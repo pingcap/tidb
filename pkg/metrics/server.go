@@ -76,6 +76,10 @@ var (
 	MemoryLimit                     prometheus.Gauge
 	InternalSessions                prometheus.Gauge
 	ActiveUser                      prometheus.Gauge
+
+	// TLS
+	TLSVersion *prometheus.CounterVec
+	TLSCipher  *prometheus.CounterVec
 )
 
 // InitServerMetrics initializes server metrics.
@@ -422,6 +426,20 @@ func InitServerMetrics() {
 			Name:      "active_users",
 			Help:      "The total count of active user.",
 		})
+	TLSVersion = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tls_version",
+			Help:      "Counter per TLS Version.",
+		}, []string{LblVersion})
+	TLSCipher = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tls_cipher",
+			Help:      "Counter per TLS Cipher.",
+		}, []string{LblCipher})
 }
 
 // ExecuteErrorToLabel converts an execute error to label.

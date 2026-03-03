@@ -8,7 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 25,
+    shard_count = 30,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -23,6 +23,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

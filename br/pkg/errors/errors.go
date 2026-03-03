@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Is tests whether the specificated error causes the error `err`.
+// Is tests whether the specified error causes the error `err`.
 func Is(err error, is *errors.Error) bool {
 	errorFound := errors.Find(err, func(e error) bool {
 		normalizedErr, ok := e.(*errors.Error)
@@ -43,13 +43,14 @@ var (
 	ErrMigrationNotFound            = errors.Normalize("no migration found", errors.RFCCodeText("BR:Common:ErrMigrationNotFound"))
 	ErrMigrationVersionNotSupported = errors.Normalize("the migration version isn't supported", errors.RFCCodeText("BR:Common:ErrMigrationVersionNotSupported"))
 
-	ErrPDUpdateFailed         = errors.Normalize("failed to update PD", errors.RFCCodeText("BR:PD:ErrPDUpdateFailed"))
-	ErrPDLeaderNotFound       = errors.Normalize("PD leader not found", errors.RFCCodeText("BR:PD:ErrPDLeaderNotFound"))
-	ErrPDInvalidResponse      = errors.Normalize("PD invalid response", errors.RFCCodeText("BR:PD:ErrPDInvalidResponse"))
-	ErrPDBatchScanRegion      = errors.Normalize("batch scan region", errors.RFCCodeText("BR:PD:ErrPDBatchScanRegion"))
-	ErrPDUnknownScatterResult = errors.Normalize("failed to wait region scattered", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
-	ErrPDNotFullyScatter      = errors.Normalize("pd not fully scattered", errors.RFCCodeText("BR:PD:ErrPDNotFullyScatter"))
-	ErrPDSplitFailed          = errors.Normalize("failed to wait region splitted", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
+	ErrPDUpdateFailed           = errors.Normalize("failed to update PD", errors.RFCCodeText("BR:PD:ErrPDUpdateFailed"))
+	ErrPDLeaderNotFound         = errors.Normalize("PD leader not found", errors.RFCCodeText("BR:PD:ErrPDLeaderNotFound"))
+	ErrPDInvalidResponse        = errors.Normalize("PD invalid response", errors.RFCCodeText("BR:PD:ErrPDInvalidResponse"))
+	ErrPDBatchScanRegion        = errors.Normalize("batch scan region", errors.RFCCodeText("BR:PD:ErrPDBatchScanRegion"))
+	ErrPDUnknownScatterResult   = errors.Normalize("failed to wait region scattered", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
+	ErrPDNotFullyScatter        = errors.Normalize("pd not fully scattered", errors.RFCCodeText("BR:PD:ErrPDNotFullyScatter"))
+	ErrPDSplitFailed            = errors.Normalize("failed to wait region split", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
+	ErrPDRegionsNotFullyScatter = errors.Normalize("regions not fully scattered", errors.RFCCodeText("BR:PD:ErrPDRegionsNotFullyScatter"))
 
 	ErrBackupChecksumMismatch    = errors.Normalize("backup checksum mismatch", errors.RFCCodeText("BR:Backup:ErrBackupChecksumMismatch"))
 	ErrBackupInvalidRange        = errors.Normalize("backup range invalid", errors.RFCCodeText("BR:Backup:ErrBackupInvalidRange"))

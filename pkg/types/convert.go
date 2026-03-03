@@ -733,6 +733,10 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 				break
 			}
 			eIdx = i
+			if i+1 == len(s) {
+				// ParseFloat doesn't accept 'e' as last char, MySQL does.
+				return s[:i], nil
+			}
 		} else if c == '\u0000' {
 			s = s[:validLen]
 			break

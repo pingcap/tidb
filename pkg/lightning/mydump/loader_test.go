@@ -18,27 +18,31 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
 	"go.uber.org/atomic"
 )
 
@@ -188,7 +192,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -213,7 +217,7 @@ func TestTableUnexpectedError(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -235,7 +239,7 @@ func TestMissingTableSchema(t *testing.T) {
 	s.touch(t, "db.tbl.csv")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -966,7 +970,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1.tbl1-schema.sql",
 		[]byte("CREATE TABLE db1.tbl1 ( id INTEGER, val VARCHAR(255) );"),
 	))
@@ -1085,7 +1089,7 @@ func TestExternalDataRoutes(t *testing.T) {
 
 func TestSampleFileCompressRatio(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1129,60 +1133,155 @@ func TestEstimateFileSize(t *testing.T) {
 	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
 }
 
+type openCounterStorage struct {
+	storeapi.Storage
+	openCount atomic.Int64
+}
+
+func (s *openCounterStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
+	s.openCount.Add(1)
+	return s.Storage.Open(ctx, path, option)
+}
+
+type openErrorStorage struct {
+	storeapi.Storage
+}
+
+func (s openErrorStorage) Open(context.Context, string, *storeapi.ReaderOption) (objectio.Reader, error) {
+	return nil, errors.New("open disabled")
+}
+
+func TestMDLoaderSkipRealSizeEstimation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("compressed", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		for range 1000 {
+			_, err = gz.Write([]byte("aaaa\n"))
+			require.NoError(t, err)
+		}
+		require.NoError(t, gz.Close())
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.csv.gz", buf.Bytes()))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		store1 := &openCounterStorage{Storage: baseStore}
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, store1)
+		require.NoError(t, err)
+		require.Greater(t, store1.openCount.Load(), int64(0))
+
+		store2 := &openCounterStorage{Storage: baseStore}
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, store2, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+		require.Equal(t, int64(0), store2.openCount.Load())
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.csv.gz"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+	})
+
+	t.Run("parquet", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.parquet", []byte("not a parquet file")))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore})
+		require.Error(t, err)
+
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore}, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.parquet"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+		require.Zero(t, fi.FileMeta.Rows)
+	})
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
-
-	type row struct {
-		ID    int64  `parquet:"name=id, type=INT64"`
-		Key   string `parquet:"name=key, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-		Value string `parquet:"name=value, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	byteArray := make([]byte, 0, 40*1024)
-	bf := bytes.NewBuffer(byteArray)
-	pwriter, err := writer.NewParquetWriterFromWriter(bf, new(row), 4)
-	require.NoError(t, err)
-	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
-	pwriter.PageSize = 8 * 1024              //8K
-	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
+	fileName := "test_1.t1.parquet"
+
+	totalRowSize := int64(0)
 	seed := time.Now().Unix()
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
-	totalRowSize := 0
-	for i := range count {
-		kl := rnd.Intn(20) + 1
-		key := make([]byte, kl)
-		kl, err = rnd.Read(key)
-		require.NoError(t, err)
-		vl := rnd.Intn(20) + 1
-		value := make([]byte, vl)
-		vl, err = rnd.Read(value)
-		require.NoError(t, err)
-
-		totalRowSize += kl + vl + 8
-		row := row{
-			ID:    int64(i),
-			Key:   string(key[:kl]),
-			Value: string(value[:vl]),
-		}
-		err = pwriter.Write(row)
-		require.NoError(t, err)
+	pc := []md.ParquetColumn{
+		{
+			Name:      "id",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.None,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					data[i] = int64(i)
+					defLevels[i] = 1
+				}
+				totalRowSize += int64(8 * numRows)
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "key",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "value",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
 	}
-	err = pwriter.WriteStop()
-	require.NoError(t, err)
+	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-	fileName := "test_1.t1.parquet"
-	err = store.WriteFile(ctx, fileName, bf.Bytes())
-	require.NoError(t, err)
-
-	rowCount, rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
-		Path: fileName,
-	}, store)
+	rowCount, rowSize, err := md.SampleStatisticsFromParquet(ctx, fileName, store)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)

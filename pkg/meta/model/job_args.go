@@ -855,6 +855,13 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 		return errors.Trace(err)
 	}
 
+	// If the job is run on older TiDB versions(<=8.1), it will incorrectly remove
+	// the last arg oldTableNames.
+	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
+	if len(oldTableNames) == 0 && len(oldSchemaIDs) != 0 {
+		oldTableNames = make([]ast.CIStr, len(oldSchemaIDs))
+	}
+
 	a.RenameTableInfos = GetRenameTablesArgsFromV1(
 		oldSchemaIDs, oldSchemaNames, oldTableNames,
 		newSchemaIDs, newTableNames, tableIDs,
@@ -1226,6 +1233,41 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	return getOrDecodeArgs[*PlacementPolicyArgs](&PlacementPolicyArgs{}, job)
 }
 
+// MaskingPolicyArgs is the argument for create/alter/drop masking policy
+type MaskingPolicyArgs struct {
+	Policy         *MaskingPolicyInfo `json:"policy,omitempty"`
+	ReplaceOnExist bool               `json:"replace_on_exist,omitempty"`
+	PolicyName     ast.CIStr          `json:"policy_name,omitempty"`
+
+	// it's set for alter/drop policy in v2
+	PolicyID int64 `json:"policy_id"`
+}
+
+func (a *MaskingPolicyArgs) getArgsV1(job *Job) []any {
+	if job.Type == ActionCreateMaskingPolicy {
+		return []any{a.Policy, a.ReplaceOnExist}
+	} else if job.Type == ActionAlterMaskingPolicy {
+		return []any{a.Policy}
+	}
+	return []any{a.PolicyName}
+}
+
+func (a *MaskingPolicyArgs) decodeV1(job *Job) error {
+	a.PolicyID = job.SchemaID
+
+	if job.Type == ActionCreateMaskingPolicy {
+		return errors.Trace(job.decodeArgs(&a.Policy, &a.ReplaceOnExist))
+	} else if job.Type == ActionAlterMaskingPolicy {
+		return errors.Trace(job.decodeArgs(&a.Policy))
+	}
+	return errors.Trace(job.decodeArgs(&a.PolicyName))
+}
+
+// GetMaskingPolicyArgs gets the masking policy args.
+func GetMaskingPolicyArgs(job *Job) (*MaskingPolicyArgs, error) {
+	return getOrDecodeArgs[*MaskingPolicyArgs](&MaskingPolicyArgs{}, job)
+}
+
 // SetDefaultValueArgs is the argument for setting default value ddl.
 type SetDefaultValueArgs struct {
 	Col *ColumnInfo `json:"column_info,omitempty"`
@@ -1371,7 +1413,7 @@ type IndexArg struct {
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
 
 	// ConditionString is used to store the partial index condition string for the index.
-	ConditionString string `json:"partial_condition_str,omitempty"`
+	ConditionString string `json:"condition_string,omitempty"`
 }
 
 // GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
@@ -1816,4 +1858,22 @@ func (a *RefreshMetaArgs) decodeV1(job *Job) error {
 // GetRefreshMetaArgs get the refresh meta argument.
 func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
+}
+
+// AlterTableAffinityArgs is the argument for AlterTableAffinity
+type AlterTableAffinityArgs struct {
+	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+}
+
+func (a *AlterTableAffinityArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableAffinityArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableAffinityArgs get the alter table affinity argument.
+func GetAlterTableAffinityArgs(job *Job) (*AlterTableAffinityArgs, error) {
+	return getOrDecodeArgs[*AlterTableAffinityArgs](&AlterTableAffinityArgs{}, job)
 }

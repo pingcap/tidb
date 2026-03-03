@@ -26,19 +26,15 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 var planSuiteUnexportedData testdata.TestData
-var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
-	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
-	testDataMap.LoadTestSuiteData("testdata", "plan_cache_suite")
 	testDataMap.LoadTestSuiteData("testdata", "decorrelate_limit_suite", true)
 
-	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/usage/collector.(*globalCollector[...]).StartWorker.func1"),
@@ -60,14 +56,6 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func GetPlanCacheSuiteData() testdata.TestData {
-	return testDataMap["plan_cache_suite"]
-}
-
-func GetIndexMergeSuiteData() testdata.TestData {
-	return testDataMap["index_merge_suite"]
 }
 
 func GetRuntimeFilterGeneratorData() testdata.TestData {

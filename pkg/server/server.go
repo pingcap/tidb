@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -989,6 +990,9 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
 				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
 			}
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
 		}
 	}
 	killQuery(conn, maxExecutionTime, runaway)
@@ -1020,11 +1024,6 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
-	if conn.bufReadConn != nil {
-		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
-			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
-		}
-	}
 	sessVars.SQLKiller.FinishResultSet()
 }
 
@@ -1050,6 +1049,11 @@ func (s *Server) KillAllConnections() {
 		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
+		}
+		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
 		}
 		killQuery(conn, false, false)
 	}
@@ -1240,6 +1244,25 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false, false, false)
 	}
+}
+
+// GetStatusVars is getting the per process status variables from the server
+func (s *Server) GetStatusVars() map[uint64]map[string]string {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]map[string]string)
+	for _, client := range s.clients {
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			if client.tlsConn != nil {
+				connState := client.tlsConn.ConnectionState()
+				rs[pi.ID] = map[string]string{
+					"Ssl_cipher":  tlsutil.CipherSuiteName(connState.CipherSuite),
+					"Ssl_version": tlsutil.VersionName(connState.Version),
+				}
+			}
+		}
+	}
+	return rs
 }
 
 // Health returns if the server is healthy (begin to shut down)

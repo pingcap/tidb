@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -65,9 +64,6 @@ type StatsUsage interface {
 
 	// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 	GetPredicateColumns(tableID int64) ([]int64, error)
-
-	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-	CollectColumnsInExtendedStats(tableID int64) ([]int64, error)
 
 	IndexUsage
 
@@ -149,8 +145,6 @@ type IndicatorsJSON struct {
 // We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
 // Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
-	owner.Listener
-
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
@@ -192,6 +186,10 @@ type StatsAnalyze interface {
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
+
+	// ClosePriorityQueue closes the stats priority queue if initialized.
+	// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+	ClosePriorityQueue()
 
 	// Close closes the analyze worker.
 	Close()
@@ -346,9 +344,6 @@ type StatsReadWriter interface {
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
 	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
 
-	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
-	ReloadExtendedStatistics() error
-
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
@@ -427,17 +422,6 @@ type StatsReadWriter interface {
 
 	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
-
-	// Methods for extended stast.
-
-	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-	InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error)
-
-	// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-	MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error)
-
-	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
 }
 
 // NeededItemTask represents one needed column/indices with expire time.

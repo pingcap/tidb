@@ -335,7 +335,7 @@ create table t(a bigint, b bigint);
 insert into t values(1, 1);
 explain format='plan_tree' select ifnull("aaaa", a) from t;
 id	task	access object	operator info
-Projection	root		aaaa->Column#4
+Projection	root		aaaa->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select ifnull("aaaa", a) from t;

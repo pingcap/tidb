@@ -270,7 +270,7 @@ func CompileLike2Regexp(str string) string {
 			result = append(result, '.', '*')
 		}
 	}
-	return string(result)
+	return "^" + string(result) + "$"
 }
 
 // DoMatchBinary is an adapter for `DoMatchInner`, `str` is binary strings or ascii string.

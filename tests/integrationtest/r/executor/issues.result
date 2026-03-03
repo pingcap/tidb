@@ -765,10 +765,10 @@ c_int	c_str	c_decimal
 explain format = 'plan_tree' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
 id	task	access object	operator info
 SelectLock	root		for update 0
-└─HashJoin	root		CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(executor__issues.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))
-  ├─Selection(Build)	root		ne(Column#10, 0)
-  │ └─StreamAgg	root		funcs:max(Column#27)->Column#7, funcs:count(distinct Column#28)->Column#8, funcs:sum(Column#29)->Column#9, funcs:count(1)->Column#10
-  │   └─Projection	root		executor__issues.t2.c_str->Column#27, executor__issues.t2.c_str->Column#28, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column#29
+└─HashJoin	root		CARTESIAN inner join, other cond:or(gt(Column, 1), or(ne(executor__issues.t1.c_str, Column), if(ne(Column, 0), NULL, 0)))
+  ├─Selection(Build)	root		ne(Column, 0)
+  │ └─StreamAgg	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+  │   └─Projection	root		executor__issues.t2.c_str->Column, executor__issues.t2.c_str->Column, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column
   │     └─TableReader	root	partition:all	data:Selection
   │       └─Selection	cop[tikv]		lt(executor__issues.t2.c_decimal, 5)
   │         └─TableFullScan	cop[tikv]	table:t2	keep order:false
@@ -817,7 +817,6 @@ st_id char(4) NOT NULL,
 st_name char(10) NOT NULL,
 PRIMARY KEY (st_id) /*T![clustered_index] NONCLUSTERED */
 );
-trace plan SELECT T_ID, T_S_SYMB, T_QTY, ST_NAME, TH_DTS FROM ( SELECT T_ID AS ID FROM TRADE WHERE T_CA_ID = 43000014236 ORDER BY T_DTS DESC LIMIT 10 ) T, TRADE, TRADE_HISTORY, STATUS_TYPE WHERE TRADE.T_ID = ID AND TRADE_HISTORY.TH_T_ID = TRADE.T_ID AND STATUS_TYPE.ST_ID = TRADE_HISTORY.TH_ST_ID ORDER BY TH_DTS DESC LIMIT 30;
 set @@foreign_key_checks=default;
 drop table if exists partsupp, supplier, nation;
 SET GLOBAL tidb_mem_oom_action='CANCEL';
@@ -917,18 +916,18 @@ Limit_8	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
     └─TableFullScan_12	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t where c = 'abc' limit 100;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_9	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_16	1.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_15	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─Selection_14	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
-      └─TableFullScan_13	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false, stats:partial[c:unInitialized]	<memory>	<disk>
+Limit_9	64.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_16	64.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_15	64.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─Selection_14	64.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
+      └─TableFullScan_13	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t where c = 'abc' limit 100000;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_9	1.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-└─TableReader_16	1.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_15	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-    └─Selection_14	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
-      └─TableFullScan_13	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false, stats:partial[c:unInitialized]	<memory>	<disk>
+Limit_9	64.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+└─TableReader_16	64.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_15	64.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+    └─Selection_14	64.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
+      └─TableFullScan_13	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t order by id limit 100;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
@@ -947,7 +946,7 @@ Limit_13	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 └─TableReader_26	1.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
   └─Limit_25	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_24	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abd")	<memory>	<disk>
-      └─TableFullScan_23	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true, stats:partial[c:unInitialized]	<memory>	<disk>
+      └─TableFullScan_23	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 select @@tidb_partition_prune_mode;
 @@tidb_partition_prune_mode
 dynamic

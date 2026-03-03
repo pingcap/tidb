@@ -57,9 +57,6 @@ const (
 	// BothMapsWritable clones both maps - safe to add/remove columns and indices
 	BothMapsWritable
 
-	// ExtendedStatsWritable shares all maps - safe to modify ExtendedStats field
-	ExtendedStatsWritable
-
 	// AllDataWritable deep copies everything - safe to modify all data including histograms
 	AllDataWritable
 )
@@ -75,17 +72,12 @@ var (
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
 	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range, idxCol []*expression.Column) (result RowEstimate, err error)
 
-	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
-	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result RowEstimate, err error)
-
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
-	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result RowEstimate, err error)
+	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range, pkIsHandle bool) (result RowEstimate, err error)
 )
 
 // Table represents statistics for a table.
 type Table struct {
-	ExtendedStats *ExtendedStatsColl
-
 	ColAndIdxExistenceMap *ColAndIdxExistenceMap
 	HistColl
 	Version uint64
@@ -215,34 +207,6 @@ func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
 func ColAndIdxExistenceMapIsEqual(m1, m2 *ColAndIdxExistenceMap) bool {
 	return maps.Equal(m1.colAnalyzed, m2.colAnalyzed) && maps.Equal(m1.idxAnalyzed, m2.idxAnalyzed)
 }
-
-// ExtendedStatsItem is the cached item of a mysql.stats_extended record.
-type ExtendedStatsItem struct {
-	StringVals string
-	ColIDs     []int64
-	ScalarVals float64
-	Tp         uint8
-}
-
-// ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
-type ExtendedStatsColl struct {
-	Stats             map[string]*ExtendedStatsItem
-	LastUpdateVersion uint64
-}
-
-// NewExtendedStatsColl allocate an ExtendedStatsColl struct.
-func NewExtendedStatsColl() *ExtendedStatsColl {
-	return &ExtendedStatsColl{Stats: make(map[string]*ExtendedStatsItem)}
-}
-
-const (
-	// ExtendedStatsInited is the status for extended stats which are just registered but have not been analyzed yet.
-	ExtendedStatsInited uint8 = iota
-	// ExtendedStatsAnalyzed is the status for extended stats which have been collected in analyze.
-	ExtendedStatsAnalyzed
-	// ExtendedStatsDeleted is the status for extended stats which were dropped. These "deleted" records would be removed from storage by GCStats().
-	ExtendedStatsDeleted
-)
 
 // HistColl is a collection of histograms. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
@@ -619,7 +583,6 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 // ColumnMapWritable: Clones columns map, safe to add/remove columns
 // IndexMapWritable: Clones indices map, safe to add/remove indices
 // BothMapsWritable: Clones both maps - safe to add/remove columns and indices
-// ExtendedStatsWritable: Shares all maps, safe to modify ExtendedStats field
 // AllDataWritable: Deep copies everything, safe to modify all data including histograms
 func (t *Table) CopyAs(intent CopyIntent) *Table {
 	var columns map[int64]*Column
@@ -649,10 +612,6 @@ func (t *Table) CopyAs(intent CopyIntent) *Table {
 		if t.ColAndIdxExistenceMap != nil {
 			existenceMap = t.ColAndIdxExistenceMap.Clone()
 		}
-	case ExtendedStatsWritable:
-		columns = t.columns
-		indices = t.indices
-		existenceMap = t.ColAndIdxExistenceMap
 	case AllDataWritable:
 		// For deep copy, create new maps and deep copy all content
 		columns = make(map[int64]*Column, len(t.columns))
@@ -686,18 +645,6 @@ func (t *Table) CopyAs(intent CopyIntent) *Table {
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
 
-	// Handle ExtendedStats for deep copy vs shallow copy
-	if (intent == AllDataWritable || intent == ExtendedStatsWritable) && t.ExtendedStats != nil {
-		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[string]*ExtendedStatsItem),
-			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
-		}
-		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
-		nt.ExtendedStats = newExtStatsColl
-	} else {
-		nt.ExtendedStats = t.ExtendedStats
-	}
-
 	return nt
 }
 
@@ -721,7 +668,6 @@ func (t *Table) String() string {
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
-	// TODO: concat content of ExtendedStatsColl
 	return strings.Join(strs, "\n")
 }
 
@@ -785,11 +731,16 @@ func (t *Table) IsEligibleForAnalysis() bool {
 	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+	if !t.MeetAutoAnalyzeMinCnt() || t.Pseudo {
 		return false
 	}
 
 	return true
+}
+
+// MeetAutoAnalyzeMinCnt checks whether the table meets the minimum count required for auto-analyze.
+func (t *Table) MeetAutoAnalyzeMinCnt() bool {
+	return t != nil && t.RealtimeCount >= AutoAnalyzeMinCnt
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
@@ -956,18 +907,6 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
-// ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
-func (t *Table) ReleaseAndPutToPool() {
-	for _, col := range t.columns {
-		col.FMSketch.DestroyAndPutToPool()
-	}
-	clear(t.columns)
-	for _, idx := range t.indices {
-		idx.FMSketch.DestroyAndPutToPool()
-	}
-	clear(t.indices)
-}
-
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
 func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	cols := make(map[int64]*Column)
@@ -1126,7 +1065,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 // If not, it will return false and set the version to the tbl's.
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	if tbl.StatsVer != Version0 && tbl.StatsVer != *version {
+	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != *version {
 		*version = tbl.StatsVer
 		return false
 	}

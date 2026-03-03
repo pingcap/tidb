@@ -17,6 +17,7 @@ package rule
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -59,9 +60,14 @@ type columnStatsUsageCollector struct {
 
 	// operatorNum is the number of operators in the logical plan.
 	operatorNum uint64
+
+	// interestingColsByDS tracks all columns of interest for index pruning (WHERE + JOIN + ORDERING)
+	interestingColsByDS map[*logicalop.DataSource][]*expression.Column
+	// Temporary storage for deduplication
+	colSet map[int64]struct{}
 }
 
-func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(enabledPlanCapture bool, collectIndexPruningCols bool) *columnStatsUsageCollector {
 	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -74,6 +80,10 @@ func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageColl
 	if enabledPlanCapture {
 		collector.collectVisitedTable = true
 		collector.visitedtbls = map[int64]struct{}{}
+	}
+	if collectIndexPruningCols {
+		collector.interestingColsByDS = make(map[*logicalop.DataSource][]*expression.Column)
+		collector.colSet = make(map[int64]struct{})
 	}
 	return collector
 }
@@ -161,6 +171,8 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
+	// Note: Interesting columns (WHERE + JOIN + ORDERING) for index pruning are collected during the same traversal
+	// in collectFromPlan via collectInterestingColumnsForDataSource method.
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
@@ -199,19 +211,118 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
+// collectInterestingColumnsForDataSource collects all interesting columns (WHERE + JOIN + ORDERING + GROUP BY) for a DataSource.
+func (c *columnStatsUsageCollector) collectInterestingColumnsForDataSource(ds *logicalop.DataSource, accumulatedJoinCols []*expression.Column, accumulatedOrderingCols []*expression.Column) {
+	// Clear the map for reuse instead of allocating a new one
+	clear(c.colSet)
+	var allCols []*expression.Column
+
+	// Collect WHERE columns from local filter predicates
+	allConds := make([]expression.Expression, 0, len(ds.PushedDownConds)+len(ds.AllConds))
+	allConds = append(allConds, ds.PushedDownConds...)
+	allConds = append(allConds, ds.AllConds...)
+
+	for _, cond := range allConds {
+		condCols := expression.ExtractColumns(cond)
+		// Only keep columns from this DataSource (local WHERE conditions)
+		allLocal := true
+		for _, col := range condCols {
+			if !ds.Schema().Contains(col) {
+				allLocal = false
+				break
+			}
+		}
+		if allLocal {
+			for _, col := range condCols {
+				if _, exists := c.colSet[col.UniqueID]; !exists {
+					allCols = append(allCols, col)
+					c.colSet[col.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Add join columns
+	for _, col := range accumulatedJoinCols {
+		if ds.Schema().Contains(col) {
+			if _, exists := c.colSet[col.UniqueID]; !exists {
+				allCols = append(allCols, col)
+				c.colSet[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+
+	// Add ordering columns
+	for _, col := range accumulatedOrderingCols {
+		if ds.Schema().Contains(col) {
+			if _, exists := c.colSet[col.UniqueID]; !exists {
+				allCols = append(allCols, col)
+				c.colSet[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+
+	c.interestingColsByDS[ds] = allCols
+}
+
 // collectFromPlan will dive into the tree to collect base column stats usage, in this process
 // we also make the use of the dive process down to passing the parent operator's column groups
 // requirement to notify the underlying datasource to maintain the possible group ndv.
-func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan) {
+// accumulatedJoinCols and accumulatedOrderingCols (which includes GROUP BY columns) are propagated down the tree for index pruning.
+func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan, accumulatedJoinCols []*expression.Column, accumulatedOrderingCols []*expression.Column) {
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
-	for _, child := range lp.Children() {
-		// passing the new asked column groups down.
-		c.collectFromPlan(curColGroups, child)
+
+	// Track columns for index pruning as we traverse
+	currentJoinCols := accumulatedJoinCols
+	currentOrderingCols := accumulatedOrderingCols
+
+	// Extract join and ordering columns from this node before visiting children
+	if c.interestingColsByDS != nil {
+		switch x := lp.(type) {
+		case *logicalop.LogicalJoin:
+			// Extract join columns from EqualConditions and OtherConditions
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+		case *logicalop.LogicalApply:
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+		case *logicalop.LogicalSort:
+			for _, item := range x.ByItems {
+				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
+			}
+		case *logicalop.LogicalTopN:
+			for _, item := range x.ByItems {
+				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
+			}
+		case *logicalop.LogicalWindow:
+			for _, item := range x.OrderBy {
+				currentOrderingCols = append(currentOrderingCols, item.Col)
+			}
+		case *logicalop.LogicalAggregation:
+			// GROUP BY columns benefit from indexes (similar to ordering)
+			currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(x.GroupByItems, nil)...)
+			// MIN/MAX aggregates can benefit from ordered indexes
+			for _, aggFunc := range x.AggFuncs {
+				if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax {
+					currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)...)
+				}
+			}
+		}
 	}
+
+	for _, child := range lp.Children() {
+		// passing the new asked column groups down, along with accumulated join/ordering columns
+		c.collectFromPlan(curColGroups, child, currentJoinCols, currentOrderingCols)
+	}
+
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
 		c.collectPredicateColumnsForDataSource(askedColGroups, x)
+		// Collect all interesting columns (WHERE + JOIN + ORDERING) for index pruning
+		if c.interestingColsByDS != nil {
+			c.collectInterestingColumnsForDataSource(x, currentJoinCols, currentOrderingCols)
+		}
 	case *logicalop.LogicalIndexScan:
 		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
@@ -273,9 +384,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 	case *logicalop.LogicalCTE:
 		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan)
+		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan, nil, nil)
 		if x.Cte.RecursivePartLogicalPlan != nil {
-			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan)
+			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan, nil, nil)
 		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns
@@ -322,10 +433,22 @@ func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	map[int64][]int64,
 	uint64,
 ) {
-	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
-	collector.collectFromPlan(nil, lp)
+	// Check if we need to collect index pruning columns
+	threshold := lp.SCtx().GetSessionVars().OptIndexPruneThreshold
+	collectIndexPruningCols := threshold >= 0
+
+	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled(), collectIndexPruningCols)
+	collector.collectFromPlan(nil, lp, nil, nil)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
+
+	// Populate DataSource field with the collected interesting columns (if index pruning is enabled)
+	if collectIndexPruningCols {
+		for ds, cols := range collector.interestingColsByDS {
+			ds.InterestingColumns = cols
+		}
+	}
+
 	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.operatorNum
 }

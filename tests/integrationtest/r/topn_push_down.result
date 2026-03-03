@@ -229,8 +229,8 @@ Limit	root		offset:0, count:5
 explain format = 'plan_tree' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	task	access object	operator info
 Limit	root		offset:0, count:5
-└─Selection	root		isnull(topn_push_down.t.a)
-  └─IndexJoin	root		left outer join, inner:IndexReader, left side:TableReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
+└─Projection	root		topn_push_down.t.a, <nil>->topn_push_down.t.a
+  └─IndexJoin	root		anti semi join, inner:IndexReader, left side:TableReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─IndexReader(Probe)	root		index:IndexRangeScan
@@ -246,8 +246,8 @@ Limit	root		offset:0, count:5
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	task	access object	operator info
 Limit	root		offset:0, count:5
-└─Selection	root		isnull(topn_push_down.t.a)
-  └─MergeJoin	root		left outer join, left side:IndexReader, left key:topn_push_down.t.a, right key:topn_push_down.t.a
+└─Projection	root		topn_push_down.t.a, <nil>->topn_push_down.t.a
+  └─MergeJoin	root		anti semi join, left side:IndexReader, left key:topn_push_down.t.a, right key:topn_push_down.t.a
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
     └─IndexReader(Probe)	root		index:IndexFullScan
@@ -263,8 +263,8 @@ Limit	root		offset:0, count:5
 explain format = 'plan_tree' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	task	access object	operator info
 Limit	root		offset:0, count:5
-└─Selection	root		isnull(topn_push_down.t.a)
-  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
+└─Projection	root		topn_push_down.t.a, <nil>->topn_push_down.t.a
+  └─HashJoin	root		anti semi join, left side:TableReader, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:TableFullScan

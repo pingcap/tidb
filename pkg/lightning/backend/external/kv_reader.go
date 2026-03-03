@@ -22,15 +22,15 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 var (
-	// default read buf size of KVReader, this buf is split into 3 parts, 2 for prefetch
-	// from storage, 1 for read by user.
-	defaultReadBufferSize = 64 * units.KiB
+	// DefaultReadBufferSize default read buf size of KVReader, this buf is split
+	// into 3 parts, 2 for prefetch from storage, 1 for read by user.
+	DefaultReadBufferSize = 64 * units.KiB
 )
 
 // KVReader reads a file in sorted KV format.
@@ -46,7 +46,7 @@ type KVReader struct {
 func NewKVReader(
 	ctx context.Context,
 	name string,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	initFileOffset uint64,
 	bufSize int,
 ) (*KVReader, error) {
@@ -65,10 +65,10 @@ func NewKVReader(
 	}, nil
 }
 
-// nextKV reads the next key-value pair from the reader.
+// NextKV reads the next key-value pair from the reader.
 // the returned key and value will be reused in later calls, so if the caller want
 // to save the KV for later use, it should copy the key and value.
-func (r *KVReader) nextKV() (key, val []byte, err error) {
+func (r *KVReader) NextKV() (key, val []byte, err error) {
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
 		return nil, nil, err

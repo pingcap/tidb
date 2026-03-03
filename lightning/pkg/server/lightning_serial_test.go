@@ -83,7 +83,7 @@ func TestRun(t *testing.T) {
 		},
 	}
 	err = lightning.run(ctx, &cfgCheckpoint, o)
-	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	require.EqualError(t, err, "unknown backend ")
 	mock.ExpectQuery("show config").WillReturnError(errors.New("lack privilege"))
 	cfgKeyspaceName := config.NewConfig()
 	cfgKeyspaceName.TikvImporter.Backend = config.BackendLocal

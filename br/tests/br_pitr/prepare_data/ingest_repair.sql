@@ -93,3 +93,7 @@ INSERT INTO test2.pairs18_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 -- test global index
 CREATE TABLE test.pairs19 (id int, pid int) partition by range(id) (partition p0 values less than (6), partition p1 values less than (11));
 INSERT INTO test.pairs19 values (1, 1), (10, 10);
+
+-- test partial index
+CREATE TABLE test.pairs20 (id int PRIMARY KEY, pid1 int, pid2 int);
+INSERT INTO test.pairs20 values (1, 1, 1), (10, 10, 10);

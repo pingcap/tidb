@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -37,7 +37,7 @@ func getEncodedData(key, value []byte) []byte {
 
 func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{
@@ -136,7 +136,7 @@ func TestKVReadWrite(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{
@@ -167,12 +167,12 @@ func TestKVReadWrite(t *testing.T) {
 	kvReader, err := NewKVReader(ctx, "/test", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, keys[i], key)
 		require.Equal(t, values[i], value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 
 	require.NoError(t, kvReader.Close())

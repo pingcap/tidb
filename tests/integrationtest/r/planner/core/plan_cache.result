@@ -693,15 +693,15 @@ HashJoin_21	100000000.00	root		CARTESIAN inner join
   └─TableFullScan_23	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_cache' select * from t where a in (select a from t);
 id	estRows	task	access object	operator info
-HashJoin_24	9990.00	root		inner join, equal:[eq(planner__core__plan_cache.t.a, planner__core__plan_cache.t.a)]
-├─HashAgg_43(Build)	7992.00	root		group by:planner__core__plan_cache.t.a, funcs:firstrow(planner__core__plan_cache.t.a)->planner__core__plan_cache.t.a
-│ └─TableReader_44	7992.00	root		data:HashAgg_35
-│   └─HashAgg_35	7992.00	cop[tikv]		group by:planner__core__plan_cache.t.a, 
-│     └─Selection_42	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
-│       └─TableFullScan_41	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─TableReader_28(Probe)	9990.00	root		data:Selection_27
-  └─Selection_27	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
-    └─TableFullScan_26	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_27	9990.00	root		inner join, equal:[eq(planner__core__plan_cache.t.a, planner__core__plan_cache.t.a)]
+├─HashAgg_46(Build)	7992.00	root		group by:planner__core__plan_cache.t.a, funcs:firstrow(planner__core__plan_cache.t.a)->planner__core__plan_cache.t.a
+│ └─TableReader_47	7992.00	root		data:HashAgg_38
+│   └─HashAgg_38	7992.00	cop[tikv]		group by:planner__core__plan_cache.t.a, 
+│     └─Selection_45	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
+│       └─TableFullScan_44	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_31(Probe)	9990.00	root		data:Selection_30
+  └─Selection_30	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
+    └─TableFullScan_29	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 set tidb_enable_non_prepared_plan_cache=1;
 explain format='plan_cache' select address from PERFORMANCE_SCHEMA.tikv_profile_cpu;

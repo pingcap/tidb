@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "execute",
+    srcs = ["execute_mock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/mock/execute",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/metering",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "@org_uber_go_mock//gomock",
+    ],
+)

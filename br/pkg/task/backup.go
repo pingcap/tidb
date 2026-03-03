@@ -24,16 +24,18 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -116,7 +118,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		" use for incremental backup, support TSO only")
 	flags.String(flagBackupTS, "", "the backup ts support TSO or datetime,"+
 		" e.g. '400036290571534337', '2018-05-11 01:42:23'")
-	flags.Int64(flagGCTTL, utils.DefaultBRGCSafePointTTL, "the TTL (in seconds) that PD holds for BR's GC safepoint")
+	flags.Int64(flagGCTTL, gc.DefaultBRGCSafePointTTL, "the TTL (in seconds) that PD holds for BR's GC safepoint")
 	flags.String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
@@ -331,7 +333,7 @@ func (cfg *BackupConfig) Adjust() {
 	}
 
 	if cfg.GCTTL == 0 {
-		cfg.GCTTL = utils.DefaultBRGCSafePointTTL
+		cfg.GCTTL = gc.DefaultBRGCSafePointTTL
 	}
 	// Use zstd as default
 	if cfg.CompressionType == backuppb.CompressionType_UNKNOWN {
@@ -347,7 +349,7 @@ type immutableBackupConfig struct {
 	IgnoreStats   bool   `json:"ignore-stats"`
 	UseCheckpoint bool   `json:"use-checkpoint"`
 
-	storage.BackendOptions
+	objstore.BackendOptions
 	Storage      string              `json:"storage"`
 	PD           []string            `json:"pd"`
 	SendCreds    bool                `json:"send-credentials-to-tikv"`
@@ -405,7 +407,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	isIncrementalBackup := cfg.LastBackupTS > 0
 	skipChecksum := !cfg.Checksum || isIncrementalBackup
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -458,7 +460,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// set skip checksum status
 	client.SetSkipChecksum(skipChecksum)
 
-	opts := storage.ExternalStorageOptions{
+	opts := storeapi.Options{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
@@ -482,8 +484,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	// if use checkpoint and gcTTL is the default value
 	// update gcttl to checkpoint's default gc ttl
-	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
-		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
+	if cfg.UseCheckpoint && cfg.GCTTL == gc.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = gc.DefaultCheckpointGCSafePointTTL
 		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
@@ -494,7 +496,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	g.Record("BackupTS", backupTS)
 	safePointID := client.GetSafePointID()
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: backupTS,
 		TTL:      client.GetGCTTL(),
 		ID:       safePointID,
@@ -517,16 +519,15 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
-		// set the ttl to 0 to remove the gc-safe-point
-		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
-			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+		// remove the gc-safe-point
+		if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
+			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
+	err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -617,7 +618,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Error("LastBackupTS is larger or equal to current TS")
 			return errors.Annotate(berrors.ErrInvalidArgument, "LastBackupTS is larger or equal to current TS")
 		}
-		err = utils.CheckGCSafePoint(ctx, mgr.GetPDClient(), cfg.LastBackupTS)
+		err = gc.CheckGCSafePoint(ctx, mgr.GetGCManager(), cfg.LastBackupTS)
 		if err != nil {
 			log.Error("Check gc safepoint for last backup ts failed", zap.Error(err))
 			return errors.Trace(err)

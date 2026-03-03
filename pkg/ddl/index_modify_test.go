@@ -379,7 +379,7 @@ func TestAnalyzeStuck(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_add_index_stuck")
 	tk.MustExec("create table t_add_index_stuck (c1 int, c2 int, c3 int)")
@@ -449,7 +449,7 @@ func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	tk.MustExec("drop table if exists t_analyze_owner_resign")
 	tk.MustExec("create table t_analyze_owner_resign (c1 int, c2 int, key(c2))")
 	for i := 0; i < 10; i++ {
@@ -942,7 +942,7 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	var value []byte
 	if indexInfo.Unique {
-		value, err = txn.Get(context.Background(), key)
+		value, err = kv.GetValue(context.Background(), txn, key)
 	} else {
 		var iter kv.Iterator
 		iter, err = txn.Iter(key, key.PrefixNext())
@@ -969,7 +969,7 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	h := kv.IntHandle(d.GetInt64())
 	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err := txn.Get(context.Background(), rowKey)
+	rowValue, err := kv.GetValue(context.Background(), txn, rowKey)
 	require.NoError(t, err)
 	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
 	require.NoError(t, err)
@@ -1256,7 +1256,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// add index
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	tk.MustExec("create table t(a int NOT NULL DEFAULT 10, b int, index idx_b(b))")
 	for i := range 50 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
@@ -1376,7 +1376,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.Equal(t, idColStatsVer, idColStatsVer2)
 
 	// modify column for partitioned table.
-	tk.MustGetErrMsg("ALTER TABLE pt modify column id varchar(10)", "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("ALTER TABLE pt modify column id varchar(10)")
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1( id int, a int, b int, index idx(id, a));")

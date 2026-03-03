@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -57,7 +58,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	vardef.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket")
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
@@ -77,7 +78,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	}
 
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
+	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
@@ -155,7 +156,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sql)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
@@ -298,6 +299,37 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
+func TestInitCompressedFiles(t *testing.T) {
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
+	}
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	for i := range 2048 {
+		fileName := filepath.Join(tempDir, fmt.Sprintf("test_%d.csv.gz", i))
+		require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return(250)`)
+	c := LoadDataController{
+		Plan: &Plan{
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
+		},
+		logger: zap.NewExample(),
+	}
+
+	c.Path = filepath.Join(tempDir, "*.gz")
+	require.NoError(t, c.InitDataFiles(ctx))
+}
+
 func TestSupportedSuffixForServerDisk(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("nextgen doesn't support import from server disk")
@@ -433,6 +465,8 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
 		},
 	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto

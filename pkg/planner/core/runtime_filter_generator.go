@@ -188,12 +188,13 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
+	l, r := expression.ExtractColumnsFromColOpCol(eqPredicate)
 	if rightIsBuildSide {
-		targetColumn = eqPredicate.GetArgs()[0].(*expression.Column)
-		srcColumn = eqPredicate.GetArgs()[1].(*expression.Column)
+		targetColumn = l
+		srcColumn = r
 	} else {
-		targetColumn = eqPredicate.GetArgs()[1].(*expression.Column)
-		srcColumn = eqPredicate.GetArgs()[0].(*expression.Column)
+		targetColumn = r
+		srcColumn = l
 	}
 	// match target column
 	// condition1: the target column must be real column

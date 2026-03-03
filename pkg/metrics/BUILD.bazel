@@ -32,7 +32,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/metrics",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/disttask/framework/dxfmetric",
+        "//pkg/dxf/framework/dxfmetric",
         "//pkg/lightning/metric",
         "//pkg/metrics/common",
         "//pkg/parser/terror",

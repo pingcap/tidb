@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -85,6 +86,7 @@ func (c *Issue33699CheckType) toGetSessionVar() string {
 
 func TestIssue33699(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	metrics.ConnGauge.Reset()
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
@@ -189,6 +191,60 @@ func TestIssue33699(t *testing.T) {
 	for _, ck := range checks {
 		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.defVal))
 	}
+}
+
+func TestChangeUserAndResetSessionResourceGroupCounter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	metrics.ConnGauge.Reset()
+
+	metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Inc()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create resource group rg_test RU_PER_SEC = 1000;")
+	tk.MustExec("set resource group rg_test")
+
+	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+
+	tidbdrv := NewTiDBDriver(store)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	var outBuffer bytes.Buffer
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		alloc:        arena.NewAllocator(512),
+		chunkAlloc:   chunk.NewAllocator(),
+		capability:   mysql.ClientProtocol41,
+	}
+	cc.SetCtx(&TiDBContext{Session: tk.Session()})
+
+	userData := append([]byte("root"), 0x0, 0x0)
+	userData = append(userData, []byte("test")...)
+	userData = append(userData, 0x0)
+	err = cc.dispatch(context.Background(), append([]byte{mysql.ComChangeUser}, userData...))
+	require.NoError(t, err)
+
+	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+
+	_, err = cc.ctx.Session.Execute(context.Background(), "set resource group rg_test")
+	require.NoError(t, err)
+	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	err = cc.dispatch(context.Background(), []byte{mysql.ComResetConnection})
+	require.NoError(t, err)
+	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
 }
 
 func TestMalformHandshakeHeader(t *testing.T) {
@@ -2155,27 +2211,27 @@ func TestConnAddMetrics(t *testing.T) {
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	// default
-	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
 	counter := metrics.QueryTotalCounter
 	v := promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default"))
 	require.Equal(t, 1.0, v)
 
 	// rg1
 	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg1"
-	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default")), 1.0)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 1.0)
 	/// inc the counter again
-	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 2.0)
 
 	// rg2
 	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg2"
 	// error
-	cc.addMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "Error", "test_rg2")), 1.0)
 	// ok
-	cc.addMetrics(mysql.ComStmtExecute, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComStmtExecute, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
 }
 

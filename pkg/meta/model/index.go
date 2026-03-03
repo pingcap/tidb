@@ -15,8 +15,10 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -38,7 +40,47 @@ const (
 	// reminding what's the desired naming convension (UPPER_UNDER_SCORE) if this
 	// is going to be implemented.
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
+
+	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
+	// The new name will be like "_Idx$_<old_index_name>_n".
+	changingIndexPrefix = "_Idx$_"
+
+	// GlobalIndexVersion constants define the key format versions for global indexes.
+	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
+	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
+	// See https://github.com/pingcap/tidb/issues/65289
+	GlobalIndexVersionLegacy uint8 = 0
+	// GlobalIndexVersionV1 is the current format (version 1) where partition ID is encoded in the key
+	// for global indexes on non-clustered tables to prevent key collisions
+	// after EXCHANGE PARTITION.
+	// Applies to non-unique indexes (handle always in key) and unique indexes with nullable
+	// columns (handle in key when any indexed value is NULL, since NULL != NULL).
+	// For unique global indexes where all columns are NOT NULL, version 0 is used since
+	// uniqueness alone prevents collisions.
+	// For clustered tables, common handles already include partition-specific data.
+	// Notice that for V1 the partition id is still in the value part as well,
+	// for decreasing the risk of issues changing the read code path for various index reads.
+	GlobalIndexVersionV1 uint8 = 1
+	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
+	// is encoded in the key ONLY!
+	GlobalIndexVersionV2 uint8 = 2
 )
+
+// GenUniqueChangingIndexName generates a unique index name for the changing index.
+func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
+	// Check whether the new index name is used.
+	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		indexNameMap[idx.Name.L] = true
+	}
+	suffix := 0
+	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	for indexNameMap[strings.ToLower(newIndexName)] {
+		suffix++
+		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	}
+	return newIndexName
+}
 
 // IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
 // Only indexable distance functions should be listed here!
@@ -202,17 +244,25 @@ type IndexInfo struct {
 	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
 	State               SchemaState        `json:"state"`
 	BackfillState       BackfillState      `json:"backfill_state"`
-	Comment             string             `json:"comment"`                       // Comment
-	Tp                  ast.IndexType      `json:"index_type"`                    // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique              bool               `json:"is_unique"`                     // Whether the index is unique.
-	Primary             bool               `json:"is_primary"`                    // Whether the index is primary key.
-	Invisible           bool               `json:"is_invisible"`                  // Whether the index is invisible.
-	Global              bool               `json:"is_global"`                     // Whether the index is global.
-	MVIndex             bool               `json:"mv_index"`                      // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo   `json:"vector_index"`                  // VectorInfo is the vector index information.
-	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`                // InvertedInfo is the inverted index information.
-	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`               // FullTextInfo is the FULLTEXT index information.
-	ConditionExprString string             `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
+	Comment             string             `json:"comment"`                 // Comment
+	Tp                  ast.IndexType      `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool               `json:"is_unique"`               // Whether the index is unique.
+	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
+	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
+	Global              bool               `json:"is_global"`               // Whether the index is global.
+	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
+	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
+	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
+	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	// Version of global index key format for non-clustered tables.
+	// Set to V1 when the handle can appear in the index key (non-unique indexes,
+	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
+	// 0=legacy, or unique with all NOT NULL columns, or clustered.
+	// 1=v1 with partition ID in key and value.
+	// 2=v2 with partition ID in key only (TODO).
+	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -246,7 +296,39 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
+	if index.AffectColumn != nil {
+		ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
+		for i := range index.AffectColumn {
+			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
+		}
+	}
 	return &ni
+}
+
+// IsChanging checks if the index is a new index added in modify column.
+func (index *IndexInfo) IsChanging() bool {
+	return strings.HasPrefix(index.Name.O, changingIndexPrefix)
+}
+
+// IsRemoving checks if the index is a index to be removed in modify column.
+func (index *IndexInfo) IsRemoving() bool {
+	return strings.HasPrefix(index.Name.O, removingObjPrefix)
+}
+
+// GetRemovingOriginName gets the origin name of the removing index.
+func (index *IndexInfo) GetRemovingOriginName() string {
+	return strings.TrimPrefix(index.Name.O, removingObjPrefix)
+}
+
+// GetChangingOriginName gets the origin index name from the changing index.
+func (index *IndexInfo) GetChangingOriginName() string {
+	idxName := strings.TrimPrefix(index.Name.O, changingIndexPrefix)
+	// Since the unique idxName may contain the suffix number (indexName_num), better trim the suffix.
+	var pos int
+	if pos = strings.LastIndex(idxName, "_"); pos == -1 {
+		return idxName
+	}
+	return idxName[:pos]
 }
 
 // HasPrefixIndex returns whether any columns of this index uses prefix length.
@@ -298,6 +380,21 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 		return ColumnarIndexTypeFulltext
 	}
 	return ColumnarIndexTypeNA
+}
+
+// HasCondition checks whether the index has a partial index condition.
+func (index *IndexInfo) HasCondition() bool {
+	return len(index.ConditionExprString) > 0
+}
+
+// ConditionExpr parses and returns the condition expression of the partial index.
+func (index *IndexInfo) ConditionExpr() (ast.ExprNode, error) {
+	stmtStr := "select " + index.ConditionExprString
+	stmts, _, err := parser.New().ParseSQL(stmtStr)
+	if err != nil {
+		return nil, err
+	}
+	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.

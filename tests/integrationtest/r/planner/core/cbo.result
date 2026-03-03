@@ -68,9 +68,9 @@ insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
 analyze table t1, t2 all columns;
 explain analyze format='brief' select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Projection	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A
-└─StreamAgg	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	funcs:sum(Column#11)->Column#8, funcs:firstrow(Column#12)->planner__core__cbo.t1.a, funcs:firstrow(Column#13)->planner__core__cbo.t1.b	<num>	N/A
-  └─Projection	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#11, planner__core__cbo.t1.a->Column#12, planner__core__cbo.t1.b->Column#13	<num>	N/A
+Projection	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#10	<num>	N/A
+└─StreamAgg	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	funcs:sum(Column#13)->Column#10, funcs:firstrow(Column#14)->planner__core__cbo.t1.a, funcs:firstrow(Column#15)->planner__core__cbo.t1.b	<num>	N/A
+  └─Projection	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#13, planner__core__cbo.t1.a->Column#14, planner__core__cbo.t1.b->Column#15	<num>	N/A
     └─HashJoin	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, build_hash_table:{concurrency:<num>, time:<num>, fetch:<num>, max_partition:<num>, total_partition:<num>, max_build:<num>, total_build:<num>}, probe:{concurrency:<num>, time:<num>, fetch_and_wait:<num>, max_worker_time:<num>, total_worker_time:<num>, max_probe:<num>, total_probe:<num>}	inner join, equal:[eq(planner__core__cbo.t1.a, planner__core__cbo.t2.b)]	<num>	<num>
       ├─TableReader(Build)	6.00	6	root	NULL	time.*loops.*cop_task.*	data:Selection	<num>	N/A
       │ └─Selection	6.00	6	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t2.b, 1), not(isnull(planner__core__cbo.t2.b))	N/A	N/A

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -296,7 +296,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store)
 	require.NoError(t, err)
 	return ti
 }
@@ -434,14 +434,14 @@ func TestCalResourceParams(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", handle.GetTargetScope()))
-	c := &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 200 * units.TiB, TableInfo: &model.TableInfo{}}}
+	c := &importer.LoadDataController{TotalRealSize: 200 * units.TiB, Plan: &importer.Plan{TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)
 	require.NoError(t, c.CalResourceParams(ctx, nil))
 	require.Equal(t, 8, c.ThreadCnt)
 	require.Equal(t, 32, c.MaxNodeCnt)
 	require.Equal(t, 256, c.DistSQLScanConcurrency)
 
-	c = &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 300 * units.GiB, TableInfo: &model.TableInfo{}}}
+	c = &importer.LoadDataController{TotalRealSize: 300 * units.GiB, Plan: &importer.Plan{TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)
 	require.NoError(t, c.CalResourceParams(ctx, nil))
 	require.Equal(t, 8, c.ThreadCnt)

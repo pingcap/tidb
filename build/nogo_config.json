@@ -413,7 +413,7 @@
       "br/pkg/rtree/logging_test.go": "ignore rtree code",
       "br/pkg/logutil/logging_test.go": "ignore logutil code",
       "br/pkg/storage/": "ignore storage code",
-      "br/pkg/mock/storage/storage.go": "ignore storage code",
+      "pkg/objstore/mockobjstore/objstore_mock.go": "ignore storage code",
       "br/pkg/utils/": "ignore utils code",
       "br/pkg/version/version.go": "ignore version code",
       "pkg/lightning/common/errors.go": "ignore error",
@@ -573,7 +573,7 @@
       "pkg/expression/builtin_cast.go": "expression/builtin_cast code",
       "pkg/server/": "server/ code",
       "pkg/distsql/": "distsql code",
-      "pkg/disttask": "disttask code",
+      "pkg/dxf": "DXF code",
       "dumpling/export": "dumpling/export code",
       "pkg/lock/": "lock file",
       "pkg/errno/": "errno code",
@@ -660,6 +660,7 @@
       "lightning/pkg/importer/": "more than 50",
       "pkg/lightning/backend/local/": "more than 50",
       "br/pkg/restore/": "more than 50",
+      "br/pkg/storage/": "more than 50",
       "pkg/ddl/tests/partition/": "more than 50"
     },
     "only_files": {
@@ -689,7 +690,7 @@
       "br/": "br code",
       "pkg/session/test": "session/test code",
       "pkg/ddl/tests": "ddl/tests code",
-      "pkg/disttask/": "disttask code",
+      "pkg/dxf/": "DXF code",
       "pkg/timer/": "timer code",
       "pkg/util/": "util code",
       "pkg/lightning/config/": "pkg/lightning/config code",
@@ -699,7 +700,8 @@
       "pkg/store/": "store code",
       "pkg/ttl/": "ttl code",
       "pkg/bindinfo/": "bindinfo code",
-      "pkg/domain/": "domain code"
+      "pkg/domain/": "domain code",
+      "pkg/sessionctx/variable/tests": "variable tests"
     }
   },
   "unconvert": {
@@ -1296,6 +1298,16 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "assertionapi": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "pkg/parser/yy_parser.go": "ignore generated code",
+      "pkg/parser/parser.go": "ignore generated code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
     }
   },
   "etcdconfig": {

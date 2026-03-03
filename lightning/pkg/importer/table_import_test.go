@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	restoremock "github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
@@ -54,6 +53,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -86,7 +87,7 @@ type tableRestoreSuiteBase struct {
 	tableMeta  *mydump.MDTableMeta
 	tableMeta2 *mydump.MDTableMeta
 
-	store storage.ExternalStorage
+	store storeapi.Storage
 }
 
 func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.TableInfo {
@@ -136,7 +137,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 
 	// Write some sample SQL dump
 	fakeDataDir := t.TempDir()
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 	s.store = store
 
@@ -417,8 +418,9 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
-		AnyTimes()
+		DoAndReturn(func(_ context.Context, _ *encode.EncodingConfig) (encode.Encoder, error) {
+			return realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})
+		}).AnyTimes()
 	mockEncBuilder.EXPECT().MakeEmptyRows().Return(realEncBuilder.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(mockEngineWriter, nil)
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
@@ -456,7 +458,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	fakeDataDir := s.T().TempDir()
 
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(s.T(), err)
 
 	fakeDataFiles := make([]mydump.FileInfo, 0)
@@ -492,10 +494,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		DataFiles:  fakeDataFiles,
 	}
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 
 	cp := &checkpoints.TableCheckpoint{
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
@@ -528,7 +527,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 						Offset:       0,
 						EndOffset:    14,
 						PrevRowIDMax: 0,
-						RowIDMax:     4, // 37 bytes with 3 columns can store at most 7 rows.
+						RowIDMax:     4,
 					},
 					Timestamp: 1234567897,
 				},
@@ -549,23 +548,23 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{0, 1, 2, -1},
 					Chunk: mydump.Chunk{
 						Offset:       6,
-						EndOffset:    52,
+						EndOffset:    42,
 						PrevRowIDMax: 7,
-						RowIDMax:     20,
+						RowIDMax:     19,
 						Columns:      []string{"a", "b", "c"},
 					},
 
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 52},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 42},
 					FileMeta:          tableMeta.DataFiles[2].FileMeta,
 					ColumnPermutation: []int{0, 1, 2, -1},
 					Chunk: mydump.Chunk{
-						Offset:       52,
+						Offset:       42,
 						EndOffset:    60,
-						PrevRowIDMax: 20,
-						RowIDMax:     22,
+						PrevRowIDMax: 19,
+						RowIDMax:     25,
 						Columns:      []string{"a", "b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -577,8 +576,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       6,
 						EndOffset:    48,
-						PrevRowIDMax: 22,
-						RowIDMax:     35,
+						PrevRowIDMax: 25,
+						RowIDMax:     39,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -594,22 +593,22 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{1, 2, 0, -1},
 					Chunk: mydump.Chunk{
 						Offset:       48,
-						EndOffset:    101,
-						PrevRowIDMax: 35,
+						EndOffset:    75,
+						PrevRowIDMax: 39,
 						RowIDMax:     48,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 101},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 75},
 					FileMeta:          tableMeta.DataFiles[3].FileMeta,
 					ColumnPermutation: []int{1, 2, 0, -1},
 					Chunk: mydump.Chunk{
-						Offset:       101,
+						Offset:       75,
 						EndOffset:    102,
 						PrevRowIDMax: 48,
-						RowIDMax:     48,
+						RowIDMax:     57,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -620,27 +619,22 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{-1, 0, 1, -1},
 					Chunk: mydump.Chunk{
 						Offset:       4,
-						EndOffset:    59,
-						PrevRowIDMax: 48,
-						RowIDMax:     61,
+						EndOffset:    42,
+						PrevRowIDMax: 57,
+						RowIDMax:     69,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
 				},
-			},
-		},
-		2: {
-			Status: checkpoints.CheckpointStatusLoaded,
-			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 59},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 42},
 					FileMeta:          tableMeta.DataFiles[4].FileMeta,
 					ColumnPermutation: []int{-1, 0, 1, -1},
 					Chunk: mydump.Chunk{
-						Offset:       59,
+						Offset:       42,
 						EndOffset:    60,
-						PrevRowIDMax: 61,
-						RowIDMax:     61,
+						PrevRowIDMax: 69,
+						RowIDMax:     75,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -1175,7 +1169,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 	}
 	_, err = f.Write(buf)
 	require.NoError(s.T(), err)
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
@@ -1204,7 +1198,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			pdHTTPCli:           cli,
 		}
 		var sourceSize int64
-		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		err = rc.store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 			sourceSize += size
 			return nil
 		})
@@ -1417,7 +1411,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	}
 	dir := s.T().TempDir()
 
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1517,7 +1511,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 	ctx := context.Background()
 
 	case1File := "db1.table1.csv"
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	err = mockStore.WriteFile(ctx, case1File, []byte(`"a"`))
 	require.NoError(s.T(), err)
@@ -2240,7 +2234,7 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 	require.NoError(s.T(), err)
 	dir := s.T().TempDir()
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	csvContent, err := charsetConvertor.Encode(string([]byte("\"colA\"，\"colB\"\n\"a\"，\"b\"")))
 	require.NoError(s.T(), err)
@@ -2397,40 +2391,4 @@ func TestGetDDLStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
-}
-
-func TestGetChunkCompressedSizeForParquet(t *testing.T) {
-	dir := "./testdata/"
-	fileName := "000000_0.parquet"
-	store, err := storage.NewLocalStorage(dir)
-	require.NoError(t, err)
-
-	dataFiles := make([]mydump.FileInfo, 0)
-	dataFiles = append(dataFiles, mydump.FileInfo{
-		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump.SourceFileMeta{
-			Path:        fileName,
-			Type:        mydump.SourceTypeParquet,
-			Compression: mydump.CompressionNone,
-			SortKey:     "99",
-			FileSize:    192,
-		},
-	})
-
-	chunk := checkpoints.ChunkCheckpoint{
-		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
-		FileMeta: dataFiles[0].FileMeta,
-		Chunk: mydump.Chunk{
-			Offset:       0,
-			EndOffset:    192,
-			PrevRowIDMax: 0,
-			RowIDMax:     100,
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
-	require.NoError(t, err)
-	require.Equal(t, compressedSize, int64(192))
 }

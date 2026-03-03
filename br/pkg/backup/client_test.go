@@ -19,18 +19,21 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 )
@@ -45,7 +48,7 @@ type testBackup struct {
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
-	storage storage.ExternalStorage
+	storage storeapi.Storage
 }
 
 // locks used to solve race when mock then behaviour when store drops
@@ -116,13 +119,15 @@ func createBackupSuite(t *testing.T) *testBackup {
 	s.mockCluster = mockCluster
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
+	gcMgr := gc.NewManager(s.mockPDClient, tikv.NullspaceID)
+	mockMgr.SetGcManager(gcMgr)
 	mockMgr.SetPDClient(s.mockPDClient)
 	s.backupClient = backup.NewBackupClient(s.ctx, mockMgr)
 
 	s.cluster, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
-	s.storage, err = storage.NewLocalStorage(base)
+	s.storage, err = objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	require.NoError(t, s.cluster.Start())
 

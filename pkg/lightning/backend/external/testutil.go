@@ -21,10 +21,10 @@ import (
 	"testing"
 
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +40,7 @@ func testReadAndCompare(
 	ctx context.Context,
 	t *testing.T,
 	kvs []common.KvPair,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	datas []string,
 	stats []string,
 	startKey dbkv.Key,
@@ -82,7 +82,6 @@ func testReadAndCompare(
 			bufPool,
 			bufPool,
 			loaded,
-			dummyOnReaderCloseFunc,
 		)
 		require.NoError(t, err)
 		loaded.build(ctx)
@@ -90,7 +89,7 @@ func testReadAndCompare(
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
 		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.kvs[i].key, loaded.kvs[k].key) < 0 { // strict comparator like < or >
+			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
 				if r != s {
 					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
 				}
@@ -99,8 +98,8 @@ func testReadAndCompare(
 			return false
 		})
 		for _, kv := range loaded.kvs {
-			require.EqualValues(t, kvs[kvIdx].Key, kv.key)
-			require.EqualValues(t, kvs[kvIdx].Val, kv.value)
+			require.EqualValues(t, kvs[kvIdx].Key, kv.Key)
+			require.EqualValues(t, kvs[kvIdx].Val, kv.Value)
 			kvIdx++
 		}
 		curStart = curEnd.Clone()

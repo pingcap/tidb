@@ -34,22 +34,24 @@ var cntWg sync.WaitGroup
 
 type int64Task int64
 
-func (int64Task) RecoverArgs() (string, string, func(), bool) {
-	return "", "", nil, false
+func (int64Task) RecoverArgs() (string, string, error) {
+	return "", "", nil
 }
 
 type MyWorker[T int64Task, R struct{}] struct {
 	id int
 }
 
-func (w *MyWorker[T, R]) HandleTask(task int64Task, _ func(struct{})) {
+func (w *MyWorker[T, R]) HandleTask(task int64Task, _ func(struct{})) error {
 	globalCnt.Add(int64(task))
 	cntWg.Done()
 	logutil.BgLogger().Info("Worker handling task")
+	return nil
 }
 
-func (w *MyWorker[T, R]) Close() {
+func (w *MyWorker[T, R]) Close() error {
 	logutil.BgLogger().Info("Close worker", zap.Int("id", w.id))
+	return nil
 }
 
 func createMyWorker() Worker[int64Task, struct{}] {
@@ -59,7 +61,7 @@ func createMyWorker() Worker[int64Task, struct{}] {
 func TestWorkerPool(t *testing.T) {
 	// Create a worker pool with 3 workers.
 	pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 3, createMyWorker)
-	pool.Start(context.Background())
+	pool.Start(NewContext(context.Background()))
 	globalCnt.Store(0)
 
 	g := new(errgroup.Group)
@@ -110,13 +112,13 @@ func TestWorkerPool(t *testing.T) {
 	require.Equal(t, int64(135), globalCnt.Load())
 
 	// Wait for the tasks to be completed.
-	pool.ReleaseAndWait()
+	pool.CloseAndWait()
 }
 
 func TestTunePoolSize(t *testing.T) {
 	t.Run("random tune pool size", func(t *testing.T) {
 		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 3, createMyWorker)
-		pool.Start(context.Background())
+		pool.Start(NewContext(context.Background()))
 		seed := time.Now().UnixNano()
 		rnd := rand.New(rand.NewSource(seed))
 		t.Logf("seed: %d", seed)
@@ -129,37 +131,39 @@ func TestTunePoolSize(t *testing.T) {
 			pool.Tune(smaller, wait)
 			require.Equal(t, smaller, pool.Cap())
 		}
-		pool.Release()
-		pool.Wait()
+		pool.CloseAndWait()
 	})
 
 	t.Run("change pool size before start", func(t *testing.T) {
 		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
 		pool.Tune(5, true)
-		pool.Start(context.Background())
-		pool.Release()
-		pool.Wait()
+		pool.Start(NewContext(context.Background()))
+		pool.CloseAndWait()
 		require.EqualValues(t, 5, pool.Cap())
 	})
 
 	t.Run("context done when reduce pool size and wait", func(t *testing.T) {
 		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
-		pool.Start(context.Background())
-		pool.Release()
+		wctx := NewContext(context.Background())
+		pool.Start(wctx)
+		wctx.Cancel()
 		pool.Tune(5, true)
-		pool.Wait()
+		pool.Release()
 	})
 }
 
 type dummyWorker[T, R any] struct {
 }
 
-func (d dummyWorker[T, R]) HandleTask(task T, send func(R)) {
+func (d dummyWorker[T, R]) HandleTask(task T, send func(R)) error {
 	var r R
 	send(r)
+	return nil
 }
 
-func (d dummyWorker[T, R]) Close() {}
+func (d dummyWorker[T, R]) Close() error {
+	return nil
+}
 
 func TestWorkerPoolNoneResult(t *testing.T) {
 	pool := NewWorkerPool[int64Task, None](
@@ -167,28 +171,28 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 		func() Worker[int64Task, None] {
 			return dummyWorker[int64Task, None]{}
 		})
-	pool.Start(context.Background())
+	pool.Start(NewContext(context.Background()))
 	ch := pool.GetResultChan()
 	require.Nil(t, ch)
-	pool.ReleaseAndWait()
+	pool.CloseAndWait()
 
 	pool2 := NewWorkerPool[int64Task, int64](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64Task, int64] {
 			return dummyWorker[int64Task, int64]{}
 		})
-	pool2.Start(context.Background())
+	pool2.Start(NewContext(context.Background()))
 	require.NotNil(t, pool2.GetResultChan())
-	pool2.ReleaseAndWait()
+	pool2.CloseAndWait()
 
 	pool3 := NewWorkerPool[int64Task, struct{}](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64Task, struct{}] {
 			return dummyWorker[int64Task, struct{}]{}
 		})
-	pool3.Start(context.Background())
+	pool3.Start(NewContext(context.Background()))
 	require.NotNil(t, pool3.GetResultChan())
-	pool3.ReleaseAndWait()
+	pool3.CloseAndWait()
 }
 
 func TestWorkerPoolCustomChan(t *testing.T) {
@@ -211,28 +215,27 @@ func TestWorkerPoolCustomChan(t *testing.T) {
 		return nil
 	})
 
-	pool.Start(context.Background())
+	pool.Start(NewContext(context.Background()))
 	for i := range 5 {
 		taskCh <- int64Task(i)
 	}
 	close(taskCh)
-	pool.Wait()
 	pool.Release()
 	require.NoError(t, g.Wait())
 	require.Equal(t, 5, count)
 }
 
 func TestWorkerPoolCancelContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	wctx := NewContext(context.Background())
 	pool := NewWorkerPool[int64Task, int64](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64Task, int64] {
 			return dummyWorker[int64Task, int64]{}
 		})
-	pool.Start(ctx)
+	pool.Start(wctx)
 	pool.AddTask(1)
 
-	cancel()
-	pool.Wait() // Should not be blocked by the result channel.
+	wctx.Cancel()
+	pool.Release() // Should not be blocked by the result channel.
 	require.Equal(t, 0, int(pool.Running()))
 }

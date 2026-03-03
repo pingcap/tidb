@@ -948,7 +948,7 @@ func formatSQL(sql string) string {
 		fmt.Fprintf(&result, "(len:%d)", length)
 		return result.String()
 	}
-	return sql
+	return strings.Clone(sql)
 }
 
 // Format the backoffType map to a string or nil.

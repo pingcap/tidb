@@ -94,3 +94,59 @@ insert into t61085 values ('AAA');
 set SESSION sql_mode = '';
 select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
 DROP TABLE t61085;
+
+# TestIssue64144
+create table a (id bigint primary key, name varchar(10) collate utf8mb4_general_ci, key(name));
+insert into a values (1, 'A�B');
+select hex(weight_string(name)) from a;
+
+select name, hex(weight_string(name)) from a where id = 1;
+select * from a where name = (select name from a where id = 1);
+
+delete from a where id = 1;
+
+--disable_warnings
+DROP TABLE IF EXISTS t_fffd;
+--enable_warnings
+
+CREATE TABLE t_fffd (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    c_utf8mb4_general_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+    c_utf8mb4_unicode_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+    c_utf8mb4_bin VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+    INDEX idx_general (c_utf8mb4_general_ci),
+    INDEX idx_unicode (c_utf8mb4_unicode_ci),
+    INDEX idx_bin (c_utf8mb4_bin)
+);
+
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('a�b', '�', 'test�string');
+
+SELECT * FROM t_fffd ORDER BY id;
+
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+
+UPDATE t_fffd SET c_utf8mb4_general_ci = 'X�Y' WHERE c_utf8mb4_general_ci = 'a�b';
+UPDATE t_fffd SET c_utf8mb4_unicode_ci = 'UPDATED�' WHERE c_utf8mb4_unicode_ci = '�';
+UPDATE t_fffd SET c_utf8mb4_bin = 'bin�updated' WHERE c_utf8mb4_bin = 'test�string';
+
+SELECT * FROM t_fffd ORDER BY id;
+
+DELETE FROM t_fffd WHERE c_utf8mb4_general_ci = 'X�Y';
+SELECT COUNT(*) FROM t_fffd;
+
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('another�row', 'multi�char', 'end�case');
+SELECT * FROM t_fffd ORDER BY id;
+
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'end�case';
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = 'multi�char';
+
+DROP TABLE t_fffd;

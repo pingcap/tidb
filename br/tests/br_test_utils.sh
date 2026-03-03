@@ -36,6 +36,7 @@ wait_log_checkpoint_advance() {
         if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
             if [ $checkpoint_ts -gt $current_ts ]; then
                 echo "the checkpoint has advanced"
+                LATEST_CHECKPOINT_TS=$checkpoint_ts
                 break
             fi
             echo "the checkpoint hasn't advanced"

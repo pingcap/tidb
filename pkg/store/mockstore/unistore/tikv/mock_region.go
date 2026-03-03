@@ -782,7 +782,7 @@ func (pd *MockPD) PutStore(ctx context.Context, store *metapb.Store) error {
 }
 
 // GetStore implements gRPC PDServer.
-func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (pd *MockPD) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 	return proto.Clone(pd.rm.stores[storeID]).(*metapb.Store), nil
@@ -1250,4 +1250,16 @@ func (c gcStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
 	res.GCBarriers = gcBarriers
 
 	return res, nil
+}
+
+func (c gcStatesClient) SetGlobalGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
+	panic("unimplemented")
+}
+
+func (c gcStatesClient) DeleteGlobalGCBarrier(ctx context.Context, barrierID string) (*pdgc.GlobalGCBarrierInfo, error) {
+	panic("unimplemented")
+}
+
+func (c gcStatesClient) GetAllKeyspacesGCStates(ctx context.Context) (pdgc.ClusterGCStates, error) {
+	panic("unimplemented")
 }

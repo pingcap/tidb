@@ -298,7 +298,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys))
+	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys), false)
 	if err != nil {
 		return err
 	}
@@ -314,10 +314,6 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 
 	sessVars := sctx.GetSessionVars()
 	if sessVars == nil {
-		return nil
-	}
-
-	if !sessVars.StmtCtx.InSelectStmt {
 		return nil
 	}
 
@@ -339,7 +335,7 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 	return nil
 }
 
-func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inSharedMode bool) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
@@ -348,11 +344,13 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.InShareMode = inSharedMode
 
 	// Set max_execution_time deadline for SELECT statements
-	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+	maxExectionTime := seVars.GetMaxExecutionTime()
+	if maxExectionTime > 0 {
 		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
+			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
 			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
 		}
 	}
@@ -962,10 +960,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TableStats)
 	}
-	if sc.MDLRelatedTableIDs == nil {
-		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	if sc.RelatedTableIDs == nil {
+		sc.RelatedTableIDs = make(map[int64]struct{})
 	} else {
-		clear(sc.MDLRelatedTableIDs)
+		clear(sc.RelatedTableIDs)
 	}
 	if sc.TblInfo2UnionScan == nil {
 		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -973,9 +971,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		clear(sc.TblInfo2UnionScan)
 	}
 	sc.IsStaleness = false
-	sc.EnableOptimizeTrace = false
-	sc.OptimizeTracer = nil
-	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
 	sc.ResourceGroupName = vars.ResourceGroupName
@@ -990,6 +985,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.StatsLoad.Timeout = 0
 	sc.StatsLoad.NeededItems = nil
 	sc.StatsLoad.ResultCh = nil
+	sc.MatchSQLBindingCacheKey = nil
+	sc.MatchSQLBindingCache = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
@@ -1065,7 +1062,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if topsqlstate.TopProfilingEnabled() && prepareStmt.SQLDigest != nil {
 			sc.IsSQLRegistered.Store(true)
 			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
@@ -1079,10 +1076,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.ExplainFormat = explainStmt.Format
+		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
+		sc.ExplainFormat = strings.ToLower(explainStmt.Format)
 		sc.InExplainAnalyzeStmt = explainStmt.Analyze
-		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief || strings.ToLower(explainStmt.Format) == types.ExplainFormatPlanTree
-		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
+		sc.IgnoreExplainIDSuffix = sc.ExplainFormat == types.ExplainFormatBrief || sc.ExplainFormat == types.ExplainFormatPlanTree
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	} else {
 		sc.ExplainFormat = ""
@@ -1090,7 +1088,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
-		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
+		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
+		sc.ExplainFormat = strings.ToLower(explainForStmt.Format)
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 	}
 
 	// TODO: Many same bool variables here.
@@ -1252,7 +1252,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 
 	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
-	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
+	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == types.ExplainFormatPlanCache)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount

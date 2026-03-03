@@ -566,12 +566,12 @@ insert into t2 values(3, 2);
 explain format='plan_tree' select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 id	task	access object	operator info
 Projection	root		cte.t1.c1, cte.t1.c2
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(cte.t1.c1), NULL, 0)))
+└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
+  └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(Column)->Column
     └─TableReader	root		data:StreamAgg
-      └─StreamAgg	cop[tikv]		funcs:max(cte.t2.c1)->Column#19, funcs:sum(isnull(cte.t2.c1))->Column#20, funcs:count(1)->Column#21
+      └─StreamAgg	cop[tikv]		funcs:max(cte.t2.c1)->Column, funcs:sum(isnull(cte.t2.c1))->Column, funcs:count(1)->Column
         └─Selection	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
           └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
@@ -605,11 +605,11 @@ c1	c2
 explain format='plan_tree' select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
 id	task	access object	operator info
 Projection	root		cte.t1.c1, cte.t1.c2
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(cte.t1.c1), NULL, 0)))
+└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
-    └─Projection	root		cte.t2.c1->Column#19, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column#20
+  └─HashAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+    └─Projection	root		cte.t2.c1->Column, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column
       └─CTEFullScan	root	CTE:cte1	data:CTE_0
 CTE_0	root		Recursive CTE, limit(offset:0, count:1)
 ├─TableReader(Seed Part)	root		data:Projection
@@ -643,11 +643,11 @@ c1	c2
 explain format='plan_tree' select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 id	task	access object	operator info
 Projection	root		cte.t1.c1, cte.t1.c2
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(cte.t1.c1), NULL, 0)))
+└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
-    └─Projection	root		cte.t2.c1->Column#23, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column#24
+  └─HashAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+    └─Projection	root		cte.t2.c1->Column, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column
       └─CTEFullScan	root	CTE:cte1	data:CTE_0
 CTE_0	root		Recursive CTE
 ├─TableReader(Seed Part)	root		data:TableFullScan
@@ -816,8 +816,8 @@ explain format='plan_tree' with recursive cte1 as (select c1 from tt union selec
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 id	task	access object	operator info
-Sort	root		Column#28
-└─HashAgg	root		group by:Column#28, funcs:firstrow(Column#28)->Column#28
+Sort	root		Column
+└─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
   └─Union	root		
     ├─Apply	root		CARTESIAN semi join, left side:TableReader
     │ ├─TableReader(Build)	root		data:TableFullScan
@@ -868,35 +868,35 @@ select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrel
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 id	task	access object	operator info
-Sort	root		Column#36
-└─HashAgg	root		group by:Column#36, funcs:firstrow(Column#36)->Column#36
+Sort	root		Column
+└─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
   └─Union	root		
     ├─Apply	root		CARTESIAN semi join, left side:TableReader
     │ ├─TableReader(Build)	root		data:TableFullScan
     │ │ └─TableFullScan	cop[tikv]	table:tt2	keep order:false, stats:pseudo
     │ └─Limit(Probe)	root		offset:0, count:1
-    │   └─Selection	root		eq(Column#23, cte1.tt2.c1)
+    │   └─Selection	root		eq(Column, cte1.tt2.c1)
     │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
     ├─Apply	root		CARTESIAN semi join, left side:TableReader
     │ ├─TableReader(Build)	root		data:TableFullScan
     │ │ └─TableFullScan	cop[tikv]	table:tt3	keep order:false, stats:pseudo
     │ └─Limit(Probe)	root		offset:0, count:1
-    │   └─Selection	root		eq(Column#27, cte1.tt3.c1)
+    │   └─Selection	root		eq(Column, cte1.tt3.c1)
     │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
     ├─Apply	root		CARTESIAN semi join, left side:TableReader
     │ ├─TableReader(Build)	root		data:TableFullScan
     │ │ └─TableFullScan	cop[tikv]	table:tt4	keep order:false, stats:pseudo
     │ └─Limit(Probe)	root		offset:0, count:1
-    │   └─Selection	root		eq(Column#31, cte1.tt4.c1)
+    │   └─Selection	root		eq(Column, cte1.tt4.c1)
     │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
     └─Apply	root		CARTESIAN semi join, left side:TableReader
       ├─TableReader(Build)	root		data:TableFullScan
       │ └─TableFullScan	cop[tikv]	table:tt5	keep order:false, stats:pseudo
       └─Limit(Probe)	root		offset:0, count:1
-        └─Selection	root		eq(Column#35, cte1.tt5.c1)
+        └─Selection	root		eq(Column, cte1.tt5.c1)
           └─CTEFullScan	root	CTE:cte1	data:CTE_0
 CTE_0	root		Non-Recursive CTE
-└─HashAgg(Seed Part)	root		group by:Column#19, funcs:firstrow(Column#19)->Column#19
+└─HashAgg(Seed Part)	root		group by:Column, funcs:firstrow(Column)->Column
   └─Union	root		
     ├─TableReader	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
@@ -1145,13 +1145,13 @@ FROM product_detail
 ) a;
 id	task	access object	operator info
 Union	root		
-├─Projection	root		cte1.table_c.col_4->Column#418
+├─Projection	root		cte1.table_c.col_4->Column
 │ └─CTEFullScan	root	CTE:product_detail	data:CTE_4
-└─Projection	root		cte1.table_c.col_4->Column#418
+└─Projection	root		cte1.table_c.col_4->Column
   └─CTEFullScan	root	CTE:product_detail	data:CTE_4
 CTE_4	root		Non-Recursive CTE
-└─Projection(Seed Part)	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+└─Projection(Seed Part)	root		cte1.table_c.col_4, 3集合->Column
+  └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column, cte1.table_c.col_1)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
     │   └─TableFullScan	cop[tikv]	table:a	keep order:false, stats:pseudo
@@ -1169,35 +1169,35 @@ CTE_0	root		Non-Recursive CTE
   │ │ │ ├─TableReader(Build)	root		data:Selection
   │ │ │ │ └─Selection	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
   │ │ │ │   └─TableFullScan	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column#159
+  │ │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column
   │ │ │   └─TopN	root		cte1.table_c.col_1:desc, offset:0, count:1
-  │ │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column#423, Column#424)]
-  │ │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
+  │ │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column, Column)]
+  │ │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column
   │ │ │       │ └─TableReader	root		data:Selection
   │ │ │       │   └─Selection	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
   │ │ │       │     └─TableFullScan	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │       └─Projection(Probe)	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
+  │ │ │       └─Projection(Probe)	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column
   │ │ │         └─IndexReader	root		index:Selection
   │ │ │           └─Selection	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
   │ │ │             └─IndexFullScan	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
-  │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column#208
+  │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column
   │ │   └─TopN	root		cte1.table_a.col_1:desc, offset:0, count:1
-  │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column#429, Column#430)]
-  │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
+  │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column, Column)]
+  │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column
   │ │       │ └─TableReader	root		data:Selection
   │ │       │   └─Selection	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
   │ │       │     └─TableFullScan	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │       └─Projection(Probe)	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
+  │ │       └─Projection(Probe)	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column
   │ │         └─IndexReader	root		index:Selection
   │ │           └─Selection	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
   │ │             └─IndexFullScan	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
-  │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column#230
+  │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column
   │   └─Limit	root		offset:0, count:1
   │     └─IndexReader	root		index:Limit
   │       └─Limit	cop[tikv]		offset:0, count:1
   │         └─Selection	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
   │           └─IndexFullScan	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column#254
+  └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column
     └─Limit	root		offset:0, count:1
       └─IndexReader	root		index:Limit
         └─Limit	cop[tikv]		offset:0, count:1
@@ -1271,13 +1271,13 @@ FROM product_detail
 ) a;
 id	task	access object	operator info
 Union	root		
-├─Projection	root		cte1.table_c.col_4->Column#418
+├─Projection	root		cte1.table_c.col_4->Column
 │ └─CTEFullScan	root	CTE:product_detail	data:CTE_4
-└─Projection	root		cte1.table_c.col_4->Column#418
+└─Projection	root		cte1.table_c.col_4->Column
   └─CTEFullScan	root	CTE:product_detail	data:CTE_4
 CTE_4	root		Non-Recursive CTE
-└─Projection(Seed Part)	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+└─Projection(Seed Part)	root		cte1.table_c.col_4, 3集合->Column
+  └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column, cte1.table_c.col_1)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
     │   └─TableFullScan	cop[tikv]	table:a	keep order:false, stats:pseudo
@@ -1295,35 +1295,35 @@ CTE_0	root		Non-Recursive CTE
   │ │ │ ├─TableReader(Build)	root		data:Selection
   │ │ │ │ └─Selection	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
   │ │ │ │   └─TableFullScan	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column#159
+  │ │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column
   │ │ │   └─TopN	root		cte1.table_c.col_1:desc, offset:0, count:1
-  │ │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column#423, Column#424)]
-  │ │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
+  │ │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column, Column)]
+  │ │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column
   │ │ │       │ └─TableReader	root		data:Selection
   │ │ │       │   └─Selection	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
   │ │ │       │     └─TableFullScan	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │       └─Projection(Probe)	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
+  │ │ │       └─Projection(Probe)	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column
   │ │ │         └─IndexReader	root		index:Selection
   │ │ │           └─Selection	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
   │ │ │             └─IndexFullScan	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
-  │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column#208
+  │ │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column
   │ │   └─TopN	root		cte1.table_a.col_1:desc, offset:0, count:1
-  │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column#429, Column#430)]
-  │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
+  │ │     └─HashJoin	root		semi join, left side:Projection, equal:[eq(Column, Column)]
+  │ │       ├─Projection(Build)	root		cast(cte1.table_d.col_1, double BINARY)->Column
   │ │       │ └─TableReader	root		data:Selection
   │ │       │   └─Selection	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
   │ │       │     └─TableFullScan	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │       └─Projection(Probe)	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
+  │ │       └─Projection(Probe)	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column
   │ │         └─IndexReader	root		index:Selection
   │ │           └─Selection	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
   │ │             └─IndexFullScan	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
-  │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column#230
+  │ └─StreamAgg(Probe)	root		funcs:max(cte1.table_c.col_1)->Column
   │   └─Limit	root		offset:0, count:1
   │     └─IndexReader	root		index:Limit
   │       └─Limit	cop[tikv]		offset:0, count:1
   │         └─Selection	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
   │           └─IndexFullScan	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column#254
+  └─StreamAgg(Probe)	root		funcs:max(cte1.table_a.col_1)->Column
     └─Limit	root		offset:0, count:1
       └─IndexReader	root		index:Limit
         └─Limit	cop[tikv]		offset:0, count:1

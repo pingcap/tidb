@@ -230,7 +230,7 @@ func TestScanRegionEmptyResult(t *testing.T) {
 	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("")}
 	mockPDClient.SetRegions(keys)
-	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil}
+	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil, nil, nil, nil, nil}
 	mockClient := &pdClient{
 		client:           mockPDClient,
 		splitBatchKeyCnt: 100,

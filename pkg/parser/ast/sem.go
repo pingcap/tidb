@@ -40,6 +40,8 @@ const (
 	CreateIndexCommand = "CREATE INDEX"
 	// CreatePlacementPolicyCommand represents CREATE PLACEMENT POLICY statement
 	CreatePlacementPolicyCommand = "CREATE PLACEMENT POLICY"
+	// CreateMaskingPolicyCommand represents CREATE MASKING POLICY statement
+	CreateMaskingPolicyCommand = "CREATE MASKING POLICY"
 	// CreateResourceGroupCommand represents CREATE RESOURCE GROUP statement
 	CreateResourceGroupCommand = "CREATE RESOURCE GROUP"
 	// CreateSequenceCommand represents CREATE SEQUENCE statement
@@ -134,6 +136,8 @@ const (
 	ShowCreateSequenceCommand = "SHOW CREATE SEQUENCE"
 	// ShowCreatePlacementPolicyCommand represents SHOW CREATE PLACEMENT POLICY statement
 	ShowCreatePlacementPolicyCommand = "SHOW CREATE PLACEMENT POLICY"
+	// ShowMaskingPoliciesCommand represents SHOW MASKING POLICIES statement
+	ShowMaskingPoliciesCommand = "SHOW MASKING POLICIES"
 	// ShowCreateResourceGroupCommand represents SHOW CREATE RESOURCE GROUP statement
 	ShowCreateResourceGroupCommand = "SHOW CREATE RESOURCE GROUP"
 	// ShowCreateProcedureCommand represents SHOW CREATE PROCEDURE statement
@@ -250,6 +254,8 @@ const (
 	ShowPlanCommand = "SHOW PLAN"
 	// ShowDistributionJobsCommand represents SHOW DISTRIBUTION JOBS statement
 	ShowDistributionJobsCommand = "SHOW DISTRIBUTION JOB"
+	// ShowAffinityCommand represents SHOW AFFINITY statement
+	ShowAffinityCommand = "SHOW AFFINITY"
 )
 
 // Admin Commands
@@ -313,6 +319,8 @@ const (
 	AdminAlterDDLJobsCommand = "ADMIN ALTER DDL JOBS"
 	// AdminCreateWorkloadSnapshotCommand represents ADMIN CREATE WORKLOAD SNAPSHOT statement
 	AdminCreateWorkloadSnapshotCommand = "ADMIN CREATE WORKLOAD SNAPSHOT"
+	// AdminReloadClusterBindingsCommand represents ADMIN RELOAD CLUSTER BINDINGS statement
+	AdminReloadClusterBindingsCommand = "ADMIN RELOAD CLUSTER BINDINGS"
 )
 
 // BRIE Commands
@@ -525,6 +533,11 @@ func (n *CreatePlacementPolicyStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateMaskingPolicyStmt) SEMCommand() string {
+	return CreateMaskingPolicyCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *CreateResourceGroupStmt) SEMCommand() string {
 	return CreateResourceGroupCommand
 }
@@ -707,6 +720,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowCreateSequenceCommand
 	case ShowCreatePlacementPolicy:
 		return ShowCreatePlacementPolicyCommand
+	case ShowMaskingPolicies:
+		return ShowMaskingPoliciesCommand
 	case ShowCreateResourceGroup:
 		return ShowCreateResourceGroupCommand
 	case ShowCreateProcedure:
@@ -823,6 +838,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowDistributionsCommand
 	case ShowDistributionJobs:
 		return ShowDistributionJobsCommand
+	case ShowAffinity:
+		return ShowAffinityCommand
 	default:
 		return UnknownCommand
 	}
@@ -908,6 +925,8 @@ func (n *AdminStmt) SEMCommand() string {
 		return AdminAlterDDLJobsCommand
 	case AdminWorkloadRepoCreate:
 		return AdminCreateWorkloadSnapshotCommand
+	case AdminReloadClusterBindings:
+		return AdminReloadClusterBindingsCommand
 	default:
 		return UnknownCommand
 	}

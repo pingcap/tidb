@@ -6,6 +6,9 @@ aliases:
     - 0xPoe
     - time-and-fate
     - terry1purcell
+    - henrybw
+    - wddevries
+    - fixdb
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -48,14 +51,13 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
+    - OliverS929
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-ddl:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
@@ -63,49 +65,42 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
+    - D3Hunter
   sig-approvers-infoschema:
     - wjhuang2016
-    - tangenta
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
     - wjhuang2016
     - D3Hunter
   sig-approvers-owner:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
   sig-approvers-parser:
     - bb7133
+    - Benjamin2037
     - BornChanger
     - D3Hunter
-    - tangenta
   sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-table:
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-lock:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
   sig-approvers-tidb-binlog:
     - Benjamin2037
@@ -124,6 +119,7 @@ aliases:
     - henrybw
     - wddevries
     - King-Dylan
+    - guo-shaoge
   sig-approvers-metrics:
     - XuHuaiyu
     - zimulala
@@ -132,10 +128,8 @@ aliases:
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
-    - King-Dylan
     - LittleFall
     - MoCuishle28
-    - RidRisR
     - SeaRise
     - Tjianke
     - TonsnakeLin
@@ -188,11 +182,13 @@ aliases:
     - GMHDBJD
     - IANTHEREAL
     - JmPotato
+    - King-Dylan
     - Leavrth
     - Little-Wallace
     - MyonKeminta
     - OliverS929
     - Reminiscent
+    - RidRisR
     - SunRunAway
     - Tammyxia
     - WangXiangUSTC

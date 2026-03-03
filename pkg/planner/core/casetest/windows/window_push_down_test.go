@@ -55,56 +55,52 @@ func testWithData(t *testing.T, tk *testkit.TestKit, input Input, output Output)
 
 // Test WindowFuncDesc.CanPushDownToTiFlash
 func TestWindowFunctionDescCanPushDown(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists employee")
-		testKit.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists employee")
+		tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 		testkit.SetTiFlashReplica(t, dom, "test", "employee")
 
 		var input Input
 		var output Output
 		suiteData := getWindowPushDownSuiteData()
 		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		testWithData(t, testKit, input, output)
+		testWithData(t, tk, input, output)
 	})
 }
 
 func TestWindowPushDownPlans(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists employee")
-		testKit.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists employee")
+		tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 		testkit.SetTiFlashReplica(t, dom, "test", "employee")
 
 		var input Input
 		var output Output
 		suiteData := getWindowPushDownSuiteData()
 		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		testWithData(t, testKit, input, output)
+		testWithData(t, tk, input, output)
 	})
 }
 
 func TestWindowPlanWithOtherOperators(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists employee")
-		testKit.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists employee")
+		tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 		testkit.SetTiFlashReplica(t, dom, "test", "employee")
 
 		var input Input
 		var output Output
 		suiteData := getWindowPushDownSuiteData()
 		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		testWithData(t, testKit, input, output)
-	})
-}
+		testWithData(t, tk, input, output)
 
-func TestIssue34765(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("create table t1(c1 varchar(32), c2 datetime, c3 bigint, c4 varchar(64));")
-		testKit.MustExec("create table t2(b2 varchar(64));")
-		testKit.MustExec("set tidb_enforce_mpp=1;")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(c1 varchar(32), c2 datetime, c3 bigint, c4 varchar(64));")
+		tk.MustExec("create table t2(b2 varchar(64));")
+		tk.MustExec("set tidb_enforce_mpp=1;")
 		testkit.SetTiFlashReplica(t, dom, "test", "t1")
 		testkit.SetTiFlashReplica(t, dom, "test", "t2")
 
@@ -112,6 +108,6 @@ func TestIssue34765(t *testing.T) {
 		defer func() {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/CheckMPPWindowSchemaLength"))
 		}()
-		testKit.MustExec("explain select count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
+		tk.MustExec("explain select /* issue:34765 */ count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
 	})
 }

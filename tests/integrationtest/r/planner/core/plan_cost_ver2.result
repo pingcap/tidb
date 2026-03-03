@@ -93,73 +93,73 @@ TableReader_8	80.00	270077.57	root		data:Selection_7
   └─TableFullScan_6	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary) */ a+1 from t;
 id	estRows	estCost	task	access object	operator info
-Projection_3	100.00	261364.77	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#4
+Projection_3	100.00	261364.77	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#5
 └─TableReader_6	100.00	256374.77	root		data:TableFullScan_5
   └─TableFullScan_5	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary) */ a+1, a+2 from t;
 id	estRows	estCost	task	access object	operator info
-Projection_3	100.00	266354.77	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#4, plus(planner__core__plan_cost_ver2.t.a, 2)->Column#5
+Projection_3	100.00	266354.77	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#5, plus(planner__core__plan_cost_ver2.t.a, 2)->Column#6
 └─TableReader_6	100.00	256374.77	root		data:TableFullScan_5
   └─TableFullScan_5	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary) */ a+1, a+2, a+3 from t;
 id	estRows	estCost	task	access object	operator info
-Projection_3	100.00	271344.77	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#4, plus(planner__core__plan_cost_ver2.t.a, 2)->Column#5, plus(planner__core__plan_cost_ver2.t.a, 3)->Column#6
+Projection_3	100.00	271344.77	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#5, plus(planner__core__plan_cost_ver2.t.a, 2)->Column#6, plus(planner__core__plan_cost_ver2.t.a, 3)->Column#7
 └─TableReader_6	100.00	256374.77	root		data:TableFullScan_5
   └─TableFullScan_5	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b;
 id	estRows	estCost	task	access object	operator info
-HashAgg_8	100.00	290007.67	root		group by:Column#7, funcs:sum(Column#6)->Column#4
-└─Projection_19	100.00	267750.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, planner__core__plan_cost_ver2.t.b->Column#7
+HashAgg_8	100.00	290007.67	root		group by:Column#8, funcs:sum(Column#7)->Column#5
+└─Projection_19	100.00	267750.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8
   └─TableReader_16	100.00	262710.77	root		data:TableFullScan_15
     └─TableFullScan_15	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a), sum(a+2) from t group by b;
 id	estRows	estCost	task	access object	operator info
-HashAgg_8	100.00	295797.67	root		group by:Column#10, funcs:sum(Column#8)->Column#4, funcs:sum(Column#9)->Column#5
-└─Projection_19	100.00	272740.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#9, planner__core__plan_cost_ver2.t.b->Column#10
+HashAgg_8	100.00	295797.67	root		group by:Column#11, funcs:sum(Column#9)->Column#5, funcs:sum(Column#10)->Column#6
+└─Projection_19	100.00	272740.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#9, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#10, planner__core__plan_cost_ver2.t.b->Column#11
   └─TableReader_16	100.00	262710.77	root		data:TableFullScan_15
     └─TableFullScan_15	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a), sum(a+2), sum(a+4) from t group by b;
 id	estRows	estCost	task	access object	operator info
-HashAgg_8	100.00	301587.67	root		group by:Column#13, funcs:sum(Column#10)->Column#4, funcs:sum(Column#11)->Column#5, funcs:sum(Column#12)->Column#6
-└─Projection_19	100.00	277730.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#10, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#11, cast(plus(planner__core__plan_cost_ver2.t.a, 4), decimal(20,0) BINARY)->Column#12, planner__core__plan_cost_ver2.t.b->Column#13
+HashAgg_8	100.00	301587.67	root		group by:Column#14, funcs:sum(Column#11)->Column#5, funcs:sum(Column#12)->Column#6, funcs:sum(Column#13)->Column#7
+└─Projection_19	100.00	277730.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#11, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#12, cast(plus(planner__core__plan_cost_ver2.t.a, 4), decimal(20,0) BINARY)->Column#13, planner__core__plan_cost_ver2.t.b->Column#14
   └─TableReader_16	100.00	262710.77	root		data:TableFullScan_15
     └─TableFullScan_15	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b;
 id	estRows	estCost	task	access object	operator info
-HashAgg_8	100.00	290007.67	root		group by:Column#7, funcs:sum(Column#6)->Column#4
-└─Projection_19	100.00	267750.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, planner__core__plan_cost_ver2.t.b->Column#7
+HashAgg_8	100.00	290007.67	root		group by:Column#8, funcs:sum(Column#7)->Column#5
+└─Projection_19	100.00	267750.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8
   └─TableReader_16	100.00	262710.77	root		data:TableFullScan_15
     └─TableFullScan_15	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b, b+1;
 id	estRows	estCost	task	access object	operator info
-HashAgg_8	100.00	304977.67	root		group by:Column#8, Column#9, funcs:sum(Column#7)->Column#4
-└─Projection_19	100.00	272740.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#9
+HashAgg_8	100.00	304977.67	root		group by:Column#10, Column#9, funcs:sum(Column#8)->Column#5
+└─Projection_19	100.00	272740.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, planner__core__plan_cost_ver2.t.b->Column#9, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#10
   └─TableReader_16	100.00	262710.77	root		data:TableFullScan_15
     └─TableFullScan_15	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b, b+1, b+2;
 id	estRows	estCost	task	access object	operator info
-HashAgg_8	100.00	319947.67	root		group by:Column#10, Column#11, Column#9, funcs:sum(Column#8)->Column#4
-└─Projection_19	100.00	277730.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, planner__core__plan_cost_ver2.t.b->Column#9, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#10, plus(planner__core__plan_cost_ver2.t.b, 2)->Column#11
+HashAgg_8	100.00	319947.67	root		group by:Column#10, Column#11, Column#12, funcs:sum(Column#9)->Column#5
+└─Projection_19	100.00	277730.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#9, planner__core__plan_cost_ver2.t.b->Column#10, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#11, plus(planner__core__plan_cost_ver2.t.b, 2)->Column#12
   └─TableReader_16	100.00	262710.77	root		data:TableFullScan_15
     └─TableFullScan_15	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a) from t group by b;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	100.00	301543.51	root		group by:Column#6, funcs:sum(Column#5)->Column#4
-└─Projection_23	100.00	301543.51	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#5, planner__core__plan_cost_ver2.t.b->Column#6
+StreamAgg_14	100.00	301543.51	root		group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_23	100.00	301543.51	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, planner__core__plan_cost_ver2.t.b->Column#7
   └─Sort_20	100.00	296503.61	root		planner__core__plan_cost_ver2.t.b
     └─TableReader_19	100.00	262710.77	root		data:TableFullScan_18
       └─TableFullScan_18	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a), sum(a+2) from t group by b;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	100.00	306533.51	root		group by:Column#8, funcs:sum(Column#6)->Column#4, funcs:sum(Column#7)->Column#5
-└─Projection_23	100.00	306533.51	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8
+StreamAgg_14	100.00	306533.51	root		group by:Column#9, funcs:sum(Column#7)->Column#5, funcs:sum(Column#8)->Column#6
+└─Projection_23	100.00	306533.51	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#8, planner__core__plan_cost_ver2.t.b->Column#9
   └─Sort_20	100.00	296503.61	root		planner__core__plan_cost_ver2.t.b
     └─TableReader_19	100.00	262710.77	root		data:TableFullScan_18
       └─TableFullScan_18	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a), sum(a+2), sum(a+4) from t group by b;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	100.00	311523.51	root		group by:Column#10, funcs:sum(Column#7)->Column#4, funcs:sum(Column#8)->Column#5, funcs:sum(Column#9)->Column#6
-└─Projection_23	100.00	311523.51	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#8, cast(plus(planner__core__plan_cost_ver2.t.a, 4), decimal(20,0) BINARY)->Column#9, planner__core__plan_cost_ver2.t.b->Column#10
+StreamAgg_14	100.00	311523.51	root		group by:Column#11, funcs:sum(Column#8)->Column#5, funcs:sum(Column#9)->Column#6, funcs:sum(Column#10)->Column#7
+└─Projection_23	100.00	311523.51	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#9, cast(plus(planner__core__plan_cost_ver2.t.a, 4), decimal(20,0) BINARY)->Column#10, planner__core__plan_cost_ver2.t.b->Column#11
   └─Sort_20	100.00	296503.61	root		planner__core__plan_cost_ver2.t.b
     └─TableReader_19	100.00	262710.77	root		data:TableFullScan_18
       └─TableFullScan_18	100.00	250038.77	cop[tikv]	table:t	keep order:false
@@ -169,15 +169,15 @@ HashJoin_23	11.00	64549.37	root		inner join, equal:[eq(planner__core__plan_cost_
 ├─TableReader_26(Build)	11.00	5140.17	root		data:Selection_25
 │ └─Selection_25	11.00	3049.29	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
 │   └─TableRangeScan_24	11.00	2500.39	cop[tikv]	table:t1	range:[-inf,10), keep order:false
-└─TableReader_29(Probe)	100.00	46728.80	root		data:Selection_28
-  └─Selection_28	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-    └─TableFullScan_27	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+└─TableReader_33(Probe)	100.00	46728.80	root		data:Selection_32
+  └─Selection_32	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_31	100.00	22730.80	cop[tikv]	table:t2	keep order:false
 explain format='verbose' select /*+ hash_join_build(t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<10;
 id	estRows	estCost	task	access object	operator info
 HashJoin_23	11.00	65403.77	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
-├─TableReader_29(Build)	100.00	46728.80	root		data:Selection_28
-│ └─Selection_28	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-│   └─TableFullScan_27	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+├─TableReader_33(Build)	100.00	46728.80	root		data:Selection_32
+│ └─Selection_32	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_31	100.00	22730.80	cop[tikv]	table:t2	keep order:false
 └─TableReader_26(Probe)	11.00	5140.17	root		data:Selection_25
   └─Selection_25	11.00	3049.29	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
     └─TableRangeScan_24	11.00	2500.39	cop[tikv]	table:t1	range:[-inf,10), keep order:false

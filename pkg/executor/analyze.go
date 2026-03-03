@@ -87,7 +87,17 @@ const (
 
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
-func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
+	defer func() {
+		// NOTE: auto-analyze always runs with InRestrictedSQL set to true.
+		if !e.Ctx().GetSessionVars().InRestrictedSQL {
+			if err != nil {
+				metrics.ManualAnalyzeCounter.WithLabelValues("failed").Inc()
+				return
+			}
+			metrics.ManualAnalyzeCounter.WithLabelValues("succ").Inc()
+		}
+	}()
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
@@ -470,6 +480,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
+		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)

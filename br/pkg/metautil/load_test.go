@@ -22,8 +22,8 @@ import (
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -39,7 +39,7 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 
 func TestLoadBackupMeta(t *testing.T) {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	tblName := ast.NewCIStr("t1")
@@ -117,7 +117,7 @@ func TestLoadBackupMeta(t *testing.T) {
 
 func TestLoadBackupMetaPartionTable(t *testing.T) {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	tblName := ast.NewCIStr("t1")
@@ -276,7 +276,7 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 
 func BenchmarkLoadBackupMeta64(b *testing.B) {
 	testDir := b.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 64, 64)
@@ -309,7 +309,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 
 func BenchmarkLoadBackupMeta1024(b *testing.B) {
 	testDir := b.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 1024, 64)
@@ -342,7 +342,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 
 func BenchmarkLoadBackupMeta10240(b *testing.B) {
 	testDir := b.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 10240, 64)

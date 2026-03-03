@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	kvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -127,15 +129,17 @@ func (c *jobContext) initStepCtx() {
 	}
 }
 
-func (c *jobContext) cleanStepCtx() {
+func (c *jobContext) cleanStepCtx(cause error) {
 	// reorgTimeoutOccurred indicates whether the current reorg process
 	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
-	if c.reorgTimeoutOccurred {
+	if cause == context.Canceled && c.reorgTimeoutOccurred {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(context.Canceled)
+	if c.stepCtxCancel != nil {
+		c.stepCtxCancel(cause)
+	}
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
@@ -308,6 +312,8 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 
 // updateDDLJob updates the DDL job information.
 func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.updateDDLJob")
+	defer r.End()
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -478,8 +484,8 @@ func finishRecoverSchema(w *worker, job *model.Job) error {
 	return nil
 }
 
-func (w *ReorgContext) setDDLLabelForTopSQL(jobQuery string) {
-	if !topsqlstate.TopSQLEnabled() || jobQuery == "" {
+func (w *ReorgContext) attachTopProfilingInfo(jobQuery string) {
+	if !topsqlstate.TopProfilingEnabled() || jobQuery == "" {
 		return
 	}
 
@@ -557,7 +563,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	if w.tp != generalWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
-	w.setDDLLabelForTopSQL(job.ID, job.Query)
+	w.attachTopProfilingInfo(job.ID, job.Query)
 	w.setDDLSourceForDiagnosis(job.ID, job.Type)
 	jobContext := w.jobContext(job.ID, job.ReorgMeta)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
@@ -579,6 +585,9 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
+	defer r.End()
+
 	job := jobW.Job
 	txn, err := w.prepareTxn(job)
 	if err != nil {
@@ -826,6 +835,9 @@ func (w *worker) runOneJobStep(
 			w.countForPanic(jobCtx, job)
 		}, false)
 
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.runOneJobStep")
+	defer r.End()
+
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
@@ -858,6 +870,14 @@ func (w *worker) runOneJobStep(
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if job.IsRollingback() {
+		if jobCtx.stepCtx != nil && jobCtx.stepCtx.Err() == nil {
+			// If the job switched to rolling back immediately after a reorg step
+			// timed out, the step context may still be active and hold reorg
+			// resources (workers, tickers, goroutines). Clean the step context
+			// explicitly to release those resources and avoid leaks before we
+			// continue rollback processing.
+			jobCtx.cleanStepCtx(dbterror.ErrCancelledDDLJob)
+		}
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
@@ -869,7 +889,7 @@ func (w *worker) runOneJobStep(
 			defer close(stopCheckingJobCancelled)
 
 			jobCtx.initStepCtx()
-			defer jobCtx.cleanStepCtx()
+			defer jobCtx.cleanStepCtx(context.Canceled)
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
@@ -922,6 +942,9 @@ func (w *worker) runOneJobStep(
 
 	prevState := job.State
 
+	if traceevent.IsEnabled(tracing.DDLJob) {
+		traceevent.TraceEvent(jobCtx.ctx, tracing.DDLJob, "runDDLJob callback", zap.String("ActionType", job.Type.String()))
+	}
 	// For every type, `schema/table` modification and `job` modification are conducted
 	// in the one kv transaction. The `schema/table` modification can be always discarded
 	// by kv reset when meets an unhandled error, but the `job` modification can't.
@@ -1057,6 +1080,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
+	case model.ActionAlterTableAffinity:
+		ver, err = onAlterTableAffinity(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

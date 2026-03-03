@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -205,7 +205,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 
 func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	mockSchemas := make([]*backuppb.Schema, 0)

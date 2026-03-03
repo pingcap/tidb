@@ -16,6 +16,9 @@ package priorityqueue_test
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,14 +40,9 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	defer pq.Close()
 
 	t.Run("IsEmpty", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.Error(t, err)
 		require.False(t, isEmpty)
-	})
-
-	t.Run("Push", func(t *testing.T) {
-		err := pq.Push(nil)
-		require.Error(t, err)
 	})
 
 	t.Run("Pop", func(t *testing.T) {
@@ -58,7 +57,7 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	})
 
 	t.Run("Peek", func(t *testing.T) {
-		job, err := pq.Peek()
+		job, err := pq.PeekForTest()
 		require.Error(t, err)
 		require.Nil(t, job)
 	})
@@ -81,7 +80,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
@@ -105,7 +104,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	})
 
 	t.Run("IsEmpty And Pop", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.False(t, isEmpty)
 
@@ -117,7 +116,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, poppedJob)
 
-		isEmpty, err = pq.IsEmpty()
+		isEmpty, err = pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.True(t, isEmpty)
 
@@ -143,14 +142,14 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 
@@ -196,7 +195,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 		// Insert some rows into the tables.
 		tk.MustExec("insert into t1 values (11)")
 		tk.MustExec("insert into t2 values (12)")
-		require.NoError(t, handle.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		// Analyze the tables.
 		tk.MustExec("analyze table t1")
 		tk.MustExec("analyze table t2")
@@ -215,7 +214,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	schema := ast.NewCIStr("test")
 	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t1"))
@@ -248,35 +247,35 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	tk.MustExec("insert into t2 values (3)")
 
 	// Dump the stats to kv.
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob1, err := pq.Peek()
+	updatedJob1, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, updatedJob1.GetTableID())
 
-	// Update some rows in t2.
-	tk.MustExec("update t2 set a = 3 where a = 2")
-	tk.MustExec("update t2 set a = 4 where a = 3")
-	tk.MustExec("update t2 set a = 5 where a = 4")
+	// Update 15 times on t2.
+	for i := 0; i < 15; i++ {
+		tk.MustExec("update t2 set a = a + 1 where a = " + strconv.Itoa(i+3))
+	}
 
 	// Dump the stats to kv.
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob2, err := pq.Peek()
+	updatedJob2, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
-	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size")
+	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size and more changes")
 }
 
 func TestProcessDMLChanges(t *testing.T) {
@@ -304,7 +303,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	schema := ast.NewCIStr("test")
 	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t1"))
@@ -323,7 +322,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	runningJobs := pq.GetRunningJobs()
 	require.Len(t, runningJobs, 0)
 	// Check no jobs are in the queue.
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -332,7 +331,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	// Insert 2 rows into t2.
 	tk.MustExec("insert into t2 values (2), (3)")
 	// Dump the stats to kv.
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
@@ -360,7 +359,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	// Add more rows to t1.
 	tk.MustExec("insert into t1 values (4), (5), (6), (7), (8), (9), (10), (11), (12), (13)")
 	// Dump the stats to kv.
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
@@ -395,7 +394,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 
 	// Insert some rows.
 	tk.MustExec("insert into example_table values (11), (12), (13), (14), (15), (16), (17), (18), (19)")
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
@@ -411,7 +410,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 
 	// Insert more rows.
 	tk.MustExec("insert into example_table values (20), (21), (22), (23), (24), (25), (26), (27), (28), (29)")
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 
 	// Process the DML changes.
@@ -444,7 +443,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
@@ -458,7 +457,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
 
@@ -470,7 +469,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
@@ -496,7 +495,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
 	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	tk.MustExec("analyze table t1")
 	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
@@ -507,7 +506,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 
 	// Insert more rows into partition p0.
 	tk.MustExec("insert into t1 partition (p0) values (2), (3), (4), (5), (6), (7), (8), (9)")
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
@@ -519,7 +518,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	require.Equal(t, tableID, job.GetTableID())
@@ -544,7 +543,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableID, job.GetTableID())
 }
@@ -564,7 +563,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	tk.MustExec("analyze table t1")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
@@ -574,7 +573,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 
 	// Insert more rows into partition p0.
 	tk.MustExec("insert into t1 partition (p0) values (2), (3), (4), (5), (6), (7), (8), (9)")
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
@@ -582,7 +581,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	pid := tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -607,7 +606,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -648,7 +647,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
@@ -664,7 +663,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 
 	// Drop the table and mock the table stats is removed from the cache.
 	tk.MustExec("drop table t1")
-	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
+	deleteEvent := statstestutil.FindEvent(handle.DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
 	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
 	require.NoError(t, err)
@@ -677,4 +676,130 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	require.NotPanics(t, func() {
 		pq.RefreshLastAnalysisDuration()
 	})
+}
+
+func TestConcurrentCloseAndBackgroundOperations(t *testing.T) {
+	// Enable the failpoint to simulate long-running operations
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue/tryBlockCloseAnalysisPriorityQueue", "return(true)")
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	require.NoError(t, pq.Initialize(ctx))
+
+	// Use a channel to signal when Close() completes
+	closeDone := make(chan struct{})
+	go func() {
+		pq.Close()
+		close(closeDone)
+	}()
+
+	// Wait for Close() to complete with a timeout
+	select {
+	case <-closeDone:
+		// Success - Close() completed without deadlock
+		require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+	case <-time.After(6 * time.Second):
+		t.Fatal("Close() timed out during concurrent operations - likely deadlock detected!")
+	}
+}
+
+func TestConcurrentClose(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	require.NoError(t, pq.Initialize(ctx))
+	require.True(t, pq.IsInitialized())
+
+	const numGoroutines = 20
+	var wg sync.WaitGroup
+	for i := 0; i < numGoroutines; i++ {
+		wg.Go(
+			func() {
+				defer func() {
+					// Ensure no panics occur during concurrent Close()
+					if r := recover(); r != nil {
+						t.Errorf("Close() panicked: %v", r)
+					}
+				}()
+				pq.Close()
+			},
+		)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Concurrent Close() calls timed out - likely deadlock detected!")
+	}
+
+	// Verify the queue is properly closed
+	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+}
+
+func TestConcurrentInitializeAndClose(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+
+	const numIterations = 5
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Initialize/Close sequence panicked: %v", r)
+			}
+			close(done)
+		}()
+
+		for i := 0; i < numIterations; i++ {
+			if err := pq.Initialize(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("Initialize() failed: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	go func() {
+		for i := 0; i < numIterations*2; i++ {
+			time.Sleep(5 * time.Millisecond)
+			pq.Close()
+		}
+	}()
+
+	// Wait for completion with timeout
+	select {
+	case <-done:
+		// Success - all operations completed without deadlock or panic
+	case <-time.After(10 * time.Second):
+		t.Fatal("Concurrent Initialize/Close operations timed out - likely deadlock detected!")
+	}
+	pq.Close()
+	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+}
+
+func TestPanicAndRecoverInQueueRun(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+
+	// Enable the failpoint to simulate a panic during background operations
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue/panicInAnalysisPriorityQueueRun", "return(true)")
+
+	require.NoError(t, pq.Initialize(ctx))
+	pq.Close()
+	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
 }

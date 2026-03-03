@@ -25,6 +25,7 @@ import (
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
 )
 
@@ -242,18 +243,60 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 	defer util.Recover("top-sql", "processStmtStatsData", nil, false)
 
+	maxLen := 0
+	for _, data := range tsr.stmtStatsBuffer {
+		maxLen = max(maxLen, len(data))
+	}
+	u64Slice := make([]uint64, 0, maxLen)
+	k := int(topsqlstate.GlobalState.MaxStatementCount.Load())
 	for timestamp, data := range tsr.stmtStatsBuffer {
+		kthNetworkBytes := findKthNetworkBytes(data, k, u64Slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			if tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
-				// This timestamp+sql+plan has been evicted due to low CPUTime.
+			// Note, by filtering with the kthNetworkBytes, we get fewer than N records(N - 1 records, at most time). The actual picked records
+			// count is decided by the count of duplicated kthNetworkBytes，if kthNetworkBytes is unique,
+			// For performance reason, do not convert the whole map into a slice and pick exactly topN records.
+			if item.NetworkInBytes+item.NetworkOutBytes > kthNetworkBytes || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
+				tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
+			} else {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
-				continue
 			}
-			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}
+}
+
+// The uint64Slice type attaches the QuickSelect interface to an array of uint64s. It
+// implements Interface so that you can call QuickSelect(k) on any IntSlice.
+type uint64Slice []uint64
+
+func (t uint64Slice) Len() int {
+	return len(t)
+}
+
+func (t uint64Slice) Less(i, j int) bool {
+	return t[i] > t[j]
+}
+
+func (t uint64Slice) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+// findKthNetworkBytes finds the k-th largest network bytes in data using quickselect algorithm.
+func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uint64) uint64 {
+	var kthNetworkBytes uint64
+	if len(data) > k {
+		u64Slice = u64Slice[:0]
+		for _, item := range data {
+			u64Slice = append(u64Slice, item.NetworkInBytes+item.NetworkOutBytes)
+		}
+		_ = quickselect.QuickSelect(uint64Slice(u64Slice), k)
+		kthNetworkBytes = u64Slice[0]
+		for i := range k {
+			kthNetworkBytes = min(kthNetworkBytes, u64Slice[i])
+		}
+	}
+	return kthNetworkBytes
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
