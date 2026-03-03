@@ -45,8 +45,15 @@ ifeq ("${NEXT_GEN}", "1")
 	UNIT_TEST_TAGS := $(UNIT_TEST_TAGS),nextgen
 	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
 	# Build-time release version for nextgen. Can be overridden by environment.
-	# we don't use %-m support for portability.
-	TIDB_X_RELEASE_VERSION ?= v$(shell date '+%y').$(shell date '+%m' | sed 's/^0//').0-$(shell git describe --always --dirty --exclude '*')
+	# If TIDB_RELEASE_VERSION already follows nextgen format, reuse it directly.
+	# Otherwise, fallback to date-based nextgen version. We don't use %-m for portability.
+	TIDB_X_RELEASE_VERSION_BY_DATE := v$(shell date '+%y').$(shell date '+%m' | sed 's/^0//').0-$(shell git describe --always --dirty --exclude '*')
+	TIDB_X_RELEASE_VERSION ?= $(shell \
+		if echo "$(TIDB_RELEASE_VERSION)" | grep -Eq '^v(2[5-9]|[3-9][0-9])\.(1[0-2]|[1-9])\.[0-9]+([+-].*)?$$'; then \
+			echo "$(TIDB_RELEASE_VERSION)"; \
+		else \
+			echo "$(TIDB_X_RELEASE_VERSION_BY_DATE)"; \
+		fi)
 	TIDB_RELEASE_VERSION := $(TIDB_X_RELEASE_VERSION)
 endif
 
