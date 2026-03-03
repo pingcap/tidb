@@ -379,7 +379,7 @@ func calcMaterializedViewLogSafePurgeTSO(
 	}
 	if len(allIDs) > 0 {
 		minSQL := fmt.Sprintf(
-			"SELECT MIN(COALESCE(LAST_SUCCESS_READ_TSO, 0)) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%s)",
+			"SELECT MIN(COALESCE(LAST_SUCCESS_READ_TSO, CAST(0 AS UNSIGNED))) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%s)",
 			buildINList(allIDs),
 		)
 		minRows, err := sqlexec.ExecSQL(kctx, sqlExec, minSQL)
