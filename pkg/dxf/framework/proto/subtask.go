@@ -168,6 +168,7 @@ func (s *StepResource) String() string {
 }
 
 // MemoryPerCore returns the memory per core of the StepResource.
+// When CPU capacity is not positive, it falls back to returning total memory.
 func (s *StepResource) MemoryPerCore() int64 {
 	if s.CPU.Capacity() <= 0 {
 		return s.Mem.Capacity()

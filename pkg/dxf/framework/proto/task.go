@@ -17,7 +17,6 @@ package proto
 import (
 	"cmp"
 	"fmt"
-	"slices"
 	"time"
 )
 
@@ -161,8 +160,10 @@ func (t *TaskBase) GetRuntimeSlots() int {
 		if len(t.ExtraParams.TargetSteps) == 0 {
 			return min(t.ExtraParams.MaxRuntimeSlots, t.RequiredSlots)
 		}
-		if slices.Contains(t.ExtraParams.TargetSteps, t.Step) {
-			return min(t.ExtraParams.MaxRuntimeSlots, t.RequiredSlots)
+		for _, step := range t.ExtraParams.TargetSteps {
+			if step == t.Step {
+				return min(t.ExtraParams.MaxRuntimeSlots, t.RequiredSlots)
+			}
 		}
 	}
 	return t.RequiredSlots

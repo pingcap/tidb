@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -313,6 +314,11 @@ func (ti *TableImporter) GetKeySpace() []byte {
 // GetKVStore gets the kv store.
 func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 	return ti.kvStore
+}
+
+// GetDataStore gets the external storage used by source data files.
+func (ti *TableImporter) GetDataStore() storeapi.Storage {
+	return ti.LoadDataController.dataStore
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {

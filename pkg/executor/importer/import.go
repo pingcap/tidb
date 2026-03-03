@@ -1191,11 +1191,6 @@ func (e *LoadDataController) Close() {
 	}
 }
 
-// GetDataStore gets the external storage used by source data files.
-func (e *LoadDataController) GetDataStore() storeapi.Storage {
-	return e.dataStore
-}
-
 // GetSortStore gets the sort store.
 func GetSortStore(ctx context.Context, url string) (storeapi.Storage, error) {
 	u, err := objstore.ParseRawURL(url)

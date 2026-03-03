@@ -303,7 +303,9 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 	}()
 
-	s.estimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
+	s.estimateConcOnce.Do(func() {
+		s.estimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
+	})
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
