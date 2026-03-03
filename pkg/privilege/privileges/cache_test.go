@@ -16,6 +16,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +156,37 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 	require.Equal(t, "column", columnsPriv[0].ColumnName)
 	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, columnsPriv[0].ColumnPriv)
 	require.Equal(t, mysql.SelectPriv, columnsPriv[1].ColumnPriv)
+}
+
+func TestMatchColumns(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use mysql;")
+	tk.MustExec("truncate table columns_priv")
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "Select")`)
+
+	p := &privileges.MySQLPrivilege{}
+	se := tk.Session()
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetRestrictedSQLExecutor()))
+	col := p.MatchColumns("user", "%", "db", "table", "c1")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "*")
+	require.NotNil(t, col)
+
+	p = &privileges.MySQLPrivilege{}
+	tk.MustExec("truncate table columns_priv")
+	tk.MustExec("flush privileges")
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "References")`)
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetRestrictedSQLExecutor()))
+	col = p.MatchColumns("user", "%", "db", "table", "c1")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "c2")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "*")
+	require.Nil(t, col)
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
@@ -383,6 +415,24 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 
 func TestSortUserTable(t *testing.T) {
 	var p privileges.MySQLPrivilege
+
+	p.SetUser([]privileges.UserRecord{
+		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+	})
+	p.SortUserTable()
+	result := []privileges.UserRecord{
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord(`%`, "root"),
+	}
+	checkUserRecord(t, p.User(), result)
+
 	p.SetUser([]privileges.UserRecord{
 		privileges.NewUserRecord(`%`, "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
@@ -390,9 +440,9 @@ func TestSortUserTable(t *testing.T) {
 		privileges.NewUserRecord("localhost", ""),
 	})
 	p.SortUserTable()
-	result := []privileges.UserRecord{
-		privileges.NewUserRecord("localhost", "root"),
+	result = []privileges.UserRecord{
 		privileges.NewUserRecord("localhost", ""),
+		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
 		privileges.NewUserRecord(`%`, "root"),
 	}
@@ -441,10 +491,24 @@ func TestGlobalPrivValueRequireStr(t *testing.T) {
 }
 
 func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
-	require.Equal(t, len(x), len(y))
-	for i := 0; i < len(x); i++ {
-		require.Equal(t, x[i].User, y[i].User)
-		require.Equal(t, x[i].Host, y[i].Host)
+	var sbX, sbY strings.Builder
+	for _, u := range x {
+		sbX.WriteString(u.User)
+		sbX.WriteString("@")
+		sbX.WriteString(u.Host)
+		sbX.WriteString("\n")
+	}
+	for _, u := range y {
+		sbY.WriteString(u.User)
+		sbY.WriteString("@")
+		sbY.WriteString(u.Host)
+		sbY.WriteString("\n")
+	}
+
+	require.Equal(t, len(x), len(y), "%s\n vs %s\n", sbX.String(), sbY.String())
+	for i := range x {
+		require.Equal(t, x[i].User, y[i].User, "%s\n vs %s\n", sbX.String(), sbY.String())
+		require.Equal(t, x[i].Host, y[i].Host, "%s\n vs %s\n", sbX.String(), sbY.String())
 	}
 }
 
