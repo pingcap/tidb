@@ -633,7 +633,7 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 
 // NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := model.NewExtraCommitTSColInfo().FieldType.Clone()
 	return &expression.Column{
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
