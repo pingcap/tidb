@@ -1054,7 +1054,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// PK suffix so that ORDER BY on PK columns can be recognised.
 	idxCols := path.IdxCols
 	idxColLens := path.IdxColLens
-	if !path.Index.Unique && !path.Index.Primary &&
+	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
 		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
 		len(path.Index.Columns) == len(path.IdxCols) {
 		extended := false
