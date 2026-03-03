@@ -336,7 +336,20 @@ func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
 
 	pkColIDs := TryGetCommonPkColumnIds(tblMeta)
 	if len(pkColIDs) == 0 {
-		pkColIDs = []int64{-1}
+		if tblMeta.PKIsHandle {
+			// For PKIsHandle tables, the PK value is stored in the row key (handle),
+			// not in the row value. The ChunkDecoder needs the actual column ID to
+			// match it in tryAppendHandleColumn and write the handle value into the chunk.
+			for _, col := range cols {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
+					pkColIDs = []int64{col.ID}
+					break
+				}
+			}
+		}
+		if len(pkColIDs) == 0 {
+			pkColIDs = []int64{-1}
+		}
 	}
 
 	defDatum := func(i int, chk *chunk.Chunk) error {

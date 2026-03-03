@@ -265,6 +265,7 @@ type memTableReader struct {
 	buffer        allocBuf
 	pkColIDs      []int64
 	cacheTable    kv.MemBuffer
+	datumCache    *tables.CachedDatumData
 	offsets       []int
 	keepOrder     bool
 	compareExec
@@ -328,6 +329,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		},
 		pkColIDs:    pkColIDs,
 		cacheTable:  us.cacheTable,
+		datumCache:  us.datumCache,
 		keepOrder:   us.keepOrder,
 		compareExec: us.compareExec,
 	}
@@ -442,6 +444,11 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	}
 	intHandle := !m.table.IsCommonHandle
 	if m.cacheTable != nil {
+		// Try pre-decoded datum cache fast path to skip KV decode.
+		if iter := m.buildDatumCacheIter(); iter != nil {
+			kvIter.Close()
+			return iter, nil
+		}
 		batchChk := chunk.New(m.retFieldTypes, cachedTableBatchSize, cachedTableBatchSize)
 		return &memRowsBatchIterForTable{
 			kvIter:         kvIter,
@@ -1154,6 +1161,167 @@ func (iter *memRowsBatchIterForTable) Close() {
 	iter.datumRow = nil
 	iter.retFieldTypes = nil
 	iter.memTableReader = nil
+}
+
+// memCachedDatumIter directly iterates pre-decoded CachedDatumData, skipping KV decode.
+type memCachedDatumIter struct {
+	data     *tables.CachedDatumData
+	chunkIdx int
+	rowIdx   int
+	desc     bool
+
+	// Column projection: maps query column index to datum cache column index.
+	colProjection   []int
+	cacheFieldTypes []*types.FieldType
+	datumRow        []types.Datum
+	retFieldTypes   []*types.FieldType
+
+	// filter
+	conditions []expression.Expression
+	evalCtx    expression.EvalContext
+
+	// TIMESTAMP timezone conversion
+	needTZConvert  bool
+	sessionLoc     *time.Location
+	tsColProjected []int // indices in projected (query) columns that are TIMESTAMP
+}
+
+func (iter *memCachedDatumIter) Next() ([]types.Datum, error) {
+	for {
+		// Check chunk bounds.
+		if !iter.desc {
+			if iter.chunkIdx >= len(iter.data.Chunks) {
+				return nil, nil
+			}
+		} else {
+			if iter.chunkIdx < 0 {
+				return nil, nil
+			}
+		}
+
+		chk := iter.data.Chunks[iter.chunkIdx]
+
+		// Check row bounds and advance to next/prev chunk.
+		if !iter.desc {
+			if iter.rowIdx >= chk.NumRows() {
+				iter.chunkIdx++
+				iter.rowIdx = 0
+				continue
+			}
+		} else {
+			if iter.rowIdx < 0 {
+				iter.chunkIdx--
+				if iter.chunkIdx >= 0 {
+					iter.rowIdx = iter.data.Chunks[iter.chunkIdx].NumRows() - 1
+				}
+				continue
+			}
+		}
+
+		row := chk.GetRow(iter.rowIdx)
+		if !iter.desc {
+			iter.rowIdx++
+		} else {
+			iter.rowIdx--
+		}
+
+		// Project: extract only the columns the query needs.
+		for i, cacheIdx := range iter.colProjection {
+			iter.datumRow[i] = row.GetDatum(cacheIdx, iter.cacheFieldTypes[cacheIdx])
+		}
+
+		// TIMESTAMP timezone conversion (on projected datum copy, safe).
+		if iter.needTZConvert {
+			for _, idx := range iter.tsColProjected {
+				if !iter.datumRow[idx].IsNull() {
+					t := iter.datumRow[idx].GetMysqlTime()
+					if err := t.ConvertTimeZone(time.UTC, iter.sessionLoc); err != nil {
+						return nil, err
+					}
+					iter.datumRow[idx].SetMysqlTime(t)
+				}
+			}
+		}
+
+		// Apply filter conditions.
+		if len(iter.conditions) > 0 {
+			mutableRow := chunk.MutRowFromDatums(iter.datumRow)
+			matched, _, err := expression.EvalBool(iter.evalCtx, iter.conditions, mutableRow.ToRow())
+			if err != nil {
+				return nil, err
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		return iter.datumRow, nil
+	}
+}
+
+func (*memCachedDatumIter) Close() {
+	// CachedDatumData is managed by cacheData; not released here.
+}
+
+// buildDatumCacheIter tries to build a memCachedDatumIter from the pre-decoded datum cache.
+// Returns nil if the datum cache is not available or column projection fails.
+func (m *memTableReader) buildDatumCacheIter() *memCachedDatumIter {
+	if m.datumCache == nil {
+		return nil
+	}
+
+	// Build column ID -> datum cache index mapping from the table's public columns.
+	allCols := m.table.Cols()
+	colIDToCacheIdx := make(map[int64]int, len(allCols))
+	for i, col := range allCols {
+		colIDToCacheIdx[col.ID] = i
+	}
+
+	// Build projection: for each query column, find its datum cache index.
+	colProjection := make([]int, len(m.columns))
+	for i, col := range m.columns {
+		idx, ok := colIDToCacheIdx[col.ID]
+		if !ok {
+			// Column not found in datum cache, fallback to KV decode.
+			return nil
+		}
+		colProjection[i] = idx
+	}
+
+	// Find TIMESTAMP columns in the projected (query) columns for TZ conversion.
+	sessionLoc := m.ctx.GetSessionVars().Location()
+	var tsColProjected []int
+	for i, col := range m.columns {
+		if col.GetType() == mysql.TypeTimestamp {
+			tsColProjected = append(tsColProjected, i)
+		}
+	}
+	needTZConvert := len(tsColProjected) > 0 && sessionLoc.String() != time.UTC.String()
+
+	iter := &memCachedDatumIter{
+		data:            m.datumCache,
+		desc:            m.desc,
+		colProjection:   colProjection,
+		cacheFieldTypes: m.datumCache.FieldTypes,
+		datumRow:        make([]types.Datum, len(m.columns)),
+		retFieldTypes:   m.retFieldTypes,
+		conditions:      m.conditions,
+		evalCtx:         m.ctx.GetExprCtx().GetEvalCtx(),
+		needTZConvert:   needTZConvert,
+		sessionLoc:      sessionLoc,
+		tsColProjected:  tsColProjected,
+	}
+
+	// For descending scan, start from the last row of the last chunk.
+	if m.desc {
+		lastIdx := len(m.datumCache.Chunks) - 1
+		iter.chunkIdx = lastIdx
+		if lastIdx >= 0 {
+			iter.rowIdx = m.datumCache.Chunks[lastIdx].NumRows() - 1
+		}
+	}
+
+	return iter
 }
 
 type memRowsIterForIndex struct {
