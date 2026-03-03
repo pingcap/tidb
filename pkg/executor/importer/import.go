@@ -1191,8 +1191,7 @@ func (e *LoadDataController) Close() {
 	}
 }
 
-// GetDataStore gets the external storage used by source data files.
-func (e *LoadDataController) GetDataStore() storeapi.Storage {
+func (e *LoadDataController) getDataStore() storeapi.Storage {
 	return e.dataStore
 }
 

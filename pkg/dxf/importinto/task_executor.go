@@ -67,6 +67,8 @@ const (
 	readerMemBudgetRatio = 0.3
 )
 
+var estimateParquetReaderMemory = mydump.EstimateParquetReaderMemory
+
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
@@ -186,7 +188,7 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, stor
 		}
 	}
 
-	peakMem, err := mydump.EstimateParquetReaderMemory(ctx, store, targetChunk.Path)
+	peakMem, err := estimateParquetReaderMemory(ctx, store, targetChunk.Path)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))
@@ -211,6 +213,27 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, stor
 		)
 		s.concurrency = memBasedConcurrency
 	}
+}
+
+func (s *importStepExecutor) getChunksForConcurrencyEstimate(subtaskChunks []importer.Chunk) []importer.Chunk {
+	if s.taskMeta == nil || len(s.taskMeta.ChunkMap) == 0 {
+		return subtaskChunks
+	}
+	totalCnt := 0
+	for _, chunks := range s.taskMeta.ChunkMap {
+		totalCnt += len(chunks)
+	}
+	allChunks := make([]importer.Chunk, 0, totalCnt)
+	for _, chunks := range s.taskMeta.ChunkMap {
+		allChunks = append(allChunks, chunks...)
+	}
+	return allChunks
+}
+
+func (s *importStepExecutor) estimateAndSetConcurrencyOnce(ctx context.Context, store storeapi.Storage, subtaskChunks []importer.Chunk) {
+	s.estimateConcOnce.Do(func() {
+		s.estimateAndSetConcurrency(ctx, store, s.getChunksForConcurrencyEstimate(subtaskChunks))
+	})
 }
 
 // Accepted implements Collector.Accepted interface.
@@ -303,7 +326,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 	}()
 
-	s.estimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
+	s.estimateAndSetConcurrencyOnce(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))

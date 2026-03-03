@@ -16,15 +16,22 @@ package importinto
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type StoreWithKS struct {
@@ -105,4 +112,113 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 	})
+}
+
+func newImportStepExecutorForEstimateTest(cpuCapacity, memCapacity int64) *importStepExecutor {
+	s := &importStepExecutor{
+		taskMeta:         &TaskMeta{},
+		concurrency:      int(cpuCapacity),
+		BaseStepExecutor: taskexecutor.BaseStepExecutor{},
+		logger:           zap.NewNop(),
+	}
+	execute.SetFrameworkInfo(
+		s,
+		&proto.Task{TaskBase: proto.TaskBase{ID: 1, Step: proto.ImportStepImport}},
+		&proto.StepResource{
+			CPU: proto.NewAllocatable(cpuCapacity),
+			Mem: proto.NewAllocatable(memCapacity),
+		},
+		nil,
+		nil,
+	)
+	return s
+}
+
+func TestEstimateAndSetConcurrency(t *testing.T) {
+	oldEstimator := estimateParquetReaderMemory
+	t.Cleanup(func() {
+		estimateParquetReaderMemory = oldEstimator
+	})
+
+	store := objstore.NewMemStorage()
+	t.Cleanup(store.Close)
+	chunks := []importer.Chunk{
+		{Path: "small.parquet", FileSize: 1, Type: mydump.SourceTypeParquet},
+		{Path: "large.parquet", FileSize: 2, Type: mydump.SourceTypeParquet},
+	}
+
+	t.Run("estimator error fallback", func(t *testing.T) {
+		var path string
+		estimateParquetReaderMemory = func(_ context.Context, _ storeapi.Storage, p string) (int64, error) {
+			path = p
+			return 0, stderrors.New("mock estimate error")
+		}
+
+		exec := newImportStepExecutorForEstimateTest(8, int64(16*units.GiB))
+		exec.estimateAndSetConcurrency(context.Background(), store, chunks)
+		require.Equal(t, "large.parquet", path)
+		require.Equal(t, 8, exec.concurrency)
+	})
+
+	t.Run("peak memory non-positive", func(t *testing.T) {
+		estimateParquetReaderMemory = func(_ context.Context, _ storeapi.Storage, _ string) (int64, error) {
+			return 0, nil
+		}
+
+		exec := newImportStepExecutorForEstimateTest(8, int64(16*units.GiB))
+		exec.estimateAndSetConcurrency(context.Background(), store, chunks)
+		require.Equal(t, 8, exec.concurrency)
+	})
+
+	t.Run("downscale concurrency by memory budget", func(t *testing.T) {
+		const peakMem = int64(3 * units.GiB)
+		estimateParquetReaderMemory = func(_ context.Context, _ storeapi.Storage, p string) (int64, error) {
+			require.Equal(t, "large.parquet", p)
+			return peakMem, nil
+		}
+
+		totalMem := int64(16 * units.GiB)
+		exec := newImportStepExecutorForEstimateTest(8, totalMem)
+		exec.estimateAndSetConcurrency(context.Background(), store, chunks)
+
+		expected := max(1, int((float64(totalMem)*readerMemBudgetRatio)/float64(peakMem)))
+		require.Equal(t, expected, exec.concurrency)
+	})
+}
+
+func TestEstimateAndSetConcurrencyOnce(t *testing.T) {
+	oldEstimator := estimateParquetReaderMemory
+	t.Cleanup(func() {
+		estimateParquetReaderMemory = oldEstimator
+	})
+
+	callCount := 0
+	estimateParquetReaderMemory = func(_ context.Context, _ storeapi.Storage, path string) (int64, error) {
+		callCount++
+		require.Equal(t, "largest-task-file.parquet", path)
+		return int64(4 * units.GiB), nil
+	}
+
+	store := objstore.NewMemStorage()
+	t.Cleanup(store.Close)
+
+	exec := newImportStepExecutorForEstimateTest(8, int64(64*units.GiB))
+	exec.taskMeta.ChunkMap = map[int32][]importer.Chunk{
+		1: {
+			{Path: "small-subtask-file.parquet", FileSize: 1, Type: mydump.SourceTypeParquet},
+		},
+		2: {
+			{Path: "largest-task-file.parquet", FileSize: 9, Type: mydump.SourceTypeParquet},
+		},
+	}
+
+	exec.estimateAndSetConcurrencyOnce(context.Background(), store, []importer.Chunk{
+		{Path: "small-subtask-file.parquet", FileSize: 1, Type: mydump.SourceTypeParquet},
+	})
+	exec.estimateAndSetConcurrencyOnce(context.Background(), store, []importer.Chunk{
+		{Path: "ignored.parquet", FileSize: 10, Type: mydump.SourceTypeParquet},
+	})
+
+	require.Equal(t, 1, callCount)
+	require.Equal(t, 4, exec.concurrency)
 }
