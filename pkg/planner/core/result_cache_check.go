@@ -54,6 +54,12 @@ func CanCacheResultSet(stmtNode ast.StmtNode, plan base.PhysicalPlan, inDML bool
 	if inDML {
 		return false
 	}
+	// Point get plans bypass non-prepared plan cache parameterization.
+	// Skip result set caching for them.
+	switch plan.(type) {
+	case *PointGetPlan, *BatchPointGetPlan:
+		return false
+	}
 	// Check AST for non-deterministic functions and variable references
 	// that get folded to constants during optimization.
 	if hasMutableExprInAST(stmtNode) {

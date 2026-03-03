@@ -35,6 +35,7 @@ type CachedResultExec struct {
 	original    exec.Executor
 	cachedTable table.CachedTable
 	cacheKey    table.ResultCacheKey
+	paramBytes  []byte
 
 	// cache hit state
 	hitCache     bool
@@ -49,7 +50,7 @@ type CachedResultExec struct {
 
 // Open checks the result cache before opening the wrapped executor.
 func (e *CachedResultExec) Open(ctx context.Context) error {
-	chunks, fieldTypes, ok := e.cachedTable.GetCachedResult(e.cacheKey)
+	chunks, fieldTypes, ok := e.cachedTable.GetCachedResult(e.cacheKey, e.paramBytes)
 	if ok && schemaMatch(fieldTypes, e.RetFieldTypes()) {
 		e.hitCache = true
 		e.cachedChunks = chunks
@@ -113,7 +114,7 @@ func (e *CachedResultExec) Close() error {
 
 	// Back-fill the cache with collected results.
 	if e.collecting {
-		e.cachedTable.PutCachedResult(e.cacheKey, e.collectedChunks, e.resultSchema)
+		e.cachedTable.PutCachedResult(e.cacheKey, e.paramBytes, e.collectedChunks, e.resultSchema)
 	}
 
 	return e.original.Close()

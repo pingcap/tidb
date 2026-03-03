@@ -335,17 +335,17 @@ func (c *cachedTable) invalidateResultCache() {
 	}
 }
 
-func (c *cachedTable) GetCachedResult(key table.ResultCacheKey) ([]*chunk.Chunk, []*types.FieldType, bool) {
+func (c *cachedTable) GetCachedResult(key table.ResultCacheKey, paramBytes []byte) ([]*chunk.Chunk, []*types.FieldType, bool) {
 	rc := c.getResultCache()
 	if rc == nil {
 		return nil, nil, false
 	}
-	return rc.Get(key)
+	return rc.Get(key, paramBytes)
 }
 
-func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
+func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
 	rc := c.getOrCreateResultCache()
-	ok := rc.Put(key, chunks, fieldTypes)
+	ok := rc.Put(key, paramBytes, chunks, fieldTypes)
 	if ok {
 		metrics.ResultCacheMemoryGauge.Set(float64(rc.MemoryUsage()))
 	}

@@ -52,6 +52,42 @@ func compileQuery(t *testing.T, tk *testkit.TestKit, sql string) compiledQuery {
 	return compiledQuery{stmtNode: stmts[0], plan: pp}
 }
 
+func TestCanCache_PointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	// PointGetPlan should not be cacheable (bypasses plan cache parameterization).
+	q := compileQuery(t, tk, "select * from cached_t where id = 1")
+	switch q.plan.(type) {
+	case *core.PointGetPlan:
+		require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+	default:
+		// If the optimizer didn't choose PointGet, this test is not applicable
+		// but the simple select test below covers non-PointGet plans.
+		t.Logf("optimizer did not choose PointGetPlan for this query (got %T), skipping", q.plan)
+	}
+}
+
+func TestCanCache_BatchPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	// BatchPointGetPlan should not be cacheable.
+	q := compileQuery(t, tk, "select * from cached_t where id in (1, 2, 3)")
+	switch q.plan.(type) {
+	case *core.BatchPointGetPlan:
+		require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+	default:
+		t.Logf("optimizer did not choose BatchPointGetPlan for this query (got %T), skipping", q.plan)
+	}
+}
+
 func TestCanCache_SimpleSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -59,7 +95,8 @@ func TestCanCache_SimpleSelect(t *testing.T) {
 	tk.MustExec("create table cached_t (id int primary key, v int)")
 	tk.MustExec("alter table cached_t cache")
 
-	q := compileQuery(t, tk, "select * from cached_t where id = 1")
+	// Use a non-PK filter so the optimizer picks a table scan, not a PointGetPlan.
+	q := compileQuery(t, tk, "select * from cached_t where v = 1")
 	require.True(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
 }
 
