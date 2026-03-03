@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -352,7 +353,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TxnCtx.IsPessimistic = true
-	sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+	sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForLock(nil)
 
 	const (
 		tableID    int64 = 1000
@@ -365,18 +366,18 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:   tableID,
-		Name: ast.NewCIStr("t"),
+		Name: pmodel.NewCIStr("t"),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        1,
-				Name:      ast.NewCIStr("a"),
+				Name:      pmodel.NewCIStr("a"),
 				State:     model.StatePublic,
 				Offset:    0,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
 				ID:        2,
-				Name:      ast.NewCIStr("b"),
+				Name:      pmodel.NewCIStr("b"),
 				State:     model.StatePublic,
 				Offset:    1,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
@@ -385,10 +386,10 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 		Indices: []*model.IndexInfo{
 			{
 				ID:   indexID,
-				Name: ast.NewCIStr("uk_b"),
+				Name: pmodel.NewCIStr("uk_b"),
 				Columns: []*model.IndexColumn{
 					{
-						Name:   ast.NewCIStr("b"),
+						Name:   pmodel.NewCIStr("b"),
 						Offset: 1,
 						Length: types.UnspecifiedLength,
 					},
@@ -401,12 +402,12 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 		},
 		Partition: &model.PartitionInfo{
 			Enable: true,
-			Type:   ast.PartitionTypeHash,
+			Type:   pmodel.PartitionTypeHash,
 			Expr:   "a",
 			Num:    2,
 			Definitions: []model.PartitionDefinition{
-				{ID: part0ID, Name: ast.NewCIStr("p0")},
-				{ID: part1ID, Name: ast.NewCIStr("p1")},
+				{ID: part0ID, Name: pmodel.NewCIStr("p0")},
+				{ID: part1ID, Name: pmodel.NewCIStr("p1")},
 			},
 			NewTableID:      newTableID,
 			DDLChangedIndex: map[int64]bool{indexID: true},
@@ -453,7 +454,7 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 
-	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForLock(nil)
 	require.Len(t, gotKeys, 1)
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
 }
