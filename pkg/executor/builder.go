@@ -6371,7 +6371,7 @@ func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.Stmt
 	if !plannercore.CanCacheResultSet(stmtNode, physPlan, inDML) {
 		return e
 	}
-	key, ok := plannercore.BuildResultCacheKey(b.ctx)
+	key, paramBytes, ok := plannercore.BuildResultCacheKey(b.ctx)
 	if !ok {
 		return e
 	}
@@ -6380,6 +6380,7 @@ func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.Stmt
 		original:     e,
 		cachedTable:  b.cachedTbl,
 		cacheKey:     key,
+		paramBytes:   paramBytes,
 	}
 }
 

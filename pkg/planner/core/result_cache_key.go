@@ -29,48 +29,74 @@ import (
 // so that the same query template with different arguments maps to different
 // cache entries.
 //
+// The returned []byte contains the raw encoded parameter bytes used for
+// secondary verification on cache hit (to guard against hash collisions).
+//
 // Returns false when no plan digest is available (e.g. the plan has not been
 // finalized yet).
-func BuildResultCacheKey(sctx sessionctx.Context) (table.ResultCacheKey, bool) {
+func BuildResultCacheKey(sctx sessionctx.Context) (table.ResultCacheKey, []byte, bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 
 	// Obtain the plan digest. It is set after optimization.
 	_, planDigest := stmtCtx.GetPlanDigest()
 	if planDigest == nil {
-		return table.ResultCacheKey{}, false
+		return table.ResultCacheKey{}, nil, false
 	}
 
 	var key table.ResultCacheKey
 	digestBytes := planDigest.Bytes()
 	copy(key.PlanDigest[:], digestBytes)
 
+	var paramBytes []byte
+
 	// Hash parameter values when present. For prepared statements these are the
 	// EXECUTE parameters; for non-prepared plan cache they are the extracted
 	// literal values.
 	if params := sctx.GetSessionVars().PlanCacheParams.AllParamValues(); len(params) > 0 {
-		key.ParamHash = hashParams(params)
+		paramBytes = encodeParams(params)
+		key.ParamHash = hashBytes(paramBytes)
+	} else if len(stmtCtx.OriginalSQL) > 0 {
+		// PlanCacheParams is empty when non-prepared plan cache is disabled or
+		// the query bypasses plan cache parameterization. Fall back to hashing
+		// the original SQL text to distinguish queries with different literals.
+		paramBytes = []byte(stmtCtx.OriginalSQL)
+		key.ParamHash = hashBytes(paramBytes)
 	}
 
-	return key, true
+	return key, paramBytes, true
 }
 
 // HashParamsForTest is exported for testing only.
 var HashParamsForTest = hashParams
 
+// EncodeParamsForTest is exported for testing only.
+var EncodeParamsForTest = encodeParams
+
+// hashBytes computes a 64-bit FNV-1a hash over a byte slice.
+func hashBytes(b []byte) uint64 {
+	h := fnv.New64a()
+	h.Write(b)
+	return h.Sum64()
+}
+
+// encodeParams encodes a slice of Datum values into a single byte slice
+// using codec.EncodeKey, concatenating the encoded bytes for each parameter.
+func encodeParams(params []types.Datum) []byte {
+	var buf []byte
+	for _, p := range params {
+		b, err := codec.EncodeKey(nil, nil, p)
+		if err != nil {
+			buf = append(buf, 0xFF)
+			continue
+		}
+		buf = append(buf, b...)
+	}
+	return buf
+}
+
 // hashParams computes a 64-bit FNV-1a hash over a slice of Datum values.
 // It uses codec.EncodeKey to produce a stable, type-aware byte representation
 // of each parameter before feeding it to the hasher.
 func hashParams(params []types.Datum) uint64 {
-	h := fnv.New64a()
-	for _, p := range params {
-		b, err := codec.EncodeKey(nil, nil, p)
-		if err != nil {
-			// Encoding should not fail for normal parameter types.
-			// On error, write a sentinel so different params still differ.
-			h.Write([]byte{0xFF})
-			continue
-		}
-		h.Write(b)
-	}
-	return h.Sum64()
+	return hashBytes(encodeParams(params))
 }

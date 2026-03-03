@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 
@@ -30,6 +31,7 @@ type ResultCacheKey = table.ResultCacheKey
 type cachedResult struct {
 	chunks     []*chunk.Chunk
 	fieldTypes []*types.FieldType // used for schema compatibility check
+	paramBytes []byte             // raw encoded params for secondary hash collision verification
 	memSize    int64
 	hitCount   atomic.Int64
 }
@@ -57,11 +59,15 @@ func newResultSetCache() *resultSetCache {
 	}
 }
 
-// Get looks up the cache. On hit it increments hitCount.
-func (c *resultSetCache) Get(key ResultCacheKey) ([]*chunk.Chunk, []*types.FieldType, bool) {
+// Get looks up the cache. On hit it verifies paramBytes to guard against hash
+// collisions, then increments hitCount.
+func (c *resultSetCache) Get(key ResultCacheKey, paramBytes []byte) ([]*chunk.Chunk, []*types.FieldType, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if r, ok := c.items[key]; ok {
+		if !bytes.Equal(r.paramBytes, paramBytes) {
+			return nil, nil, false
+		}
 		r.hitCount.Add(1)
 		return r.chunks, r.fieldTypes, true
 	}
@@ -70,8 +76,8 @@ func (c *resultSetCache) Get(key ResultCacheKey) ([]*chunk.Chunk, []*types.Field
 
 // Put inserts into the cache. If limits are exceeded the entry is rejected
 // (no eviction — the entire cache is cleared when the lease expires).
-func (c *resultSetCache) Put(key ResultCacheKey, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
-	memSize := estimateChunksMemory(chunks)
+func (c *resultSetCache) Put(key ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
+	memSize := estimateChunksMemory(chunks) + int64(len(paramBytes))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.items) >= c.maxEntries || c.totalMem+memSize > c.maxMemory {
@@ -80,6 +86,7 @@ func (c *resultSetCache) Put(key ResultCacheKey, chunks []*chunk.Chunk, fieldTyp
 	c.items[key] = &cachedResult{
 		chunks:     chunks,
 		fieldTypes: fieldTypes,
+		paramBytes: paramBytes,
 		memSize:    memSize,
 	}
 	c.totalMem += memSize

@@ -35,7 +35,7 @@ func makeTestChunk() *chunk.Chunk {
 func TestResultCacheGetMiss(t *testing.T) {
 	c := newResultSetCache()
 	key := ResultCacheKey{ParamHash: 42}
-	chunks, fts, ok := c.Get(key)
+	chunks, fts, ok := c.Get(key, []byte("params"))
 	require.False(t, ok)
 	require.Nil(t, chunks)
 	require.Nil(t, fts)
@@ -47,12 +47,13 @@ func TestResultCachePutAndGet(t *testing.T) {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{ft}
 	key := ResultCacheKey{PlanDigest: [16]byte{1}, ParamHash: 100}
+	pb := []byte("param-100")
 
-	ok := c.Put(key, []*chunk.Chunk{chk}, fts)
+	ok := c.Put(key, pb, []*chunk.Chunk{chk}, fts)
 	require.True(t, ok)
 	require.Equal(t, 1, c.Len())
 
-	gotChunks, gotFts, hit := c.Get(key)
+	gotChunks, gotFts, hit := c.Get(key, pb)
 	require.True(t, hit)
 	require.Len(t, gotChunks, 1)
 	require.Equal(t, chk, gotChunks[0])
@@ -64,11 +65,12 @@ func TestResultCacheHitCount(t *testing.T) {
 	chk := makeTestChunk()
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	key := ResultCacheKey{PlanDigest: [16]byte{2}}
+	pb := []byte("pb")
 
-	c.Put(key, []*chunk.Chunk{chk}, []*types.FieldType{ft})
+	c.Put(key, pb, []*chunk.Chunk{chk}, []*types.FieldType{ft})
 
 	for i := 0; i < 5; i++ {
-		c.Get(key)
+		c.Get(key, pb)
 	}
 
 	c.mu.RLock()
@@ -85,24 +87,25 @@ func TestResultCacheMaxEntries(t *testing.T) {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{ft}
 
-	require.True(t, c.Put(ResultCacheKey{ParamHash: 1}, []*chunk.Chunk{chk}, fts))
-	require.True(t, c.Put(ResultCacheKey{ParamHash: 2}, []*chunk.Chunk{chk}, fts))
-	require.False(t, c.Put(ResultCacheKey{ParamHash: 3}, []*chunk.Chunk{chk}, fts))
+	require.True(t, c.Put(ResultCacheKey{ParamHash: 1}, []byte("p1"), []*chunk.Chunk{chk}, fts))
+	require.True(t, c.Put(ResultCacheKey{ParamHash: 2}, []byte("p2"), []*chunk.Chunk{chk}, fts))
+	require.False(t, c.Put(ResultCacheKey{ParamHash: 3}, []byte("p3"), []*chunk.Chunk{chk}, fts))
 	require.Equal(t, 2, c.Len())
 }
 
 func TestResultCacheMaxMemory(t *testing.T) {
 	c := newResultSetCache()
 	chk := makeTestChunk()
-	mem := estimateChunksMemory([]*chunk.Chunk{chk})
+	pb := []byte("p1")
+	mem := estimateChunksMemory([]*chunk.Chunk{chk}) + int64(len(pb))
 	// Allow room for exactly one entry.
 	c.maxMemory = mem
 
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{ft}
 
-	require.True(t, c.Put(ResultCacheKey{ParamHash: 1}, []*chunk.Chunk{chk}, fts))
-	require.False(t, c.Put(ResultCacheKey{ParamHash: 2}, []*chunk.Chunk{chk}, fts))
+	require.True(t, c.Put(ResultCacheKey{ParamHash: 1}, pb, []*chunk.Chunk{chk}, fts))
+	require.False(t, c.Put(ResultCacheKey{ParamHash: 2}, []byte("p2"), []*chunk.Chunk{chk}, fts))
 	require.Equal(t, mem, c.MemoryUsage())
 }
 
@@ -118,12 +121,37 @@ func TestResultCacheConcurrency(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			key := ResultCacheKey{ParamHash: uint64(i % 10)}
-			c.Put(key, []*chunk.Chunk{chk}, fts)
-			c.Get(key)
+			pb := []byte{byte(i % 10)}
+			c.Put(key, pb, []*chunk.Chunk{chk}, fts)
+			c.Get(key, pb)
 			c.Len()
 			c.MemoryUsage()
 		}(i)
 	}
 	wg.Wait()
 	require.True(t, c.Len() <= 10)
+}
+
+func TestResultCacheParamBytesMismatch(t *testing.T) {
+	// Verify that same hash key but different paramBytes results in a cache miss.
+	c := newResultSetCache()
+	chk := makeTestChunk()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	fts := []*types.FieldType{ft}
+
+	// Simulate a hash collision: same key but different actual param bytes.
+	key := ResultCacheKey{PlanDigest: [16]byte{1}, ParamHash: 999}
+	pbA := []byte("param-value-A")
+	pbB := []byte("param-value-B")
+
+	ok := c.Put(key, pbA, []*chunk.Chunk{chk}, fts)
+	require.True(t, ok)
+
+	// Lookup with matching paramBytes should hit.
+	_, _, hit := c.Get(key, pbA)
+	require.True(t, hit)
+
+	// Lookup with different paramBytes (hash collision) should miss.
+	_, _, hit = c.Get(key, pbB)
+	require.False(t, hit)
 }

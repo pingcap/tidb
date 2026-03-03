@@ -28,7 +28,7 @@ import (
 
 // execAndBuildKey executes a SQL statement and builds the result cache key
 // from the session context afterward (plan digest is set after execution).
-func execAndBuildKey(t *testing.T, tk *testkit.TestKit, sql string) (table.ResultCacheKey, bool) {
+func execAndBuildKey(t *testing.T, tk *testkit.TestKit, sql string) (table.ResultCacheKey, []byte, bool) {
 	t.Helper()
 	tk.MustQuery(sql)
 	sctx := tk.Session().(sessionctx.Context)
@@ -43,7 +43,7 @@ func TestBuildResultCacheKey_NoPlan(t *testing.T) {
 	// Replace StmtCtx with a fresh one that has no plan digest.
 	sctx := tk.Session().(sessionctx.Context)
 	sctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
-	_, ok := core.BuildResultCacheKey(sctx)
+	_, _, ok := core.BuildResultCacheKey(sctx)
 	require.False(t, ok)
 }
 
@@ -55,22 +55,56 @@ func TestBuildResultCacheKey_NonPrepared(t *testing.T) {
 	tk.MustExec("alter table cached_t cache")
 
 	// Two different queries with same shape but different constants.
-	key1, ok1 := execAndBuildKey(t, tk, "select * from cached_t where id = 1")
+	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_t where id = 1")
 	require.True(t, ok1)
+	require.NotNil(t, pb1)
 
-	key2, ok2 := execAndBuildKey(t, tk, "select * from cached_t where id = 2")
+	key2, pb2, ok2 := execAndBuildKey(t, tk, "select * from cached_t where id = 2")
 	require.True(t, ok2)
+	require.NotNil(t, pb2)
 
-	// Plan digests should be the same (normalized), so the keys differ
-	// only when parameters are captured. If neither has params, the plan
-	// digest alone differentiates at the normalized plan level.
 	// With the same plan shape, the PlanDigest portion should be equal.
 	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
+	// Different literal values must produce different ParamHash via SQL fallback.
+	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
+	// Different param bytes for different values.
+	require.NotEqual(t, pb1, pb2)
 
 	// A structurally different query should produce a different plan digest.
-	key3, ok3 := execAndBuildKey(t, tk, "select v from cached_t")
+	key3, _, ok3 := execAndBuildKey(t, tk, "select v from cached_t")
 	require.True(t, ok3)
 	require.NotEqual(t, key1.PlanDigest, key3.PlanDigest)
+}
+
+func TestBuildResultCacheKey_NonPrepared_DifferentValues(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+	// Disable non-prepared plan cache to trigger the SQL fallback path.
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache = OFF")
+
+	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_t where v = 1")
+	require.True(t, ok1)
+	require.NotNil(t, pb1)
+
+	key2, pb2, ok2 := execAndBuildKey(t, tk, "select * from cached_t where v = 2")
+	require.True(t, ok2)
+	require.NotNil(t, pb2)
+
+	// Same plan shape → same digest.
+	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
+	// Different literals → different ParamHash (the bug was both being 0).
+	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
+	// Different param bytes for different values.
+	require.NotEqual(t, pb1, pb2)
+
+	// Same query twice must produce the same key and param bytes.
+	key3, pb3, ok3 := execAndBuildKey(t, tk, "select * from cached_t where v = 1")
+	require.True(t, ok3)
+	require.Equal(t, key1, key3)
+	require.Equal(t, pb1, pb3)
 }
 
 func TestBuildResultCacheKey_Prepared(t *testing.T) {
@@ -87,18 +121,22 @@ func TestBuildResultCacheKey_Prepared(t *testing.T) {
 	tk.MustExec("set @a = 1")
 	tk.MustQuery("execute stmt using @a")
 	sctx := tk.Session().(sessionctx.Context)
-	key1, ok1 := core.BuildResultCacheKey(sctx)
+	key1, pb1, ok1 := core.BuildResultCacheKey(sctx)
 	require.True(t, ok1)
+	require.NotNil(t, pb1)
 
 	// Execute with param = 2
 	tk.MustExec("set @a = 2")
 	tk.MustQuery("execute stmt using @a")
-	key2, ok2 := core.BuildResultCacheKey(sctx)
+	key2, pb2, ok2 := core.BuildResultCacheKey(sctx)
 	require.True(t, ok2)
+	require.NotNil(t, pb2)
 
 	// Same plan digest but different param hash.
 	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
 	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
+	// Different param bytes for different values.
+	require.NotEqual(t, pb1, pb2)
 }
 
 func TestBuildResultCacheKey_SameParams(t *testing.T) {
@@ -114,15 +152,16 @@ func TestBuildResultCacheKey_SameParams(t *testing.T) {
 	tk.MustExec("set @a = 42")
 	tk.MustQuery("execute stmt using @a")
 	sctx := tk.Session().(sessionctx.Context)
-	key1, ok1 := core.BuildResultCacheKey(sctx)
+	key1, pb1, ok1 := core.BuildResultCacheKey(sctx)
 	require.True(t, ok1)
 
 	tk.MustQuery("execute stmt using @a")
-	key2, ok2 := core.BuildResultCacheKey(sctx)
+	key2, pb2, ok2 := core.BuildResultCacheKey(sctx)
 	require.True(t, ok2)
 
-	// Identical keys.
+	// Identical keys and param bytes.
 	require.Equal(t, key1, key2)
+	require.Equal(t, pb1, pb2)
 }
 
 func TestHashParams_DifferentTypes(t *testing.T) {
