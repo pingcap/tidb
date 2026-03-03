@@ -35,8 +35,8 @@ const (
 	// version from ServerVersion.
 	VersionSeparator = "-TiDB-"
 
-	// TiDBXReleaseVersionPrefix is used in `select tidb_version()` output of nextgen.
-	TiDBXReleaseVersionPrefix = "TiDB-X-CLOUD."
+	// tidbXReleaseVersionPrefix is used in `select tidb_version()` output of nextgen.
+	tidbXReleaseVersionPrefix = "TiDB-X-CLOUD."
 
 	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
 	// TiDBXPlaceholderReleaseVersion is the default release version for nextgen when no
@@ -47,7 +47,7 @@ const (
 // Version information.
 var (
 	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
-	TiDBReleaseVersion = "v8.4.0-this-is-a-placeholder"
+	TiDBReleaseVersion = legacyTiDBReleaseVersionPlaceholder
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
 	ServerVersion = fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, TiDBReleaseVersion)
@@ -79,7 +79,7 @@ func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	return fmt.Sprintf("%s20%02d%02d.%s", TiDBXReleaseVersionPrefix, year, month, matched[3]), nil
+	return fmt.Sprintf("%s20%02d%02d.%s", tidbXReleaseVersionPrefix, year, month, matched[3]), nil
 }
 
 // BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version

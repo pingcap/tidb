@@ -117,6 +117,6 @@ func TestBuildTiDBXReleaseVersion(t *testing.T) {
 }
 
 func TestNormalizeTiDBReleaseVersionForNextGen(t *testing.T) {
-	require.Equal(t, TiDBXPlaceholderReleaseVersion, NormalizeTiDBReleaseVersionForNextGen("v8.4.0-this-is-a-placeholder"))
+	require.Equal(t, TiDBXPlaceholderReleaseVersion, NormalizeTiDBReleaseVersionForNextGen(legacyTiDBReleaseVersionPlaceholder))
 	require.Equal(t, "v26.3.0", NormalizeTiDBReleaseVersionForNextGen("v26.3.0"))
 }

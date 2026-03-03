@@ -17,9 +17,12 @@ package printer
 import (
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestPrintResult(t *testing.T) {
@@ -60,10 +63,32 @@ func TestGetTiDBInfo(t *testing.T) {
 		expectedReleaseVersion, err := mysql.BuildTiDBXReleaseVersion(mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
 		require.NoError(t, err)
 		require.Contains(t, info, "Release Version: "+expectedReleaseVersion)
-		require.Contains(t, info, "TiDB Component Version: "+mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
 	} else {
 		require.Contains(t, info, "\nKernel Type: Classic")
 		require.Contains(t, info, "Release Version: "+mysql.TiDBReleaseVersion)
-		require.NotContains(t, info, "TiDB Component Version:")
+	}
+	require.NotContains(t, info, "TiDB Component Version:")
+}
+
+func TestPrintTiDBInfo(t *testing.T) {
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+		},
+	)
+	defer restore()
+
+	PrintTiDBInfo()
+	entries := recorded.FilterMessage("Welcome to TiDB.").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion), fields["TiDB Component Version"])
+	} else {
+		_, ok := fields["TiDB Component Version"]
+		require.False(t, ok)
 	}
 }

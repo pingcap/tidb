@@ -80,17 +80,12 @@ func PrintTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
-	releaseVersion, componentVersion := getReleaseVersionsForDisplay()
+	releaseVersion, _ := getReleaseVersionsForDisplay()
 	enterpriseVersion := ""
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)
 	}
-	componentVersionInfo := ""
-	if componentVersion != "" {
-		componentVersionInfo = fmt.Sprintf("TiDB Component Version: %s\n", componentVersion)
-	}
 	info := fmt.Sprintf("Release Version: %s\n"+
-		"%s"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
@@ -101,7 +96,6 @@ func GetTiDBInfo() string {
 		"Store: %s"+
 		"%s",
 		releaseVersion,
-		componentVersionInfo,
 		versioninfo.TiDBEdition,
 		versioninfo.TiDBGitHash,
 		versioninfo.TiDBGitBranch,
