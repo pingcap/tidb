@@ -276,12 +276,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 							// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
 							if li.Offset != 0 {
 								canRemove = false
-							} else {
-								// Check if join key is unique key
-								removePlan = li.Children()[0]
-								if isJoinKeyUniqueKey(apply, removePlan) {
-									canRemove = true
-								}
+								break
+							}
+							// Check if join key is unique key
+							removePlan = li.Children()[0]
+							if isJoinKeyUniqueKey(apply, removePlan) {
+								canRemove = true
 							}
 						}
 					}
