@@ -119,13 +119,13 @@ func TestSetVersionByConfig(t *testing.T) {
 		conf.TiDBEdition = "Starter"
 	})
 	require.NoError(t, initVersions(config.GetGlobalConfig()))
-	require.Equal(t, "Starter", versioninfo.TiDBEdition)
 	if kerneltype.IsNextGen() {
 		require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
 		require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", mysql.ServerVersion)
 	} else {
 		require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
 		require.Equal(t, "test", mysql.ServerVersion)
+		require.Equal(t, "Starter", versioninfo.TiDBEdition)
 	}
 }
 

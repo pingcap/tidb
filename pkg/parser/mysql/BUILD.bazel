@@ -18,6 +18,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/format",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
     ],
 )

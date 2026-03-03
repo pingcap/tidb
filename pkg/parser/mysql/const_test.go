@@ -105,15 +105,22 @@ func TestBuildTiDBXReleaseVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "TiDB-X-CLOUD.202603.0", tidbXVersion)
 
+	tidbXVersion, err = BuildTiDBXReleaseVersion("v26.3.0-xxx")
+	require.NoError(t, err)
+	require.Equal(t, "TiDB-X-CLOUD.202603.0", tidbXVersion)
+
 	serverVersion, err := BuildTiDBXServerVersion("v26.3.0")
 	require.NoError(t, err)
 	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", serverVersion)
 
-	_, err = BuildTiDBXReleaseVersion("v26.13.1")
-	require.ErrorContains(t, err, "invalid TiDB release version")
+	serverVersion, err = BuildTiDBXServerVersion("v26.3.0-xxx")
+	require.NoError(t, err)
+	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", serverVersion)
 
-	_, err = BuildTiDBXReleaseVersion("v26.03.1")
-	require.ErrorContains(t, err, "invalid TiDB release version")
+	for _, ver := range []string{"26.1.1", "v26xxxx", "v24.1.1", "v26.0.1", "v26.13.1"} {
+		_, err = BuildTiDBXReleaseVersion(ver)
+		require.ErrorContains(t, err, "invalid TiDB release version")
+	}
 }
 
 func TestNormalizeTiDBReleaseVersionForNextGen(t *testing.T) {

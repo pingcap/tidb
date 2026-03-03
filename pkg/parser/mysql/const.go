@@ -15,10 +15,9 @@ package mysql
 
 import (
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
 )
@@ -51,8 +50,6 @@ var (
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
 	ServerVersion = fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, TiDBReleaseVersion)
-
-	tidbXReleaseVersionPattern = regexp.MustCompile(`^v([0-9]{2})\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$`)
 )
 
 // NormalizeTiDBReleaseVersionForNextGen rewrites the legacy placeholder into a nextgen
@@ -67,19 +64,19 @@ func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
 // BuildTiDBXReleaseVersion converts mysql.TiDBReleaseVersion into the nextgen visible
 // version format `TiDB-X-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
 func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
-	matched := tidbXReleaseVersionPattern.FindStringSubmatch(releaseVersion)
-	if len(matched) != 4 {
+	if !strings.HasPrefix(releaseVersion, "v") {
 		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
 	}
-	year, err := strconv.Atoi(matched[1])
+	rawVer := strings.TrimPrefix(releaseVersion, "v")
+	ver, err := semver.NewVersion(rawVer)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
 	}
-	month, err := strconv.Atoi(matched[2])
-	if err != nil {
-		return "", errors.Trace(err)
+	// our first release of next-gen since 2025
+	if ver.Major < 25 || ver.Major > 99 || ver.Minor < 1 || ver.Minor > 12 {
+		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
 	}
-	return fmt.Sprintf("%s20%02d%02d.%s", tidbXReleaseVersionPrefix, year, month, matched[3]), nil
+	return fmt.Sprintf("%s20%02d%02d.%d", tidbXReleaseVersionPrefix, ver.Major, ver.Minor, ver.Patch), nil
 }
 
 // BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version
