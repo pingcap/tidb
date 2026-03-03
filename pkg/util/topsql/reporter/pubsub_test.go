@@ -462,6 +462,7 @@ func TestSubscribeTopRUOnlyDoesNotEnableTopSQL(t *testing.T) {
 	require.False(t, topsqlstate.TopSQLEnabled())
 	require.True(t, topsqlstate.TopProfilingEnabled())
 }
+
 // TestSendTopRURecordsGatingAndErrors verifies TopRU record sending is gated
 // by sink/global enablement and surfaces stream errors or context cancellation.
 func TestSendTopRURecordsGatingAndErrors(t *testing.T) {
