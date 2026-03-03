@@ -582,6 +582,7 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 // NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(tp.GetFlag() | mysql.UnsignedFlag)
 	return &expression.Column{
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
