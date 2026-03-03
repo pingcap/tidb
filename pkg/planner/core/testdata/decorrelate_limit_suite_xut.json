@@ -97,7 +97,7 @@
         "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT AVG(e2.salary)  FROM employees e2  WHERE e2.id = e.id  GROUP BY e2.dept_id  HAVING AVG(e2.salary) > 1000  LIMIT 1) AS avg_salary_having FROM employees e",
         "Plan": [
           "MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
-          "├─Projection(Build) root  cast(test.employees.salary, decimal(14,6) BINARY)->Column#16, test.employees.id",
+          "├─Projection(Build) root  cast(test.employees.salary, decimal(14,6) BINARY)->Column, test.employees.id",
           "│ └─TableReader root  data:Selection",
           "│   └─Selection cop[tikv]  gt(cast(test.employees.salary, decimal(14,6) BINARY), 1000)",
           "│     └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
@@ -108,7 +108,7 @@
       {
         "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT count(e2.dept_id)  FROM employees e2  WHERE e2.id = e.id limit 1) AS distinct_dept_id FROM employees e",
         "Plan": [
-          "Projection root  test.employees.name, test.employees.salary, if(isnull(test.employees.dept_id), 0, 1)->Column#16",
+          "Projection root  test.employees.name, test.employees.salary, if(isnull(test.employees.dept_id), 0, 1)->Column",
           "└─MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
           "  ├─TableReader(Build) root  data:TableFullScan",
           "  │ └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
@@ -174,11 +174,11 @@
       {
         "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT ROW_NUMBER() OVER (ORDER BY e2.salary DESC)  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS row_num FROM employees e",
         "Plan": [
-          "Projection root  test.employees.name, test.employees.salary, Column#17",
+          "Projection root  test.employees.name, test.employees.salary, Column",
           "└─Apply root  CARTESIAN left outer join, left side:TableReader",
           "  ├─TableReader(Build) root  data:TableFullScan",
           "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
-          "  └─Window(Probe) root  row_number()->Column#17 over(order by test.employees.salary desc rows between current row and current row)",
+          "  └─Window(Probe) root  row_number()->Column#20 over(order by test.employees.salary desc rows between current row and current row)",
           "    └─Sort root  test.employees.salary:desc",
           "      └─TableReader root  data:TableRangeScan",
           "        └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
