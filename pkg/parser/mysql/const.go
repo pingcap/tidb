@@ -15,6 +15,8 @@ package mysql
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -32,6 +34,14 @@ const (
 	// one with MySQL compatibility version, with this fixed then we can parse TiDB
 	// version from ServerVersion.
 	VersionSeparator = "-TiDB-"
+
+	// TiDBXReleaseVersionPrefix is used in `select tidb_version()` output of nextgen.
+	TiDBXReleaseVersionPrefix = "TiDB-X-CLOUD."
+
+	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
+	// TiDBXPlaceholderReleaseVersion is the default release version for nextgen when no
+	// release version is injected during build.
+	TiDBXPlaceholderReleaseVersion = "v26.3.0"
 )
 
 // Version information.
@@ -41,7 +51,46 @@ var (
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
 	ServerVersion = fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, TiDBReleaseVersion)
+
+	tidbXReleaseVersionPattern = regexp.MustCompile(`^v([0-9]{2})\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$`)
 )
+
+// NormalizeTiDBReleaseVersionForNextGen rewrites the legacy placeholder into a nextgen
+// placeholder that follows `v[2-digit-year].[month].[fix-version]`.
+func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
+	if releaseVersion == legacyTiDBReleaseVersionPlaceholder {
+		return TiDBXPlaceholderReleaseVersion
+	}
+	return releaseVersion
+}
+
+// BuildTiDBXReleaseVersion converts mysql.TiDBReleaseVersion into the nextgen visible
+// version format `TiDB-X-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
+func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
+	matched := tidbXReleaseVersionPattern.FindStringSubmatch(releaseVersion)
+	if len(matched) != 4 {
+		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
+	}
+	year, err := strconv.Atoi(matched[1])
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	month, err := strconv.Atoi(matched[2])
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return fmt.Sprintf("%s20%02d%02d.%s", TiDBXReleaseVersionPrefix, year, month, matched[3]), nil
+}
+
+// BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version
+// format `8.0.11-TiDB-X-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
+func BuildTiDBXServerVersion(releaseVersion string) (string, error) {
+	tidbXReleaseVersion, err := BuildTiDBXReleaseVersion(releaseVersion)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, strings.TrimPrefix(tidbXReleaseVersion, "TiDB-")), nil
+}
 
 // Header information.
 const (

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +57,13 @@ func TestGetTiDBInfo(t *testing.T) {
 	info := GetTiDBInfo()
 	if kerneltype.IsNextGen() {
 		require.Contains(t, info, "\nKernel Type: Next Generation")
+		expectedReleaseVersion, err := mysql.BuildTiDBXReleaseVersion(mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
+		require.NoError(t, err)
+		require.Contains(t, info, "Release Version: "+expectedReleaseVersion)
+		require.Contains(t, info, "TiDB Component Version: "+mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
 	} else {
 		require.Contains(t, info, "\nKernel Type: Classic")
+		require.Contains(t, info, "Release Version: "+mysql.TiDBReleaseVersion)
+		require.NotContains(t, info, "TiDB Component Version:")
 	}
 }

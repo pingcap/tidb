@@ -753,17 +753,32 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 }
 
-func setVersions() {
-	cfg := config.GetGlobalConfig()
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
-	}
+func setVersionByConfig(cfg *config.Config) error {
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
 	}
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
+	if kerneltype.IsNextGen() {
+		normalizedReleaseVersion := mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion)
+		serverVersion, err := mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
+		if err != nil {
+			return errors.Annotate(err, "invalid tidb release version for nextgen kernel")
+		}
+		mysql.TiDBReleaseVersion = normalizedReleaseVersion
+		mysql.ServerVersion = serverVersion
+		return nil
+	}
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	return nil
+}
+
+func setVersions() {
+	cfg := config.GetGlobalConfig()
+	terror.MustNil(setVersionByConfig(cfg))
 }
 
 func setGlobalVars() {
@@ -861,20 +876,14 @@ func setGlobalVars() {
 	atomic.StoreUint64(&vardef.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 	atomic.StoreUint64(&vardef.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
-		variable.SetSysVar(vardef.Version, cfg.ServerVersion)
-	}
+	terror.MustNil(setVersionByConfig(cfg))
+	variable.SetSysVar(vardef.Version, mysql.ServerVersion)
 
 	if len(cfg.TiDBEdition) > 0 {
-		versioninfo.TiDBEdition = cfg.TiDBEdition
 		variable.SetSysVar(vardef.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(vardef.VersionComment, cfg.VersionComment)
-	}
-	if len(cfg.TiDBReleaseVersion) > 0 {
-		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
 	// set instance variables

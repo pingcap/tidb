@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -58,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -1659,8 +1659,23 @@ func TestInfoBuiltin(t *testing.T) {
 		tidbVersionResult += fmt.Sprint(line)
 	}
 	lines := strings.Split(tidbVersionResult, "\n")
-	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
-	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
+	tidbVersionInfo := make(map[string]string, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) == 2 {
+			tidbVersionInfo[parts[0]] = parts[1]
+		}
+	}
+	if kerneltype.IsNextGen() {
+		expectedReleaseVersion, err := mysql.BuildTiDBXReleaseVersion(mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
+		require.NoError(t, err)
+		require.Equal(t, expectedReleaseVersion, tidbVersionInfo["Release Version"], "errors in 'select tidb_version()'")
+		require.Equal(t, mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion), tidbVersionInfo["TiDB Component Version"], "errors in 'select tidb_version()'")
+	} else {
+		require.Equal(t, mysql.TiDBReleaseVersion, tidbVersionInfo["Release Version"], "errors in 'select tidb_version()'")
+	}
+	require.Equal(t, versioninfo.TiDBEdition, tidbVersionInfo["Edition"], "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
