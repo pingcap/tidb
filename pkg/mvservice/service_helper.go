@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +41,7 @@ type serviceHelper struct {
 
 	reportCache struct {
 		submittedCount int64
-		completedCount int64
+		finishedCount  int64
 		failedCount    int64
 		timeoutCount   int64
 		rejectedCount  int64
@@ -152,7 +153,7 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 		return time.Time{}, err
 	}
 	defer sysSessionPool.Put(se)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	sctx := se.(sessionctx.Context)
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -226,7 +227,7 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}
 	defer sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	if mvLogID <= 0 {
 		return time.Time{}, errors.New("materialized view log id is invalid")
@@ -277,6 +278,51 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}
 	nextPurge = mvsUnix(rows[0].GetInt64(0), 0)
 	return nextPurge, nil
+}
+
+// GetCurrentTSO fetches current cluster TSO from TiDB.
+func (*serviceHelper) GetCurrentTSO(_ context.Context, sysSessionPool basic.SessionPool) (uint64, error) {
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return 0, err
+	}
+	defer sysSessionPool.Put(se)
+	sctx := se.(sessionctx.Context)
+	store := sctx.GetStore()
+	if store == nil {
+		return 0, errors.New("get current tso failed: store is nil")
+	}
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return 0, err
+	}
+	if ver.Ver == 0 {
+		return 0, errors.New("get current tso failed: invalid version")
+	}
+	return ver.Ver, nil
+}
+
+// PurgeMVHistoryBeforeTSO removes old records from MV history tables.
+func (*serviceHelper) PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, currentTSO uint64, retention time.Duration) error {
+	const (
+		deleteMVRefreshHistSQL  = `DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %?`
+		deleteMVLogPurgeHistSQL = `DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %?`
+	)
+
+	cutoffTSO := currentTSO
+	if retention > 0 {
+		cutoffPhysical := max(oracle.ExtractPhysical(currentTSO)-int64(retention/time.Millisecond), 0)
+		cutoffTSO = oracle.ComposeTS(cutoffPhysical, 0)
+	}
+
+	params := []any{cutoffTSO}
+	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVRefreshHistSQL, params); err != nil {
+		return err
+	}
+	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVLogPurgeHistSQL, params); err != nil {
+		return err
+	}
+	return nil
 }
 
 // fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
@@ -349,7 +395,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 		return nil, err
 	}
 	defer sysSessionPool.Put(se)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	return execRCRestrictedSQL(ctx, se.(sessionctx.Context), sql, params)
 }
 
@@ -390,6 +436,11 @@ func RegisterMVService(
 	}
 
 	cfg := DefaultMVServiceConfig()
+	cfg.TaskBackpressure = TaskBackpressureConfig{
+		CPUThreshold: defaultBackpressureCPUThreshold,
+		MemThreshold: defaultBackpressureMemThreshold,
+		Delay:        defaultTaskBackpressureDelay,
+	}
 	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
 	mvService.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
 

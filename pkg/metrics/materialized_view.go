@@ -18,6 +18,23 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	mvMetricRunEventTaskExecSubmitted = "exec_submitted"
+	mvMetricRunEventTaskExecFinished  = "exec_finished"
+	mvMetricRunEventTaskExecFailed    = "exec_failed"
+	mvMetricRunEventTaskExecTimeout   = "exec_timeout"
+	mvMetricRunEventTaskExecRejected  = "exec_rejected"
+
+	mvMetricTaskStatusTaskExecRunning         = "exec_running"
+	mvMetricTaskStatusTaskExecWaiting         = "exec_waiting"
+	mvMetricTaskStatusTaskExecTimedOutRunning = "exec_timed_out_running"
+
+	mvMetricTaskStatusMVTotal       = "mv_total"
+	mvMetricTaskStatusMVLogTotal    = "mvlog_total"
+	mvMetricTaskStatusMVRefreshRun  = "mv_refresh_running"
+	mvMetricTaskStatusMVLogPurgeRun = "mvlog_purge_running"
+)
+
 // Metrics for materialized view service.
 var (
 	MVServiceTaskStatusGaugeVec *prometheus.GaugeVec
@@ -27,7 +44,7 @@ var (
 	MVServiceRunEventCounterVec *prometheus.CounterVec
 
 	MVTaskExecutorSubmittedCounter prometheus.Counter
-	MVTaskExecutorCompletedCounter prometheus.Counter
+	MVTaskExecutorFinishedCounter  prometheus.Counter
 	MVTaskExecutorFailedCounter    prometheus.Counter
 	MVTaskExecutorTimeoutCounter   prometheus.Counter
 	MVTaskExecutorRejectedCounter  prometheus.Counter
@@ -49,7 +66,7 @@ func InitMVMetrics() {
 			Namespace: "tidb",
 			Subsystem: "mv",
 			Name:      "service_task_status",
-			Help:      "Number of MV service and task executor tasks by status.",
+			Help:      "Number of MV service and task executor tasks by status and role.",
 		}, []string{LblType})
 
 	MVServiceOperationDurationHistogramVec = NewHistogramVec(
@@ -66,20 +83,20 @@ func InitMVMetrics() {
 			Namespace: "tidb",
 			Subsystem: "mv",
 			Name:      "service_run_event_total",
-			Help:      "Counter of MV service and task executor events.",
+			Help:      "Counter of MV service scheduler and task executor events.",
 		}, []string{LblType})
 
-	MVTaskExecutorSubmittedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_submitted")
-	MVTaskExecutorCompletedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_completed")
-	MVTaskExecutorFailedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_failed")
-	MVTaskExecutorTimeoutCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_timeout")
-	MVTaskExecutorRejectedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_rejected")
-	MVTaskExecutorRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("running")
-	MVTaskExecutorWaitingTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("waiting")
-	MVTaskExecutorTimedOutRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("timed_out_running")
+	MVTaskExecutorSubmittedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecSubmitted)
+	MVTaskExecutorFinishedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecFinished)
+	MVTaskExecutorFailedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecFailed)
+	MVTaskExecutorTimeoutCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecTimeout)
+	MVTaskExecutorRejectedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecRejected)
+	MVTaskExecutorRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecRunning)
+	MVTaskExecutorWaitingTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecWaiting)
+	MVTaskExecutorTimedOutRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecTimedOutRunning)
 
-	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mv_total")
-	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mvlog_total")
-	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mv_refresh_running")
-	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mvlog_purge_running")
+	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVTotal)
+	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogTotal)
+	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshRun)
+	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogPurgeRun)
 }

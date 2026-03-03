@@ -33,7 +33,7 @@ func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current 
 func (h *serviceHelper) reportMetrics(s *MVService) {
 	// Executor metrics
 	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, s.executor.metrics.counters.submittedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorCompletedCounter, &h.reportCache.completedCount, s.executor.metrics.counters.completedCount.Load())
+	reportCounterDelta(tidbmetrics.MVTaskExecutorFinishedCounter, &h.reportCache.finishedCount, s.executor.metrics.counters.finishedCount.Load())
 	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &h.reportCache.failedCount, s.executor.metrics.counters.failedCount.Load())
 	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &h.reportCache.timeoutCount, s.executor.metrics.counters.timeoutCount.Load())
 	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &h.reportCache.rejectedCount, s.executor.metrics.counters.rejectedCount.Load())

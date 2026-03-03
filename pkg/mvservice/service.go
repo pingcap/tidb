@@ -48,10 +48,10 @@ type Helper interface {
 
 // MVService is the in-memory scheduler and executor for MV refresh/purge tasks.
 type MVService struct {
-	sysSessionPool basic.SessionPool
-	lastRefresh    atomic.Int64
-	ctx            context.Context
-	sch            *ServerConsistentHash
+	sysSessionPool      basic.SessionPool
+	lastMetaFetchMillis atomic.Int64
+	ctx                 context.Context
+	sch                 *ServerConsistentHash
 
 	executor *TaskExecutor
 	notifier Notifier
@@ -59,14 +59,17 @@ type MVService struct {
 
 	mh Helper
 
-	fetchInterval         time.Duration
-	basicInterval         time.Duration
-	serverRefreshInterval time.Duration
+	fetchInterval            time.Duration
+	basicInterval            time.Duration
+	serverRefreshInterval    time.Duration
+	historyGCIntervalMillis  atomic.Int64
+	historyGCRetentionMillis atomic.Int64
+	lastHistoryGCMillis      atomic.Int64
 
-	retryBaseDelayNanos atomic.Int64
-	retryMaxDelayNanos  atomic.Int64
-	backpressureMu      sync.RWMutex
-	backpressureCfg     TaskBackpressureConfig
+	retryBaseDelayMillis atomic.Int64
+	retryMaxDelayMillis  atomic.Int64
+	backpressureMu       sync.RWMutex
+	backpressureCfg      TaskBackpressureConfig
 
 	metrics struct {
 		mvCount                atomic.Int64
@@ -92,6 +95,8 @@ const (
 	defaultMVFetchInterval       = 30 * time.Second
 	defaultMVBasicInterval       = time.Second
 	defaultServerRefreshInterval = 5 * time.Second
+	defaultMVHistoryGCInterval   = time.Hour
+	defaultMVHistoryGCRetention  = 7 * 24 * time.Hour
 	defaultMVTaskRetryBase       = 10 * time.Second
 	defaultMVTaskRetryMax        = 120 * time.Second
 	maxNextScheduleTs            = 9e18
@@ -103,6 +108,8 @@ const (
 
 	mvFetchTypeMLogPurge    = "fetch_mlog"
 	mvFetchTypeMViewRefresh = "fetch_mviews"
+
+	mvTaskDurationTypeHistoryGC = "history_gc"
 
 	mvDurationResultSuccess = "success"
 	mvDurationResultFailed  = "failed"
@@ -117,6 +124,9 @@ const (
 	mvRunEventFetchMLogErr       = "fetch_mlog_error"
 	mvRunEventFetchMViewOK       = "fetch_mviews_ok"
 	mvRunEventFetchMViewErr      = "fetch_mviews_error"
+	mvRunEventHistoryGCGetTSOErr = "history_gc_get_tso_error"
+
+	mvHistoryGCOwnerKey = "mv-history-gc"
 )
 
 type mv struct {
@@ -280,8 +290,8 @@ func (t *MVService) runtimeLogFields() []zap.Field {
 		zap.Int64("executor_running_count", t.executor.metrics.gauges.runningCount.Load()),
 		zap.Int64("executor_waiting_count", t.executor.metrics.gauges.waitingCount.Load()),
 	}
-	if lastRefreshTS := t.lastRefresh.Load(); lastRefreshTS > 0 {
-		fields = append(fields, zap.Time("last_refresh_time", mvsUnixMilli(lastRefreshTS)))
+	if lastMetaFetchTS := t.lastMetaFetchMillis.Load(); lastMetaFetchTS > 0 {
+		fields = append(fields, zap.Time("last_meta_fetch_time", mvsUnixMilli(lastMetaFetchTS)))
 	}
 	return fields
 }
@@ -551,7 +561,7 @@ func (t *MVService) fetchAllMVMeta() error {
 	t.buildMVLogPurgeTasks(newMLogPending)
 	t.buildMVRefreshTasks(newMViewPending)
 
-	t.lastRefresh.Store(mvsNow().UnixMilli())
+	t.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
 	return nil
 }
 
@@ -567,6 +577,44 @@ func resetTimer(timer *mvsTimer, delay time.Duration) {
 		}
 	}
 	timer.Reset(delay)
+}
+
+func (t *MVService) maybeGCOperationHistory(now time.Time) {
+	historyGCInterval, historyGCRetention := t.GetHistoryGCConfig()
+	nowMillis := now.UnixMilli()
+	lastMillis := t.lastHistoryGCMillis.Load()
+	if lastMillis > 0 && nowMillis-lastMillis < historyGCInterval.Milliseconds() {
+		return
+	}
+	if !t.sch.AvailableString(mvHistoryGCOwnerKey) {
+		return
+	}
+	// Throttle retries by interval even when GC fails.
+	t.lastHistoryGCMillis.Store(nowMillis)
+	startAt := mvsNow()
+	result := mvDurationResultSuccess
+	defer func() {
+		t.mh.observeTaskDuration(mvTaskDurationTypeHistoryGC, result, mvsSince(startAt))
+	}()
+
+	currentTSO, err := t.mh.GetCurrentTSO(t.ctx, t.sysSessionPool)
+	if err != nil {
+		result = mvDurationResultFailed
+		t.mh.observeRunEvent(mvRunEventHistoryGCGetTSOErr)
+		fields := append(t.runtimeLogFields(), zap.Error(err))
+		logutil.BgLogger().Warn("get current tso failed when GC MV/MVLOG operation history", fields...)
+		return
+	}
+	if err := t.mh.PurgeMVHistoryBeforeTSO(t.ctx, t.sysSessionPool, currentTSO, historyGCRetention); err != nil {
+		result = mvDurationResultFailed
+		fields := append(t.runtimeLogFields(),
+			zap.Uint64("current_tso", currentTSO),
+			zap.Duration("history_gc_retention", historyGCRetention),
+			zap.Error(err),
+		)
+		logutil.BgLogger().Warn("GC MV/MVLOG operation history failed", fields...)
+		return
+	}
 }
 
 // NotifyDDLChange marks MV metadata as dirty and wakes the service loop.
@@ -591,11 +639,11 @@ func (t *MVService) Run() {
 	}
 	t.executor.Run()
 	timer := mvsNewTimer(0)
-	metricTimer := mvsNewTimer(t.basicInterval)
+	maintenanceTimer := mvsNewTimer(t.basicInterval)
 
 	defer func() {
 		timer.Stop()
-		metricTimer.Stop()
+		maintenanceTimer.Stop()
 		t.executor.Close()
 		t.mh.reportMetrics(t)
 	}()
@@ -603,11 +651,11 @@ func (t *MVService) Run() {
 	lastSrvRefresh := time.Time{}
 	for {
 		ddlDirty := false
+		maintenanceTick := false
 		select {
 		case <-timer.C:
-		case <-metricTimer.C:
-			t.mh.reportMetrics(t)
-			resetTimer(metricTimer, t.basicInterval)
+		case <-maintenanceTimer.C:
+			maintenanceTick = true
 		case <-t.notifier.C:
 			t.notifier.clear()
 			ddlDirty = t.ddlDirty.Swap(false)
@@ -616,6 +664,11 @@ func (t *MVService) Run() {
 		}
 
 		now := mvsNow()
+		if maintenanceTick {
+			t.mh.reportMetrics(t)
+			t.maybeGCOperationHistory(now)
+			resetTimer(maintenanceTimer, t.basicInterval)
+		}
 
 		if now.Sub(lastSrvRefresh) >= t.serverRefreshInterval {
 			if err := t.sch.refresh(); err != nil {
@@ -636,7 +689,7 @@ func (t *MVService) Run() {
 			if needFetch {
 				t.mh.observeRunEvent(mvRunEventFetchByInterval)
 			}
-			// Fetch metadata on demand; errors are throttled via lastRefresh update below.
+			// Fetch metadata on demand; errors are throttled via lastMetaFetchMillis update below.
 			if err := t.fetchAllMVMeta(); err != nil {
 				fields := append(t.runtimeLogFields(),
 					zap.Bool("ddl_dirty", ddlDirty),
@@ -660,10 +713,10 @@ func (t *MVService) Run() {
 	}
 }
 
-// markFetchFailure records a synthetic lastRefresh to control next fetch time.
+// markFetchFailure records a synthetic lastMetaFetchMillis to control next fetch time.
 func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
 	if !ddlTriggered {
-		t.lastRefresh.Store(now.UnixMilli())
+		t.lastMetaFetchMillis.Store(now.UnixMilli())
 		return
 	}
 
@@ -674,13 +727,13 @@ func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
 	if retryDelay > t.fetchInterval {
 		retryDelay = t.fetchInterval
 	}
-	// next fetch time = lastRefresh + fetchInterval = now + retryDelay
-	t.lastRefresh.Store(now.Add(retryDelay - t.fetchInterval).UnixMilli())
+	// next fetch time = lastMetaFetchMillis + fetchInterval = now + retryDelay
+	t.lastMetaFetchMillis.Store(now.Add(retryDelay - t.fetchInterval).UnixMilli())
 }
 
 // shouldFetchMVMeta reports whether a periodic metadata refresh is due.
 func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
-	last := t.lastRefresh.Load()
+	last := t.lastMetaFetchMillis.Load()
 	if last == 0 {
 		return true
 	}
@@ -689,7 +742,7 @@ func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
 
 // nextFetchTime returns the next periodic metadata refresh time.
 func (t *MVService) nextFetchTime(now time.Time) time.Time {
-	last := t.lastRefresh.Load()
+	last := t.lastMetaFetchMillis.Load()
 	if last == 0 {
 		return now
 	}
