@@ -382,7 +382,7 @@ func NewExtraCommitTSColInfo() *ColumnInfo {
 		Name: ExtraCommitTSName,
 	}
 	colInfo.SetType(mysql.TypeLonglong)
-	colInfo.SetFlag(mysql.UnsignedFlag)
+	colInfo.SetFlag(colInfo.GetFlag() | mysql.UnsignedFlag)
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
