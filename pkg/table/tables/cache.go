@@ -40,8 +40,9 @@ var (
 
 type cachedTable struct {
 	TableCommon
-	cacheData atomic.Pointer[cacheData]
-	totalSize int64
+	cacheData   atomic.Pointer[cacheData]
+	resultCache atomic.Pointer[resultSetCache]
+	totalSize   int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
 }
@@ -301,6 +302,25 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		TestMockRenewLeaseABA2 <- struct{}{}
 	})
+}
+
+func (c *cachedTable) getResultCache() *resultSetCache {
+	return c.resultCache.Load()
+}
+
+func (c *cachedTable) getOrCreateResultCache() *resultSetCache {
+	if rc := c.resultCache.Load(); rc != nil {
+		return rc
+	}
+	rc := newResultSetCache()
+	if c.resultCache.CompareAndSwap(nil, rc) {
+		return rc
+	}
+	return c.resultCache.Load()
+}
+
+func (c *cachedTable) invalidateResultCache() {
+	c.resultCache.Store(nil)
 }
 
 const cacheTableWriteLease = 5 * time.Second
