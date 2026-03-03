@@ -206,6 +206,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 		return
 	}
 	if succ {
+		c.invalidateResultCache() // Data is about to be reloaded, old result sets are stale.
 		c.cacheData.Store(&cacheData{
 			Start:     ts,
 			Lease:     lease,
@@ -289,6 +290,7 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 		if !kv.IsTxnRetryableError(err) {
 			log.Warn("Renew read lease error", zap.Error(err))
 		}
+		c.invalidateResultCache() // Renewal failed, data may have changed.
 		return
 	}
 	if newLease > 0 {
@@ -297,6 +299,8 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 			Lease:     newLease,
 			MemBuffer: data.MemBuffer,
 		})
+	} else {
+		c.invalidateResultCache() // Lease not renewed, data may have changed.
 	}
 
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
@@ -370,6 +374,6 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 func (c *cachedTable) lockForWrite(ctx context.Context) (uint64, error) {
 	handle := c.TakeStateRemoteHandle()
 	defer c.PutStateRemoteHandle(handle)
-
+	c.invalidateResultCache() // Write incoming, result cache is no longer valid.
 	return handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
 }
