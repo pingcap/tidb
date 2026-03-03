@@ -17,7 +17,6 @@ package mvdeltamergeagg
 import (
 	"context"
 	"math/bits"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/table"
@@ -164,21 +163,29 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 		return nil
 	}
 
-	validateStart := time.Now()
 	if err := w.validateChunkResult(result); err != nil {
 		return err
 	}
-	stats.validateTime += time.Since(validateStart)
 
-	getTxnStart := time.Now()
 	txn, err := w.exec.Ctx().Txn(true)
 	if err != nil {
 		return err
 	}
-	stats.getTxnTime += time.Since(getTxnStart)
 
 	tableCtx := w.exec.Ctx().GetTableCtx()
 	stmtCtx := w.exec.Ctx().GetSessionVars().StmtCtx
+	sessVars := w.exec.Ctx().GetSessionVars()
+	insertSizeHintStep := int(sessVars.ShardAllocateStep)
+	if insertSizeHintStep <= 0 {
+		insertSizeHintStep = 1
+	}
+	insertRemain := 0
+	for _, op := range result.RowOps {
+		if op.Tp == RowOpInsert {
+			insertRemain++
+		}
+	}
+	insertOrdinal := 0
 
 	for _, op := range result.RowOps {
 		switch op.Tp {
@@ -187,66 +194,61 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 			continue
 		case RowOpInsert:
 			stats.insertRows++
-			buildStart := time.Now()
 			w.buildInsertRow(result, op.RowIdx)
-			stats.buildInsertTime += time.Since(buildStart)
 
-			addStart := time.Now()
-			_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow, table.DupKeyCheckLazy)
+			sizeHint := 0
+			if insertOrdinal%insertSizeHintStep == 0 {
+				sizeHint = min(insertSizeHintStep, insertRemain)
+			}
+			insertOrdinal++
+			insertRemain--
+			if sizeHint > 0 {
+				_, err = w.exec.TargetTable.AddRecord(
+					tableCtx,
+					txn,
+					w.newRow,
+					table.WithReserveAutoIDHint(sizeHint),
+					table.DupKeyCheckLazy,
+				)
+			} else {
+				_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow, table.DupKeyCheckLazy)
+			}
 			if err != nil {
 				return err
 			}
-			stats.addRecordTime += time.Since(addStart)
 		case RowOpUpdate:
 			stats.updateRows++
-			buildUpdateStart := time.Now()
 			w.buildUpdateRows(result, op.RowIdx)
-			stats.buildUpdateTime += time.Since(buildUpdateStart)
 
 			updateOrdinal := int(op.updateOrdinal)
-			buildTouchedStart := time.Now()
 			w.buildTouchedFromBitmap(result.UpdateTouchedBitmap, result.UpdateTouchedStride, updateOrdinal)
-			stats.buildTouchedTime += time.Since(buildTouchedStart)
 
-			handleStart := time.Now()
 			handle, err := w.exec.TargetHandleCols.BuildHandle(stmtCtx, result.Input.GetRow(op.RowIdx))
-			stats.buildHandleTime += time.Since(handleStart)
 			if err != nil {
 				return err
 			}
 
-			updateRecordStart := time.Now()
 			if err := w.exec.TargetTable.UpdateRecord(tableCtx, txn, handle, w.oldRow, w.newRow, w.touched); err != nil {
 				return err
 			}
-			stats.updateRecordTime += time.Since(updateRecordStart)
 		case RowOpDelete:
 			stats.deleteRows++
-			buildDeleteStart := time.Now()
 			w.buildDeleteRow(result, op.RowIdx)
-			stats.buildDeleteTime += time.Since(buildDeleteStart)
 
-			handleStart := time.Now()
 			handle, err := w.exec.TargetHandleCols.BuildHandle(stmtCtx, result.Input.GetRow(op.RowIdx))
-			stats.buildHandleTime += time.Since(handleStart)
 			if err != nil {
 				return err
 			}
 
-			removeStart := time.Now()
 			if err := w.exec.TargetTable.RemoveRecord(tableCtx, txn, handle, w.oldRow); err != nil {
 				return err
 			}
-			stats.removeRecordTime += time.Since(removeStart)
 		default:
 			return errors.Errorf("unknown MVDeltaMergeAgg row op %d", op.Tp)
 		}
 	}
 
-	mayFlushStart := time.Now()
-	err = txn.MayFlush()
-	stats.mayFlushTime += time.Since(mayFlushStart)
-	return err
+	return txn.MayFlush()
 }
 
 func (w *tableResultWriter) validateChunkResult(result *ChunkResult) error {

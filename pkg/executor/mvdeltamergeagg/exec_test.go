@@ -1196,13 +1196,11 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 		writerTime:      4 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
 		writerDetail: mvDeltaMergeAggWriterStats{
-			chunks:           1,
-			rowOps:           10,
-			insertRows:       3,
-			updateRows:       5,
-			deleteRows:       2,
-			getTxnTime:       2 * time.Millisecond,
-			updateRecordTime: 6 * time.Millisecond,
+			chunks:     1,
+			rowOps:     10,
+			insertRows: 3,
+			updateRows: 5,
+			deleteRows: 2,
 		},
 	})
 	right := newMVDeltaMergeAggRuntimeStats(3)
@@ -1211,13 +1209,11 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 		writerTime:      1 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},
 		writerDetail: mvDeltaMergeAggWriterStats{
-			chunks:           2,
-			rowOps:           7,
-			insertRows:       1,
-			updateRows:       4,
-			deleteRows:       2,
-			getTxnTime:       1 * time.Millisecond,
-			updateRecordTime: 3 * time.Millisecond,
+			chunks:     2,
+			rowOps:     7,
+			insertRows: 1,
+			updateRows: 4,
+			deleteRows: 2,
 		},
 	})
 
@@ -1234,8 +1230,6 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 	require.Equal(t, int64(4), left.writerDetail.insertRows)
 	require.Equal(t, int64(9), left.writerDetail.updateRows)
 	require.Equal(t, int64(4), left.writerDetail.deleteRows)
-	require.Equal(t, 3*time.Millisecond, left.writerDetail.getTxnTime)
-	require.Equal(t, 9*time.Millisecond, left.writerDetail.updateRecordTime)
 
 	cloned, ok := left.Clone().(*mvDeltaMergeAggRuntimeStats)
 	require.True(t, ok)

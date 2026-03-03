@@ -217,18 +217,6 @@ type mvDeltaMergeAggWriterStats struct {
 	insertRows int64
 	updateRows int64
 	deleteRows int64
-
-	validateTime     time.Duration
-	getTxnTime       time.Duration
-	buildInsertTime  time.Duration
-	buildUpdateTime  time.Duration
-	buildDeleteTime  time.Duration
-	buildTouchedTime time.Duration
-	buildHandleTime  time.Duration
-	addRecordTime    time.Duration
-	updateRecordTime time.Duration
-	removeRecordTime time.Duration
-	mayFlushTime     time.Duration
 }
 
 func (s *mvDeltaMergeAggWriterStats) merge(other mvDeltaMergeAggWriterStats) {
@@ -238,18 +226,6 @@ func (s *mvDeltaMergeAggWriterStats) merge(other mvDeltaMergeAggWriterStats) {
 	s.insertRows += other.insertRows
 	s.updateRows += other.updateRows
 	s.deleteRows += other.deleteRows
-
-	s.validateTime += other.validateTime
-	s.getTxnTime += other.getTxnTime
-	s.buildInsertTime += other.buildInsertTime
-	s.buildUpdateTime += other.buildUpdateTime
-	s.buildDeleteTime += other.buildDeleteTime
-	s.buildTouchedTime += other.buildTouchedTime
-	s.buildHandleTime += other.buildHandleTime
-	s.addRecordTime += other.addRecordTime
-	s.updateRecordTime += other.updateRecordTime
-	s.removeRecordTime += other.removeRecordTime
-	s.mayFlushTime += other.mayFlushTime
 }
 
 func newMVDeltaMergeAggRuntimeStats(workerCnt int) *mvDeltaMergeAggRuntimeStats {
@@ -339,30 +315,6 @@ func (s *mvDeltaMergeAggRuntimeStats) String() string {
 	buf.WriteString(", noop:")
 	buf.WriteString(strconv.FormatInt(s.writerDetail.noopRows, 10))
 	buf.WriteString("}")
-	buf.WriteString(", validate:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.validateTime))
-	buf.WriteString(", get_txn:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.getTxnTime))
-	buf.WriteString(", build_row:{insert:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildInsertTime))
-	buf.WriteString(", update:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildUpdateTime))
-	buf.WriteString(", delete:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildDeleteTime))
-	buf.WriteString("}")
-	buf.WriteString(", build_touched:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildTouchedTime))
-	buf.WriteString(", build_handle:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildHandleTime))
-	buf.WriteString(", dml:{insert:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.addRecordTime))
-	buf.WriteString(", update:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.updateRecordTime))
-	buf.WriteString(", delete:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.removeRecordTime))
-	buf.WriteString("}")
-	buf.WriteString(", may_flush:")
-	buf.WriteString(execdetails.FormatDuration(s.writerDetail.mayFlushTime))
 	buf.WriteString("}")
 	buf.WriteString("}")
 	return buf.String()
