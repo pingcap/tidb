@@ -67,7 +67,6 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		ranges = ranger.FullIntRange(false)
 	}
 
-	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
 	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
 	// are derived from sample data processed within TiDB.
@@ -101,7 +100,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	keepSamplesForGlobal := e.tableID.IsPartitionTable() &&
 		e.ctx.GetSessionVars().EnableSampleBasedGlobalStats &&
 		variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-	count, hists, topNs, fmSketches, extStats, rootCollector, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency, keepSamplesForGlobal)
+	count, hists, topNs, fmSketches, rootCollector, err := e.buildSamplingStats(gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency, keepSamplesForGlobal)
 	if err != nil {
 		if e.memTracker != nil {
 			e.memTracker.Release(e.memTracker.BytesConsumed())
@@ -136,7 +135,6 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		StatsVer:      e.StatsVersion,
 		Count:         count,
 		Snapshot:      e.snapshot,
-		ExtStats:      extStats,
 		BaseCount:     e.baseCount,
 		BaseModifyCnt: e.baseModifyCnt,
 		RowCollector:  rootCollector,
@@ -212,7 +210,6 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	gp *gp.Pool,
 	ranges []*ranger.Range,
-	needExtStats bool,
 	indexesWithVirtualColOffsets []int,
 	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
 	samplingStatsConcurrency int,
@@ -222,13 +219,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	hists []*statistics.Histogram,
 	topns []*statistics.TopN,
 	fmSketches []*statistics.FMSketch,
-	extStats *statistics.ExtendedStatsColl,
 	rootCollector statistics.RowSampleCollector,
 	err error,
 ) {
 	// Open memory tracker and resultHandler.
 	if err = e.open(ranges); err != nil {
-		return 0, nil, nil, nil, nil, nil, err
+		return 0, nil, nil, nil, nil, err
 	}
 	defer func() {
 		if err1 := e.resultHandler.Close(); err1 != nil {
@@ -306,7 +302,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		if err1 := mergeEg.Wait(); err1 != nil {
 			err = stderrors.Join(err, err1)
 		}
-		return 0, nil, nil, nil, nil, nil, getAnalyzePanicErr(err)
+		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
 	}
 	err = mergeEg.Wait()
 	rootCollectorMemSize := rootRowCollector.Base().MemSize
@@ -316,7 +312,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}
 	}()
 	if err != nil {
-		return 0, nil, nil, nil, nil, nil, err
+		return 0, nil, nil, nil, nil, err
 	}
 
 	// Decode the data from sample collectors.
@@ -329,7 +325,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}
 		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, e.schemaForVirtualColEval)
 		if err != nil {
-			return 0, nil, nil, nil, nil, nil, err
+			return 0, nil, nil, nil, nil, err
 		}
 	} else {
 		// If there's no virtual column, normal decode way is enough.
@@ -337,7 +333,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
 				if err != nil {
-					return 0, nil, nil, nil, nil, nil, err
+					return 0, nil, nil, nil, nil, err
 				}
 			}
 		}
@@ -347,7 +343,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for _, sample := range rootRowCollector.Base().Samples {
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
 		if err != nil {
-			return 0, nil, nil, nil, nil, nil, err
+			return 0, nil, nil, nil, nil, err
 		}
 	}
 	colLen := len(e.colsInfo)
@@ -393,7 +389,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	if indexPushedDownResult.err != nil {
 		close(exitCh)
 		e.samplingBuilderWg.Wait()
-		return 0, nil, nil, nil, nil, nil, indexPushedDownResult.err
+		return 0, nil, nil, nil, nil, indexPushedDownResult.err
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
 		ret := indexPushedDownResult.results[e.indexes[offset].ID]
@@ -438,16 +434,10 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		e.memTracker.Release(totalSampleCollectorSize)
 	}()
 	if err != nil {
-		return 0, nil, nil, nil, nil, nil, err
+		return 0, nil, nil, nil, nil, err
 	}
 
 	count = rootRowCollector.Base().Count
-	if needExtStats {
-		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
-		if err != nil {
-			return 0, nil, nil, nil, nil, nil, err
-		}
-	}
 
 	if keepRootCollector {
 		rootCollector = rootRowCollector
@@ -860,7 +850,7 @@ workLoop:
 					numTopN = 0
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()

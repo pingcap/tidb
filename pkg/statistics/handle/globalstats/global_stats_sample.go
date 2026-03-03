@@ -73,7 +73,7 @@ func buildGlobalColumnStatsFromSamples(
 			continue
 		}
 		sc := buildColumnSampleCollector(collector, i, col)
-		hist, topn, err := statistics.BuildHistAndTopN(ctx, numBuckets, numTopN, col.ID, sc, &col.FieldType, true, nil, false)
+		hist, topn, err := statistics.BuildHistAndTopN(ctx, numBuckets, numTopN, col.ID, sc, &col.FieldType, true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func buildGlobalIndexStatsFromSamples(
 		idx := indexes[idxOffset]
 		fmSketchIdx := sampleColCount + idxOffset
 		sc := buildIndexSampleCollector(collector, colsInfo, idx, fmSketchIdx, ctx)
-		hist, topn, err := statistics.BuildHistAndTopN(ctx, numBuckets, numTopN, idx.ID, sc, types.NewFieldType(mysql.TypeBlob), false, nil, false)
+		hist, topn, err := statistics.BuildHistAndTopN(ctx, numBuckets, numTopN, idx.ID, sc, types.NewFieldType(mysql.TypeBlob), false, nil)
 		if err != nil {
 			return nil, err
 		}

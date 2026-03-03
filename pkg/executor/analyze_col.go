@@ -161,15 +161,14 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
+func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, err error) {
 	if err = e.open(ranges); err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	defer func() {
 		if err1 := e.resultHandler.Close(); err1 != nil {
 			hists = nil
 			cms = nil
-			extStats = nil
 			err = err1
 		}
 	}()
@@ -206,14 +205,14 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			}
 		})
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
 			time.Sleep(1000 * time.Second)
 		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
-			return nil, nil, nil, nil, nil, err1
+			return nil, nil, nil, nil, err1
 		}
 		if data == nil {
 			break
@@ -223,7 +222,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			resp := &tipb.AnalyzeMixedResp{}
 			err = resp.Unmarshal(data)
 			if err != nil {
-				return nil, nil, nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			colResp = resp.ColumnsResp
 			handleHist, handleCms, handleFms, handleTopn, err = updateIndexResult(e.ctx, resp.IndexResp, nil, handleHist,
@@ -231,7 +230,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 				int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
 
 			if err != nil {
-				return nil, nil, nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 		} else {
 			colResp = &tipb.AnalyzeColumnsResp{}
@@ -244,7 +243,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			rowCount = int64(respHist.TotalRowCount())
 			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
 			if err != nil {
-				return nil, nil, nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 		}
 		for i, rc := range colResp.Collectors {
@@ -260,7 +259,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		pkHist.ID = pkInfo.ID
 		err = pkHist.DecodeTo(pkInfo.RetType, timeZone)
 		if err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)
@@ -272,7 +271,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
 			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
 			if err != nil {
-				return nil, nil, nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			topNs = append(topNs, collectors[i].TopN)
 		}
@@ -280,7 +279,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			s.Ordinal = j
 			tmp, err := tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
-				return nil, nil, nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			s.Value = &tmp
 			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
@@ -299,22 +298,16 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset) {
 				numTopN = 0
 			}
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		hists = append(hists, hg)
 		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 		fms = append(fms, collectors[i].FMSketch)
-	}
-	if needExtStats {
-		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, collectors)
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
 	}
 	if handleHist != nil {
 		handleHist.ID = e.commonHandle.ID
@@ -329,7 +322,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		fms = append([]*statistics.FMSketch{handleFms}, fms...)
 		topNs = append([]*statistics.TopN{handleTopn}, topNs...)
 	}
-	return hists, cms, topNs, fms, extStats, nil
+	return hists, cms, topNs, fms, nil
 }
 
 // AnalyzeColumnsExecV1 is used to maintain v1 analyze process
@@ -348,8 +341,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
-	hists, cms, topNs, fms, extStats, err := e.buildStats(ranges, collExtStats)
+	hists, cms, topNs, fms, err := e.buildStats(ranges)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
@@ -370,7 +362,6 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		return &statistics.AnalyzeResults{
 			TableID:  e.tableID,
 			Ars:      []*statistics.AnalyzeResult{pkResult, restResult},
-			ExtStats: extStats,
 			Job:      e.job,
 			StatsVer: e.StatsVersion,
 			Count:    int64(pkResult.Hist[0].TotalRowCount()),
@@ -406,7 +397,6 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		Ars:      ars,
 		Job:      e.job,
 		StatsVer: e.StatsVersion,
-		ExtStats: extStats,
 		Count:    cnt,
 		Snapshot: e.snapshot,
 	}

@@ -76,9 +76,7 @@ type AnalyzeResult struct {
 
 // DestroyAndPutToPool destroys the result and put it to the pool.
 func (a *AnalyzeResult) DestroyAndPutToPool() {
-	for _, f := range a.Fms {
-		f.DestroyAndPutToPool()
-	}
+	a.Fms = nil // Release for GC.
 	for _, h := range a.Hist {
 		h.DestroyAndPutToPool()
 	}
@@ -96,7 +94,6 @@ type AnalyzeResults struct {
 	// during global stats merge, memory must be released through this tracker
 	// (not the parent stmt tracker) to keep the accounting consistent.
 	MemTracker *memory.Tracker
-	ExtStats   *ExtendedStatsColl
 	Job        *AnalyzeJob
 	// Ars: combine the analyze result of all columns and the analyze result of indexes.
 	// (In stats version2)
