@@ -721,15 +721,16 @@ func TestIndexEqualUnknown(t *testing.T) {
 	})
 }
 
-func TestLimitIndexEstimation(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
-		tk.MustExec("set session tidb_enable_extended_stats = on")
+func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists mp, ab")
+		testKit.MustExec("CREATE TABLE mp (\n  col1 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,\n  col2 BIGINT NOT NULL DEFAULT '0',\n  col3 INT UNSIGNED NOT NULL DEFAULT '0',\n  col4 INT UNSIGNED NOT NULL DEFAULT '0',\n  col5 VARCHAR(30) NOT NULL DEFAULT '',\n  col6 VARCHAR(64) NOT NULL DEFAULT '',\n  col7 int unsigned NOT NULL DEFAULT '0',\n  PRIMARY KEY (col1),\n  KEY `idx_1` (`col2`,`col6`,`col7`),\n  KEY `idx_2`(`col3`, `col5`, `col6`, `col4`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		testKit.MustExec("CREATE TABLE ab (\n  col1 BIGINT NOT NULL,\n  col2 VARCHAR(64) NOT NULL,\n  col3 VARCHAR(60) NOT NULL,\n  PRIMARY KEY (col1),\n  UNIQUE KEY idx_1 (col3, col2)\n)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 		// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
 		// these 2 columns are strictly correlated in reverse order.
-		require.NoError(t, testkit.LoadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom))
+		require.NoError(t, testkit.LoadTableStats("ab.simplified.json", dom))
+		require.NoError(t, testkit.LoadTableStats("mp.simplified.json", dom))
 		var input []string
 		var output []struct {
 			SQL  string
@@ -741,9 +742,9 @@ func TestLimitIndexEstimation(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 			})
-			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }

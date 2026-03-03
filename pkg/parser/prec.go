@@ -1,0 +1,139 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package parser implements a hand-written recursive descent SQL parser
+// that produces MySQL-compatible ASTs.
+//
+// It wraps the existing Scanner/lexer and produces ast.StmtNode values
+// compatible with the existing TiDB query pipeline.
+package parser
+
+import (
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+)
+
+// Token is an alias for parser.Token. All token values flow through this type
+// from the Scanner into the hand-written parser's ring buffer (LexerBridge).
+
+// EOF is the token type returned at end of input.
+const EOF = 0
+
+// Precedence levels for the Pratt expression parser.
+// Higher number = tighter binding.
+//
+//	bool_pri → comp_op predicate   (precComparison for =, >=, etc.)
+//	predicate → LIKE/IN/BETWEEN/REGEXP/IS   (precPredicate)
+//	bit_expr → |, &, <<, >>, +, -, *, /, etc.
+const (
+	precNone       = 0
+	precOr         = 1  // OR, ||
+	precXor        = 2  // XOR
+	precAnd        = 3  // AND, &&
+	precNot        = 4  // NOT (prefix only)
+	precComparison = 5  // =, <=>, >=, >, <=, <, !=, <>
+	precPredicate  = 6  // LIKE, IN, BETWEEN, REGEXP (predicate level in MySQL grammar; IS is at precComparison)
+	precBitOr      = 7  // |
+	precBitAnd     = 8  // &
+	precShift      = 9  // <<, >>
+	precAddSub     = 10 // +, -
+	precMulDiv     = 11 // *, /, DIV, MOD, %
+	precBitXor     = 12 // ^
+	precUnary      = 13 // - (unary), ~ (bit inversion), ! (not)
+	precConcat     = 14 // || (PIPES_AS_CONCAT) — yacc: pipes is at low precedence
+	precCollate    = 15 // COLLATE — yacc: %right collate is above pipes
+)
+
+// tokenPrecedence returns the infix precedence for the given token.
+// Returns precNone if the token is not a valid infix operator.
+func tokenPrecedence(tok int, sqlMode mysql.SQLMode) int {
+	switch tok {
+	case or, pipesAsOr:
+		return precOr
+	case xor:
+		return precXor
+	case and, andand:
+		return precAnd
+	case '=', eq, nulleq:
+		return precComparison
+	case ge, '>', le, '<', neq, neqSynonym:
+		return precComparison
+	case '|':
+		return precBitOr
+	case '&':
+		return precBitAnd
+	case lsh, rsh:
+		return precShift
+	case '+', '-':
+		return precAddSub
+	case '*', '/', '%', div, mod:
+		return precMulDiv
+	case '^':
+		return precBitXor
+	case pipes:
+		if sqlMode.HasPipesAsConcatMode() {
+			return precConcat
+		}
+		return precOr
+	}
+	return precNone
+}
+
+// tokenToOp converts a token type to an opcode.Op for binary expressions.
+func tokenToOp(tok int) opcode.Op {
+	switch tok {
+	case '+':
+		return opcode.Plus
+	case '-':
+		return opcode.Minus
+	case '*':
+		return opcode.Mul
+	case '/':
+		return opcode.Div
+	case '%', mod:
+		return opcode.Mod
+	case div:
+		return opcode.IntDiv
+	case '|':
+		return opcode.Or
+	case '&':
+		return opcode.And
+	case '^':
+		return opcode.Xor
+	case lsh:
+		return opcode.LeftShift
+	case rsh:
+		return opcode.RightShift
+	case '=', eq:
+		return opcode.EQ
+	case nulleq:
+		return opcode.NullEQ
+	case ge:
+		return opcode.GE
+	case '>':
+		return opcode.GT
+	case le:
+		return opcode.LE
+	case '<':
+		return opcode.LT
+	case neq, neqSynonym:
+		return opcode.NE
+	case or, pipesAsOr:
+		return opcode.LogicOr
+	case and, andand:
+		return opcode.LogicAnd
+	case xor:
+		return opcode.LogicXor
+	}
+	return 0
+}

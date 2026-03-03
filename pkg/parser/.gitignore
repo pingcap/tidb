@@ -1,6 +1,5 @@
 bin/
-y.go
-*.output
+genkeyword
 .idea/
 .vscode/
 coverage.txt

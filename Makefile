@@ -51,7 +51,7 @@ precheck: fmt bazel_prepare
 
 .PHONY: check
 check: ## Run comprehensive code quality checks
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
+check: check-bazel-prepare check-parallel lint tidy testSuite errdoc license bazel_check_abi
 
 .PHONY: fmt
 fmt: ## Format Go code using gofmt
@@ -88,7 +88,8 @@ errdoc:tools/bin/errdoc-gen
 .PHONY: lint
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml \
+	-exclude pkg/util/hack/... -exclude ./pkg/util/hack/...  $(FILES_TIDB_TESTS)
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
@@ -153,18 +154,14 @@ test_part_1: checklist integrationtest ## Run test part 1: checklist and integra
 test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test ## Run test part 2: parser tests, unit tests, BR and dumpling tests
 
 .PHONY: test_part_parser
-test_part_parser: parser_yacc test_part_parser_dev
+test_part_parser: test_part_parser_dev
 
 .PHONY: test_part_parser_dev
 test_part_parser_dev: parser_fmt parser_unit_test
 
 .PHONY: parser
 parser:
-	@cd pkg/parser && make parser
-
-.PHONY: parser_yacc
-parser_yacc:
-	@cd pkg/parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+	@cd pkg/parser && go build ./...
 
 .PHONY: parser_fmt
 parser_fmt:

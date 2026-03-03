@@ -1,0 +1,746 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package parser
+
+import (
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+)
+
+// markIsInBraces sets IsInBraces=true on a SelectStmt or SetOprStmt node.
+func markIsInBraces(node ast.Node) {
+	if s, ok := node.(*ast.SelectStmt); ok {
+		s.IsInBraces = true
+	} else if s, ok := node.(*ast.SetOprStmt); ok {
+		s.IsInBraces = true
+	}
+}
+
+// parsePriority parses optional LOW_PRIORITY / HIGH_PRIORITY / DELAYED modifiers.
+func (p *HandParser) parsePriority() mysql.PriorityEnum {
+	switch p.peek().Tp {
+	case lowPriority:
+		p.next()
+		return mysql.LowPriority
+	case highPriority:
+		p.next()
+		return mysql.HighPriority
+	case delayed:
+		p.next()
+		return mysql.DelayedPriority
+	}
+	return mysql.NoPriority
+}
+
+// wrapTableNameInRefs wraps a TableName in the standard TableSource → Join → TableRefsClause chain.
+func (p *HandParser) wrapTableNameInRefs(tn *ast.TableName) *ast.TableRefsClause {
+	ts := Alloc[ast.TableSource](p.arena)
+	ts.Source = tn
+	join := p.arena.AllocJoin()
+	join.Left = ts
+	clause := Alloc[ast.TableRefsClause](p.arena)
+	clause.TableRefs = join
+	return clause
+}
+
+// parseInsertStmt parses INSERT [INTO] table [(col_list)] VALUES (val_list), ... | SELECT ...
+// Also handles REPLACE which uses the same AST structure.
+func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
+	stmt := Alloc[ast.InsertStmt](p.arena)
+	stmt.IsReplace = isReplace
+	stmt.PartitionNames = make([]ast.CIStr, 0)
+
+	// Consume INSERT or REPLACE.
+	p.next()
+
+	// Optional optimizer hints (/*+ ... */).
+	stmt.TableHints = p.parseOptHints()
+
+	// Optional priority modifiers (INSERT and REPLACE).
+	stmt.Priority = p.parsePriority()
+
+	// Optional IGNORE (INSERT only, not REPLACE — matching MySQL grammar).
+	if !isReplace {
+		if _, ok := p.accept(ignore); ok {
+			stmt.IgnoreErr = true
+		}
+	}
+
+	// Optional INTO.
+	p.accept(into)
+
+	// Table reference. For INSERT the parser uses TableName + PartitionNameListOpt.
+	tn := p.parseTableName()
+	if tn == nil {
+		return nil
+	}
+
+	// Optional PARTITION clause.
+	// yacc: PartitionNameList → Identifier (',' Identifier)*
+	// Identifier = identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
+	// (no stringLit — partition names must be identifiers).
+	if _, ok := p.accept(partition); ok {
+		p.expect('(')
+		var names []ast.CIStr
+		for {
+			tok := p.peek()
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.syntaxErrorAt(tok)
+				return nil
+			}
+			p.next()
+			names = append(names, ast.NewCIStr(tok.Lit))
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		p.expect(')')
+		stmt.PartitionNames = names
+	}
+
+	// Wrap TableName in standard TableSource -> Join -> TableRefsClause.
+	stmt.Table = p.wrapTableNameInRefs(tn)
+
+	// Optional column list.
+	var hasColumnList bool
+	if _, ok := p.accept('('); ok {
+		hasColumnList = true
+		// Could be: empty (), column list, or (SELECT ...).
+		if p.peek().Tp == ')' {
+			// Empty column list: INSERT INTO foo () VALUES ()
+			p.next() // consume ')'
+			stmt.Columns = make([]*ast.ColumnName, 0)
+		} else if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == values {
+			// Subquery in parens: INSERT INTO t1 (SELECT ...), (WITH ...), (TABLE t2), (VALUES ROW(...)).
+			subStartOff := p.peek().Offset
+			sub := p.parseSubquery()
+			if sub != nil {
+				sub = p.maybeParseUnion(sub)
+			}
+			// Set text on the inner statement to match yacc SubSelect behavior.
+			subEndOff := p.peek().Offset
+			if sub != nil && subEndOff > subStartOff {
+				sub.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
+			}
+			p.expect(')')
+			// Mark the select as "in braces" so Restore() preserves the parens.
+			if sub != nil {
+				markIsInBraces(sub)
+			}
+			stmt.Select = sub
+		} else {
+			// Column list: (c1, c2, ...)
+			for {
+				col := p.parseColumnName()
+				if col == nil {
+					return nil
+				}
+				stmt.Columns = append(stmt.Columns, col)
+				if _, ok := p.accept(','); !ok {
+					break
+				}
+			}
+			p.expect(')')
+		}
+	}
+
+	// VALUES or SELECT
+	switch p.peek().Tp {
+	case values, value: // VALUES
+		stmt.Lists = p.parseValueList(isReplace, false)
+	case selectKwd: // SELECT
+		sel := p.parseSelectStmt()
+		stmt.Select = p.maybeParseUnion(sel)
+	case with: // WITH [RECURSIVE] cte_list SELECT ...
+		withStmt := p.parseWithStmt()
+		if rs, ok := withStmt.(ast.ResultSetNode); ok {
+			stmt.Select = rs
+		}
+	case tableKwd: // TABLE
+		// INSERT INTO ... TABLE ...
+		if ts := p.parseTableStmt(); ts != nil {
+			stmt.Select = ts.(*ast.SelectStmt)
+		}
+	case '(': // (SELECT ...) or (VALUES ...) or (WITH ...) or ((SELECT ...))
+		p.next()
+		subStartOff := p.peek().Offset
+		if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == '(' {
+			sub := p.parseSubquery()
+			if sub != nil {
+				sub = p.maybeParseUnion(sub)
+			}
+			// Set text on the inner statement to match yacc SubSelect behavior.
+			subEndOff := p.peek().Offset
+			if sub != nil && subEndOff > subStartOff {
+				sub.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
+			}
+			p.expect(')')
+			if sub != nil {
+				markIsInBraces(sub)
+			}
+			stmt.Select = sub
+		} else if p.peek().Tp == values { // (VALUES ...)
+			stmt.Lists = p.parseValueList(isReplace, false)
+			p.expect(')')
+		} else { //revive:disable-line
+			// Assuming recursive calls handle complex cases.
+		}
+	case set: // SET c1=v1
+		if hasColumnList {
+			p.syntaxErrorAt(p.peek())
+			return nil
+		}
+		// INSERT INTO t SET c1=v1
+		p.next()
+		stmt.Setlist = true
+		// We need to populate Lists with one row.
+		var row []ast.ExprNode
+		for {
+			assign := p.parseAssignment()
+			if assign == nil {
+				return nil
+			}
+			stmt.Columns = append(stmt.Columns, assign.Column)
+			row = append(row, assign.Expr)
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		stmt.Lists = append(stmt.Lists, row)
+	}
+
+	// ON DUPLICATE KEY UPDATE (INSERT only, not REPLACE — matching MySQL grammar).
+	if !isReplace {
+		if _, ok := p.accept(on); ok {
+			p.expect(duplicate)
+			p.expect(key)
+			p.expect(update)
+			for {
+				assign := p.parseAssignment()
+				if assign == nil {
+					return nil
+				}
+				stmt.OnDuplicate = append(stmt.OnDuplicate, assign)
+				if _, ok := p.accept(','); !ok {
+					break
+				}
+			}
+		}
+	}
+
+	return stmt
+}
+
+// parseValueList parses VALUES (v1, v2), (v3, v4), ...
+func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode { //revive:disable-line
+	p.expectAny(values, value)
+
+	var lists [][]ast.ExprNode
+	for {
+		// yacc: INSERT VALUES uses RowValue = '(' ValuesOpt ')' — no ROW keyword.
+		// VALUES ROW(...) statement requires ROW keyword (enforceRow=true).
+		if enforceRow {
+			if _, ok := p.accept(row); !ok { //revive:disable-line
+				// Report error at the current position (before consuming),
+				// matching the yacc grammar's error offset.
+				tok := p.peek()
+				p.errorNear(tok.EndOffset, tok.Offset)
+				return nil
+			}
+		}
+		p.expect('(')
+		list := make([]ast.ExprNode, 0)
+		if p.peek().Tp != ')' {
+			for {
+				list = append(list, p.parseExprOrDefault())
+				if _, ok := p.accept(','); !ok {
+					break
+				}
+			}
+		}
+		p.expect(')')
+		lists = append(lists, list)
+
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return lists
+}
+
+// parseExprOrDefault parses an expression or bare DEFAULT keyword.
+// Used in INSERT VALUES and SET assignment contexts where bare DEFAULT is valid.
+func (p *HandParser) parseExprOrDefault() ast.ExprNode {
+	if p.peek().Tp == defaultKwd && p.peekN(1).Tp != '(' {
+		p.next() // consume DEFAULT
+		return p.arena.AllocDefaultExpr()
+	}
+	return p.parseExpression(precNone)
+}
+
+// parseAssignment parses col = expr | col = DEFAULT
+func (p *HandParser) parseAssignment() *ast.Assignment {
+	col := p.parseColumnName()
+	if col == nil {
+		return nil
+	}
+	p.expectAny(eq, assignmentEq)
+
+	node := Alloc[ast.Assignment](p.arena)
+	node.Column = col
+
+	node.Expr = p.parseExprOrDefault()
+	if node.Expr == nil {
+		return nil
+	}
+	return node
+}
+
+// parseUpdateStmt parses UPDATE [LOW_PRIORITY] [IGNORE] table_reference SET col_name1={expr1|DEFAULT} [,
+// col_name2={expr2|DEFAULT}] ... [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
+func (p *HandParser) parseUpdateStmt() ast.StmtNode {
+	stmt := Alloc[ast.UpdateStmt](p.arena)
+	p.expect(update)
+
+	// Optional optimizer hints (/*+ ... */).
+	stmt.TableHints = p.parseOptHints()
+
+	// [LOW_PRIORITY | HIGH_PRIORITY | DELAYED]
+	stmt.Priority = p.parsePriority()
+
+	// [IGNORE]
+	if _, ok := p.accept(ignore); ok {
+		stmt.IgnoreErr = true
+	}
+
+	// Table reference — use parseCommaJoin directly to detect multi-table (comma-separated).
+	// In the yacc grammar, only comma-separated table references trigger the multi-table path
+	// (which disallows ORDER BY and LIMIT). JOINed tables go through the single-table path.
+	joinNode, hasComma := p.parseCommaJoin()
+	if joinNode != nil {
+		clause := Alloc[ast.TableRefsClause](p.arena)
+		clause.TableRefs = joinNode
+		stmt.TableRefs = clause
+	}
+
+	// SET
+	p.expect(set)
+	for {
+		assign := p.parseAssignment()
+		if assign == nil {
+			return nil
+		}
+		stmt.List = append(stmt.List, assign)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+
+	// [WHERE]
+	if _, ok := p.accept(where); ok {
+		stmt.Where = p.parseExpression(precNone)
+	}
+
+	// [ORDER BY] and [LIMIT]. Only comma-separated multi-table UPDATE rejects them.
+	// In the yacc grammar, the single-table path (TableRef, which includes JOINs)
+	// allows ORDER BY and LIMIT, while the multi-table path (TableRefs with commas) does not.
+	isMultiTable := hasComma
+
+	if p.peek().Tp == order {
+		if isMultiTable {
+			p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("UPDATE", "ORDER BY"))
+			return nil
+		}
+		stmt.Order = p.parseOrderByClause()
+	}
+
+	// [LIMIT] — yacc LimitClause: simple LIMIT count only (no offset, no FETCH).
+	if p.peek().Tp == limit {
+		if isMultiTable {
+			p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("UPDATE", "LIMIT"))
+			return nil
+		}
+		stmt.Limit = p.parseLimitClauseSimple()
+	}
+
+	return stmt
+}
+
+// parseDeleteStmt parses DELETE [LOW_PRIORITY] [QUICK] [IGNORE] FROM tbl_name
+// [PARTITION (partition_name_list)] [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
+// OR Multi-table syntax.
+func (p *HandParser) parseDeleteStmt() ast.StmtNode {
+	stmt := Alloc[ast.DeleteStmt](p.arena)
+	stmt.IsMultiTable = false
+	stmt.BeforeFrom = false
+	p.expect(deleteKwd)
+
+	// Optional optimizer hints (/*+ ... */).
+	stmt.TableHints = p.parseOptHints()
+
+	// [LOW_PRIORITY | HIGH_PRIORITY | DELAYED]
+	stmt.Priority = p.parsePriority()
+
+	// [QUICK]
+	if _, ok := p.accept(quick); ok {
+		stmt.Quick = true
+	}
+
+	// [IGNORE]
+	if _, ok := p.accept(ignore); ok {
+		stmt.IgnoreErr = true
+	}
+
+	// DELETE FROM ...
+	// Multi-table: DELETE t1, t2 FROM t1, t2, t3 ...
+	// Single-table: DELETE FROM t1 ...
+
+	if p.peek().Tp != from {
+		stmt.IsMultiTable = true
+		stmt.BeforeFrom = true
+		stmt.Tables = p.parseDeleteTableList()
+		if stmt.Tables == nil {
+			return nil
+		}
+	}
+
+	p.expect(from)
+
+	// Table refs
+	tableRefStartTok := p.peek()
+	stmt.TableRefs = p.parseTableRefs()
+
+	// [USING]
+	// Only accept USING in "DELETE FROM t1, t2 USING ..." form (BeforeFrom==false).
+	// When BeforeFrom==true ("DELETE t1, t2 FROM t JOIN t1 ON ..."), the USING
+	// keyword does not belong to DELETE; it may be part of an outer statement
+	// (e.g., CREATE BINDING ... FOR ... USING ...).
+	// Also, only accept USING when followed by table references (identifiers/backtick),
+	// not when followed by DML keywords (delete/select/update/insert) which indicates
+	// the USING belongs to an outer CREATE BINDING statement.
+	if !stmt.BeforeFrom {
+		if p.peek().Tp == using && !p.isUsingForBinding() {
+			usingTok := p.next() // consume USING
+			// DELETE FROM t1, t2 USING t1, t2, t3 ...
+			if stmt.IsMultiTable { //revive:disable-line
+				// Already is multi-table. e.g. DELETE t1 FROM t2 USING t3
+			} else {
+				// Was DELETE FROM t1 ... USING ...
+				// Convert single-table DELETE FROM t1 to Multi-table.
+				stmt.IsMultiTable = true
+				stmt.BeforeFrom = false
+				stmt.Tables = p.convertToTableList(stmt.TableRefs, usingTok.EndOffset, usingTok.Offset)
+				if stmt.Tables == nil { //revive:disable-line
+					// Failed to convert
+				}
+				// Parse the USING tables as new TableRefs (sources).
+				stmt.TableRefs = p.parseTableRefs()
+			}
+		} else {
+			// No USING clause.
+			if stmt.TableRefs != nil {
+				var validateAndClear func(node ast.ResultSetNode) bool
+				validateAndClear = func(node ast.ResultSetNode) bool {
+					if j, ok := node.(*ast.Join); ok {
+						left := validateAndClear(j.Left)
+						right := false
+						if j.Right != nil {
+							right = validateAndClear(j.Right)
+						}
+						return left || right
+					}
+					if ts, ok := node.(*ast.TableSource); ok {
+						if tn, ok := ts.Source.(*ast.TableName); ok {
+							has := tn.HasWildcard
+							tn.HasWildcard = false
+							return has
+						}
+					}
+					return false
+				}
+
+				var hasWildcard bool
+				if stmt.TableRefs.TableRefs != nil {
+					hasWildcard = validateAndClear(stmt.TableRefs.TableRefs)
+				}
+
+				if hasWildcard && !stmt.IsMultiTable {
+					p.syntaxErrorAt(p.peek())
+					return nil
+				}
+			}
+		}
+	} else {
+		// BeforeFrom==true: "DELETE t1, t2 FROM ..."
+		// Clear wildcards in table refs for AST normalization.
+		if stmt.TableRefs != nil {
+			var clearWildcard func(node ast.ResultSetNode)
+			clearWildcard = func(node ast.ResultSetNode) {
+				if j, ok := node.(*ast.Join); ok {
+					clearWildcard(j.Left)
+					if j.Right != nil {
+						clearWildcard(j.Right)
+					}
+				}
+				if ts, ok := node.(*ast.TableSource); ok {
+					if tn, ok := ts.Source.(*ast.TableName); ok {
+						tn.HasWildcard = false
+					}
+				}
+			}
+			if stmt.TableRefs.TableRefs != nil {
+				clearWildcard(stmt.TableRefs.TableRefs)
+			}
+		}
+	}
+
+	if !stmt.IsMultiTable {
+		// Single-table delete must be a simple TableName, not a Join or Subquery
+		if stmt.TableRefs != nil && stmt.TableRefs.TableRefs != nil {
+			var isTableName bool
+			j := stmt.TableRefs.TableRefs
+			if j.Right == nil { // no multiple tables
+				if ts, ok := j.Left.(*ast.TableSource); ok {
+					if _, ok2 := ts.Source.(*ast.TableName); ok2 {
+						isTableName = true
+					}
+				}
+			}
+			if !isTableName {
+				// It's a subquery or join — report error at the start of table refs
+				p.errorNear(tableRefStartTok.EndOffset, tableRefStartTok.Offset)
+				return nil
+			}
+		}
+	}
+
+	// [WHERE]
+	if _, ok := p.accept(where); ok {
+		stmt.Where = p.parseExpression(precNone)
+	}
+
+	// [ORDER BY] and [LIMIT] are only valid for single-table DELETE.
+	if !stmt.IsMultiTable {
+		if p.peek().Tp == order {
+			stmt.Order = p.parseOrderByClause()
+		}
+
+		if p.peek().Tp == limit {
+			stmt.Limit = p.parseLimitClauseSimple()
+		}
+	}
+
+	// Clear wildcard in Tables (targets) to ensure AST normalization.
+	if stmt.Tables != nil {
+		for _, t := range stmt.Tables.Tables {
+			if t != nil {
+				t.HasWildcard = false
+			}
+		}
+	}
+
+	return stmt
+}
+
+// isUsingForBinding returns true when a USING keyword at the current position
+// belongs to an outer CREATE BINDING ... USING ... statement rather than to
+// a DELETE ... USING ... multi-table form. We distinguish by looking at what
+// follows USING: if it's a DML keyword (SELECT/DELETE/UPDATE/INSERT), it's a
+// binding hint clause, not a DELETE USING table list.
+func (p *HandParser) isUsingForBinding() bool {
+	if p.peek().Tp != using {
+		return false
+	}
+	next := p.peekN(1).Tp
+	return next == selectKwd || next == deleteKwd || next == update || next == insert
+}
+
+// convertToTableList converts TableRefsClause (from parsing FROM ...) into DeleteTableList.
+// Used when we encounter USING and need to treat FROM clause as Targets.
+// colOff is the byte offset for column calculation; nearOff is the byte offset for "near" text.
+func (p *HandParser) convertToTableList(refs *ast.TableRefsClause, colOff, nearOff int) *ast.DeleteTableList {
+	if refs == nil || refs.TableRefs == nil {
+		return nil
+	}
+	list := Alloc[ast.DeleteTableList](p.arena)
+
+	// Helper to extract TableName from Join tree.
+	var visit func(node ast.ResultSetNode) bool
+	visit = func(node ast.ResultSetNode) bool {
+		if j, ok := node.(*ast.Join); ok {
+			// Recurse left
+			if !visit(j.Left) {
+				return false
+			}
+			// Recurse right if present
+			if j.Right != nil {
+				return visit(j.Right)
+			}
+			return true
+		}
+		if ts, ok := node.(*ast.TableSource); ok {
+			// In DELETE FROM ... USING, target tables cannot have aliases.
+			// MySQL grammar uses table_ident_opt_wild (no alias) here.
+			if ts.AsName.L != "" {
+				p.errorNear(colOff, nearOff)
+				return false
+			}
+			if tn, ok := ts.Source.(*ast.TableName); ok {
+				list.Tables = append(list.Tables, tn)
+				return true
+			}
+		}
+		// Subquery or other source cannot be deleted from in this manner?
+		// MySQL allows deleting from aliases.
+		return false
+	}
+
+	if !visit(refs.TableRefs) {
+		return nil
+	}
+	return list
+}
+
+// parseDeleteTableList parses t1, t2 for DELETE t1, t2 FROM ...
+func (p *HandParser) parseDeleteTableList() *ast.DeleteTableList {
+	list := Alloc[ast.DeleteTableList](p.arena)
+	for {
+		tn := p.parseTableName()
+		if tn == nil {
+			return nil
+		}
+		// .*.
+		if p.peek().Tp == '.' && p.peekN(1).Tp == '*' {
+			p.next() // .
+			p.next() // *
+		}
+		list.Tables = append(list.Tables, tn)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return list
+}
+
+// parseTableStmt parses TABLE t1 [ORDER BY ...] [LIMIT ...]
+func (p *HandParser) parseTableStmt() ast.StmtNode {
+	// TABLE t1 -> SELECT * FROM t1
+	stmt := p.arena.AllocSelectStmt()
+	stmt.Kind = ast.SelectStmtKindTable
+	p.expect(tableKwd)
+
+	tn := p.parseTableName()
+	stmt.From = p.wrapTableNameInRefs(tn)
+
+	p.parseSelectStmtSuffix(stmt)
+
+	// Set * as Fields
+	wildCard := Alloc[ast.SelectField](p.arena)
+	wildCard.WildCard = &ast.WildCardField{}
+	stmt.Fields = &ast.FieldList{Fields: []*ast.SelectField{wildCard}}
+
+	return stmt
+}
+
+// parseValuesStmt parses VALUES (1,2), (3,4) ...
+func (p *HandParser) parseValuesStmt() ast.StmtNode {
+	stmt := p.arena.AllocSelectStmt()
+	stmt.Kind = ast.SelectStmtKindValues
+	// VALUES statement requires a wildcard FieldList to avoid nil-pointer
+	// dereferences in the planner (mirrors the yacc parser behavior).
+	wc := Alloc[ast.WildCardField](p.arena)
+	sf := Alloc[ast.SelectField](p.arena)
+	sf.WildCard = wc
+	fl := Alloc[ast.FieldList](p.arena)
+	fl.Fields = []*ast.SelectField{sf}
+	stmt.Fields = fl
+
+	rawLists := p.parseValueList(false, true)
+	// Convert [][]ExprNode to []*RowExpr
+	for _, rawRow := range rawLists {
+		rowExpr := Alloc[ast.RowExpr](p.arena)
+		rowExpr.Values = rawRow
+		stmt.Lists = append(stmt.Lists, rowExpr)
+	}
+
+	p.parseSelectStmtSuffix(stmt)
+
+	return stmt
+}
+
+// parseNonTransactionalDMLStmt parses: BATCH [ON column] [LIMIT N] [DRY RUN [QUERY]] <DML>
+func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
+	stmt := Alloc[ast.NonTransactionalDMLStmt](p.arena)
+	p.expect(batch)
+
+	if _, ok := p.accept(on); ok {
+		stmt.ShardColumn = p.parseColumnName()
+	}
+
+	p.expect(limit) // yacc requires LIMIT in BATCH
+	if tok, ok := p.expect(intLit); ok {
+		stmt.Limit = tokenItemToUint64(tok.Item)
+	}
+
+	// DRY RUN
+	if _, ok := p.accept(dry); ok {
+		p.expect(run)
+		stmt.DryRun = ast.DryRunSplitDml
+		if p.peek().Tp == query || p.peek().IsKeyword("QUERY") {
+			p.next()
+			stmt.DryRun = ast.DryRunQuery
+		}
+	}
+
+	var dml ast.StmtNode
+	switch p.peek().Tp {
+	case insert:
+		dml = p.parseInsertStmt(false)
+	case replace:
+		dml = p.parseInsertStmt(true)
+	case update:
+		dml = p.parseUpdateStmt()
+	case deleteKwd:
+		dml = p.parseDeleteStmt()
+	default:
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
+
+	if shardable, ok := dml.(ast.ShardableDMLStmt); ok { //revive:disable-line
+		stmt.DMLStmt = shardable
+	} else {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
+
+	return stmt
+}
+
+// parseSelectStmtSuffix parses the common suffix for TABLE/VALUES statements:
+// [ORDER BY ...] [LIMIT ...] [INTO OUTFILE ...]
+func (p *HandParser) parseSelectStmtSuffix(stmt *ast.SelectStmt) {
+	if p.peek().Tp == order {
+		stmt.OrderBy = p.parseOrderByClause()
+	}
+	if p.peek().Tp == limit {
+		stmt.Limit = p.parseLimitClause()
+	}
+	if p.peek().Tp == forKwd || p.peek().Tp == lock {
+		stmt.LockInfo = p.parseSelectLock()
+	}
+	if p.peek().Tp == into {
+		stmt.SelectIntoOpt = p.parseSelectIntoOption()
+	}
+}

@@ -99,7 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
-		"burstable", "calibrate", "rollup",
+		"burstable", "calibrate", "masking", "rollup",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -527,7 +527,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
 		{"admin reload cluster bindings", true, "ADMIN RELOAD CLUSTER BINDINGS"},
-		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
+		// Extended stats has been removed. keep this case only for syntax compatibility.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
 		// Test for 'admin flush plan_cache'
@@ -656,6 +656,18 @@ func TestDMLStmt(t *testing.T) {
 		{"TABLE t ORDER BY b LIMIT 3", true, "TABLE `t` ORDER BY `b` LIMIT 3"},
 		{"TABLE t ORDER BY b LIMIT 3 OFFSET 2", true, "TABLE `t` ORDER BY `b` LIMIT 2,3"},
 		{"TABLE t ORDER BY b LIMIT 2,3", true, "TABLE `t` ORDER BY `b` LIMIT 2,3"},
+
+		// LIMIT with uint64 max value should succeed
+		{"SELECT * FROM t LIMIT 18446744073709551615", true, "SELECT * FROM `t` LIMIT 18446744073709551615"},
+		// LIMIT with uint64 overflow should fail (value exceeds max uint64)
+		{"SELECT * FROM t LIMIT 18446744073709551616 OFFSET 3", false, ""},
+		// OFFSET with uint64 overflow should also fail
+		{"SELECT * FROM t LIMIT 10 OFFSET 18446744073709551616", false, ""},
+		// LIMIT offset,count with overflow in offset position
+		{"SELECT * FROM t LIMIT 18446744073709551616, 10", false, ""},
+		// LIMIT offset,count with overflow in count position
+		{"SELECT * FROM t LIMIT 10, 18446744073709551616", false, ""},
+
 		{"INSERT INTO ta TABLE tb", true, "INSERT INTO `ta` TABLE `tb`"},
 		{"INSERT INTO t.a TABLE t.b", true, "INSERT INTO `t`.`a` TABLE `t`.`b`"},
 		{"REPLACE INTO ta TABLE tb", true, "REPLACE INTO `ta` TABLE `tb`"},
@@ -1260,6 +1272,7 @@ func TestDBAStmt(t *testing.T) {
 		{`SHOW KEYS FROM t FROM test where true;`, true, "SHOW INDEX IN `test`.`t` WHERE TRUE"},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true, "SHOW EVENTS IN `test_db` WHERE `definer`=_UTF8MB4'current_user'"},
 		{`SHOW PLUGINS`, true, "SHOW PLUGINS"},
+		{`SHOW PLUGINS LIKE 'Validate%'`, true, "SHOW PLUGINS LIKE _UTF8MB4'Validate%'"},
 		{`SHOW PROFILES`, true, "SHOW PROFILES"},
 		{`SHOW PROFILE`, true, "SHOW PROFILE"},
 		{`SHOW PROFILE FOR QUERY 1`, true, "SHOW PROFILE FOR QUERY 1"},
@@ -1298,7 +1311,7 @@ func TestDBAStmt(t *testing.T) {
 		// for show create sequence
 		{"show create sequence seq", true, "SHOW CREATE SEQUENCE `seq`"},
 		{"show create sequence test.seq", true, "SHOW CREATE SEQUENCE `test`.`seq`"},
-		// for show stats_extended.
+		// Extended stats has been removed. keep this case only for syntax compatibility.
 		{"show stats_extended", true, "SHOW STATS_EXTENDED"},
 		{"show stats_extended where table_name = 't'", true, "SHOW STATS_EXTENDED WHERE `table_name`=_UTF8MB4't'"},
 		// for show stats_meta.
@@ -1346,10 +1359,14 @@ func TestDBAStmt(t *testing.T) {
 		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
 		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
 		{"lock stats t partition (p0, p1)", true, "LOCK STATS `t` PARTITION(`p0`, `p1`)"},
+		{"lock stats t partition p0", true, "LOCK STATS `t` PARTITION(`p0`)"},
+		{"lock stats t partition p0, p1", true, "LOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// for unlock stats
 		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
 		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
 		{"unlock stats t partition (p0, p1)", true, "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"},
+		{"unlock stats t partition p0", true, "UNLOCK STATS `t` PARTITION(`p0`)"},
+		{"unlock stats t partition p0, p1", true, "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
@@ -3963,6 +3980,35 @@ func TestDDL(t *testing.T) {
 		{"create or replace placement policy x regions='us'", true, "CREATE OR REPLACE PLACEMENT POLICY `x` REGIONS = 'us'"},
 		{"create placement policy x placement policy y", false, ""},
 
+		// for masking policy
+		{"create table masking (id int)", true, "CREATE TABLE `masking` (`id` INT)"},
+		{"select masking from t", true, "SELECT `masking` FROM `t`"},
+		{"alter table t add masking int", true, "ALTER TABLE `t` ADD COLUMN `masking` INT"},
+		{"alter table t drop masking", true, "ALTER TABLE `t` DROP COLUMN `masking`"},
+		{"alter table t modify masking int", true, "ALTER TABLE `t` MODIFY COLUMN `masking` INT"},
+		{"create masking policy p on t(c) as c", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c`"},
+		{"create masking policy p on t(c) as c enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c` ENABLE"},
+		{"create masking policy if not exists p on t(c) as c disable", true, "CREATE MASKING POLICY IF NOT EXISTS `p` ON `t` (`c`) AS `c` DISABLE"},
+		{"create or replace masking policy p on t(c) as c", true, "CREATE OR REPLACE MASKING POLICY `p` ON `t` (`c`) AS `c`"},
+		{"create masking policy p on t(c) as c restrict on none", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c`"},
+		{"create or replace masking policy if not exists p on t(c) as c", false, ""},
+		{"create masking policy p on t(c) as case when current_user() = 'root' then c else 'xxx' end enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS CASE WHEN CURRENT_USER()=_UTF8MB4'root' THEN `c` ELSE _UTF8MB4'xxx' END ENABLE"},
+		{"create masking policy p on t(c) as c restrict on (insert_into_select, delete_select) enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c` RESTRICT ON (INSERT_INTO_SELECT, DELETE_SELECT) ENABLE"},
+		{"create masking policy p on t(c) as case when current_user() not in ('root@%', 'u@%') then 'x' else c end", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS CASE WHEN CURRENT_USER() NOT IN (_UTF8MB4'root@%',_UTF8MB4'u@%') THEN _UTF8MB4'x' ELSE `c` END"},
+		{"alter table t add masking policy p on (c) as c", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c`"},
+		{"alter table t add masking policy p on (c) as c restrict on none", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c`"},
+		{"alter table t add masking policy p on (c) as c disable", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c` DISABLE"},
+		{"alter table t add masking policy p on (c) as c restrict on (update_select, ctas) disable", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c` RESTRICT ON (UPDATE_SELECT, CTAS) DISABLE"},
+		{"alter table t modify masking policy p set expression = case when current_role() in ('r1', 'r2') then c else 'x' end", true, "ALTER TABLE `t` MODIFY MASKING POLICY `p` SET EXPRESSION = CASE WHEN CURRENT_ROLE() IN (_UTF8MB4'r1',_UTF8MB4'r2') THEN `c` ELSE _UTF8MB4'x' END"},
+		{"alter table t modify masking policy p set expression case when current_role() in ('r1', 'r2') then c else 'x' end", false, ""},
+		{"alter table t modify masking policy p set restrict on (insert_into_select, update_select, delete_select, ctas)", true, "ALTER TABLE `t` MODIFY MASKING POLICY `p` SET RESTRICT ON (INSERT_INTO_SELECT, UPDATE_SELECT, DELETE_SELECT, CTAS)"},
+		{"alter table t modify masking policy p set restrict on none", true, "ALTER TABLE `t` MODIFY MASKING POLICY `p` SET RESTRICT ON NONE"},
+		{"alter table t enable masking policy p", true, "ALTER TABLE `t` ENABLE MASKING POLICY `p`"},
+		{"alter table t disable masking policy p", true, "ALTER TABLE `t` DISABLE MASKING POLICY `p`"},
+		{"alter table t drop masking policy p", true, "ALTER TABLE `t` DROP MASKING POLICY `p`"},
+		{"show masking policies for t", true, "SHOW MASKING POLICIES FOR `t`"},
+		{"show masking policies for t where column_name = 'c'", true, "SHOW MASKING POLICIES FOR `t` WHERE `column_name`=_UTF8MB4'c'"},
+
 		{"alter placement policy x primary_region='us'", true, "ALTER PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
 		{"alter placement policy x region='us, 3'", false, ""},
 		{"alter placement policy x followers=3", true, "ALTER PLACEMENT POLICY `x` FOLLOWERS = 3"},
@@ -5203,6 +5249,7 @@ func TestPrivilege(t *testing.T) {
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password'"},
 		{`ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'"},
+		{`ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'`, false, ""},
 		{"alter user 'test@localhost' password expire;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE"},
 		{"alter user 'test@localhost' password expire never;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE NEVER"},
 		{"alter user 'test@localhost' password expire default;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE DEFAULT"},
@@ -6891,6 +6938,21 @@ func TestQuotedSystemVariables(t *testing.T) {
 	}
 }
 
+func TestDottedSystemVariableInExpr(t *testing.T) {
+	p := parser.New()
+	// @@validate_password.length should keep the full dotted name,
+	// NOT split "validate_password" as scope and "length" as name.
+	st, err := p.ParseOneStmt("select @@validate_password.length", "", "")
+	require.NoError(t, err)
+	ss := st.(*ast.SelectStmt)
+	ve := ss.Fields.Fields[0].Expr.(*ast.VariableExpr)
+	require.Equal(t, "validate_password.length", ve.Name)
+	require.False(t, ve.IsGlobal)
+	require.False(t, ve.IsInstance)
+	require.True(t, ve.IsSystem)
+	require.False(t, ve.ExplicitScope)
+}
+
 // See https://github.com/pingcap/parser/issue/95
 func TestQuotedVariableColumnName(t *testing.T) {
 	p := parser.New()
@@ -6955,7 +7017,7 @@ func TestUnderscoreCharset(t *testing.T) {
 		if tt.parseFail {
 			require.EqualError(t, err, fmt.Sprintf("line 1 column %d near \"'3F')\" ", len(tt.cs)+17))
 		} else if tt.unSupport {
-			require.EqualError(t, err, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
+			require.EqualError(t, err, parser.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
 		} else {
 			require.NoError(t, err)
 		}
@@ -7781,11 +7843,11 @@ func TestCharsetIntroducer(t *testing.T) {
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
 	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 }
 
 func TestNonTransactionalDML(t *testing.T) {

@@ -36,7 +36,7 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 674, len(parser.Keywords))
+	require.Equal(t, 676, len(parser.Keywords))
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
@@ -50,7 +50,7 @@ func TestKeywordsLength(t *testing.T) {
 func TestKeywordsSorting(t *testing.T) {
 	for i, kw := range parser.Keywords {
 		if i > 1 && parser.Keywords[i-1].Word > kw.Word && parser.Keywords[i-1].Section == kw.Section {
-			t.Errorf("%s should come after %s, please update parser.y and re-generate keywords.go\n",
+			t.Errorf("%s should come after %s, please update keywords.go to fix the sort order\n",
 				parser.Keywords[i-1].Word, kw.Word)
 		}
 	}

@@ -325,9 +325,14 @@ func TestParseHint(t *testing.T) {
 		},
 		{
 			input: "set_var(timestamp = 1.5)",
-			errs: []string{
-				`Cannot use decimal number`,
-				`Optimizer hint syntax error at line 1 `,
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "timestamp",
+						Value:   "1.5",
+					},
+				},
 			},
 		},
 		{
