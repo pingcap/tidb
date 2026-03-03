@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +86,7 @@ func TestGlobalIndexVersion0(t *testing.T) {
 
 	// Get the table info and verify the index version
 	dom := domain.GetDomain(tk.Session())
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	require.NotNil(t, tblInfo)
@@ -109,7 +109,7 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	tk.MustExec("CREATE INDEX idx_a ON tp(a)")
 	tk.MustExec(`CREATE UNIQUE INDEX idx_ab ON tp(a,b) GLOBAL`)
 
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 
@@ -148,7 +148,7 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	)`)
 	tk.MustExec(`CREATE INDEX idx_b ON tpc(b) GLOBAL`)
 
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tpc"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tpc"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 
@@ -223,7 +223,7 @@ func TestGlobalIndexVersion1(t *testing.T) {
 
 	// Get the table info and verify the index version
 	dom := domain.GetDomain(tk.Session())
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	require.NotNil(t, tblInfo)
@@ -245,7 +245,7 @@ func TestGlobalIndexVersion1(t *testing.T) {
 	// Create a non-global index and verify it has version 0
 	tk.MustExec("CREATE INDEX idx_a ON tp(a)")
 
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 
@@ -473,7 +473,7 @@ func TestUpdateIndexesResetsGlobalIndexVersion(t *testing.T) {
 
 	// Verify metadata: Global=false and GlobalIndexVersion=0.
 	dom := domain.GetDomain(tk.Session())
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_upd_idx"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_upd_idx"))
 	require.NoError(t, err)
 	var idxB *model.IndexInfo
 	for _, idx := range tbl.Meta().Indices {
