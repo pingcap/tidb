@@ -81,7 +81,7 @@ Grants for u1@%
 GRANT USAGE ON *.* TO 'u1'@'%'
 GRANT CREATE ON `executor__simple`.* TO 'u1'@'%'
 GRANT UPDATE ON `executor__simple`.`t1` TO 'u1'@'%'
-GRANT SELECT(v), UPDATE(v) ON `executor__simple`.`t1` TO 'u1'@'%'
+GRANT SELECT(`v`), UPDATE(`v`) ON `executor__simple`.`t1` TO 'u1'@'%'
 GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%'
 DROP USER u1;
 SHOW GRANTS FOR u1;

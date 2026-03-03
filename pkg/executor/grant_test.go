@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -189,4 +190,18 @@ func TestGrantColumnScope(t *testing.T) {
 
 	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
 		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+}
+
+func TestShowColumnsForDifferentHost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec(`CREATE USER u@'%'`)
+	tk.MustExec(`CREATE USER u@'127.0.0.1'`)
+	tk.MustExec(`CREATE TABLE test.t(c1 int, c2 int);`)
+	tk.MustExec(`GRANT SELECT(c1) ON test.t TO u@'%'`)
+	tk.MustExec(`GRANT SELECT(c2) ON test.t TO u@'127.0.0.1'`)
+	tk.MustQuery(`SHOW GRANTS FOR u@'%'`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u'@'%'", "GRANT SELECT(`c1`) ON `test`.`t` TO 'u'@'%'"))
+	tk.MustQuery(`SHOW GRANTS FOR u@'127.0.0.1'`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u'@'127.0.0.1'", "GRANT SELECT(`c2`) ON `test`.`t` TO 'u'@'127.0.0.1'"))
 }

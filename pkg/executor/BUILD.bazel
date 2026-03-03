@@ -342,6 +342,7 @@ go_test(
         "explain_test.go",
         "explain_unit_test.go",
         "explainfor_test.go",
+        "grant_revoke_test.go",
         "grant_test.go",
         "historical_stats_test.go",
         "hot_regions_history_table_test.go",

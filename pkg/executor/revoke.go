@@ -328,7 +328,33 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 			if err != nil {
 				return err
 			}
+<<<<<<< HEAD
 			break
+=======
+
+			//TODO Optimized for batch, one-shot.
+		}
+	} else {
+		// FIXME(cbc): should not reach here?
+		err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, "")
+		if err != nil {
+			return err
+		}
+	}
+
+	if checkTablePrivTbl {
+		sql := strings.Join([]string{"SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_priv LIKE '%%", priv.Priv.String(), "%%';"}, "")
+		exists, err := recordExists(internalSession, sql, mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, e.Level.TableName)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			// We should delete the row in mysql.tables_priv if there is no column privileges left.
+			p := &ast.PrivElem{Priv: priv.Priv}
+			if err = e.revokeTablePriv(ctx, internalSession, p, user, host, false); err != nil {
+				return err
+			}
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 		}
 		//TODO Optimized for batch, one-shot.
 	}
