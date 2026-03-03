@@ -1048,6 +1048,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
+	if prop.IsSortItemEmpty() || !all {
+		return property.PropNotMatched
+	}
 
 	// For non-unique secondary indexes on CommonHandle tables, the index physically
 	// stores (index_cols, PK_cols). Build an effective column list that includes the
@@ -1058,7 +1061,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
 		len(path.Index.Columns) == len(path.IdxCols) {
 		extended := false
-		for _, handleCol := range ds.CommonHandleCols {
+		for i, handleCol := range ds.CommonHandleCols {
 			if handleCol == nil {
 				continue
 			}
@@ -1078,12 +1081,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 					extended = true
 				}
 				idxCols = append(idxCols, handleCol)
-				idxColLens = append(idxColLens, types.UnspecifiedLength)
+				idxColLens = append(idxColLens, ds.CommonHandleLens[i])
 			}
 		}
 	}
 
-	if prop.IsSortItemEmpty() || !all || len(idxCols) < len(prop.SortItems) {
+	if len(idxCols) < len(prop.SortItems) {
 		return property.PropNotMatched
 	}
 

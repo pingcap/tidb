@@ -44,21 +44,28 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			a2 int,
 			b int,
 			c int,
+			d int,
 			PRIMARY KEY(a1, a2) CLUSTERED,
-			KEY ic(c),
-			KEY ic_overlap(c, a1),
-			KEY ic_multi(b, c),
+			KEY ic(d),
+			KEY ic_overlap(d, a1),
+			KEY ic_multi(b, d),
 			UNIQUE KEY uic(c)
 		)`)
-		tk.MustExec("insert into t_ch values ('x', 1, 10, 1), ('y', 2, 20, 2), ('a', 3, 30, 3)")
+		// Multiple rows share d=0 and b=10,d=0 so ORDER BY assertions are meaningful.
+		// Each row has a distinct c for the UNIQUE KEY uic(c).
+		tk.MustExec(`insert into t_ch values
+			('x', 1, 10, 1, 0),
+			('y', 2, 20, 2, 0),
+			('a', 3, 10, 3, 0),
+			('m', 4, 30, 4, 1)`)
 
 		// ---------------------------------------------------------------
 		// Case 1: Basic — single-column secondary index, ORDER BY full PK.
-		// The optimizer should recognise that ic stores (c, a1, a2) and
+		// The optimizer should recognise that ic stores (d, a1, a2) and
 		// satisfy ORDER BY a1, a2 with keep order:true (no TopN).
 		// ---------------------------------------------------------------
 		rows := tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic) where c = 1 order by a1, a2 limit 100",
+			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1, a2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 1: expected keep order:true for basic CommonHandle ordering")
@@ -66,16 +73,20 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"case 1: unexpected TopN sort")
 
 		tk.MustQuery(
-			"select * from t_ch use index(ic) where c = 1 order by a1, a2 limit 100",
-		).Check(testkit.Rows("x 1 10 1"))
+			"select * from t_ch use index(ic) where d = 0 order by a1, a2 limit 100",
+		).Check(testkit.Rows(
+			"a 3 10 3 0",
+			"x 1 10 1 0",
+			"y 2 20 2 0",
+		))
 
 		// ---------------------------------------------------------------
-		// Case 2: Partial PK overlap — index ic_overlap(c, a1) already
+		// Case 2: Partial PK overlap — index ic_overlap(d, a1) already
 		// contains PK column a1. Only a2 should be appended. ORDER BY
 		// a1, a2 should still use keep order:true.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic_overlap) where c = 1 order by a1, a2 limit 100",
+			"explain format = 'brief' select * from t_ch use index(ic_overlap) where d = 0 order by a1, a2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 2: expected keep order:true with partial PK overlap index")
@@ -83,15 +94,19 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"case 2: unexpected TopN sort")
 
 		tk.MustQuery(
-			"select * from t_ch use index(ic_overlap) where c = 1 order by a1, a2 limit 100",
-		).Check(testkit.Rows("x 1 10 1"))
+			"select * from t_ch use index(ic_overlap) where d = 0 order by a1, a2 limit 100",
+		).Check(testkit.Rows(
+			"a 3 10 3 0",
+			"x 1 10 1 0",
+			"y 2 20 2 0",
+		))
 
 		// ---------------------------------------------------------------
-		// Case 3: Multi-column secondary index — ic_multi(b, c) with all
+		// Case 3: Multi-column secondary index — ic_multi(b, d) with all
 		// access conditions satisfied, ORDER BY PK should use keep order.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic_multi) where b = 10 and c = 1 order by a1, a2 limit 100",
+			"explain format = 'brief' select * from t_ch use index(ic_multi) where b = 10 and d = 0 order by a1, a2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 3: expected keep order:true for multi-column secondary index")
@@ -99,8 +114,11 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"case 3: unexpected TopN sort")
 
 		tk.MustQuery(
-			"select * from t_ch use index(ic_multi) where b = 10 and c = 1 order by a1, a2 limit 100",
-		).Check(testkit.Rows("x 1 10 1"))
+			"select * from t_ch use index(ic_multi) where b = 10 and d = 0 order by a1, a2 limit 100",
+		).Check(testkit.Rows(
+			"a 3 10 3 0",
+			"x 1 10 1 0",
+		))
 
 		// ---------------------------------------------------------------
 		// Case 4: Unique index — PK columns should NOT be appended to a
@@ -121,7 +139,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// ORDER BY a1 DESC, a2 DESC via a reverse scan.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic) where c = 1 order by a1 desc, a2 desc limit 100",
+			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1 desc, a2 desc limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 5: expected keep order:true for DESC ordering")
@@ -129,19 +147,48 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"case 5: unexpected TopN sort for DESC ordering")
 
 		tk.MustQuery(
-			"select * from t_ch use index(ic) where c = 1 order by a1 desc, a2 desc limit 100",
-		).Check(testkit.Rows("x 1 10 1"))
+			"select * from t_ch use index(ic) where d = 0 order by a1 desc, a2 desc limit 100",
+		).Check(testkit.Rows(
+			"y 2 20 2 0",
+			"x 1 10 1 0",
+			"a 3 10 3 0",
+		))
 
 		// ---------------------------------------------------------------
 		// Case 6: Mixed ASC/DESC — ORDER BY a1 ASC, a2 DESC cannot be
 		// satisfied by the index since all PK columns share one direction.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic) where c = 1 order by a1 asc, a2 desc limit 100",
+			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1 asc, a2 desc limit 100",
 		).Rows()
 		hasKeepOrderTrue = explainHas(rows, "keep order:true")
 		hasTopN = explainHas(rows, "TopN")
 		require.True(t, !hasKeepOrderTrue || hasTopN,
 			"case 6: mixed ASC/DESC should not be satisfied by keep order alone")
+
+		// ---------------------------------------------------------------
+		// Case 7: Prefixed clustered PK — PRIMARY KEY(p1(2), p2) stores
+		// only the first 2 bytes of p1 in the handle. ORDER BY on the
+		// full p1, p2 columns must NOT use keep order:true because the
+		// physical sort key is by the truncated prefix, not the full value.
+		// ---------------------------------------------------------------
+		tk.MustExec("drop table if exists t_prefix")
+		tk.MustExec(`CREATE TABLE t_prefix (
+			p1 varchar(64),
+			p2 int,
+			c int,
+			PRIMARY KEY(p1(2), p2) CLUSTERED,
+			KEY ic_p(c)
+		)`)
+		tk.MustExec("insert into t_prefix values ('abc', 1, 0), ('abd', 2, 0), ('axy', 3, 0)")
+		rows = tk.MustQuery(
+			"explain format = 'brief' select * from t_prefix use index(ic_p) where c = 0 order by p1, p2 limit 100",
+		).Rows()
+		hasKeepOrderTrue = explainHas(rows, "keep order:true")
+		hasTopN = explainHas(rows, "TopN")
+		// The prefixed PK column cannot satisfy ORDER BY on the full column,
+		// so either keep order should be false or a TopN/Sort must be present.
+		require.True(t, !hasKeepOrderTrue || hasTopN,
+			"case 7: prefixed clustered PK should not satisfy ORDER BY without sort")
 	})
 }
