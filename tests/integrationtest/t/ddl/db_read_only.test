@@ -433,3 +433,105 @@ explain analyze update t1 set b = 2 where a = 1;
 explain analyze delete from t1 where a = 1;
 
 alter schema read_only read only 0;
+
+# test RESTRICTED_REPLICA_WRITER_ADMIN bypasses per-database read only
+drop database if exists ro_bypass;
+create database ro_bypass;
+use ro_bypass;
+create table t1(a int primary key, b int);
+
+drop user if exists 'repl_writer'@'localhost';
+create user 'repl_writer'@'localhost';
+grant all on ro_bypass.* to 'repl_writer'@'localhost';
+grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'repl_writer'@'localhost';
+
+drop user if exists 'normal_user'@'localhost';
+create user 'normal_user'@'localhost';
+grant all on ro_bypass.* to 'normal_user'@'localhost';
+
+alter schema ro_bypass read only 1;
+
+# privileged user should bypass read-only
+connect (repl_conn,localhost,repl_writer,,ro_bypass);
+connection repl_conn;
+insert into t1 values(1, 10);
+update t1 set b = 20 where a = 1;
+delete from t1 where a = 1;
+create table t2(a int primary key);
+alter table t2 add column b int;
+drop table t2;
+
+# unprivileged user should still be blocked
+connect (normal_conn,localhost,normal_user,,ro_bypass);
+connection normal_conn;
+-- error 3989
+insert into t1 values(2, 20);
+-- error 3989
+update t1 set b = 30 where a = 1;
+-- error 3989
+delete from t1 where a = 1;
+-- error 3989
+create table t3(a int primary key);
+-- error 3989
+alter table t1 add column c int;
+-- error 3989
+drop table t1;
+
+# test RESTRICTED_REPLICA_WRITER_ADMIN bypasses FK cascade into a read-only child schema
+connection default;
+drop database if exists ro_fk_parent;
+drop database if exists ro_fk_child;
+create database ro_fk_parent;
+create database ro_fk_child;
+create table ro_fk_parent.parent(id int primary key, val int);
+create table ro_fk_child.child(id int primary key, parent_id int, foreign key fk_p(parent_id) references ro_fk_parent.parent(id) on delete cascade on update cascade);
+insert into ro_fk_parent.parent values (1, 100), (2, 200);
+insert into ro_fk_child.child values (1, 1), (2, 2);
+grant all on ro_fk_parent.* to 'repl_writer'@'localhost';
+grant all on ro_fk_parent.* to 'normal_user'@'localhost';
+alter schema ro_fk_child read only 1;
+
+# privileged user: cascade into read-only child should succeed
+connect (repl_fk_conn,localhost,repl_writer,,ro_fk_parent);
+connection repl_fk_conn;
+# REPLACE triggers cascade delete into read-only child (removes child row with parent_id=1)
+replace into ro_fk_parent.parent values (1, 150);
+select * from ro_fk_parent.parent order by id;
+select * from ro_fk_child.child order by id;
+# DELETE with no remaining child reference after the cascade above
+delete from ro_fk_parent.parent where id = 1;
+select * from ro_fk_parent.parent order by id;
+select * from ro_fk_child.child order by id;
+# UPDATE cascades parent_id update into read-only child
+update ro_fk_parent.parent set id = 3 where id = 2;
+select * from ro_fk_parent.parent order by id;
+select * from ro_fk_child.child order by id;
+
+# unprivileged user: cascade into read-only child should be blocked, rows unchanged
+connect (normal_fk_conn,localhost,normal_user,,ro_fk_parent);
+connection normal_fk_conn;
+-- error 3989
+replace into ro_fk_parent.parent values (3, 999);
+-- error 3989
+delete from ro_fk_parent.parent where id = 3;
+-- error 3989
+update ro_fk_parent.parent set id = 4 where id = 3;
+# rows must be unchanged after blocked operations
+select * from ro_fk_parent.parent order by id;
+select * from ro_fk_child.child order by id;
+
+connection default;
+disconnect repl_fk_conn;
+disconnect normal_fk_conn;
+alter schema ro_fk_child read only 0;
+drop database ro_fk_parent;
+drop database ro_fk_child;
+
+# cleanup
+connection default;
+disconnect repl_conn;
+disconnect normal_conn;
+alter schema ro_bypass read only 0;
+drop database ro_bypass;
+drop user 'repl_writer'@'localhost';
+drop user 'normal_user'@'localhost';
