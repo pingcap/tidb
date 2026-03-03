@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -207,6 +208,7 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
 	fkCascades := make([]*FKCascade, 0, len(referredFKs))
+	skipReadOnlyCheck := skipReadOnlyCheckForReplica(ctx)
 	for _, referredFK := range referredFKs {
 		fkCheck, fkCascade, err := buildOnDeleteOrUpdateFKTrigger(ctx, is, referredFK, FKCascadeOnDelete)
 		if err != nil {
@@ -217,9 +219,30 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 		}
 		if fkCascade != nil {
 			fkCascades = append(fkCascades, fkCascade)
+			if !skipReadOnlyCheck {
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
+				if ok && fkDBInfo.ReadOnly {
+					return nil, nil, errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+			}
 		}
 	}
 	return fkChecks, fkCascades, nil
+}
+
+// skipReadOnlyCheckForReplica reports whether the session holds
+// RESTRICTED_REPLICA_WRITER_ADMIN and should bypass per-database read-only
+// enforcement on FK cascade writes.
+func skipReadOnlyCheckForReplica(ctx base.PlanContext) bool {
+	vars := ctx.GetSessionVars()
+	if vars.User == nil {
+		return false
+	}
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm == nil {
+		return false
+	}
+	return pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false)
 }
 
 func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
@@ -229,6 +252,7 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
 	fkChecks := make(map[int64][]*FKCheck)
 	fkCascades := make(map[int64][]*FKCascade)
+	skipReadOnlyCheck := skipReadOnlyCheckForReplica(ctx)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
 		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
@@ -249,10 +273,12 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
-			for _, fk := range referredFKCascades {
-				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly {
-					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+			if !skipReadOnlyCheck {
+				for _, fk := range referredFKCascades {
+					fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+					if ok && fkDBInfo.ReadOnly {
+						return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+					}
 				}
 			}
 		}
@@ -277,6 +303,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 	}
 	fkChecks := make(map[int64][]*FKCheck)
 	fkCascades := make(map[int64][]*FKCascade)
+	skipReadOnlyCheck := skipReadOnlyCheckForReplica(ctx)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
 		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
@@ -294,9 +321,11 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			}
 			if fkCascade != nil {
 				fkCascades[tid] = append(fkCascades[tid], fkCascade)
-				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly {
-					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				if !skipReadOnlyCheck {
+					fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
+					if ok && fkDBInfo.ReadOnly {
+						return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+					}
 				}
 			}
 		}

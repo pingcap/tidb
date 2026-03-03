@@ -378,7 +378,7 @@ func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 		if vars.User != nil {
 			pm := privilege.GetPrivilegeManager(p.sctx)
 			if pm != nil {
-				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false) {
 					return
 				}
 			}
