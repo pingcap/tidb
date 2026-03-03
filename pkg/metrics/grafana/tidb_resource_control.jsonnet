@@ -1021,7 +1021,7 @@ local RunawaySyncerOPSPanel = graphPanel.new(
   legend_values=true,
   format="short",
   logBase1Y=1,
-  description="The rate of runaway syncer operations per second, by type and result.",
+  description="The rate of runaway syncer operations per second, by instance and result.",
 ).addTarget(
   prometheus.target(
     'sum(rate(tidb_server_runaway_syncer_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, result)',

@@ -3127,7 +3127,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The rate of runaway syncer operations per second, by type and result.",
+               "description": "The rate of runaway syncer operations per second, by instance and result.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
