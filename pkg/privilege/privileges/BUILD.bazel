@@ -40,7 +40,13 @@ go_library(
         "@com_github_lestrrat_go_jwx_v2//jwt",
         "@com_github_lestrrat_go_jwx_v2//jwt/openid",
         "@com_github_pingcap_errors//:errors",
+<<<<<<< HEAD
+=======
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+>>>>>>> c4a2803301e (priv cache: add some debug logs to help locating problems (#63980))
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
