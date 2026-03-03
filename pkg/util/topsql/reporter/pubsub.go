@@ -47,7 +47,10 @@ var _ tipb.TopSQLPubSubServer = &TopSQLPubSubService{}
 // Subscribe registers dataSinks to the reporter and redirects data received from reporter
 // to subscribers associated with those dataSinks.
 func (ps *TopSQLPubSubService) Subscribe(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer) error {
-	ds := newPubSubDataSink(req, stream, ps.dataSinkRegisterer)
+	ds, err := newPubSubDataSink(req, stream, ps.dataSinkRegisterer)
+	if err != nil {
+		return err
+	}
 	if err := ps.dataSinkRegisterer.Register(ds); err != nil {
 		return err
 	}
@@ -91,14 +94,12 @@ func parseTopSQLSubscription(req *tipb.TopSQLSubRequest) bool {
 	return false
 }
 
-func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval) {
-	if req == nil {
-		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
-	}
+// ErrTopRUConfig indicates the subscription requests TopRU but omits the Topru config.
+var ErrTopRUConfig = errors.New("topru config is empty")
 
-	cfg := req.GetTopru()
-	if cfg == nil {
-		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval, error) {
+	if req == nil {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED, nil
 	}
 
 	enabled := false
@@ -109,10 +110,15 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 		}
 	}
 	if !enabled {
-		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED, nil
 	}
 
-	return true, cfg.GetItemIntervalSeconds()
+	cfg := req.GetTopru()
+	if cfg == nil {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED, ErrTopRUConfig
+	}
+
+	return true, cfg.GetItemIntervalSeconds(), nil
 }
 
 // newPubSubDataSink creates a DataSink for PubSub subscription.
@@ -121,10 +127,16 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 // Register enables TopRU when the sink has enableTopRU; Deregister disables it when the last such sink is removed.
 // item_interval_seconds controls TopRURecordItem.timestamp_sec (15s/30s/60s).
 // Requests without the TOPRU collector entry keep TopRU disabled for backward compatibility.
-func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
+// It returns an error when the request includes TOPRU but omits the Topru config.
+func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) (*pubSubDataSink, error) {
 	ctx, cancel := context.WithCancel(stream.Context())
 	enableTopSQL := parseTopSQLSubscription(req)
-	enableTopRU, itemInterval := parseTopRUSubscription(req)
+	enableTopRU, itemInterval, err := parseTopRUSubscription(req)
+	if err != nil {
+		logutil.BgLogger().Warn("[top-sql] pubsub datasink failed to parse top-ru config", zap.Error(err))
+		cancel()
+		return nil, err
+	}
 
 	ds := &pubSubDataSink{
 		ctx:    ctx,
@@ -140,7 +152,7 @@ func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_Subs
 		itemInterval: itemInterval,
 	}
 
-	return ds
+	return ds, nil
 }
 
 var _ DataSink = &pubSubDataSink{}
