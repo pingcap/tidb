@@ -418,7 +418,6 @@ func BuildIndexInfo(
 		}
 		idxInfo.Global = indexOption.Global
 		setGlobalIndexVersion(tblInfo, idxInfo)
-
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = pmodel.IndexTypeBtree
