@@ -949,6 +949,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogIsExplicitTxn, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogIsWriteCacheTable, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogResultCacheHit, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogHasMoreResults, tp: mysql.TypeTiny, size: 1},

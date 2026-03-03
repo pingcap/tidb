@@ -560,3 +560,24 @@ func TestCopRuntimeStats2(t *testing.T) {
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
 }
+
+func TestResultCacheRuntimeStats(t *testing.T) {
+	// Test hit case.
+	hit := &ResultCacheRuntimeStats{HitCache: true, CachedRows: 100}
+	require.Equal(t, "result_cache:hit, cached_rows:100", hit.String())
+	require.Equal(t, TpResultCacheRuntimeStats, hit.Tp())
+
+	// Test miss case.
+	miss := &ResultCacheRuntimeStats{HitCache: false}
+	require.Equal(t, "result_cache:miss", miss.String())
+
+	// Test Clone.
+	cloned := hit.Clone().(*ResultCacheRuntimeStats)
+	require.Equal(t, true, cloned.HitCache)
+	require.Equal(t, int64(100), cloned.CachedRows)
+
+	// Test Merge: miss + hit = hit.
+	miss.Merge(hit)
+	require.True(t, miss.HitCache)
+	require.Equal(t, int64(100), miss.CachedRows)
+}

@@ -316,6 +316,29 @@ func TestSlowLogFormat(t *testing.T) {
 	require.False(t, seVar.CurrentDBChanged)
 }
 
+func TestSlowLogResultCacheHit(t *testing.T) {
+	ctx := mock.NewContext()
+	seVar := ctx.GetSessionVars()
+	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "127.0.0.1"}
+	seVar.ConnectionID = 1
+
+	// With ResultCacheHit = true, the slow log should contain "Result_cache_hit: true".
+	logItems := &variable.SlowQueryLogItems{
+		TxnTS:          1,
+		SQL:            "select * from t;",
+		Succ:           true,
+		ResultCacheHit: true,
+	}
+	logString := seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, "# Result_cache_hit: true")
+
+	// With ResultCacheHit = false, the slow log should NOT contain "Result_cache_hit".
+	logItems.ResultCacheHit = false
+	logString = seVar.SlowLogFormat(logItems)
+	require.NotContains(t, logString, "Result_cache_hit")
+}
+
 func TestIsolationRead(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {

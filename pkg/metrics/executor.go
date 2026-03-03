@@ -54,6 +54,18 @@ var (
 
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
+
+	// ResultCacheHitCounter records the number of result cache hits on cached tables.
+	ResultCacheHitCounter prometheus.Counter
+
+	// ResultCacheMissCounter records the number of result cache misses on cached tables.
+	ResultCacheMissCounter prometheus.Counter
+
+	// ResultCacheMemoryGauge records the memory usage of result cache on cached tables.
+	ResultCacheMemoryGauge prometheus.Gauge
+
+	// ResultCacheEvictCounter records the number of result cache evictions (lease expiry).
+	ResultCacheEvictCounter prometheus.Counter
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -129,4 +141,40 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
+
+	ResultCacheHitCounter = NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_hit_total",
+			Help:      "Total number of result cache hits on cached tables.",
+		},
+	)
+
+	ResultCacheMissCounter = NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_miss_total",
+			Help:      "Total number of result cache misses on cached tables.",
+		},
+	)
+
+	ResultCacheMemoryGauge = NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_memory_bytes",
+			Help:      "Memory usage of result cache on cached tables.",
+		},
+	)
+
+	ResultCacheEvictCounter = NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_evict_total",
+			Help:      "Total number of result cache evictions (lease expiry).",
+		},
+	)
 }

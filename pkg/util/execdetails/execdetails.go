@@ -947,6 +947,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpResultCacheRuntimeStats is the tp for ResultCacheRuntimeStats
+	TpResultCacheRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -1951,4 +1953,38 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*RURuntimeStats) Tp() int {
 	return TpRURuntimeStats
+}
+
+// ResultCacheRuntimeStats records result cache hit/miss info for EXPLAIN ANALYZE.
+type ResultCacheRuntimeStats struct {
+	HitCache   bool
+	CachedRows int64
+}
+
+// String implements the RuntimeStats interface.
+func (e *ResultCacheRuntimeStats) String() string {
+	if e.HitCache {
+		return fmt.Sprintf("result_cache:hit, cached_rows:%d", e.CachedRows)
+	}
+	return "result_cache:miss"
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ResultCacheRuntimeStats) Clone() RuntimeStats {
+	return &ResultCacheRuntimeStats{HitCache: e.HitCache, CachedRows: e.CachedRows}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ResultCacheRuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*ResultCacheRuntimeStats); ok {
+		if tmp.HitCache {
+			e.HitCache = true
+			e.CachedRows = tmp.CachedRows
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (*ResultCacheRuntimeStats) Tp() int {
+	return TpResultCacheRuntimeStats
 }

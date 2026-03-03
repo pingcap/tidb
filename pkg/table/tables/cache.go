@@ -325,7 +325,14 @@ func (c *cachedTable) getOrCreateResultCache() *resultSetCache {
 }
 
 func (c *cachedTable) invalidateResultCache() {
-	c.resultCache.Store(nil)
+	old := c.resultCache.Swap(nil)
+	if old != nil {
+		n := old.Len()
+		if n > 0 {
+			metrics.ResultCacheEvictCounter.Add(float64(n))
+		}
+		metrics.ResultCacheMemoryGauge.Sub(float64(old.MemoryUsage()))
+	}
 }
 
 func (c *cachedTable) GetCachedResult(key table.ResultCacheKey) ([]*chunk.Chunk, []*types.FieldType, bool) {
@@ -338,7 +345,11 @@ func (c *cachedTable) GetCachedResult(key table.ResultCacheKey) ([]*chunk.Chunk,
 
 func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
 	rc := c.getOrCreateResultCache()
-	return rc.Put(key, chunks, fieldTypes)
+	ok := rc.Put(key, chunks, fieldTypes)
+	if ok {
+		metrics.ResultCacheMemoryGauge.Set(float64(rc.MemoryUsage()))
+	}
+	return ok
 }
 
 const cacheTableWriteLease = 5 * time.Second

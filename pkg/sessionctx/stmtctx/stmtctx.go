@@ -323,6 +323,9 @@ type StatementContext struct {
 	// If the statement read from table cache, this flag is set.
 	ReadFromTableCache bool
 
+	// ReadFromResultCache indicates whether the result was served from the result set cache.
+	ReadFromResultCache bool
+
 	// cache is used to reduce object allocation.
 	cache struct {
 		execdetails.RuntimeStatsColl
