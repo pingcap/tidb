@@ -169,7 +169,7 @@ func TestMatchColumns(t *testing.T) {
 
 	p := &privileges.MySQLPrivilege{}
 	se := tk.Session()
-	require.NoError(t, p.LoadColumnsPrivTable(se.GetRestrictedSQLExecutor()))
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
 	col := p.MatchColumns("user", "%", "db", "table", "c1")
 	require.NotNil(t, col)
 	col = p.MatchColumns("user", "%", "db", "table", "*")
@@ -180,7 +180,7 @@ func TestMatchColumns(t *testing.T) {
 	tk.MustExec("flush privileges")
 	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
 	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "References")`)
-	require.NoError(t, p.LoadColumnsPrivTable(se.GetRestrictedSQLExecutor()))
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
 	col = p.MatchColumns("user", "%", "db", "table", "c1")
 	require.NotNil(t, col)
 	col = p.MatchColumns("user", "%", "db", "table", "c2")
