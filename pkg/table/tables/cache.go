@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -73,6 +75,7 @@ type cacheData struct {
 	Start uint64
 	Lease uint64
 	kv.MemBuffer
+	datumCache *CachedDatumData // pre-decoded datum cache
 }
 
 func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
@@ -225,12 +228,15 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 				return
 			}
 
+			datumCache := c.buildDatumCache(mb)
+
 			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&cacheData{
-					Start:     startTS,
-					Lease:     tmp.Lease,
-					MemBuffer: mb,
+					Start:      startTS,
+					Lease:      tmp.Lease,
+					MemBuffer:  mb,
+					datumCache: datumCache,
 				})
 				atomic.StoreInt64(&c.totalSize, totalSize)
 			}
@@ -296,9 +302,10 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	}
 	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
-			Start:     data.Start,
-			Lease:     newLease,
-			MemBuffer: data.MemBuffer,
+			Start:      data.Start,
+			Lease:      newLease,
+			MemBuffer:  data.MemBuffer,
+			datumCache: data.datumCache,
 		})
 	} else {
 		c.invalidateResultCache() // Lease not renewed, data may have changed.
@@ -307,6 +314,50 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		TestMockRenewLeaseABA2 <- struct{}{}
 	})
+}
+
+// buildDatumCache builds a CachedDatumData from the given MemBuffer.
+// It constructs the decoder parameters from the table schema.
+// Returns nil if building fails (non-fatal, the cache simply won't be available).
+func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
+	cols := c.Cols()
+	tblMeta := c.Meta()
+
+	colInfo := make([]rowcodec.ColInfo, len(cols))
+	fieldTypes := make([]*types.FieldType, len(cols))
+	for i, col := range cols {
+		colInfo[i] = rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblMeta.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col.ColumnInfo),
+		}
+		fieldTypes[i] = rowcodec.FieldTypeFromModelColumn(col.ColumnInfo)
+	}
+
+	pkColIDs := TryGetCommonPkColumnIds(tblMeta)
+	if len(pkColIDs) == 0 {
+		pkColIDs = []int64{-1}
+	}
+
+	defDatum := func(i int, chk *chunk.Chunk) error {
+		chk.AppendNull(i)
+		return nil
+	}
+
+	dc, err := BuildCachedDatumData(mb, c.tableID, colInfo, pkColIDs, defDatum, fieldTypes)
+	if err != nil {
+		log.Warn("build datum cache failed", zap.Error(err))
+		return nil
+	}
+	return dc
+}
+
+func (c *cachedTable) GetCachedDatumData() *CachedDatumData {
+	data := c.cacheData.Load()
+	if data == nil {
+		return nil
+	}
+	return data.datumCache
 }
 
 func (c *cachedTable) getResultCache() *resultSetCache {
