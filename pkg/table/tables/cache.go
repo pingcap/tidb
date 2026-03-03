@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -75,7 +76,8 @@ type cacheData struct {
 	Start uint64
 	Lease uint64
 	kv.MemBuffer
-	datumCache *CachedDatumData // pre-decoded datum cache
+	datumCache      *CachedDatumData                // pre-decoded datum cache for table scans
+	indexDatumCaches map[int64]*CachedIndexDatumData // pre-decoded datum caches for index scans, keyed by index ID
 }
 
 func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
@@ -229,14 +231,16 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 			}
 
 			datumCache := c.buildDatumCache(mb)
+			indexDatumCaches := c.buildIndexDatumCaches(mb)
 
 			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&cacheData{
-					Start:      startTS,
-					Lease:      tmp.Lease,
-					MemBuffer:  mb,
-					datumCache: datumCache,
+					Start:            startTS,
+					Lease:            tmp.Lease,
+					MemBuffer:        mb,
+					datumCache:       datumCache,
+					indexDatumCaches: indexDatumCaches,
 				})
 				atomic.StoreInt64(&c.totalSize, totalSize)
 			}
@@ -302,10 +306,11 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	}
 	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
-			Start:      data.Start,
-			Lease:      newLease,
-			MemBuffer:  data.MemBuffer,
-			datumCache: data.datumCache,
+			Start:            data.Start,
+			Lease:            newLease,
+			MemBuffer:        data.MemBuffer,
+			datumCache:       data.datumCache,
+			indexDatumCaches: data.indexDatumCaches,
 		})
 	} else {
 		c.invalidateResultCache() // Lease not renewed, data may have changed.
@@ -371,6 +376,44 @@ func (c *cachedTable) GetCachedDatumData() *CachedDatumData {
 		return nil
 	}
 	return data.datumCache
+}
+
+// buildIndexDatumCaches builds CachedIndexDatumData for all public indexes.
+// Returns nil if no indexes can be cached (non-fatal).
+func (c *cachedTable) buildIndexDatumCaches(mb kv.MemBuffer) map[int64]*CachedIndexDatumData {
+	tblMeta := c.Meta()
+	indices := tblMeta.Indices
+	if len(indices) == 0 {
+		return nil
+	}
+
+	caches := make(map[int64]*CachedIndexDatumData, len(indices))
+	for _, idx := range indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		dc, err := BuildCachedIndexDatumData(mb, c.tableID, idx, tblMeta)
+		if err != nil {
+			log.Warn("build index datum cache failed",
+				zap.String("index", idx.Name.O),
+				zap.Error(err))
+			continue
+		}
+		caches[idx.ID] = dc
+	}
+	if len(caches) == 0 {
+		return nil
+	}
+	return caches
+}
+
+// GetCachedIndexDatumData returns the pre-decoded index datum cache for the given index ID.
+func (c *cachedTable) GetCachedIndexDatumData(indexID int64) *CachedIndexDatumData {
+	data := c.cacheData.Load()
+	if data == nil || data.indexDatumCaches == nil {
+		return nil
+	}
+	return data.indexDatumCaches[indexID]
 }
 
 func (c *cachedTable) getResultCache() *resultSetCache {

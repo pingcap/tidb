@@ -1512,6 +1512,17 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			}); ok {
 				us.datumCache = dcp.GetCachedDatumData()
 			}
+			// Try to use pre-decoded index datum caches to skip index KV decode.
+			if icp, ok := cachedTable.(interface {
+				GetCachedIndexDatumData(int64) *tables.CachedIndexDatumData
+			}); ok {
+				us.indexDatumCaches = make(map[int64]*tables.CachedIndexDatumData)
+				for _, idx := range tbl.Meta().Indices {
+					if dc := icp.GetCachedIndexDatumData(idx.ID); dc != nil {
+						us.indexDatumCaches[idx.ID] = dc
+					}
+				}
+			}
 			// Record the first cached table for result set caching.
 			if b.cachedTbl == nil {
 				b.cachedTbl = cachedTable

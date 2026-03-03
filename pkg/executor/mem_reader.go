@@ -62,6 +62,7 @@ type memIndexReader struct {
 	retFieldTypes  []*types.FieldType
 	outputOffset   []int
 	cacheTable     kv.MemBuffer
+	indexDatumCache *tables.CachedIndexDatumData // pre-decoded index datum cache
 	keepOrder      bool
 	physTblIDIdx   int
 	partitionIDMap map[int64]struct{}
@@ -87,20 +88,25 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 	if us.desc {
 		slices.Reverse(kvRanges)
 	}
+	var indexDatumCache *tables.CachedIndexDatumData
+	if us.indexDatumCaches != nil {
+		indexDatumCache = us.indexDatumCaches[idxReader.index.ID]
+	}
 	return &memIndexReader{
-		ctx:            us.Ctx(),
-		index:          idxReader.index,
-		table:          idxReader.table.Meta(),
-		kvRanges:       kvRanges,
-		conditions:     us.conditions,
-		retFieldTypes:  exec.RetTypes(us),
-		outputOffset:   outputOffset,
-		cacheTable:     us.cacheTable,
-		keepOrder:      us.keepOrder,
-		compareExec:    us.compareExec,
-		physTblIDIdx:   us.physTblIDIdx,
-		partitionIDMap: us.partitionIDMap,
-		resultRows:     make([]types.Datum, 0, len(outputOffset)),
+		ctx:             us.Ctx(),
+		index:           idxReader.index,
+		table:           idxReader.table.Meta(),
+		kvRanges:        kvRanges,
+		conditions:      us.conditions,
+		retFieldTypes:   exec.RetTypes(us),
+		outputOffset:    outputOffset,
+		cacheTable:      us.cacheTable,
+		indexDatumCache: indexDatumCache,
+		keepOrder:       us.keepOrder,
+		compareExec:     us.compareExec,
+		physTblIDIdx:    us.physTblIDIdx,
+		partitionIDMap:  us.partitionIDMap,
+		resultRows:      make([]types.Datum, 0, len(outputOffset)),
 	}
 }
 
@@ -212,6 +218,14 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		}
 	}
 
+	// Fast path: use pre-decoded index cache.
+	if m.indexDatumCache != nil {
+		if cachedDatums, ok := m.indexDatumCache.Entries[string(key)]; ok {
+			return m.projectCachedIndexDatums(cachedDatums, key), nil
+		}
+	}
+
+	// Slow path: full decode.
 	colsLen := len(m.index.Columns)
 	if m.decodeBuff == nil {
 		m.decodeBuff = make([][]byte, colsLen, colsLen+len(colInfos))
@@ -251,6 +265,45 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		}
 	}
 	return ds, nil
+}
+
+// projectCachedIndexDatums applies outputOffset projection to cached datums,
+// handles physTblIDIdx, and converts TIMESTAMP columns from UTC to session timezone.
+func (m *memIndexReader) projectCachedIndexDatums(cachedDatums []types.Datum, key []byte) []types.Datum {
+	physTblIDColumnIdx := math.MaxInt64
+	if m.physTblIDIdx >= 0 {
+		physTblIDColumnIdx = m.outputOffset[m.physTblIDIdx]
+	}
+
+	ds := m.resultRows[:0]
+	for i, offset := range m.outputOffset {
+		if m.physTblIDIdx == i {
+			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
+			ds = append(ds, types.NewIntDatum(tid))
+			continue
+		}
+		if offset > physTblIDColumnIdx {
+			offset = offset - 1
+		}
+		d := cachedDatums[offset]
+		// Convert TIMESTAMP from UTC to session timezone.
+		if m.loc != time.UTC && len(m.indexDatumCache.TsColIndices) > 0 {
+			for _, tsIdx := range m.indexDatumCache.TsColIndices {
+				if offset == tsIdx && !d.IsNull() {
+					t := d.GetMysqlTime()
+					if !t.IsZero() {
+						// ConvertTimeZone modifies t in place; safe because GetMysqlTime returns a copy.
+						_ = t.ConvertTimeZone(time.UTC, m.loc)
+						d.SetMysqlTime(t)
+					}
+					break
+				}
+			}
+		}
+		ds = append(ds, d)
+	}
+	m.resultRows = ds
+	return ds
 }
 
 type memTableReader struct {
