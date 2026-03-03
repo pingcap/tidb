@@ -76,6 +76,7 @@ go_test(
         "rewrite_meta_rawkv_test.go",
         "search_test.go",
         "stream_metas_test.go",
+        "stream_mgr_fuzz_test.go",
         "stream_misc_test.go",
         "table_mapping_test.go",
     ],

@@ -46,19 +46,166 @@ const (
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
 
-// metaPattern is a regular expression used to match backup metadata filenames.
-// The expected filename format is:
-//
-//	{flushTs}-{minDefaultTs}-{minTs}-{maxTs}.meta
-//
-// where each part is a hexadecimal string (0-9, a-f, A-F).
-// Example:
-//
-//	0000000000000001-0000000000003039-065CCFF1D8AC0000-065CCFF1D8AC0006.meta
-//
-// The pattern captures all four parts as separate groups.
-// Leading zeros are necessary for the pattern to match.
-var metaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
+const (
+	legacyBackupMetaPartCount = 4
+	taggedMetaTagValueLen     = 17
+
+	backupMetaMinBeginTSTag byte = 'd'
+	backupMetaMinTSTag      byte = 'l'
+	backupMetaMaxTSTag      byte = 'u'
+)
+
+var (
+	legacyBackupMetaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
+	taggedBackupMetaPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}-(?:[0-9A-Za-z][0-9a-fA-F]{16})+$`)
+)
+
+type parsedBackupMetaFileName struct {
+	flushTs      uint64
+	storeID      uint64
+	minDefaultTs uint64
+	minTs        uint64
+	maxTs        uint64
+}
+
+func parseBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
+	switch {
+	case taggedBackupMetaPattern.MatchString(fileName):
+		return parseTaggedBackupMetaFileName(fileName)
+	case legacyBackupMetaPattern.MatchString(fileName):
+		return parseLegacyBackupMetaFileName(fileName)
+	default:
+		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta file name format: %s", fileName)
+	}
+}
+
+func parseLegacyBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
+	parts := strings.Split(fileName, "-")
+	if len(parts) != legacyBackupMetaPartCount {
+		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta legacy file name format: %s", fileName)
+	}
+
+	flushTs, err := parseBackupMetaHexU64(fileName, "flushTs", parts[0])
+	if err != nil {
+		return parsedBackupMetaFileName{}, err
+	}
+	minDefaultTs, err := parseBackupMetaHexU64(fileName, "minDefaultTs", parts[1])
+	if err != nil {
+		return parsedBackupMetaFileName{}, err
+	}
+	minTs, err := parseBackupMetaHexU64(fileName, "minTs", parts[2])
+	if err != nil {
+		return parsedBackupMetaFileName{}, err
+	}
+	maxTs, err := parseBackupMetaHexU64(fileName, "maxTs", parts[3])
+	if err != nil {
+		return parsedBackupMetaFileName{}, err
+	}
+
+	return parsedBackupMetaFileName{
+		flushTs:      flushTs,
+		minDefaultTs: minDefaultTs,
+		minTs:        minTs,
+		maxTs:        maxTs,
+	}, nil
+}
+
+func parseTaggedBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
+	const (
+		seenMinBeginTs = 1 << iota
+		seenMinTs
+		seenMaxTs
+	)
+
+	prefix, suffix, ok := strings.Cut(fileName, "-")
+	if !ok {
+		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta tagged file name format: %s", fileName)
+	}
+	if len(prefix) != 32 {
+		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta tagged prefix length in %s", fileName)
+	}
+
+	flushTs, err := parseBackupMetaHexU64(fileName, "flushTs", prefix[:16])
+	if err != nil {
+		return parsedBackupMetaFileName{}, err
+	}
+	storeID, err := parseBackupMetaHexU64(fileName, "storeID", prefix[16:])
+	if err != nil {
+		return parsedBackupMetaFileName{}, err
+	}
+
+	var (
+		minDefaultTs uint64
+		minTs        uint64
+		maxTs        uint64
+		requiredMask uint8
+		seenTags     [256]bool
+	)
+	for pos := 0; pos < len(suffix); {
+		remain := len(suffix) - pos
+		if remain < taggedMetaTagValueLen {
+			return parsedBackupMetaFileName{}, errors.Errorf("incomplete tag segment in %s", fileName)
+		}
+		tag := suffix[pos]
+		if !isASCIIAlphanumeric(tag) {
+			return parsedBackupMetaFileName{}, errors.Errorf("invalid suffix tag %q in %s", tag, fileName)
+		}
+		hexValue := suffix[pos+1 : pos+taggedMetaTagValueLen]
+		value, err := parseBackupMetaHexU64(fileName, "tag value", hexValue)
+		if err != nil {
+			return parsedBackupMetaFileName{}, err
+		}
+		if seenTags[tag] {
+			return parsedBackupMetaFileName{}, errors.Errorf("duplicate suffix tag %q in %s", tag, fileName)
+		}
+		seenTags[tag] = true
+		switch tag {
+		case backupMetaMinBeginTSTag:
+			minDefaultTs = value
+			requiredMask |= seenMinBeginTs
+		case backupMetaMinTSTag:
+			minTs = value
+			requiredMask |= seenMinTs
+		case backupMetaMaxTSTag:
+			maxTs = value
+			requiredMask |= seenMaxTs
+		}
+		pos += taggedMetaTagValueLen
+	}
+
+	if requiredMask&seenMinBeginTs == 0 {
+		return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", backupMetaMinBeginTSTag, fileName)
+	}
+	if requiredMask&seenMinTs == 0 {
+		return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", backupMetaMinTSTag, fileName)
+	}
+	if requiredMask&seenMaxTs == 0 {
+		return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", backupMetaMaxTSTag, fileName)
+	}
+
+	return parsedBackupMetaFileName{
+		flushTs:      flushTs,
+		storeID:      storeID,
+		minDefaultTs: minDefaultTs,
+		minTs:        minTs,
+		maxTs:        maxTs,
+	}, nil
+}
+
+func parseBackupMetaHexU64(fileName, partName, hexPart string) (uint64, error) {
+	if len(hexPart) != 16 {
+		return 0, errors.Errorf("%s must be 16 hex digits in %s", partName, fileName)
+	}
+	value, err := strconv.ParseUint(hexPart, 16, 64)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse %s in %s", partName, fileName)
+	}
+	return value, nil
+}
+
+func isASCIIAlphanumeric(ch byte) bool {
+	return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z'
+}
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -383,35 +530,28 @@ func (m *MetadataHelper) Close() {
 }
 
 func FilterPathByTs(path string, left, right uint64) string {
-	filename := strings.TrimSuffix(path, ".meta")
+	filename := strings.TrimSuffix(path, metaSuffix)
 	filename = filename[strings.LastIndex(filename, "/")+1:]
+	metaFile, err := parseBackupMetaFileName(filename)
+	if err != nil {
+		// keep consistency with old behaviour, tolerate future file path changes.
+		return path
+	}
 
-	if metaPattern.MatchString(filename) {
-		matches := metaPattern.FindStringSubmatch(filename)
-		if len(matches) < 5 {
-			log.Warn("invalid meta file name format", zap.String("file", path))
-			// consider compatible with future file path change
-			return path
-		}
+	minDefaultTs := metaFile.minDefaultTs
+	if minDefaultTs == 0 || minDefaultTs > metaFile.minTs {
+		log.Warn("minDefaultTs is not correct, fallback to minTs",
+			zap.String("file", path),
+			zap.Uint64("flushTs", metaFile.flushTs),
+			zap.Uint64("storeID", metaFile.storeID),
+			zap.Uint64("minTs", metaFile.minTs),
+			zap.Uint64("minDefaultTs", minDefaultTs),
+		)
+		minDefaultTs = metaFile.minTs
+	}
 
-		flushTs, _ := strconv.ParseUint(matches[1], 16, 64)
-		minDefaultTs, _ := strconv.ParseUint(matches[2], 16, 64)
-		minTs, _ := strconv.ParseUint(matches[3], 16, 64)
-		maxTs, _ := strconv.ParseUint(matches[4], 16, 64)
-
-		if minDefaultTs == 0 || minDefaultTs > minTs {
-			log.Warn("minDefaultTs is not correct, fallback to minTs",
-				zap.String("file", path),
-				zap.Uint64("flushTs", flushTs),
-				zap.Uint64("minTs", minTs),
-				zap.Uint64("minDefaultTs", minDefaultTs),
-			)
-			minDefaultTs = minTs
-		}
-
-		if right < minDefaultTs || maxTs < left {
-			return ""
-		}
+	if right < minDefaultTs || metaFile.maxTs < left {
+		return ""
 	}
 
 	// keep consistency with old behaviour

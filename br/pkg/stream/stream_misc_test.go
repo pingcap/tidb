@@ -154,6 +154,42 @@ func TestFilterPath(t *testing.T) {
 			expected: "",
 		},
 		{
+			name: "new format: normal",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+		},
+		{
+			name: "new format: accepts reordered tags and extra tags",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 3,
+				restoreTS:    4,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+		},
+		{
+			name: "new format: out of range should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003u0000000000000004.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "",
+		},
+		{
+			name: "new format: invalid name should be preserved for compatibility",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 10,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
+		},
+		{
 			name: "non-matching file name format, preserved for compatibility",
 			args: args{
 				path:         "v1/backupmeta/unexpected_format.meta",
