@@ -212,6 +212,8 @@ const (
 	LocalInFile = "local_infile"
 	// PerformanceSchema is the name for 'performance_schema' system variable.
 	PerformanceSchema = "performance_schema"
+	// PerfSchemaSessionConnectAttrsSize is the name for 'performance_schema_session_connect_attrs_size' system variable.
+	PerfSchemaSessionConnectAttrsSize = "performance_schema_session_connect_attrs_size"
 	// Flush is the name for 'flush' system variable.
 	Flush = "flush"
 	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.
