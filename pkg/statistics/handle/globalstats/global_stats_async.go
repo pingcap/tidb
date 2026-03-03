@@ -305,7 +305,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 				globalStatsNDV = a.globalStats.Count
 			}
 			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
-			a.globalStats.Fms[i].DestroyAndPutToPool()
+			a.globalStats.Fms[i] = nil // Release for GC.
 		}
 	}
 	err = a.dealCMSketch()
