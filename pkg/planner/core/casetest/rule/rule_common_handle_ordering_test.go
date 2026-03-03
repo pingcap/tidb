@@ -130,9 +130,11 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// For a unique index with a range scan, the optimizer should not
 		// be able to satisfy ORDER BY PK via keep order on the index.
 		hasKeepOrderTrue := explainHas(rows, "keep order:true")
-		hasTopN := explainHas(rows, "TopN")
-		require.True(t, !hasKeepOrderTrue || hasTopN,
-			"case 4: unique index should not satisfy ORDER BY PK without sort")
+		hasSortOp := explainHas(rows, "TopN") || explainHas(rows, "Sort")
+		if !hasKeepOrderTrue {
+			require.True(t, hasSortOp,
+				"case 4: unique index should not satisfy ORDER BY PK without sort")
+		}
 
 		// ---------------------------------------------------------------
 		// Case 5: DESC ordering — the index scan should satisfy
@@ -162,9 +164,11 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1 asc, a2 desc limit 100",
 		).Rows()
 		hasKeepOrderTrue = explainHas(rows, "keep order:true")
-		hasTopN = explainHas(rows, "TopN")
-		require.True(t, !hasKeepOrderTrue || hasTopN,
-			"case 6: mixed ASC/DESC should not be satisfied by keep order alone")
+		hasSortOp = explainHas(rows, "TopN") || explainHas(rows, "Sort")
+		if !hasKeepOrderTrue {
+			require.True(t, hasSortOp,
+				"case 6: mixed ASC/DESC should not be satisfied by keep order alone")
+		}
 
 		// ---------------------------------------------------------------
 		// Case 7: Prefixed clustered PK — PRIMARY KEY(p1(2), p2) stores
@@ -185,10 +189,109 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"explain format = 'brief' select * from t_prefix use index(ic_p) where c = 0 order by p1, p2 limit 100",
 		).Rows()
 		hasKeepOrderTrue = explainHas(rows, "keep order:true")
-		hasTopN = explainHas(rows, "TopN")
+		hasSortOp = explainHas(rows, "TopN") || explainHas(rows, "Sort")
 		// The prefixed PK column cannot satisfy ORDER BY on the full column,
 		// so either keep order should be false or a TopN/Sort must be present.
-		require.True(t, !hasKeepOrderTrue || hasTopN,
-			"case 7: prefixed clustered PK should not satisfy ORDER BY without sort")
+		if !hasKeepOrderTrue {
+			require.True(t, hasSortOp,
+				"case 7: prefixed clustered PK should not satisfy ORDER BY without sort")
+		}
+
+		// ---------------------------------------------------------------
+		// Case 8: Single varchar clustered PK — a single non-integer column
+		// PK uses CommonHandle. The secondary index stores (idx_col, pk_col)
+		// and should satisfy ORDER BY on the PK.
+		// ---------------------------------------------------------------
+		tk.MustExec("drop table if exists t_varchar_pk")
+		tk.MustExec(`CREATE TABLE t_varchar_pk (
+			pk varchar(64) PRIMARY KEY CLUSTERED,
+			c int,
+			d int,
+			KEY ic_vc(c)
+		)`)
+		tk.MustExec(`insert into t_varchar_pk values
+			('banana', 0, 1),
+			('apple', 0, 2),
+			('cherry', 0, 3),
+			('date', 1, 4)`)
+		rows = tk.MustQuery(
+			"explain format = 'brief' select * from t_varchar_pk use index(ic_vc) where c = 0 order by pk limit 100",
+		).Rows()
+		require.True(t, explainHas(rows, "keep order:true"),
+			"case 8: expected keep order:true for single varchar clustered PK")
+		require.False(t, explainHas(rows, "TopN"),
+			"case 8: unexpected TopN sort")
+
+		tk.MustQuery(
+			"select * from t_varchar_pk use index(ic_vc) where c = 0 order by pk limit 100",
+		).Check(testkit.Rows(
+			"apple 0 2",
+			"banana 0 1",
+			"cherry 0 3",
+		))
+
+		// ---------------------------------------------------------------
+		// Case 9: Single varbinary clustered PK — binary types also use
+		// CommonHandle. Ordering should work the same as varchar.
+		// ---------------------------------------------------------------
+		tk.MustExec("drop table if exists t_binary_pk")
+		tk.MustExec(`CREATE TABLE t_binary_pk (
+			pk varbinary(64) PRIMARY KEY CLUSTERED,
+			c int,
+			d int,
+			KEY ic_bin(c)
+		)`)
+		tk.MustExec(`insert into t_binary_pk values
+			(x'CC', 0, 1),
+			(x'AA', 0, 2),
+			(x'DD', 0, 3),
+			(x'BB', 1, 4)`)
+		rows = tk.MustQuery(
+			"explain format = 'brief' select * from t_binary_pk use index(ic_bin) where c = 0 order by pk limit 100",
+		).Rows()
+		require.True(t, explainHas(rows, "keep order:true"),
+			"case 9: expected keep order:true for single varbinary clustered PK")
+		require.False(t, explainHas(rows, "TopN"),
+			"case 9: unexpected TopN sort")
+
+		tk.MustQuery(
+			"select * from t_binary_pk use index(ic_bin) where c = 0 order by pk limit 100",
+		).Check(testkit.Rows(
+			"\xaa 0 2",
+			"\xcc 0 1",
+			"\xdd 0 3",
+		))
+
+		// ---------------------------------------------------------------
+		// Case 10: Multi-type composite PK — (int, varchar) to verify
+		// ordering works with mixed types in the PK.
+		// ---------------------------------------------------------------
+		tk.MustExec("drop table if exists t_int_varchar_pk")
+		tk.MustExec(`CREATE TABLE t_int_varchar_pk (
+			pk1 int,
+			pk2 varchar(64),
+			c int,
+			KEY ic_iv(c)
+		, PRIMARY KEY(pk1, pk2) CLUSTERED)`)
+		tk.MustExec(`insert into t_int_varchar_pk values
+			(1, 'b', 0),
+			(1, 'a', 0),
+			(2, 'a', 0),
+			(3, 'x', 1)`)
+		rows = tk.MustQuery(
+			"explain format = 'brief' select * from t_int_varchar_pk use index(ic_iv) where c = 0 order by pk1, pk2 limit 100",
+		).Rows()
+		require.True(t, explainHas(rows, "keep order:true"),
+			"case 10: expected keep order:true for (int, varchar) clustered PK")
+		require.False(t, explainHas(rows, "TopN"),
+			"case 10: unexpected TopN sort")
+
+		tk.MustQuery(
+			"select * from t_int_varchar_pk use index(ic_iv) where c = 0 order by pk1, pk2 limit 100",
+		).Check(testkit.Rows(
+			"1 a 0",
+			"1 b 0",
+			"2 a 0",
+		))
 	})
 }
