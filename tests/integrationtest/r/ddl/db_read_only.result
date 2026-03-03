@@ -433,9 +433,11 @@ drop database if exists ro_bypass;
 create database ro_bypass;
 use ro_bypass;
 create table t1(a int primary key, b int);
+drop user if exists 'repl_writer'@'localhost';
 create user 'repl_writer'@'localhost';
 grant all on ro_bypass.* to 'repl_writer'@'localhost';
 grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'repl_writer'@'localhost';
+drop user if exists 'normal_user'@'localhost';
 create user 'normal_user'@'localhost';
 grant all on ro_bypass.* to 'normal_user'@'localhost';
 alter schema ro_bypass read only 1;
@@ -457,6 +459,54 @@ alter table t1 add column c int;
 Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
 drop table t1;
 Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+drop database if exists ro_fk_parent;
+drop database if exists ro_fk_child;
+create database ro_fk_parent;
+create database ro_fk_child;
+create table ro_fk_parent.parent(id int primary key, val int);
+create table ro_fk_child.child(id int primary key, parent_id int, foreign key fk_p(parent_id) references ro_fk_parent.parent(id) on delete cascade on update cascade);
+insert into ro_fk_parent.parent values (1, 100), (2, 200);
+insert into ro_fk_child.child values (1, 1), (2, 2);
+grant all on ro_fk_parent.* to 'repl_writer'@'localhost';
+grant all on ro_fk_parent.* to 'normal_user'@'localhost';
+alter schema ro_fk_child read only 1;
+replace into ro_fk_parent.parent values (1, 150);
+select * from ro_fk_parent.parent order by id;
+id	val
+1	150
+2	200
+select * from ro_fk_child.child order by id;
+id	parent_id
+2	2
+delete from ro_fk_parent.parent where id = 1;
+select * from ro_fk_parent.parent order by id;
+id	val
+2	200
+select * from ro_fk_child.child order by id;
+id	parent_id
+2	2
+update ro_fk_parent.parent set id = 3 where id = 2;
+select * from ro_fk_parent.parent order by id;
+id	val
+3	200
+select * from ro_fk_child.child order by id;
+id	parent_id
+2	3
+replace into ro_fk_parent.parent values (3, 999);
+Error 3989 (HY000): Schema 'ro_fk_child' is in read only mode.
+delete from ro_fk_parent.parent where id = 3;
+Error 3989 (HY000): Schema 'ro_fk_child' is in read only mode.
+update ro_fk_parent.parent set id = 4 where id = 3;
+Error 3989 (HY000): Schema 'ro_fk_child' is in read only mode.
+select * from ro_fk_parent.parent order by id;
+id	val
+3	200
+select * from ro_fk_child.child order by id;
+id	parent_id
+2	3
+alter schema ro_fk_child read only 0;
+drop database ro_fk_parent;
+drop database ro_fk_child;
 alter schema ro_bypass read only 0;
 drop database ro_bypass;
 drop user 'repl_writer'@'localhost';
