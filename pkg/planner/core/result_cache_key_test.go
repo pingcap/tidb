@@ -194,3 +194,34 @@ func TestHashParams_MultipleParams(t *testing.T) {
 	h21 := core.HashParamsForTest([]types.Datum{d2, d1})
 	require.NotEqual(t, h12, h21)
 }
+
+func TestBuildResultCacheKey_DifferentTimezones(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_tz (id int primary key, ts timestamp)")
+	tk.MustExec("alter table cached_tz cache")
+
+	// Same query executed under different timezones must produce different keys.
+	tk.MustExec("set @@time_zone = '+00:00'")
+	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_tz")
+	require.True(t, ok1)
+
+	tk.MustExec("set @@time_zone = '+08:00'")
+	key2, pb2, ok2 := execAndBuildKey(t, tk, "select * from cached_tz")
+	require.True(t, ok2)
+
+	// Same plan digest (same query shape).
+	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
+	// Different ParamHash because timezone is included.
+	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
+	// Different param bytes.
+	require.NotEqual(t, pb1, pb2)
+
+	// Same timezone should produce same key.
+	tk.MustExec("set @@time_zone = '+00:00'")
+	key3, pb3, ok3 := execAndBuildKey(t, tk, "select * from cached_tz")
+	require.True(t, ok3)
+	require.Equal(t, key1, key3)
+	require.Equal(t, pb1, pb3)
+}

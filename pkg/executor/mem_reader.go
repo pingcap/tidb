@@ -1231,14 +1231,18 @@ func (iter *memCachedDatumIter) Next() ([]types.Datum, error) {
 		}
 
 		// TIMESTAMP timezone conversion (on projected datum copy, safe).
+		// Datum cache stores TIMESTAMP in UTC; convert to session timezone on read.
+		// Skip NULL values and zero timestamps (consistent with KV decode path in decoder.go).
 		if iter.needTZConvert {
 			for _, idx := range iter.tsColProjected {
 				if !iter.datumRow[idx].IsNull() {
 					t := iter.datumRow[idx].GetMysqlTime()
-					if err := t.ConvertTimeZone(time.UTC, iter.sessionLoc); err != nil {
-						return nil, err
+					if !t.IsZero() {
+						if err := t.ConvertTimeZone(time.UTC, iter.sessionLoc); err != nil {
+							return nil, err
+						}
+						iter.datumRow[idx].SetMysqlTime(t)
 					}
-					iter.datumRow[idx].SetMysqlTime(t)
 				}
 			}
 		}

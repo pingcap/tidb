@@ -15,7 +15,9 @@
 package core
 
 import (
+	"encoding/binary"
 	"hash/fnv"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -54,15 +56,21 @@ func BuildResultCacheKey(sctx sessionctx.Context) (table.ResultCacheKey, []byte,
 	// literal values.
 	if params := sctx.GetSessionVars().PlanCacheParams.AllParamValues(); len(params) > 0 {
 		paramBytes = encodeParams(params)
-		key.ParamHash = hashBytes(paramBytes)
 	} else if len(stmtCtx.OriginalSQL) > 0 {
 		// PlanCacheParams is empty when non-prepared plan cache is disabled or
 		// the query bypasses plan cache parameterization. Fall back to hashing
 		// the original SQL text to distinguish queries with different literals.
 		paramBytes = []byte(stmtCtx.OriginalSQL)
-		key.ParamHash = hashBytes(paramBytes)
 	}
 
+	// Include the session timezone offset in the cache key so that the same
+	// query executed under different timezones maps to different cache entries.
+	// TIMESTAMP columns are stored in UTC and converted on read; cached result
+	// sets contain the post-conversion values and must not be reused across
+	// timezone changes.
+	paramBytes = appendTZOffset(paramBytes, sctx.GetSessionVars().Location())
+
+	key.ParamHash = hashBytes(paramBytes)
 	return key, paramBytes, true
 }
 
@@ -99,4 +107,13 @@ func encodeParams(params []types.Datum) []byte {
 // of each parameter before feeding it to the hasher.
 func hashParams(params []types.Datum) uint64 {
 	return hashBytes(encodeParams(params))
+}
+
+// appendTZOffset appends the timezone UTC offset (in seconds) to buf so that
+// different session timezones produce distinct cache keys.
+func appendTZOffset(buf []byte, loc *time.Location) []byte {
+	_, offset := time.Date(2000, 1, 1, 0, 0, 0, 0, loc).Zone()
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], uint32(int32(offset)))
+	return append(buf, b[:]...)
 }
