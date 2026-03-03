@@ -18,15 +18,13 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-// ResultCacheKey is the lookup key for the result set cache.
-type ResultCacheKey struct {
-	PlanDigest [16]byte // digest of the normalized plan
-	ParamHash  uint64   // hash of prepared stmt parameter values; 0 for non-prepared
-}
+// ResultCacheKey is an alias for table.ResultCacheKey.
+type ResultCacheKey = table.ResultCacheKey
 
 // cachedResult is a single cached result set entry.
 type cachedResult struct {

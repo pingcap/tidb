@@ -18,7 +18,7 @@ import (
 	"hash/fnv"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
@@ -31,16 +31,16 @@ import (
 //
 // Returns false when no plan digest is available (e.g. the plan has not been
 // finalized yet).
-func BuildResultCacheKey(sctx sessionctx.Context) (tables.ResultCacheKey, bool) {
+func BuildResultCacheKey(sctx sessionctx.Context) (table.ResultCacheKey, bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 
 	// Obtain the plan digest. It is set after optimization.
 	_, planDigest := stmtCtx.GetPlanDigest()
 	if planDigest == nil {
-		return tables.ResultCacheKey{}, false
+		return table.ResultCacheKey{}, false
 	}
 
-	var key tables.ResultCacheKey
+	var key table.ResultCacheKey
 	digestBytes := planDigest.Bytes()
 	copy(key.PlanDigest[:], digestBytes)
 

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -28,7 +28,7 @@ import (
 
 // execAndBuildKey executes a SQL statement and builds the result cache key
 // from the session context afterward (plan digest is set after execution).
-func execAndBuildKey(t *testing.T, tk *testkit.TestKit, sql string) (tables.ResultCacheKey, bool) {
+func execAndBuildKey(t *testing.T, tk *testkit.TestKit, sql string) (table.ResultCacheKey, bool) {
 	t.Helper()
 	tk.MustQuery(sql)
 	sctx := tk.Session().(sessionctx.Context)
