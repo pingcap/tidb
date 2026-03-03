@@ -118,7 +118,7 @@ func TestSetVersionByConfig(t *testing.T) {
 		conf.TiDBReleaseVersion = "v26.3.0"
 		conf.TiDBEdition = "Starter"
 	})
-	require.NoError(t, setVersionByConfig(config.GetGlobalConfig()))
+	require.NoError(t, initVersions(config.GetGlobalConfig()))
 	require.Equal(t, "Starter", versioninfo.TiDBEdition)
 	if kerneltype.IsNextGen() {
 		require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
@@ -151,7 +151,7 @@ func TestSetVersionByConfigInvalidNextGenReleaseVersion(t *testing.T) {
 		conf.ServerVersion = ""
 		conf.TiDBReleaseVersion = "v26.13.1"
 	})
-	err := setVersionByConfig(config.GetGlobalConfig())
+	err := initVersions(config.GetGlobalConfig())
 	require.ErrorContains(t, err, "invalid tidb release version for nextgen kernel")
 }
 
@@ -177,7 +177,7 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 		conf.ServerVersion = ""
 		conf.TiDBReleaseVersion = "v8.4.0-this-is-a-placeholder"
 	})
-	require.NoError(t, setVersionByConfig(config.GetGlobalConfig()))
+	require.NoError(t, initVersions(config.GetGlobalConfig()))
 	require.Equal(t, mysql.TiDBXPlaceholderReleaseVersion, mysql.TiDBReleaseVersion)
 	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", mysql.ServerVersion)
 }

@@ -291,7 +291,7 @@ func main() {
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
-		setVersions()
+		mustInitVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
@@ -753,13 +753,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 }
 
-func setVersionByConfig(cfg *config.Config) error {
-	if len(cfg.TiDBEdition) > 0 {
-		versioninfo.TiDBEdition = cfg.TiDBEdition
-	}
-	if len(cfg.TiDBReleaseVersion) > 0 {
-		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
-	}
+func initVersions(cfg *config.Config) error {
+	// in next-gen, wo forbid users to set version info.
+	// and we need to init the cluster version from component version.
 	if kerneltype.IsNextGen() {
 		normalizedReleaseVersion := mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion)
 		serverVersion, err := mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
@@ -770,15 +766,22 @@ func setVersionByConfig(cfg *config.Config) error {
 		mysql.ServerVersion = serverVersion
 		return nil
 	}
+
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
 	if len(cfg.ServerVersion) > 0 {
 		mysql.ServerVersion = cfg.ServerVersion
 	}
 	return nil
 }
 
-func setVersions() {
+func mustInitVersions() {
 	cfg := config.GetGlobalConfig()
-	terror.MustNil(setVersionByConfig(cfg))
+	terror.MustNil(initVersions(cfg))
 }
 
 func setGlobalVars() {
@@ -876,7 +879,7 @@ func setGlobalVars() {
 	atomic.StoreUint64(&vardef.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 	atomic.StoreUint64(&vardef.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
-	terror.MustNil(setVersionByConfig(cfg))
+	terror.MustNil(initVersions(cfg))
 	variable.SetSysVar(vardef.Version, mysql.ServerVersion)
 
 	if len(cfg.TiDBEdition) > 0 {
