@@ -1168,7 +1168,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
 		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults,
-		variable.SlowLogStorageFromKV, variable.SlowLogStorageFromMPP:
+		variable.SlowLogStorageFromKV, variable.SlowLogStorageFromMPP,
+		variable.SlowLogResultCacheHit:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {

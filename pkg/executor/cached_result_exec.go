@@ -18,9 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // CachedResultExec wraps an existing executor and adds result set caching
@@ -52,10 +54,27 @@ func (e *CachedResultExec) Open(ctx context.Context) error {
 		e.hitCache = true
 		e.cachedChunks = chunks
 		e.chunkIdx = 0
+		metrics.ResultCacheHitCounter.Inc()
+		e.Ctx().GetSessionVars().StmtCtx.ReadFromResultCache = true
+		// Register runtime stats for EXPLAIN ANALYZE.
+		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+			var cachedRows int64
+			for _, chk := range chunks {
+				cachedRows += int64(chk.NumRows())
+			}
+			coll.RegisterStats(e.ID(), &execdetails.ResultCacheRuntimeStats{
+				HitCache:   true,
+				CachedRows: cachedRows,
+			})
+		}
 		return nil
 	}
 
 	// Cache miss — open the original executor.
+	metrics.ResultCacheMissCounter.Inc()
+	if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+		coll.RegisterStats(e.ID(), &execdetails.ResultCacheRuntimeStats{HitCache: false})
+	}
 	if err := e.original.Open(ctx); err != nil {
 		return err
 	}

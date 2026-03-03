@@ -260,6 +260,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.ResultRows = stmtCtx.GetResultRowsCount()
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
+	items.ResultCacheHit = stmtCtx.ReadFromResultCache
 	items.UsedStats = stmtCtx.GetUsedStatsInfo(false)
 	items.IsSyncStatsFailed = stmtCtx.IsSyncStatsFailed
 	items.Warnings = variable.CollectWarningsForSlowLog(stmtCtx)

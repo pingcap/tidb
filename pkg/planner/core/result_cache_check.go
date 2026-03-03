@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 )
 
 // resultCacheNonDeterministicFuncs lists functions whose results are
@@ -112,28 +113,28 @@ func checkPlanTreeCacheable(plan base.PhysicalPlan) bool {
 	// For reader types, the inner plans (tablePlan/indexPlan) are NOT exposed
 	// via Children(). We must traverse them explicitly.
 	switch x := plan.(type) {
-	case *PhysicalTableReader:
-		if x.tablePlan != nil && !checkPlanTreeCacheable(x.tablePlan) {
+	case *physicalop.PhysicalTableReader:
+		if x.TablePlan != nil && !checkPlanTreeCacheable(x.TablePlan) {
 			return false
 		}
-	case *PhysicalIndexReader:
-		if x.indexPlan != nil && !checkPlanTreeCacheable(x.indexPlan) {
+	case *physicalop.PhysicalIndexReader:
+		if x.IndexPlan != nil && !checkPlanTreeCacheable(x.IndexPlan) {
 			return false
 		}
-	case *PhysicalIndexLookUpReader:
-		if x.indexPlan != nil && !checkPlanTreeCacheable(x.indexPlan) {
+	case *physicalop.PhysicalIndexLookUpReader:
+		if x.IndexPlan != nil && !checkPlanTreeCacheable(x.IndexPlan) {
 			return false
 		}
-		if x.tablePlan != nil && !checkPlanTreeCacheable(x.tablePlan) {
+		if x.TablePlan != nil && !checkPlanTreeCacheable(x.TablePlan) {
 			return false
 		}
-	case *PhysicalIndexMergeReader:
-		for _, partial := range x.partialPlans {
+	case *physicalop.PhysicalIndexMergeReader:
+		for _, partial := range x.PartialPlansRaw {
 			if !checkPlanTreeCacheable(partial) {
 				return false
 			}
 		}
-		if x.tablePlan != nil && !checkPlanTreeCacheable(x.tablePlan) {
+		if x.TablePlan != nil && !checkPlanTreeCacheable(x.TablePlan) {
 			return false
 		}
 	}
@@ -143,29 +144,29 @@ func checkPlanTreeCacheable(plan base.PhysicalPlan) bool {
 // checkNodeCacheable checks a single plan node for cacheability.
 func checkNodeCacheable(plan base.PhysicalPlan) bool {
 	// 1. Check FOR UPDATE / FOR SHARE lock.
-	if lock, ok := plan.(*PhysicalLock); ok {
+	if lock, ok := plan.(*physicalop.PhysicalLock); ok {
 		if lock.Lock != nil && lock.Lock.LockType != ast.SelectLockNone {
 			return false
 		}
 	}
 	// 2. Check that scanned tables are cached tables.
 	switch x := plan.(type) {
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		if x.Table.TableCacheStatusType != model.TableCacheStatusEnable {
 			return false
 		}
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		if x.Table.TableCacheStatusType != model.TableCacheStatusEnable {
 			return false
 		}
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		if x.TblInfo.TableCacheStatusType != model.TableCacheStatusEnable {
 			return false
 		}
 		if x.Lock {
 			return false
 		}
-	case *BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		if x.TblInfo.TableCacheStatusType != model.TableCacheStatusEnable {
 			return false
 		}
@@ -185,46 +186,46 @@ func checkNodeCacheable(plan base.PhysicalPlan) bool {
 func collectNodeExprs(plan base.PhysicalPlan) []expression.Expression {
 	var exprs []expression.Expression
 	switch x := plan.(type) {
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		exprs = append(exprs, x.Conditions...)
-	case *PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		exprs = append(exprs, x.Exprs...)
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		exprs = append(exprs, x.AccessCondition...)
-		exprs = append(exprs, x.filterCondition...)
-	case *PhysicalIndexScan:
+		exprs = append(exprs, x.FilterCondition...)
+	case *physicalop.PhysicalIndexScan:
 		exprs = append(exprs, x.AccessCondition...)
-	case *PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		exprs = append(exprs, x.Conditions...)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		for _, item := range x.ByItems {
 			exprs = append(exprs, item.Expr)
 		}
-	case *PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		for _, item := range x.ByItems {
 			exprs = append(exprs, item.Expr)
 		}
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		exprs = append(exprs, x.GroupByItems...)
 		for _, f := range x.AggFuncs {
 			exprs = append(exprs, f.Args...)
 		}
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		exprs = append(exprs, x.GroupByItems...)
 		for _, f := range x.AggFuncs {
 			exprs = append(exprs, f.Args...)
 		}
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		exprs = append(exprs, x.LeftConditions...)
 		exprs = append(exprs, x.RightConditions...)
 		exprs = append(exprs, x.OtherConditions...)
-	case *PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		exprs = append(exprs, x.LeftConditions...)
 		exprs = append(exprs, x.RightConditions...)
 		exprs = append(exprs, x.OtherConditions...)
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		exprs = append(exprs, x.AccessConditions...)
-	case *BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		exprs = append(exprs, x.AccessConditions...)
 	}
 	return exprs

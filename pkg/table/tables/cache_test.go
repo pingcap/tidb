@@ -553,3 +553,119 @@ func TestRenewLeaseABAFailPoint(t *testing.T) {
 	tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 2"))
 	require.False(t, lastReadFromCache(tk))
 }
+
+func lastReadFromResultCache(tk *testkit.TestKit) bool {
+	return tk.Session().GetSessionVars().StmtCtx.ReadFromResultCache
+}
+
+func TestResultCacheStmtCtxFlag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rc_flag (id int primary key, v int)")
+	tk.MustExec("insert into t_rc_flag values (1, 10), (2, 20)")
+	tk.MustExec("alter table t_rc_flag cache")
+
+	// Wait until the table is cached.
+	cached := false
+	for i := 0; i < 20; i++ {
+		tk.MustQuery("select * from t_rc_flag")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	// First query: cache miss, should populate the result cache.
+	tk.MustQuery("select * from t_rc_flag where id = 1").Check(testkit.Rows("1 10"))
+	// The first execution may be a miss, but let's allow for it to be either.
+	firstHit := lastReadFromResultCache(tk)
+
+	// Second query with the same plan: should hit the result cache.
+	tk.MustQuery("select * from t_rc_flag where id = 1").Check(testkit.Rows("1 10"))
+	if firstHit {
+		// If first was already a hit, second must be too.
+		require.True(t, lastReadFromResultCache(tk))
+	} else {
+		// The first was a miss, so it should have been cached, and the second should be a hit.
+		require.True(t, lastReadFromResultCache(tk))
+	}
+}
+
+func TestResultCacheMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rc_metrics (id int primary key, v int)")
+	tk.MustExec("insert into t_rc_metrics values (1, 10)")
+	tk.MustExec("alter table t_rc_metrics cache")
+
+	// Wait until the table is cached.
+	cached := false
+	for i := 0; i < 20; i++ {
+		tk.MustQuery("select * from t_rc_metrics")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	hitCounter := metrics.ResultCacheHitCounter
+	missCounter := metrics.ResultCacheMissCounter
+	hitPB := &dto.Metric{}
+	missPB := &dto.Metric{}
+
+	hitCounter.Write(hitPB)
+	missCounter.Write(missPB)
+	hitBefore := hitPB.GetCounter().GetValue()
+	missBefore := missPB.GetCounter().GetValue()
+
+	// First query: should be a miss (no result cache entry yet).
+	tk.MustQuery("select * from t_rc_metrics where id = 1").Check(testkit.Rows("1 10"))
+
+	// Second query: should hit the result cache.
+	tk.MustQuery("select * from t_rc_metrics where id = 1").Check(testkit.Rows("1 10"))
+
+	hitCounter.Write(hitPB)
+	missCounter.Write(missPB)
+	hitAfter := hitPB.GetCounter().GetValue()
+	missAfter := missPB.GetCounter().GetValue()
+
+	// We should see at least one hit and one miss.
+	require.Greater(t, hitAfter, hitBefore)
+	require.Greater(t, missAfter, missBefore)
+}
+
+func TestResultCacheSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rc_slow (id int primary key, v int)")
+	tk.MustExec("insert into t_rc_slow values (1, 10)")
+	tk.MustExec("alter table t_rc_slow cache")
+
+	// Wait until the table is cached.
+	cached := false
+	for i := 0; i < 20; i++ {
+		tk.MustQuery("select * from t_rc_slow")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	// First query populates the result cache.
+	tk.MustQuery("select * from t_rc_slow where id = 1").Check(testkit.Rows("1 10"))
+	// Second query should hit.
+	tk.MustQuery("select * from t_rc_slow where id = 1").Check(testkit.Rows("1 10"))
+	require.True(t, lastReadFromResultCache(tk))
+
+	// Verify the StmtCtx flag is set, which feeds into slow log.
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromResultCache)
+}
