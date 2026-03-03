@@ -21,6 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
+// timeLiteralNames maps token types to their literal function names.
+var timeLiteralNames = map[int]string{
+	timeType:      ast.TimeLiteral,
+	timestampType: ast.TimestampLiteral,
+	dateType:      ast.DateLiteral,
+}
+
 // parsePrefixKeywordExpr handles prefix expressions starting with keywords (e.g. CASE, INTERVAL, Functions).
 func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive:disable-line
 	tok := p.peek()
@@ -114,9 +121,32 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	case convert:
 		return p.tryBuiltinFunc(p.parseConvertFunc)
 
+	case timestampDiff:
+		return p.tryBuiltinFunc(p.parseTimestampDiffFunc)
+
+	case builtinFnNow, now, builtinFnCurTime:
+		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
+
+	case builtinFnCurDate:
+		return p.tryBuiltinFunc(p.parseCurDateFunc)
+
+	case builtinFnDateAdd, builtinFnDateSub:
+		return p.tryBuiltinFunc(p.parseDateArithFunc)
+
+	case builtinFnSubstring:
+		return p.tryBuiltinFunc(p.parseSubstringFunc)
+
+	case jsonSumCrc32:
+		return p.tryBuiltinFunc(p.parseJsonSumCrc32Func)
+
+	case timeType, timestampType, dateType:
+		return p.parsePrefixTimeLiteral(timeLiteralNames[tok.Tp])
+
+	case EOF:
+		return nil
+
 	case binaryType:
 		// BINARY expr → FuncCastExpr with binary charset (per parser.y:8242-8253).
-		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
 		p.next()
 		expr := p.parseExpression(precUnary)
 		if expr != nil {
@@ -130,51 +160,11 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 				FunctionType: ast.CastBinaryOperator,
 			}
 		}
-		// Fallback to identifier if not a binary expression.
 		return &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: ast.NewCIStr("binary")}}
-
-	case timestampDiff:
-		return p.tryBuiltinFunc(p.parseTimestampDiffFunc)
 
 	// Keywords that are also valid as function names in expression context.
 	case ifKwd, replace, coalesce, insert:
 		return p.parseKeywordFuncCall()
-
-	case timeType, timestampType, dateType:
-		var tp string
-		switch p.peek().Tp {
-		case timeType:
-			tp = ast.TimeLiteral
-		case timestampType:
-			tp = ast.TimestampLiteral
-		default:
-			tp = ast.DateLiteral
-		}
-		return p.parsePrefixTimeLiteral(tp)
-
-	case EOF:
-		return nil
-
-	// NowSymFunc: NOW(), CURRENT_TIMESTAMP(), LOCALTIME(), LOCALTIMESTAMP()
-	// Originally, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
-	// The scanner may produce either builtinFnNow or now depending on context.
-	case builtinFnNow, now, builtinFnCurTime:
-		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
-
-	case builtinFnCurDate:
-		return p.tryBuiltinFunc(p.parseCurDateFunc)
-
-	// DATE_ADD / DATE_SUB with INTERVAL syntax.
-	case builtinFnDateAdd, builtinFnDateSub:
-		return p.tryBuiltinFunc(p.parseDateArithFunc)
-
-	// SUBSTRING/SUBSTR with FROM/FOR and comma forms.
-	case builtinFnSubstring:
-		return p.tryBuiltinFunc(p.parseSubstringFunc)
-
-	// JSON_SUM_CRC32(expr AS type)
-	case jsonSumCrc32:
-		return p.tryBuiltinFunc(p.parseJsonSumCrc32Func)
 
 	// CHAR(expr, ...) - must route through parseScalarFuncCall for USING/NULL-sentinel handling.
 	case charType, character:

@@ -363,21 +363,21 @@ func (p *HandParser) parseSetRole() ast.StmtNode {
 }
 
 func (p *HandParser) parseRoleList() []*auth.RoleIdentity {
-	var list []*auth.RoleIdentity
-	for {
-		// Use parseUserIdentity which parses 'user'@'host'
-		user := p.parseUserIdentity()
-		if user == nil {
-			p.syntaxErrorAt(p.peek())
-			return nil
-		}
-		role := &auth.RoleIdentity{Username: user.Username, Hostname: user.Hostname}
-		list = append(list, role)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	list, ok := parseCommaListPtr(p, p.parseUserAsRole)
+	if !ok {
+		p.syntaxErrorAt(p.peek())
+		return nil
 	}
 	return list
+}
+
+// parseUserAsRole parses a user identity and wraps it as a RoleIdentity.
+func (p *HandParser) parseUserAsRole() *auth.RoleIdentity {
+	user := p.parseUserIdentity()
+	if user == nil {
+		return nil
+	}
+	return &auth.RoleIdentity{Username: user.Username, Hostname: user.Hostname}
 }
 
 // parseSetDefaultRole parses: SET DEFAULT ROLE { NONE | ALL | role_list } TO user_list

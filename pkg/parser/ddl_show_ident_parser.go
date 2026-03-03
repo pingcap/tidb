@@ -19,6 +19,47 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
+// showSimpleEntry describes a trivial SHOW variant that only sets a type,
+// optionally attaches a mysql.* table reference, and parses LIKE/WHERE.
+type showSimpleEntry struct {
+	tp          ast.ShowStmtType
+	tableName   string // if non-empty, sets stmt.Table = mysql.<tableName>
+	noLikeWhere bool   // if true, skip parseShowLikeOrWhere
+	withDBName  bool   // if true, parse optional FROM/IN database name
+}
+
+// showSimpleTypes maps uppercase identifier tokens to their simple SHOW entries.
+// All entries follow the same 3-step pattern: consume token, set type, parse LIKE/WHERE.
+var showSimpleTypes = map[string]showSimpleEntry{
+	"DATABASES":            {tp: ast.ShowDatabases},
+	"ENGINES":              {tp: ast.ShowEngines},
+	"COLLATION":            {tp: ast.ShowCollation},
+	"ERRORS":               {tp: ast.ShowErrors},
+	"PLUGINS":              {tp: ast.ShowPlugins},
+	"PRIVILEGES":           {tp: ast.ShowPrivileges, noLikeWhere: true},
+	"CHARSET":              {tp: ast.ShowCharset},
+	"CONFIG":               {tp: ast.ShowConfig},
+	"BUILTINS":             {tp: ast.ShowBuiltins, noLikeWhere: true},
+	"PROFILES":             {tp: ast.ShowProfiles, noLikeWhere: true},
+	"TRIGGERS":             {tp: ast.ShowTriggers, withDBName: true},
+	"EVENTS":               {tp: ast.ShowEvents, withDBName: true},
+	"STATS_EXTENDED":       {tp: ast.ShowStatsExtended},
+	"STATS_META":           {tp: ast.ShowStatsMeta, tableName: "STATS_META"},
+	"STATS_LOCKED":         {tp: ast.ShowStatsLocked, tableName: "STATS_TABLE_LOCKED"},
+	"STATS_HISTOGRAMS":     {tp: ast.ShowStatsHistograms, tableName: "STATS_HISTOGRAMS"},
+	"STATS_BUCKETS":        {tp: ast.ShowStatsBuckets, tableName: "STATS_BUCKETS"},
+	"STATS_HEALTHY":        {tp: ast.ShowStatsHealthy},
+	"STATS_TOPN":           {tp: ast.ShowStatsTopN},
+	"HISTOGRAMS_IN_FLIGHT": {tp: ast.ShowHistogramsInFlight},
+	"COLUMN_STATS_USAGE":   {tp: ast.ShowColumnStatsUsage},
+	"BACKUPS":              {tp: ast.ShowBackups},
+	"RESTORES":             {tp: ast.ShowRestores},
+	"AFFINITY":             {tp: ast.ShowAffinity},
+	"IMPORTS":              {tp: ast.ShowImports},
+	"SESSION_STATES":       {tp: ast.ShowSessionStates},
+	"BINDINGS":             {tp: ast.ShowBindings},
+}
+
 // parseShowIdentBased handles identifier-based SHOW variants (STATS_*, ENGINES, COLLATION, etc.).
 // Caller passes the pre-allocated ShowStmt.
 func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
@@ -26,22 +67,26 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	if !isIdentLike(tok.Tp) {
 		return nil
 	}
-	switch strings.ToUpper(tok.Lit) {
-	case "DATABASES":
+	upper := strings.ToUpper(tok.Lit)
+
+	// Table-driven dispatch for trivial SHOW types.
+	if entry, ok := showSimpleTypes[upper]; ok {
 		p.next()
-		stmt.Tp = ast.ShowDatabases
-		p.parseShowLikeOrWhere(stmt)
+		stmt.Tp = entry.tp
+		if entry.tableName != "" {
+			stmt.Table = &ast.TableName{Name: ast.NewCIStr(entry.tableName), Schema: ast.NewCIStr("mysql")}
+		}
+		if entry.withDBName {
+			stmt.DBName = p.parseShowDatabaseNameOpt()
+		}
+		if !entry.noLikeWhere {
+			p.parseShowLikeOrWhere(stmt)
+		}
 		return stmt
-	case "ENGINES":
-		p.next()
-		stmt.Tp = ast.ShowEngines
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "COLLATION":
-		p.next()
-		stmt.Tp = ast.ShowCollation
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
+	}
+
+	// Cases with extra logic that cannot be table-driven.
+	switch upper {
 	case "GRANTS":
 		p.next()
 		stmt.Tp = ast.ShowGrants
@@ -52,35 +97,9 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 			}
 		}
 		return stmt
-	case "ERRORS":
-		p.next()
-		stmt.Tp = ast.ShowErrors
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "PLUGINS":
-		p.next()
-		stmt.Tp = ast.ShowPlugins
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "PRIVILEGES":
-		p.next()
-		stmt.Tp = ast.ShowPrivileges
-		return stmt
-	case "TRIGGERS":
-		p.next()
-		stmt.Tp = ast.ShowTriggers
-		stmt.DBName = p.parseShowDatabaseNameOpt()
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "EVENTS":
-		p.next()
-		stmt.Tp = ast.ShowEvents
-		stmt.DBName = p.parseShowDatabaseNameOpt()
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
+
 	case "OPEN":
 		p.next()
-		// SHOW OPEN TABLES [FROM db] [LIKE ...] — yacc requires TABLES keyword
 		p.expect(tables)
 		stmt.Tp = ast.ShowOpenTables
 		stmt.DBName = p.parseShowDatabaseNameOpt()
@@ -88,7 +107,6 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		return stmt
 	case "TABLE":
 		p.next()
-		// SHOW TABLE STATUS [FROM db] [LIKE ...]
 		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowTableStatus
@@ -108,153 +126,6 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		stmt.Tp = ast.ShowPlacement
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
-	case "SESSION_STATES":
-		p.next()
-		stmt.Tp = ast.ShowSessionStates
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "BINDINGS":
-		p.next()
-		stmt.Tp = ast.ShowBindings
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "PROFILES":
-		p.next()
-		stmt.Tp = ast.ShowProfiles
-		return stmt
-	case "PROFILE":
-		p.next()
-		stmt.Tp = ast.ShowProfile
-		// Parse optional profile types (CPU, MEMORY, BLOCK IO, etc.)
-		for {
-			pk := p.peek()
-			switch strings.ToUpper(pk.Lit) {
-			case "CPU":
-				p.next()
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeCPU)
-			case "MEMORY":
-				p.next()
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeMemory)
-			case "BLOCK":
-				p.next()
-				p.expect(io)
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeBlockIo)
-			case "CONTEXT":
-				p.next()
-				p.expect(switchesSym)
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeContextSwitch)
-			case "IPC":
-				p.next()
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeIpc)
-			case "PAGE":
-				p.next()
-				p.expect(faultsSym)
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypePageFaults)
-			case "SWAPS":
-				p.next()
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeSwaps)
-			case "SOURCE":
-				p.next()
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeSource)
-			case "ALL":
-				p.next()
-				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeAll)
-			default:
-				goto doneProfileTypes
-			}
-			// comma between types
-			if _, ok := p.accept(','); !ok {
-				break
-			}
-		}
-	doneProfileTypes:
-		// FOR QUERY n
-		if _, ok := p.accept(forKwd); ok {
-			p.expect(query)
-			v := int64(p.parseUint64())
-			stmt.ShowProfileArgs = &v
-		}
-		// LIMIT
-		if p.peek().Tp == limit {
-			stmt.ShowProfileLimit = p.parseLimitClause()
-		}
-		return stmt
-	case "INDEXES":
-		// SHOW INDEXES {FROM|IN} tbl [{FROM|IN} db] [WHERE expr]
-		p.next()
-		p.parseShowIndexStmt(stmt)
-		return stmt
-	case "CHARSET":
-		p.next()
-		stmt.Tp = ast.ShowCharset
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "MASTER":
-		p.next()
-		if p.peekKeyword(status, "STATUS") {
-			p.next()
-			stmt.Tp = ast.ShowMasterStatus
-			return stmt
-		}
-		return nil
-	case "CONFIG":
-		p.next()
-		stmt.Tp = ast.ShowConfig
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "BUILTINS":
-		p.next()
-		stmt.Tp = ast.ShowBuiltins
-		return stmt
-	case "STATS_EXTENDED":
-		p.next()
-		stmt.Tp = ast.ShowStatsExtended
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "STATS_META":
-		p.next()
-		stmt.Tp = ast.ShowStatsMeta
-		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_META"), Schema: ast.NewCIStr("mysql")}
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "STATS_LOCKED":
-		p.next()
-		stmt.Tp = ast.ShowStatsLocked
-		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_TABLE_LOCKED"), Schema: ast.NewCIStr("mysql")}
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "STATS_HISTOGRAMS":
-		p.next()
-		stmt.Tp = ast.ShowStatsHistograms
-		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_HISTOGRAMS"), Schema: ast.NewCIStr("mysql")}
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "STATS_BUCKETS":
-		p.next()
-		stmt.Tp = ast.ShowStatsBuckets
-		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_BUCKETS"), Schema: ast.NewCIStr("mysql")}
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "STATS_HEALTHY":
-		p.next()
-		stmt.Tp = ast.ShowStatsHealthy
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "STATS_TOPN":
-		p.next()
-		stmt.Tp = ast.ShowStatsTopN
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "HISTOGRAMS_IN_FLIGHT":
-		p.next()
-		stmt.Tp = ast.ShowHistogramsInFlight
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "COLUMN_STATS_USAGE":
-		p.next()
-		stmt.Tp = ast.ShowColumnStatsUsage
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
 	case "BINDING_CACHE":
 		p.next()
 		if p.peekKeyword(status, "STATUS") {
@@ -264,34 +135,12 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 			return stmt
 		}
 		return nil
-	case "BACKUPS":
-		p.next()
-		stmt.Tp = ast.ShowBackups
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "RESTORES":
-		p.next()
-		stmt.Tp = ast.ShowRestores
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
 	case "BACKUP":
 		p.next()
 		return p.parseShowBackupLogsStmt()
 	case "BR":
 		p.next()
 		return p.parseShowBRJobStmt()
-	case "AFFINITY":
-		// parser.y: ShowTargetFilterable → "AFFINITY" → ShowStmt{Tp: ShowAffinity}
-		p.next()
-		stmt.Tp = ast.ShowAffinity
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	case "IMPORTS":
-		// SHOW IMPORTS — ShowImports is the correct AST constant for this path
-		p.next()
-		stmt.Tp = ast.ShowImports
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
 	case "EXTENDED":
 		// SHOW EXTENDED [FULL] {COLUMNS|FIELDS} {FROM|IN} tbl ...
 		p.next()

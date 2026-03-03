@@ -72,6 +72,66 @@ func (p *HandParser) parseCommaJoin() (*ast.Join, bool) {
 	return innerJoin, hasComma
 }
 
+// applyJoinCondition handles the ON/USING/natural-join logic that is shared
+// by parseJoin, parseJoinRHS, and continueParsingJoinFrom.
+// It consumes the ON expr / USING (cols) clause (if any), builds the Join node,
+// and returns the new left-hand side. Returns (nil, false) on error.
+func (p *HandParser) applyJoinCondition(
+	lhs, rhs ast.ResultSetNode,
+	joinType ast.JoinType, natural, straight bool,
+) (ast.ResultSetNode, bool) {
+	if natural {
+		join := p.arena.AllocJoin()
+		join.Left = lhs
+		join.Right = rhs
+		join.Tp = joinType
+		join.NaturalJoin = true
+		return join, true
+	}
+	if _, ok := p.accept(on); ok {
+		onExpr := p.parseExpression(precNone)
+		if onExpr == nil {
+			return nil, false
+		}
+		join := p.arena.AllocJoin()
+		join.Left = lhs
+		join.Right = rhs
+		join.Tp = joinType
+		join.StraightJoin = straight
+		cond := Alloc[ast.OnCondition](p.arena)
+		cond.Expr = onExpr
+		join.On = cond
+		return join, true
+	}
+	if _, ok := p.accept(using); ok {
+		join := p.arena.AllocJoin()
+		join.Left = lhs
+		join.Right = rhs
+		join.Tp = joinType
+		join.StraightJoin = straight
+		p.expect('(')
+		join.Using = p.parseColumnNameList()
+		p.expect(')')
+		return join, true
+	}
+	// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
+	if joinType == ast.LeftJoin || joinType == ast.RightJoin {
+		tok := p.peek()
+		p.errorNear(tok.EndOffset, tok.Offset)
+		return nil, false
+	}
+	// Pure cross/straight join without ON.
+	if !straight {
+		return p.makeCrossJoin(lhs, rhs), true
+	}
+	join := p.arena.AllocJoin()
+	join.Left = lhs
+	join.Right = rhs
+	join.Tp = joinType
+	join.StraightJoin = true
+	return join, true
+}
+
 // parseJoin parses table references with keyword joins (middle precedence).
 //
 // MySQL's grammar for joins has two forms:
@@ -119,58 +179,11 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 			return nil
 		}
 
-		// Check for ON/USING clause for THIS join level.
-		// NATURAL JOIN never takes ON/USING — check it FIRST to avoid
-		// accidentally consuming ON from DML clauses like ON DUPLICATE KEY.
-		if natural {
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.NaturalJoin = true
-			lhs = join
-		} else if _, ok := p.accept(on); ok {
-			onExpr := p.parseExpression(precNone)
-			if onExpr == nil {
-				return nil
-			}
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			on := Alloc[ast.OnCondition](p.arena)
-			on.Expr = onExpr
-			join.On = on
-			lhs = join
-		} else if _, ok := p.accept(using); ok {
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			p.expect('(')
-			join.Using = p.parseColumnNameList()
-			p.expect(')')
-			lhs = join
-		} else {
-			// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
-			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-				tok := p.peek()
-				p.errorNear(tok.EndOffset, tok.Offset)
-				return nil
-			}
-			// Pure cross/straight join without ON.
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			if !straight {
-				lhs = p.makeCrossJoin(lhs, rhs)
-			} else {
-				lhs = join
-			}
+		// Apply ON/USING/natural-join condition.
+		var ok bool
+		lhs, ok = p.applyJoinCondition(lhs, rhs, joinType, natural, straight)
+		if !ok {
+			return nil
 		}
 	}
 
@@ -220,57 +233,11 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 			return nil
 		}
 
-		// Check for ON/USING clause for THIS join level.
-		// NATURAL JOIN never takes ON/USING — check it FIRST.
-		if natural {
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.NaturalJoin = true
-			lhs = join
-		} else if _, ok := p.accept(on); ok {
-			condExpr := p.parseExpression(precNone)
-			if condExpr == nil {
-				return nil
-			}
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			cond := Alloc[ast.OnCondition](p.arena)
-			cond.Expr = condExpr
-			join.On = cond
-			lhs = join
-		} else if _, ok := p.accept(using); ok {
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			p.expect('(')
-			join.Using = p.parseColumnNameList()
-			p.expect(')')
-			lhs = join
-		} else {
-			// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
-			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-				tok := p.peek()
-				p.errorNear(tok.EndOffset, tok.Offset)
-				return nil
-			}
-			// Pure cross/straight join without ON.
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			if !straight {
-				lhs = p.makeCrossJoin(lhs, rhs)
-			} else {
-				lhs = join
-			}
+		// Apply ON/USING/natural-join condition.
+		var ok bool
+		lhs, ok = p.applyJoinCondition(lhs, rhs, joinType, natural, straight)
+		if !ok {
+			return nil
 		}
 	}
 
@@ -710,54 +677,11 @@ func (p *HandParser) continueParsingJoinFrom(left ast.ResultSetNode) *ast.Join {
 			return nil
 		}
 
-		// Handle ON/USING — mirror parseJoin exactly.
-		if natural {
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.NaturalJoin = true
-			lhs = join
-		} else if _, ok := p.accept(on); ok {
-			onExpr := p.parseExpression(precNone)
-			if onExpr == nil {
-				return nil
-			}
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			onCond := Alloc[ast.OnCondition](p.arena)
-			onCond.Expr = onExpr
-			join.On = onCond
-			lhs = join
-		} else if _, ok := p.accept(using); ok {
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.StraightJoin = straight
-			p.expect('(')
-			join.Using = p.parseColumnNameList()
-			p.expect(')')
-			lhs = join
-		} else {
-			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-				tok := p.peek()
-				p.errorNear(tok.EndOffset, tok.Offset)
-				return nil
-			}
-			if !straight {
-				lhs = p.makeCrossJoin(lhs, rhs)
-			} else {
-				join := p.arena.AllocJoin()
-				join.Left = lhs
-				join.Right = rhs
-				join.Tp = joinType
-				join.StraightJoin = true
-				lhs = join
-			}
+		// Apply ON/USING/natural-join condition.
+		var ok bool
+		lhs, ok = p.applyJoinCondition(lhs, rhs, joinType, natural, straight)
+		if !ok {
+			return nil
 		}
 	}
 
