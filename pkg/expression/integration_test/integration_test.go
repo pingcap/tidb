@@ -1671,7 +1671,6 @@ func TestInfoBuiltin(t *testing.T) {
 		expectedReleaseVersion, err := mysql.BuildTiDBXReleaseVersion(mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
 		require.NoError(t, err)
 		require.Equal(t, expectedReleaseVersion, tidbVersionInfo["Release Version"], "errors in 'select tidb_version()'")
-		require.Equal(t, mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion), tidbVersionInfo["TiDB Component Version"], "errors in 'select tidb_version()'")
 	} else {
 		require.Equal(t, mysql.TiDBReleaseVersion, tidbVersionInfo["Release Version"], "errors in 'select tidb_version()'")
 	}

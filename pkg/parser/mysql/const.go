@@ -65,16 +65,16 @@ func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
 // version format `TiDB-X-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
 func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 	if !strings.HasPrefix(releaseVersion, "v") {
-		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
+		return "", errors.Errorf("invalid TiDB release version %q, should start with 'v'", releaseVersion)
 	}
 	rawVer := strings.TrimPrefix(releaseVersion, "v")
 	ver, err := semver.NewVersion(rawVer)
 	if err != nil {
-		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
+		return "", errors.Errorf("invalid TiDB release version %q, expect a semantic version", releaseVersion)
 	}
 	// our first release of next-gen since 2025
 	if ver.Major < 25 || ver.Major > 99 || ver.Minor < 1 || ver.Minor > 12 {
-		return "", errors.Errorf("invalid TiDB release version %q, expected format v[2-digit-year].[month].[fix-version]", releaseVersion)
+		return "", errors.Errorf("invalid TiDB release version %q, the semantic version part should be in [2-digit-year].[month].[fix-version]-[xxx] format", releaseVersion)
 	}
 	return fmt.Sprintf("%s20%02d%02d.%d", tidbXReleaseVersionPrefix, ver.Major, ver.Minor, ver.Patch), nil
 }

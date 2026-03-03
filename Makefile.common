@@ -32,6 +32,7 @@ BUILD_TAGS          := codes
 CHECK_BUILD_TAGS    := deadlock,enableassert
 UNIT_TEST_TAGS      := deadlock,intest
 REAL_TIKV_TEST_TAGS := deadlock,intest
+TIDB_RELEASE_VERSION ?= $(shell git describe --tags --dirty --always)
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
 	BUILD_TAGS  := $(BUILD_TAGS),boringcrypto
@@ -43,6 +44,10 @@ ifeq ("${NEXT_GEN}", "1")
 	CHECK_BUILD_TAGS := $(CHECK_BUILD_TAGS),nextgen
 	UNIT_TEST_TAGS := $(UNIT_TEST_TAGS),nextgen
 	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
+	# Build-time release version for nextgen. Can be overridden by environment.
+	# we don't use %-m support for portability.
+	TIDB_X_RELEASE_VERSION ?= v$(shell date '+%y').$(shell date '+%m' | sed 's/^0//').0-$(shell git describe --always --dirty --exclude '*')
+	TIDB_RELEASE_VERSION := $(TIDB_X_RELEASE_VERSION)
 endif
 
 GO              := GO111MODULE=on go
@@ -80,7 +85,7 @@ UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 FAILPOINT_ENABLE  := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl enable
 FAILPOINT_DISABLE := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl disable
 
-LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(TIDB_RELEASE_VERSION)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
