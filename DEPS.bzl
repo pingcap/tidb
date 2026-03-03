@@ -1175,20 +1175,6 @@ def go_deps():
         version = "v0.0.0-20180111231733-ee0de3bc6815",
     )
     go_repository(
-        name = "com_github_dolthub_maphash",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/maphash",
-        sum = "h1:bsQ7JsF4FkkWyrP3oCnFJgrCUAFbFf3kOl4L/QxPDyQ=",
-        version = "v0.1.0",
-    )
-    go_repository(
-        name = "com_github_dolthub_swiss",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/swiss",
-        sum = "h1:gs2osYs5SJkAaH5/ggVJqXQxRXtWshF6uE0lgR/Y3Gw=",
-        version = "v0.2.1",
-    )
-    go_repository(
         name = "com_github_dustin_go_humanize",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/dustin/go-humanize",
