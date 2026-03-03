@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -832,17 +832,17 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	// on a non-clustered table (no clustered index)
 	tblInfo := &model.TableInfo{
 		ID:   tableID,
-		Name: ast.NewCIStr("test_table"),
+		Name: pmodel.NewCIStr("test_table"),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        1,
-				Name:      ast.NewCIStr("a"),
+				Name:      pmodel.NewCIStr("a"),
 				Offset:    0,
 				FieldType: *types.NewFieldType(mysql.TypeLong),
 			},
 			{
 				ID:        2,
-				Name:      ast.NewCIStr("b"),
+				Name:      pmodel.NewCIStr("b"),
 				Offset:    1,
 				FieldType: *types.NewFieldType(mysql.TypeLong),
 			},
@@ -854,10 +854,10 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 
 	idxInfo := &model.IndexInfo{
 		ID:   1,
-		Name: ast.NewCIStr("idx_b"),
+		Name: pmodel.NewCIStr("idx_b"),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   ast.NewCIStr("b"),
+				Name:   pmodel.NewCIStr("b"),
 				Offset: 1,
 				Length: types.UnspecifiedLength,
 			},
@@ -946,10 +946,10 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	// even with NULL values - this verifies backward compatibility
 	idxInfoV0 := &model.IndexInfo{
 		ID:   1,
-		Name: ast.NewCIStr("idx_b_v0"),
+		Name: pmodel.NewCIStr("idx_b_v0"),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   ast.NewCIStr("b"),
+				Name:   pmodel.NewCIStr("b"),
 				Offset: 1,
 				Length: types.UnspecifiedLength,
 			},
