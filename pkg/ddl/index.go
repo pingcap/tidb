@@ -417,20 +417,8 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
-<<<<<<< HEAD
-=======
 		setGlobalIndexVersion(tblInfo, idxInfo)
 
-		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		idxInfo.ConditionExprString = conditionString
-		idxInfo.AffectColumn, err = buildAffectColumn(idxInfo, tblInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
->>>>>>> 2f9776e8e7b (table: Non-clustered table non-unique global index needs partid in key, v1 (#65380))
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = pmodel.IndexTypeBtree
@@ -2333,12 +2321,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				return false, err
 			}
 			for _, index := range w.indexes {
-<<<<<<< HEAD
-				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
-=======
-				if index.Meta().HasCondition() {
-					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
-				}
 				actualHandle := handle
 				// For global indexes V1+ on partitioned tables, we need to wrap the handle
 				// with the partition ID to create a PartitionHandle.
@@ -2349,7 +2331,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
 				}
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
->>>>>>> 2f9776e8e7b (table: Non-clustered table non-unique global index needs partid in key, v1 (#65380))
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}

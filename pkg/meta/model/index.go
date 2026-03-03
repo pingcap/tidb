@@ -105,7 +105,6 @@ type VectorIndexInfo struct {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-<<<<<<< HEAD
 	ID            int64            `json:"id"`
 	Name          model.CIStr      `json:"idx_name"` // Index name.
 	Table         model.CIStr      `json:"tbl_name"` // Table name.
@@ -120,25 +119,6 @@ type IndexInfo struct {
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
-=======
-	ID                  int64              `json:"id"`
-	Name                ast.CIStr          `json:"idx_name"` // Index name.
-	Table               ast.CIStr          `json:"tbl_name"` // Table name.
-	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
-	State               SchemaState        `json:"state"`
-	BackfillState       BackfillState      `json:"backfill_state"`
-	Comment             string             `json:"comment"`                 // Comment
-	Tp                  ast.IndexType      `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique              bool               `json:"is_unique"`               // Whether the index is unique.
-	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
-	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
-	Global              bool               `json:"is_global"`               // Whether the index is global.
-	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
-	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
-	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
-	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
-	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -146,28 +126,6 @@ type IndexInfo struct {
 	// 1=v1 with partition ID in key and value.
 	// 2=v2 with partition ID in key only (TODO).
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
-}
-
-// Hash64 implement HashEquals interface.
-func (index *IndexInfo) Hash64(h base.Hasher) {
-	h.HashInt64(index.ID)
-}
-
-// Equals implements HashEquals interface.
-func (index *IndexInfo) Equals(other any) bool {
-	// any(nil) can still be converted as (*IndexInfo)(nil)
-	index2, ok := other.(*IndexInfo)
-	if !ok {
-		return false
-	}
-	if index == nil {
-		return index2 == nil
-	}
-	if index2 == nil {
-		return false
-	}
-	return index.ID == index2.ID
->>>>>>> 2f9776e8e7b (table: Non-clustered table non-unique global index needs partid in key, v1 (#65380))
 }
 
 // Clone clones IndexInfo.
