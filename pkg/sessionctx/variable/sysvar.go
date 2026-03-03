@@ -3544,6 +3544,7 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+<<<<<<< HEAD
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,
@@ -3592,6 +3593,11 @@ var defaultSysVars = []*SysVar{
 			if ChangePDMetadataCircuitBreakerErrorRateThresholdRatio != nil {
 				ChangePDMetadataCircuitBreakerErrorRateThresholdRatio(uint32(v * 100))
 			}
+=======
+	{Scope: ScopeGlobal, Name: TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(DefTiDBAccelerateUserCreationUpdate), Type: TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 			return nil
 		},
 	},

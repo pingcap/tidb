@@ -29,6 +29,7 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
@@ -442,6 +443,15 @@ func (p *immutable) DefaultRoles() []defaultRoleRecord {
 	return p.defaultRoles
 }
 
+<<<<<<< HEAD
 func (p *immutable) RoleGraph() map[string]roleGraphEdgesTable {
+=======
+func (p *MySQLPrivilege) GlobalPriv(user string) []globalPrivRecord {
+	ret, _ := p.globalPriv.Get(itemGlobalPriv{username: user})
+	return ret.data
+}
+
+func (p *MySQLPrivilege) RoleGraph() map[auth.RoleIdentity]roleGraphEdgesTable {
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	return p.roleGraph
 }

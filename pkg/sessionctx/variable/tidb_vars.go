@@ -1020,6 +1020,9 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
+	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 )
 
 // TiDB vars that have only global scope
@@ -1632,10 +1635,14 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+<<<<<<< HEAD
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
+=======
+	DefTiDBAccelerateUserCreationUpdate               = false
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 )
 
 // Process global variables.
@@ -1756,11 +1763,17 @@ var (
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
+<<<<<<< HEAD
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 
 	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
+=======
+	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 )
 
 var (

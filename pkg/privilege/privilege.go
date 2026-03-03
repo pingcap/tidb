@@ -44,10 +44,21 @@ type VerificationInfo struct {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+	ShowGrants(sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
+<<<<<<< HEAD
 	// GetEncodedPassword shows the encoded password for user.
 	GetEncodedPassword(user, host string) string
+=======
+	// FetchColumnPrivileges gets column privilege for user
+	FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchTablePrivileges gets table privilege for user
+	FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchSchemaPrivileges gets schema privilege for user
+	FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
@@ -101,10 +112,10 @@ type Manager interface {
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
-	ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+	ActiveRoles(sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
 
 	// FindEdge find if there is an edge between role and user.
-	FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
+	FindEdge(role *auth.RoleIdentity, user *auth.UserIdentity) bool
 
 	// GetDefaultRoles returns all default roles for certain user.
 	GetDefaultRoles(user, host string) []*auth.RoleIdentity
