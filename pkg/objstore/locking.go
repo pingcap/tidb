@@ -128,6 +128,10 @@ func (w conditionalPut) CommitTo(ctx context.Context, s storeapi.Storage) (uuid.
 func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
+	// Some object stores reject "." as a directory component in list prefixes.
+	if dirName == "." {
+		dirName = ""
+	}
 
 	return cx.Storage.WalkDir(cx, &storeapi.WalkOption{
 		SubDir:    dirName,

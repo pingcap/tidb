@@ -294,9 +294,9 @@ func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMs
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
-		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, summaryStr, jobID, JobStatusRunning)
+			SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
+			WHERE id = %? AND status IN (%?, %?);`,
+		jobStatusFailed, errorMsg, summaryStr, jobID, jobStatusPending, JobStatusRunning)
 	return err
 }
 

@@ -29,6 +29,7 @@ func TestDefaultSDKConfig(t *testing.T) {
 	require.Equal(t, config.GetDefaultFilter(), cfg.filter)
 	require.Equal(t, log.L(), cfg.logger)
 	require.Equal(t, "auto", cfg.charset)
+	require.True(t, cfg.estimateRealSize)
 }
 
 func TestSDKOptions(t *testing.T) {
@@ -70,6 +71,10 @@ func TestSDKOptions(t *testing.T) {
 	WithMaxScanFiles(100)(cfg)
 	require.NotNil(t, cfg.maxScanFiles)
 	require.Equal(t, 100, *cfg.maxScanFiles)
+
+	// Test WithEstimateRealSize
+	WithEstimateRealSize(false)(cfg)
+	require.False(t, cfg.estimateRealSize)
 
 	// Test WithSkipInvalidFiles
 	WithSkipInvalidFiles(true)(cfg)

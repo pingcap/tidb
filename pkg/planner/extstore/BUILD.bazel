@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extstore",
+    srcs = ["extstore.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/extstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/keyspace",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/vardef",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_spf13_afero//:afero",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "extstore_test",
+    timeout = "short",
+    srcs = ["extstore_test.go"],
+    embed = [":extstore"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/config",
+        "//pkg/objstore/storeapi",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit/testsetup",
+        "@com_github_spf13_afero//:afero",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

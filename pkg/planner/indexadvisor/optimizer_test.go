@@ -191,7 +191,7 @@ func TestOptimizerEstIndexSize(t *testing.T) {
 	require.Equal(t, float64(0), s)
 
 	tk.MustExec(`insert into t values (1, space(32))`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t all columns")
 	s, err = opt.EstIndexSize("test", "t", "a")
@@ -207,7 +207,7 @@ func TestOptimizerEstIndexSize(t *testing.T) {
 	require.Equal(t, float64(34), s) // 32 + 1 + 1
 
 	tk.MustExec(`insert into t values (1, space(64))`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t all columns")
 	s, err = opt.EstIndexSize("test", "t", "a")

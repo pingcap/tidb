@@ -17,6 +17,8 @@ package memory
 import (
 	"container/list"
 	"math/bits"
+	"runtime"
+	"runtime/metrics"
 	"sync/atomic"
 	"time"
 
@@ -250,3 +252,66 @@ func intoRatio(x float64) (zMilli int64) {
 }
 
 type cpuCacheLinePad cpu.CacheLinePad
+
+// RuntimeMemStats represents the runtime memory statistics
+type RuntimeMemStats struct {
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, NumGC uint64
+}
+
+var gcTracker struct {
+	lastGCTime atomic.Int64 // approximate time of last GC in unix nano
+	lastNumGC  atomic.Uint64
+}
+
+func approxLastGCTime() int64 {
+	return gcTracker.lastGCTime.Load()
+}
+
+// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
+func SampleRuntimeMemStats() (s RuntimeMemStats) {
+	heapSample := [7]metrics.Sample{
+		// heap alloc
+		{Name: "/memory/classes/heap/objects:bytes"},
+		// heap available
+		{Name: "/memory/classes/heap/unused:bytes"}, // unused
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		// memory total
+		{Name: "/memory/classes/total:bytes"},
+		// total free
+		{Name: "/gc/heap/frees:bytes"},
+		// total GC cycles
+		{Name: "/gc/cycles/total:gc-cycles"},
+	}
+	metrics.Read(heapSample[:])
+	s = RuntimeMemStats{
+		HeapAlloc: heapSample[0].Value.Uint64(),
+		HeapInuse: heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64(), // inuse = alloc + unused
+		TotalFree: heapSample[5].Value.Uint64(),
+		NumGC:     heapSample[6].Value.Uint64(),
+	}
+
+	total := heapSample[4].Value.Uint64()
+	heap := heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64() + heapSample[2].Value.Uint64() + heapSample[3].Value.Uint64()
+	if total > heap {
+		s.MemOffHeap = total - heap
+	}
+
+	if s.NumGC > gcTracker.lastNumGC.Load() {
+		gcTracker.lastGCTime.Store(now().UnixNano())
+		gcTracker.lastNumGC.Store(s.NumGC)
+	}
+
+	return s
+}
+
+// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
+func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
+	return RuntimeMemStats{
+		HeapAlloc:  s.HeapAlloc,
+		HeapInuse:  s.HeapInuse,
+		TotalFree:  s.TotalAlloc - s.Alloc,
+		MemOffHeap: s.Sys - s.HeapSys,
+		NumGC:      uint64(s.NumGC),
+	}
+}

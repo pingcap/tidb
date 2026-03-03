@@ -53,6 +53,7 @@ go_test(
     shard_count = 48,
     deps = [
         ":indexadvisor",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/testkit",
         "//pkg/util/set",

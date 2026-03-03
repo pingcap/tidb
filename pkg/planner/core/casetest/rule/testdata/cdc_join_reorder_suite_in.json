@@ -1,0 +1,247 @@
+[
+  {
+    "name": "TestCDCJoinReorder",
+    "cases": [
+      // =============================================
+      // Group 1: Inner join reorder (baseline)
+      // =============================================
+
+      // 3-table inner join
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // 4-table inner join
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
+
+      // =============================================
+      // Group 2: LEFT JOIN + INNER JOIN
+      // =============================================
+
+      // assoc(inner, left) = 1: (t1 INNER t2) LEFT t3
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a ORDER BY t1.a, t2.a",
+      // assoc(left, inner) = 0: (t1 LEFT t2) INNER t3 on t1.a = t3.a
+      // A conflict rule should be added to prevent incorrect reorder.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a ORDER BY t1.a, t3.a",
+      // leftAsscom(left, inner) = 1: (t1 LEFT t2) INNER t3 on t2.a = t3.a
+      // leftAsscom allows reorder when the inner join condition references the right side of the left join.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a, t2.a, t3.a",
+
+      // =============================================
+      // Group 3: RIGHT JOIN + INNER JOIN
+      // =============================================
+
+      // assoc(right, inner) = 1: (t1 RIGHT t2) INNER t3
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t2.a, t3.a",
+      // assoc(inner, right) = 0: (t1 INNER t2) RIGHT t3
+      // A conflict rule prevents incorrect reorder.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t2.a = t3.a ORDER BY t3.a",
+
+      // =============================================
+      // Group 4: Nested LEFT JOINs
+      // =============================================
+
+      // assoc(left, left) = 1: (t1 LEFT t2) LEFT t3 on t2.a = t3.a
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // leftAsscom(left, left) = 1: (t1 LEFT t2) LEFT t3 on t1.a = t3.a
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t1.a = t3.a ORDER BY t1.a",
+
+      // =============================================
+      // Group 5: Nested RIGHT JOINs
+      // =============================================
+
+      // assoc(right, right) = 1: (t1 RIGHT t2) RIGHT t3 on t2.a = t3.a
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t2.a = t3.a ORDER BY t3.a",
+
+      // =============================================
+      // Group 6: LEFT + RIGHT mixed
+      // =============================================
+
+      // assoc(right, left) = 1: (t1 RIGHT t2) LEFT t3 on t2.a = t3.a
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a ORDER BY t2.a",
+      // assoc(left, right) = 0: (t1 LEFT t2) RIGHT t3 on t1.a = t3.a
+      // Conflict rule should prevent incorrect reorder.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t1.a = t3.a ORDER BY t3.a",
+
+      // =============================================
+      // Group 7: rightAsscom(right, left) = 1
+      // =============================================
+
+      // rightAsscom(right, left) = 1: t1 RIGHT (t2 LEFT t3)
+      // In SQL: t2 LEFT t3 is a subgroup; t1 RIGHT JOIN that.
+      // We write it as: t1 RIGHT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t1.a = t3.a
+      // Parse tree: (t1 RIGHT t2) LEFT t3
+      // Use a different structure to test rightAsscom:
+      // t2 LEFT t3 ON t2.a = t3.a, then t1 RIGHT t2 ON t1.b = t2.b
+      // This is achieved via: t1 RIGHT JOIN (t2 LEFT JOIN t3 ON t2.a = t3.a) ON t1.a = t2.a
+      // But MySQL syntax doesn't allow this directly. Use:
+      "SELECT * FROM t2 LEFT JOIN t3 ON t2.a = t3.a RIGHT JOIN t1 ON t2.a = t1.a ORDER BY t1.a",
+
+      // =============================================
+      // Group 8: Complex 4-table mixed outer joins
+      // =============================================
+
+      // LEFT + INNER + LEFT: (t1 LEFT t2) INNER t3 LEFT t4
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
+      // RIGHT + INNER + RIGHT: (t1 RIGHT t2) INNER t3 RIGHT t4
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a RIGHT JOIN t4 ON t3.a = t4.a ORDER BY t4.a",
+      // INNER + LEFT + RIGHT: t1 INNER t2 LEFT t3 RIGHT t4
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a RIGHT JOIN t4 ON t3.a = t4.a ORDER BY t4.a",
+
+      // =============================================
+      // Group 9: All inner join with more complex conditions
+      // =============================================
+
+      // Inner join with multiple conditions
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a AND t1.b < t2.b JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // Inner join chain with different join columns
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.b = t3.b ORDER BY t1.a, t2.a, t3.a",
+
+      // =============================================
+      // Group 10: Join-condition orientation and filters
+      // =============================================
+
+      // Reversed equality orientation to exercise eq condition alignment.
+      "SELECT * FROM t1 JOIN t2 ON t2.a = t1.a JOIN t3 ON t3.a = t2.a ORDER BY t1.a",
+      // Inner join with one-side filter in ON condition.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a AND t2.b > 150 JOIN t3 ON t2.a = t3.a ORDER BY t1.a, t2.a",
+      // Degenerate predicate (single-side reference) + normal edge.
+      "SELECT * FROM t1 JOIN t2 ON t1.b > 15 JOIN t3 ON t2.a = t3.a WHERE t1.a = 3 ORDER BY t2.a, t3.a",
+      // Cross-style inner join with join predicate in WHERE.
+      "SELECT * FROM t1 JOIN t2 JOIN t3 ON t2.a = t3.a WHERE t1.a = t2.a ORDER BY t1.a",
+
+      // =============================================
+      // Group 11: Reorder barriers and fallback paths
+      // =============================================
+
+      // Null-safe equality should stop join-group expansion.
+      "SELECT * FROM t1 JOIN t2 ON t1.a <=> t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // STRAIGHT_JOIN should preserve explicit order.
+      "SELECT * FROM t1 STRAIGHT_JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // Non-equi LEFT JOIN should not be reordered as non-inner edge.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a < t2.a JOIN t3 ON t1.a = t3.a ORDER BY t1.a, t2.a, t3.a",
+      // Non-equi RIGHT JOIN should not be reordered as non-inner edge.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a < t2.a JOIN t3 ON t2.a = t3.a ORDER BY t2.a, t3.a",
+
+      // =============================================
+      // Group 12: Parenthesized/derived join groups
+      // =============================================
+
+      // Explicit parenthesized mixed joins.
+      "SELECT * FROM (t1 LEFT JOIN t2 ON t1.a = t2.a) JOIN (t3 JOIN t4 ON t3.a = t4.a) ON t1.a = t3.a ORDER BY t1.a, t3.a",
+      // Right join over an explicit sub-join.
+      "SELECT * FROM t1 RIGHT JOIN (t2 LEFT JOIN t3 ON t2.a = t3.a) ON t1.a = t2.a ORDER BY t2.a, t1.a",
+      // Derived-table leafs inside join reorder.
+      "SELECT * FROM (SELECT a, b FROM t1 WHERE a <= 3) x JOIN (SELECT a, b FROM t2 WHERE a <= 2) y ON x.a = y.a JOIN t3 ON y.a = t3.a ORDER BY x.a",
+      // Mixed outer chain with one-side outer condition.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a AND t2.b > 150 LEFT JOIN t3 ON t1.a = t3.a JOIN t4 ON t3.a = t4.a ORDER BY t1.a, t4.a",
+
+      // =============================================
+      // Group 13: 5-table joins
+      // =============================================
+
+      // 5-table inner join chain.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a JOIN t5 ON t4.a = t5.a ORDER BY t1.a",
+      // 5-table mixed: INNER + LEFT + INNER + RIGHT.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a JOIN t4 ON t1.a = t4.a RIGHT JOIN t5 ON t4.a = t5.a ORDER BY t5.a",
+      // 5-table all LEFT JOINs.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a LEFT JOIN t4 ON t3.a = t4.a LEFT JOIN t5 ON t4.a = t5.a ORDER BY t1.a",
+
+      // =============================================
+      // Group 14: Deep outer join chains (4-table)
+      // =============================================
+
+      // 4 consecutive LEFT JOINs: assoc(left,left) exercised at each level.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
+      // 4 consecutive RIGHT JOINs: assoc(right,right) exercised at each level.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t2.a = t3.a RIGHT JOIN t4 ON t3.a = t4.a ORDER BY t4.a",
+
+      // =============================================
+      // Group 15: Alternating join type patterns
+      // =============================================
+
+      // LEFT-RIGHT-LEFT alternating: conflict rules from mixed joins interact.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t2.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t3.a",
+      // RIGHT-LEFT-RIGHT alternating: another direction of mixed chain.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a RIGHT JOIN t4 ON t3.a = t4.a ORDER BY t4.a",
+
+      // =============================================
+      // Group 16: WHERE clause interaction with outer joins
+      // =============================================
+
+      // WHERE filter on preserved side of 3-table LEFT JOIN chain.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a WHERE t1.b > 10 ORDER BY t1.a",
+      // WHERE IS NULL filter: preserves outer join semantics (anti-join pattern).
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t1.a = t3.a WHERE t2.a IS NULL ORDER BY t1.a",
+      // WHERE on null-extended side may convert LEFT to INNER before reorder.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a WHERE t2.b > 100 ORDER BY t1.a",
+
+      // =============================================
+      // Group 17: Self-joins
+      // =============================================
+
+      // Self inner join: same table joined with itself.
+      "SELECT * FROM t1 x JOIN t1 y ON x.a = y.b ORDER BY x.a, y.a",
+      // Self left join + another table: CD-C must track distinct vertex IDs.
+      "SELECT * FROM t1 x LEFT JOIN t1 y ON x.a = y.b JOIN t2 ON x.a = t2.a ORDER BY x.a, t2.a",
+
+      // =============================================
+      // Group 18: Compound ON conditions for non-inner edges
+      // =============================================
+
+      // LEFT JOIN with multiple ON conditions + INNER.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a AND t1.b < t2.b JOIN t3 ON t1.a = t3.a ORDER BY t1.a, t3.a",
+      // RIGHT JOIN with multiple ON conditions + INNER.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a AND t1.b > t2.b JOIN t3 ON t2.a = t3.a ORDER BY t2.a, t3.a",
+
+      // =============================================
+      // Group 19: leftAsscom/rightAsscom = 0 specific cases
+      // =============================================
+
+      // leftAsscom(right, left) = 0: (t1 RIGHT t2) LEFT t3 ON t1.a = t3.a.
+      // The LEFT join references the inner side of the RIGHT join.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t1.a = t3.a ORDER BY t2.a",
+      // leftAsscom(right, inner) = 0: (t1 RIGHT t2) INNER t3 ON t1.a = t3.a.
+      // The INNER join references the inner side of the RIGHT join.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a ORDER BY t2.a, t3.a",
+      // rightAsscom(left, inner) = 0: t1 LEFT (t2 INNER t3).
+      // Achieved via t2 JOIN t3 ON t2.a = t3.a LEFT JOIN t1 ON t1.a = t2.a, then reversed.
+      "SELECT * FROM t2 JOIN t3 ON t2.a = t3.a LEFT JOIN t1 ON t1.a = t3.a ORDER BY t2.a",
+
+      // =============================================
+      // Group 20: Aggregation and LIMIT on top of join reorder
+      // =============================================
+
+      // GROUP BY after 3-table mixed join.
+      "SELECT t1.a, COUNT(*) FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a GROUP BY t1.a ORDER BY t1.a",
+      // LIMIT after 3-table inner join.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a LIMIT 2",
+
+      // =============================================
+      // Group 21: Semi/Anti join as join-group barriers
+      // =============================================
+
+      // EXISTS subquery becomes semi join, forms a barrier for join group expansion.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a WHERE EXISTS (SELECT 1 FROM t3 WHERE t3.a = t1.a) ORDER BY t1.a",
+      // NOT EXISTS subquery becomes anti join.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a WHERE NOT EXISTS (SELECT 1 FROM t3 WHERE t3.a = t1.a) ORDER BY t1.a",
+      // IN subquery becomes semi join.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a WHERE t1.a IN (SELECT a FROM t3) ORDER BY t1.a",
+
+      // =============================================
+      // Group 22: Join with OR and complex predicates
+      // =============================================
+
+      // Inner join with OR in WHERE.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a WHERE t1.b > 10 OR t2.b > 150 ORDER BY t1.a",
+      // Left join with compound predicate in ON.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a AND (t2.b > 100 OR t2.b < 50) JOIN t3 ON t1.a = t3.a ORDER BY t1.a",
+
+      // =============================================
+      // Group 23: Cross join columns (join on column b)
+      // =============================================
+
+      // Join on column b instead of a.
+      "SELECT * FROM t1 JOIN t2 ON t1.b = t2.b LEFT JOIN t3 ON t2.b = t3.b ORDER BY t1.a",
+      // Mixed columns: a for one edge, b for another.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.b = t3.b ORDER BY t1.a"
+    ]
+  }
+]

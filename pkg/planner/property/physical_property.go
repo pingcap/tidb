@@ -346,6 +346,23 @@ func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
 	return true, p.SortItems[0].Desc
 }
 
+// PartialOrderMatchResult records the result of matching partial order property with an access path.
+// It is stored in candidatePath to allow each path to have its own match result.
+type PartialOrderMatchResult struct {
+	// Matched indicates whether this path can provide partial order
+	Matched bool
+	// PrefixCol is the last and only one prefix column ID of index, only used for executor part
+	// For example:
+	// Query ORDER BY a,b,c
+	// Index: a, b, c(10)
+	// PrefixCol: c, the col c
+	// PrefixLen: 10, the col length of c in index
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix length in bytes for prefix index, only used for executor part
+	PrefixLen int
+}
+
 // IndexJoinRuntimeProp is the inner runtime property for index join.
 type IndexJoinRuntimeProp struct {
 	// for complete the last col range access, cuz its runtime constant.
@@ -517,6 +534,38 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 // IsSortItemEmpty checks whether the order property is empty.
 func (p *PhysicalProperty) IsSortItemEmpty() bool {
 	return len(p.SortItems) == 0
+}
+
+// NeedKeepOrder returns whether the property requires maintaining order.
+// It handles both normal sorting (SortItems) and partial order (PartialOrderInfo).
+func (p *PhysicalProperty) NeedKeepOrder() bool {
+	return !p.IsSortItemEmpty() || p.PartialOrderInfo != nil
+}
+
+// GetSortDescForKeepOrder returns the sort direction (descending or not).
+// It prioritizes PartialOrderInfo over SortItems.
+// This method reuses the existing AllSameOrder methods.
+func (p *PhysicalProperty) GetSortDescForKeepOrder() bool {
+	if p.PartialOrderInfo != nil && len(p.PartialOrderInfo.SortItems) > 0 {
+		_, desc := p.PartialOrderInfo.AllSameOrder()
+		return desc
+	}
+	_, desc := p.AllSameOrder()
+	return desc
+}
+
+// GetSortItemsForKeepOrder returns the sort items used for KeepOrder.
+// It prioritizes PartialOrderInfo over SortItems.
+// Returns a copy of SortItems (converting from []*SortItem to []SortItem if from PartialOrderInfo).
+func (p *PhysicalProperty) GetSortItemsForKeepOrder() []SortItem {
+	if p.PartialOrderInfo != nil && len(p.PartialOrderInfo.SortItems) > 0 {
+		items := make([]SortItem, 0, len(p.PartialOrderInfo.SortItems))
+		for _, si := range p.PartialOrderInfo.SortItems {
+			items = append(items, *si)
+		}
+		return items
+	}
+	return p.SortItems
 }
 
 // HashCode calculates hash code for a PhysicalProperty object.

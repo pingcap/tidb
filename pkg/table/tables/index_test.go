@@ -559,6 +559,17 @@ func TestPartialIndexDML(t *testing.T) {
 			dml:               []string{"insert into t values (1, 2, 1)", "update t set c = 3 where a = 1"},
 			shouldCreateIndex: true,
 		},
+		// only modify condition column.
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a), key testidx(c) where b > 2)",
+			dml:               []string{"insert into t values (1, 3, 1)", "update t set b = 2 where a = 1"},
+			shouldCreateIndex: false,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a), key testidx(c) where b > 2)",
+			dml:               []string{"insert into t values (1, 2, 1)", "update t set b = 3 where a = 1"},
+			shouldCreateIndex: true,
+		},
 	}
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)

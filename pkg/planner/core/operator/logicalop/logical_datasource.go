@@ -40,13 +40,17 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
+	// AstIndexHints keeps the original AST hints for later access-path selection.
+	// It is treated as read-only after DataSource build and may be shared by plans rebuilt from the same AST.
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
@@ -54,6 +58,7 @@ type DataSource struct {
 	Columns       []*model.ColumnInfo
 	DBName        ast.CIStr
 
+	// TableAsName points to the AST alias and is only used as read-only metadata after plan build.
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
@@ -82,7 +87,8 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64 `hash64-equals:"true"`
-	PartitionNames  []ast.CIStr
+	// PartitionNames records the explicit partition list from AST and is treated as read-only after plan build.
+	PartitionNames []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -502,6 +508,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	is.SetNoncacheableReason(path.NoncacheableReason)
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -513,6 +520,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IsIndexGather: true,
 		Index:         path.Index,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	sg.SetNoncacheableReason(path.NoncacheableReason)
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
@@ -574,6 +582,7 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 // NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(tp.GetFlag() | mysql.UnsignedFlag)
 	return &expression.Column{
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
@@ -586,10 +595,34 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
-	if dataSource.Table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first column.
-		resultColumnInfo = originSchemaColumns[0]
-		resultColumn = originColumns[0]
+	if dataSource.Table.Type().IsClusterTable() {
+		// For cluster tables, ExtraHandleID is not valid as they are memory tables.
+		// Use the first column from originColumns if available, otherwise fall back
+		// to the first column from table metadata.
+		if len(originColumns) > 0 {
+			resultColumnInfo = originSchemaColumns[0]
+			resultColumn = originColumns[0]
+		} else {
+			cols := dataSource.Table.Meta().Columns
+			if len(cols) > 0 {
+				col := cols[0]
+				resultColumnInfo = col
+				resultColumn = &expression.Column{
+					RetType:  col.FieldType.Clone(),
+					UniqueID: dataSource.SCtx().GetSessionVars().AllocPlanColumnID(),
+					ID:       col.ID,
+					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
+				}
+			} else {
+				// All cluster tables must have at least one column in their metadata.
+				// If this is ever reached, it indicates a bug in table registration.
+				logutil.BgLogger().Error("cluster table has no metadata columns",
+					zap.String("db", dataSource.DBName.L),
+					zap.String("table", dataSource.TableInfo.Name.L))
+				resultColumn = dataSource.NewExtraHandleSchemaCol()
+				resultColumnInfo = model.NewExtraHandleColInfo()
+			}
+		}
 	} else {
 		if dataSource.HandleCols != nil {
 			resultColumn = dataSource.HandleCols.GetCol(0)
@@ -761,7 +794,9 @@ func (ds *DataSource) CheckPartialIndexes() {
 		// A special handler for plan cache.
 		// We only do it for single IS NOT NULL constraint now.
 		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
-			path.PartIdxCondNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+			if !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+				path.NoncacheableReason = "IndexScan of partial index is uncacheable"
+			}
 		}
 	}
 	// 1. No partial index,

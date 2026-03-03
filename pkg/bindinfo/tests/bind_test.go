@@ -803,6 +803,11 @@ func TestFuzzyBindingHints(t *testing.T) {
 }
 
 func TestBatchDropBindings(t *testing.T) {
+	originLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	defer func() {
+		bindinfo.Lease = originLease
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)

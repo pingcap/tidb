@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -336,13 +337,54 @@ type checkIndexWorker struct {
 	e          *FastCheckTableExec
 }
 
+type fastCheckSysSessionVarsBackup struct {
+	optimizerUseInvisibleIndexes bool
+	memQuotaQuery                int64
+	distSQLScanConcurrency       int
+	executorConcurrency          int
+	maxExecutionTime             uint64
+	tikvClientReadTimeout        uint64
+}
+
+func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSessionVarsBackup {
+	return fastCheckSysSessionVarsBackup{
+		optimizerUseInvisibleIndexes: sv.OptimizerUseInvisibleIndexes,
+		memQuotaQuery:                sv.MemQuotaQuery,
+		distSQLScanConcurrency:       sv.DistSQLScanConcurrency(),
+		executorConcurrency:          sv.ExecutorConcurrency,
+		maxExecutionTime:             sv.MaxExecutionTime,
+		tikvClientReadTimeout:        sv.TiKVClientReadTimeout,
+	}
+}
+
+func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
+	sv.OptimizerUseInvisibleIndexes = b.optimizerUseInvisibleIndexes
+	sv.MemQuotaQuery = b.memQuotaQuery
+	if sv.MemTracker != nil {
+		sv.MemTracker.SetBytesLimit(sv.MemQuotaQuery)
+	}
+	sv.SetDistSQLScanConcurrency(b.distSQLScanConcurrency)
+	sv.ExecutorConcurrency = b.executorConcurrency
+	sv.MaxExecutionTime = b.maxExecutionTime
+	sv.TiKVClientReadTimeout = b.tikvClientReadTimeout
+}
+
+func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
+	sysVars.OptimizerUseInvisibleIndexes = true
+	sysVars.MemQuotaQuery = userVars.MemQuotaQuery
+	if sysVars.MemTracker != nil {
+		sysVars.MemTracker.SetBytesLimit(sysVars.MemQuotaQuery)
+	}
+	sysVars.SetDistSQLScanConcurrency(userVars.DistSQLScanConcurrency())
+	sysVars.ExecutorConcurrency = userVars.ExecutorConcurrency
+	sysVars.MaxExecutionTime = userVars.MaxExecutionTime
+	sysVars.TiKVClientReadTimeout = userVars.TiKVClientReadTimeout
+}
+
 func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
-	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
-	originMemQuotaQuery := sessVars.MemQuotaQuery
-
-	sessVars.OptimizerUseInvisibleIndexes = true
-	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	backup := backupFastCheckSysSessionVars(sessVars)
+	applyFastCheckSysSessionVars(sessVars, w.sctx.GetSessionVars())
 	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
 	if snapshot != 0 {
 		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
@@ -352,8 +394,7 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 
 	return func() {
-		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
-		sessVars.MemQuotaQuery = originMemQuotaQuery
+		backup.restoreTo(sessVars)
 		if snapshot != 0 {
 			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
 			if err != nil {
@@ -449,6 +490,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		restoreCtx()
 		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
+	var fpErr error
+	failpoint.InjectCall("fastCheckTableAfterInitSessCtx", se.GetSessionVars(), &fpErr)
+	if fpErr != nil {
+		return fpErr
+	}
 
 	tblMeta := w.table.Meta()
 	tblName := TableName(w.e.dbName, tblMeta.Name.String())
@@ -543,14 +589,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			"select /*+ AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s (%s = 0) group by%s",
 			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, idxCondition, whereKey, groupByKey)
 
-		logutil.BgLogger().Info(
-			"fast check table by group",
+		logger := logutil.BgLogger().With(
 			zap.String("table name", tblMeta.Name.String()),
 			zap.String("index name", idxInfo.Name.String()),
 			zap.Int("times", times),
 			zap.Int("current offset", offset), zap.Int("current mod", mod),
-			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery),
+			zap.Int("bucket size", bucketSize),
 		)
+		logger.Info("fast check table by group",
+			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
 		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
@@ -572,6 +619,37 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
 		})
+
+		tableChecksumMap, indexChecksumMap := make(map[uint64]groupByChecksum), make(map[uint64]groupByChecksum)
+		for _, c := range tableChecksum {
+			tableChecksumMap[c.bucket] = c
+		}
+		for _, c := range indexChecksum {
+			indexChecksumMap[c.bucket] = c
+		}
+
+		for bktIdx := range bucketSize {
+			tblBktSum, tblOk := tableChecksumMap[uint64(bktIdx)]
+			idxBktSum, idxOk := indexChecksumMap[uint64(bktIdx)]
+			if tblOk {
+				if idxOk {
+					if tblBktSum.checksum != idxBktSum.checksum || tblBktSum.count != idxBktSum.count {
+						logger.Info("found different checksum in the same bucket",
+							zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum),
+							zap.Stringer("idxBktSum", idxBktSum))
+					}
+				} else {
+					logger.Info("found bucket only exists in table side",
+						zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum))
+				}
+			} else {
+				if !idxOk {
+					continue
+				}
+				logger.Info("found bucket only exists in index side",
+					zap.Int("bucket", bktIdx), zap.Stringer("idxBktSum", idxBktSum))
+			}
+		}
 
 		currentOffset := 0
 
@@ -784,6 +862,10 @@ type groupByChecksum struct {
 	bucket   uint64
 	checksum uint64
 	count    int64
+}
+
+func (c groupByChecksum) String() string {
+	return fmt.Sprintf("{bkt:%d,sum:%d,cnt:%d}", c.bucket, c.checksum, c.count)
 }
 
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {

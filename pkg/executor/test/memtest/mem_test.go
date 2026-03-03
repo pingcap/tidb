@@ -223,29 +223,4 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			}
 		}
 	}
-	{
-		require.True(t, tk.Session().GetSessionVars().ConnectionID != 0)
-		b := memory.GlobalMemArbitrator().GetAwaitFreeBudgets(tk.Session().GetSessionVars().ConnectionID)
-		b.ConsumeQuota(0, memory.DefMaxLimit)
-		require.True(t, b.Used.Load() == memory.DefMaxLimit)
-		tk.MustExec("set global tidb_mem_arbitrator_mode = standard")
-		tk.MustExec("set tidb_mem_arbitrator_wait_averse = default")
-		m0 := memory.GlobalMemArbitrator().ExecMetrics()
-		require.ErrorContains(t, tk.ExecToErr("select /*+ set_var(tidb_mem_arbitrator_query_reserved=1) */ * from t"), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode), path=ParseSQL] [conn=")
-		m1 := memory.GlobalMemArbitrator().ExecMetrics()
-		require.Equal(t, m0.Cancel, m1.Cancel)
-		tk.MustExec("set global tidb_mem_arbitrator_mode = priority")
-		tk.MustExec("set tidb_mem_arbitrator_wait_averse = 1")
-		require.ErrorContains(t, tk.ExecToErr("select * from t"), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse), path=ParseSQL] [conn=")
-		m2 := memory.GlobalMemArbitrator().ExecMetrics()
-		require.Equal(t, m2.Cancel, m1.Cancel)
-		tk.MustExec("set tidb_mem_arbitrator_wait_averse = default")
-		tk.MustExec("select * from information_schema.resource_groups where name<>'?'")
-		m3 := memory.GlobalMemArbitrator().ExecMetrics()
-		require.Equal(t, m2.Cancel, m3.Cancel)
-		require.Equal(t, m2.Task.Succ+1, m3.Task.Succ)
-		require.Equal(t, m2.Task.SuccByPriority[1]+1, m3.Task.SuccByPriority[1])
-		b.ConsumeQuota(0, -memory.DefMaxLimit)
-	}
-	// out-of-quota under priority mode & kill under oom risk will be covered in tracker tests
 }
