@@ -999,7 +999,14 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
+	if evalType == types.ETDecimal ||
+		(evalType == types.ETInt && !intOverflow && !mysql.HasUnsignedFlag(argExprTp.GetFlag())) {
+		// Unary minus only flips the sign for decimal values.
+		// For signed integer without overflow, the sign width is already covered by the input flen.
+		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen())
+	} else {
+		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
+	}
 	return sig, err
 }
 
