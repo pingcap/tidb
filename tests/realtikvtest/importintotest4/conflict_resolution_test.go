@@ -108,7 +108,7 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 
 	sortStorageURI := fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t %s FROM 'gs://conflicts/t.*.csv?endpoint=%s'
-		with __max_engine_size = '1', cloud_storage_uri='%s'`, columnVars, gcsEndpoint, sortStorageURI)
+		with __max_engine_size = '1', cloud_storage_uri='%s', conflict_handling='record'`, columnVars, gcsEndpoint, sortStorageURI)
 	if len(options) > 0 {
 		importSQL = fmt.Sprintf("%s, %s", importSQL, options)
 	}
@@ -146,6 +146,40 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 	}
 
 	return int64(jobID)
+}
+
+func (s *mockGCSSuite) TestGlobalSortConflictHandlingDefaultError() {
+	sourceBucket := fmt.Sprintf("conflict-handling-src-%d", rand.Int())
+	sortedBucket := fmt.Sprintf("conflict-handling-sorted-%d", rand.Int())
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortedBucket})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: sourceBucket, Name: "t.0.csv"},
+		Content: []byte(`
+1,1
+1,2
+2,2
+`),
+	})
+	s.T().Cleanup(func() {
+		testutils.RemoveAllObjects(s.T(), s.server, sourceBucket)
+		testutils.RemoveAllObjects(s.T(), s.server, sortedBucket)
+	})
+
+	dbName := fmt.Sprintf("conflict_handling%d", rand.Int())
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t(a int primary key, b int)")
+
+	sortStorageURI := fmt.Sprintf("gs://%s?endpoint=%s", sortedBucket, gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://%s/t.*.csv?endpoint=%s'
+		with __max_engine_size='1', cloud_storage_uri='%s'`, sourceBucket, gcsEndpoint, sortStorageURI)
+	err := s.tk.QueryToErr(importSQL)
+	s.Error(err)
+	s.Contains(strings.ToLower(err.Error()), "duplicate")
+
+	importSQL = fmt.Sprintf(`%s, conflict_handling='record'`, importSQL)
+	s.tk.MustQuery(importSQL)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("2 2"))
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {

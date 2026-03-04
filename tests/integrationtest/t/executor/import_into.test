@@ -124,6 +124,16 @@ import into t from '/file.csv' with checksum_table=false;
 -- error 8164
 import into t from '/file.csv' with checksum_table=null;
 -- error 8164
+import into t from '/file.csv' with conflict_handling;
+-- error 8164
+import into t from '/file.csv' with conflict_handling=1;
+-- error 8164
+import into t from '/file.csv' with conflict_handling=true;
+-- error 8164
+import into t from '/file.csv' with conflict_handling='';
+-- error 8164
+import into t from '/file.csv' with conflict_handling='unknown';
+-- error 8164
 import into t from '/file.csv' with record_errors='aa';
 -- error 8164
 import into t from '/file.csv' with record_errors='111aa';

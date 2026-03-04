@@ -431,7 +431,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if sm.KVGroup != external.DataKVGroup {
 		partSize = m.indexKVPartSize
 	}
-	onDup, err := getOnDupForKVGroup(m.indicesGenKV, sm.KVGroup)
+	onDup, err := getOnDupForKVGroup(
+		m.indicesGenKV,
+		sm.KVGroup,
+		m.taskMeta.Plan.GetConflictHandlingMode(),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -506,9 +510,20 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 	m.summary.Reset()
 }
 
-func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup string) (engineapi.OnDuplicateKey, error) {
+func getOnDupForConflictedKV(conflictHandling importer.ConflictHandlingMode) engineapi.OnDuplicateKey {
+	if conflictHandling == importer.ConflictHandlingModeRecord {
+		return engineapi.OnDuplicateKeyRecord
+	}
+	return engineapi.OnDuplicateKeyError
+}
+
+func getOnDupForKVGroup(
+	indicesGenKV map[int64]importer.GenKVIndex,
+	kvGroup string,
+	conflictHandling importer.ConflictHandlingMode,
+) (engineapi.OnDuplicateKey, error) {
 	if kvGroup == external.DataKVGroup {
-		return engineapi.OnDuplicateKeyRecord, nil
+		return getOnDupForConflictedKV(conflictHandling), nil
 	}
 
 	indexID, err2 := external.KVGroup2IndexID(kvGroup)
@@ -516,17 +531,21 @@ func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup stri
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
-	return getOnDupForIndex(indicesGenKV, indexID)
+	return getOnDupForIndex(indicesGenKV, indexID, conflictHandling)
 }
 
-func getOnDupForIndex(indicesGenKV map[int64]importer.GenKVIndex, indexID int64) (engineapi.OnDuplicateKey, error) {
+func getOnDupForIndex(
+	indicesGenKV map[int64]importer.GenKVIndex,
+	indexID int64,
+	conflictHandling importer.ConflictHandlingMode,
+) (engineapi.OnDuplicateKey, error) {
 	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Errorf("unknown index %d", indexID)
 	}
 	if info.Unique {
-		return engineapi.OnDuplicateKeyRecord, nil
+		return getOnDupForConflictedKV(conflictHandling), nil
 	}
 	return engineapi.OnDuplicateKeyRemove, nil
 }
@@ -611,7 +630,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	onDup, err := getOnDupForKVGroup(e.indicesGenKV, sm.KVGroup)
+	onDup, err := getOnDupForKVGroup(
+		e.indicesGenKV,
+		sm.KVGroup,
+		e.taskMeta.Plan.GetConflictHandlingMode(),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}

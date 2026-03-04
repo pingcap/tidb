@@ -110,6 +110,7 @@ const (
 	maxWriteSpeedOption       = "max_write_speed"
 	checksumTableOption       = "checksum_table"
 	recordErrorsOption        = "record_errors"
+	conflictHandlingOption    = "conflict_handling"
 	detachedOption            = "detached"
 	// if 'import mode' enabled, TiKV will:
 	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
@@ -148,6 +149,7 @@ var (
 		maxWriteSpeedOption:         true,
 		checksumTableOption:         true,
 		recordErrorsOption:          true,
+		conflictHandlingOption:      true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
@@ -186,8 +188,9 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
-		threadOption:          {},
-		disablePrecheckOption: {},
+		threadOption:           {},
+		disablePrecheckOption:  {},
+		conflictHandlingOption: {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -204,6 +207,17 @@ var (
 	defaultCharacterSet = "utf8mb4"
 	// default field null def
 	defaultFieldNullDef = []string{`\N`}
+)
+
+// ConflictHandlingMode controls the behavior when IMPORT INTO finds conflicted rows.
+type ConflictHandlingMode string
+
+const (
+	// ConflictHandlingModeRecord keeps current behavior, i.e. remove conflicted
+	// rows and record them for later inspection.
+	ConflictHandlingModeRecord ConflictHandlingMode = "record"
+	// ConflictHandlingModeError means fail on first conflict.
+	ConflictHandlingModeError ConflictHandlingMode = "error"
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -288,6 +302,7 @@ type Plan struct {
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
+	ConflictHandling      ConflictHandlingMode
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
@@ -318,6 +333,20 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+}
+
+// GetConflictHandlingMode returns the normalized conflict handling mode.
+// For task metadata generated before this option was introduced, the value is
+// empty, and we keep the historical behavior for compatibility.
+func (p *Plan) GetConflictHandlingMode() ConflictHandlingMode {
+	switch p.ConflictHandling {
+	case ConflictHandlingModeRecord:
+		return ConflictHandlingModeRecord
+	case "":
+		return ConflictHandlingModeRecord
+	default:
+		return ConflictHandlingModeError
+	}
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -663,6 +692,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
+	p.ConflictHandling = ConflictHandlingModeError
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = getDefMaxEngineSize()
@@ -852,6 +882,19 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.Checksum.FromStringValue(v); err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[conflictHandlingOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		mode := ConflictHandlingMode(strings.ToLower(v))
+		switch mode {
+		case ConflictHandlingModeRecord, ConflictHandlingModeError:
+			p.ConflictHandling = mode
+		default:
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}

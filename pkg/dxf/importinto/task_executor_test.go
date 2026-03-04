@@ -71,9 +71,14 @@ func TestImportTaskExecutor(t *testing.T) {
 
 func TestGetOnDupForKVGroup(t *testing.T) {
 	t.Run("data-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup)
+		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.ConflictHandlingModeRecord)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
+	})
+	t.Run("data-kv-group-error", func(t *testing.T) {
+		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.ConflictHandlingModeError)
+		require.NoError(t, err)
+		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	indicesGenKV := map[int64]importer.GenKVIndex{
@@ -82,26 +87,31 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	}
 
 	t.Run("unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1))
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.ConflictHandlingModeRecord)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
+	t.Run("unique-index-error", func(t *testing.T) {
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.ConflictHandlingModeError)
+		require.NoError(t, err)
+		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
+	})
 
 	t.Run("non-unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2))
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.ConflictHandlingModeRecord)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRemove, onDup)
 	})
 
 	t.Run("unknown-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3))
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3), importer.ConflictHandlingModeRecord)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 		require.ErrorContains(t, err, "unknown index 3")
 	})
 
 	t.Run("invalid-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number")
+		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number", importer.ConflictHandlingModeRecord)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 	})

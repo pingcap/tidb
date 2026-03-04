@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -53,6 +52,7 @@ type encodeAndSortOperator struct {
 	logger            *zap.Logger
 	errCh             chan error
 	indicesGenKV      map[int64]importer.GenKVIndex
+	conflictHandling  importer.ConflictHandlingMode
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -68,15 +68,16 @@ func newEncodeAndSortOperator(
 	concurrency int,
 ) *encodeAndSortOperator {
 	op := &encodeAndSortOperator{
-		collector:     collector,
-		taskID:        executor.taskID,
-		subtaskID:     subtaskID,
-		taskKeyspace:  executor.taskMeta.Plan.Keyspace,
-		tableImporter: executor.tableImporter,
-		sharedVars:    sharedVars,
-		logger:        executor.logger,
-		errCh:         make(chan error),
-		indicesGenKV:  executor.indicesGenKV,
+		collector:        collector,
+		taskID:           executor.taskID,
+		subtaskID:        subtaskID,
+		taskKeyspace:     executor.taskMeta.Plan.Keyspace,
+		tableImporter:    executor.tableImporter,
+		sharedVars:       sharedVars,
+		logger:           executor.logger,
+		errCh:            make(chan error),
+		indicesGenKV:     executor.indicesGenKV,
+		conflictHandling: executor.taskMeta.Plan.GetConflictHandlingMode(),
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -120,7 +121,7 @@ func newChunkWorker(
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID)
+			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.conflictHandling)
 			if err != nil {
 				return nil, err
 			}
@@ -148,7 +149,7 @@ func newChunkWorker(
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
-			SetOnDup(engineapi.OnDuplicateKeyRecord).
+			SetOnDup(getOnDupForConflictedKV(op.conflictHandling)).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
