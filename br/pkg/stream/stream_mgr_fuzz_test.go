@@ -16,6 +16,7 @@ package stream
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,5 +53,25 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 			minTs:        minTs,
 			maxTs:        maxTs,
 		}, taggedParsed)
+
+		tagValues := map[byte]uint64{
+			backupMetaMinBeginTSTag: minDefaultTs,
+			backupMetaMinTSTag:      minTs,
+			backupMetaMaxTSTag:      maxTs,
+		}
+		tagOrder := []byte{backupMetaMinBeginTSTag, backupMetaMaxTSTag, backupMetaMinTSTag}
+		for _, missingTag := range tagOrder {
+			segments := make([]string, 0, len(tagOrder)-1)
+			for _, tag := range tagOrder {
+				if tag == missingTag {
+					continue
+				}
+				segments = append(segments, fmt.Sprintf("%c%016X", tag, tagValues[tag]))
+			}
+			missingTagFileName := fmt.Sprintf("%016X%016X-%s", flushTs, storeID, strings.Join(segments, ""))
+			_, err := parseBackupMetaFileName(missingTagFileName)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), fmt.Sprintf("missing %q tag", missingTag))
+		}
 	})
 }

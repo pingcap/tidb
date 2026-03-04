@@ -111,12 +111,6 @@ func parseLegacyBackupMetaFileName(fileName string) (parsedBackupMetaFileName, e
 }
 
 func parseTaggedBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
-	const (
-		seenMinBeginTs = 1 << iota
-		seenMinTs
-		seenMaxTs
-	)
-
 	prefix, suffix, ok := strings.Cut(fileName, "-")
 	if !ok {
 		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta tagged file name format: %s", fileName)
@@ -138,7 +132,6 @@ func parseTaggedBackupMetaFileName(fileName string) (parsedBackupMetaFileName, e
 		minDefaultTs uint64
 		minTs        uint64
 		maxTs        uint64
-		requiredMask uint8
 		seenTags     [256]bool
 	)
 	for pos := 0; pos < len(suffix); {
@@ -162,25 +155,19 @@ func parseTaggedBackupMetaFileName(fileName string) (parsedBackupMetaFileName, e
 		switch tag {
 		case backupMetaMinBeginTSTag:
 			minDefaultTs = value
-			requiredMask |= seenMinBeginTs
 		case backupMetaMinTSTag:
 			minTs = value
-			requiredMask |= seenMinTs
 		case backupMetaMaxTSTag:
 			maxTs = value
-			requiredMask |= seenMaxTs
 		}
 		pos += taggedMetaTagValueLen
 	}
 
-	if requiredMask&seenMinBeginTs == 0 {
-		return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", backupMetaMinBeginTSTag, fileName)
-	}
-	if requiredMask&seenMinTs == 0 {
-		return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", backupMetaMinTSTag, fileName)
-	}
-	if requiredMask&seenMaxTs == 0 {
-		return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", backupMetaMaxTSTag, fileName)
+	required := []byte{backupMetaMinBeginTSTag, backupMetaMinTSTag, backupMetaMaxTSTag}
+	for _, tag := range required {
+		if !seenTags[tag] {
+			return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", tag, fileName)
+		}
 	}
 
 	return parsedBackupMetaFileName{
