@@ -87,8 +87,9 @@ make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
 git fetch origin --prune
-make bazel_lint_changed # Optional: skip this step if the resolved Bazel target is //:all.
 ```
+
+`make bazel_lint_changed` is intentionally excluded from the default local flow because it can be slow and resource-intensive on local macOS environments. Agents MUST NOT run `make bazel_lint_changed` unless the user explicitly requests it.
 
 ## Task -> Validation Matrix
 
