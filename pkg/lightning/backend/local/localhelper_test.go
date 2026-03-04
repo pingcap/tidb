@@ -375,6 +375,8 @@ func TestTuneStoreWriteLimiter(t *testing.T) {
 	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel1()
 	testLimiter(ctx1, 200)
+}
+
 func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 	makeSplitKeys := func(n int) [][]byte {
 		keys := make([][]byte, n)
