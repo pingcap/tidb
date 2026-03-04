@@ -35,6 +35,7 @@ const (
 	VersionSeparator = "-TiDB-"
 
 	// tidbXReleaseVersionPrefix is used in `select tidb_version()` output of nextgen.
+	// we always add the `-CLOUD` as we don't have OP version in nextgen now.
 	tidbXReleaseVersionPrefix = "TiDB-X-CLOUD."
 
 	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
