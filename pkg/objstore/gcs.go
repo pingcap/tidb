@@ -25,7 +25,10 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
@@ -58,6 +61,12 @@ const (
 	gcsPredefinedACL      = "gcs.predefined-acl"
 	gcsCredentialsFile    = "gcs.credentials-file"
 )
+
+type globalSortGCSReadRetryConfig struct {
+	maxAttempts int
+}
+
+type globalSortGCSReadRetryKey struct{}
 
 // GCSBackendOptions are options for configuration the GCS storage.
 type GCSBackendOptions struct {
@@ -124,15 +133,129 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 // GCSStorage defines some standard operations for BR/Lightning on the GCS storage.
 // It implements the `Storage` interface.
 type GCSStorage struct {
-	gcs       *backuppb.GCS
-	idx       *atomic.Int64
-	clientCnt int64
-	clientOps []option.ClientOption
+	gcs        *backuppb.GCS
+	idx        *atomic.Int64
+	nextSlotID *atomic.Int64
+	clientCnt  int64
+	clientOps  []option.ClientOption
 
-	handles      []*storage.BucketHandle
-	clients      []*storage.Client
+	slots        []*gcsClientSlot
+	retiredSlots map[int64]*gcsClientSlot
+	slotsMu      sync.RWMutex
+	clientCtx    context.Context
 	clientCancel context.CancelFunc
 	accessRec    *recording.AccessStats
+	newClient    func(context.Context, ...option.ClientOption) (*storage.Client, error)
+}
+
+type gcsClientSlot struct {
+	id     int64
+	owner  *GCSStorage
+	client *storage.Client
+	handle *storage.BucketHandle
+
+	inflight atomic.Int64
+	draining atomic.Bool
+	closed   atomic.Bool
+
+	errStateMu                      sync.Mutex
+	retryableHTTP2InternalErrCount  int64
+	lastRetryableHTTP2InternalErrAt int64
+
+	closeOnce sync.Once
+}
+
+type gcsSlotLease struct {
+	slot *gcsClientSlot
+	once sync.Once
+}
+
+func newGCSSlotLease(slot *gcsClientSlot) *gcsSlotLease {
+	if slot == nil {
+		return nil
+	}
+	slot.inflight.Inc()
+	return &gcsSlotLease{slot: slot}
+}
+
+func (l *gcsSlotLease) release() {
+	if l == nil || l.slot == nil {
+		return
+	}
+	l.once.Do(func() {
+		l.slot.inflight.Dec()
+	})
+}
+
+type gcsLeaseCloser struct {
+	closer io.Closer
+	lease  *gcsSlotLease
+}
+
+func (c *gcsLeaseCloser) Close() error {
+	defer c.lease.release()
+	return c.closer.Close()
+}
+
+func (slot *gcsClientSlot) close() {
+	if slot == nil {
+		return
+	}
+	slot.closeOnce.Do(func() {
+		slot.closed.Store(true)
+		if slot.client != nil {
+			_ = slot.client.Close()
+		}
+	})
+}
+
+func (slot *gcsClientSlot) shouldRetryForGlobalSort(err error) bool {
+	retry := shouldRetry(err)
+	if retry && isSlotRetirementCandidate(err) {
+		slot.recordRetryableHTTP2InternalError()
+	}
+	return retry
+}
+
+func (slot *gcsClientSlot) recordRetryableHTTP2InternalError() {
+	if slot == nil || slot.draining.Load() {
+		return
+	}
+
+	now := time.Now()
+	triggerRetire := false
+
+	slot.errStateMu.Lock()
+	lastAt := time.Unix(0, slot.lastRetryableHTTP2InternalErrAt)
+	if slot.lastRetryableHTTP2InternalErrAt == 0 || now.Sub(lastAt) > gcsSlotRetireHTTP2InternalErrWindow {
+		slot.retryableHTTP2InternalErrCount = 0
+	}
+	slot.retryableHTTP2InternalErrCount++
+	slot.lastRetryableHTTP2InternalErrAt = now.UnixNano()
+	count := slot.retryableHTTP2InternalErrCount
+	if count >= gcsSlotRetireHTTP2InternalErrThreshold && slot.draining.CompareAndSwap(false, true) {
+		triggerRetire = true
+	}
+	slot.errStateMu.Unlock()
+
+	if !triggerRetire {
+		return
+	}
+
+	log.Warn("retiring gcs client slot due to repeated internal HTTP2 error",
+		zap.String("marker", gcsSlotRetireLogMarker),
+		zap.Int64("slot-id", slot.id),
+		zap.Int64("retryable-http2-internal-error-count", count),
+		zap.Duration("window", gcsSlotRetireHTTP2InternalErrWindow))
+
+	go slot.owner.replaceDrainingSlot(slot)
+}
+
+func (slot *gcsClientSlot) resetErrorBudget() {
+	slot.errStateMu.Lock()
+	slot.retryableHTTP2InternalErrCount = 0
+	slot.lastRetryableHTTP2InternalErrAt = 0
+	slot.errStateMu.Unlock()
 }
 
 // CopyFrom implements Copier.
@@ -141,13 +264,24 @@ func (s *GCSStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec stor
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
 	}
+	dstSlot, dstLease, err := s.acquireSlot(true)
+	if err != nil {
+		return err
+	}
+	defer dstLease.release()
+	srcSlot, srcLease, err := es.acquireSlot(true)
+	if err != nil {
+		return err
+	}
+	defer srcLease.release()
+
 	dstName := s.objectName(spec.To)
 	srcName := es.objectName(spec.From)
 	// A note here:
 	// https://cloud.google.com/storage/docs/json_api/v1/objects/rewrite
 	// It seems extra configuration is needed when doing cross-region copying.
-	copier := s.GetBucketHandle().Object(dstName).CopierFrom(es.GetBucketHandle().Object(srcName))
-	_, err := copier.Run(ctx)
+	copier := dstSlot.handle.Object(dstName).CopierFrom(srcSlot.handle.Object(srcName))
+	_, err = copier.Run(ctx)
 	if err != nil {
 		return errors.Annotatef(
 			err,
@@ -167,16 +301,189 @@ func (s *GCSStorage) MarkStrongConsistency() {
 	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
 }
 
+func (s *GCSStorage) getSlots() []*gcsClientSlot {
+	s.slotsMu.RLock()
+	defer s.slotsMu.RUnlock()
+	return append([]*gcsClientSlot(nil), s.slots...)
+}
+
+func (s *GCSStorage) pickSlotLocked(start int, skipDraining bool) *gcsClientSlot {
+	if len(s.slots) == 0 {
+		return nil
+	}
+	if start < 0 {
+		start = -start
+	}
+	if skipDraining {
+		for i := range s.slots {
+			slot := s.slots[(start+i)%len(s.slots)]
+			if !slot.draining.Load() {
+				return slot
+			}
+		}
+	}
+	return s.slots[start%len(s.slots)]
+}
+
+func (s *GCSStorage) acquireSlot(skipDraining bool) (*gcsClientSlot, *gcsSlotLease, error) {
+	s.slotsMu.RLock()
+	defer s.slotsMu.RUnlock()
+
+	if len(s.slots) == 0 {
+		return nil, nil, errors.Annotate(berrors.ErrStorageUnknown, "gcs storage has no available client slots")
+	}
+
+	start := int(s.idx.Inc())
+	slot := s.pickSlotLocked(start, skipDraining)
+	if slot == nil {
+		return nil, nil, errors.Annotate(berrors.ErrStorageUnknown, "gcs storage has no available client slots")
+	}
+	lease := newGCSSlotLease(slot)
+	if skipDraining && slot.draining.Load() {
+		lease.release()
+		slot = s.pickSlotLocked(start+1, true)
+		if slot == nil {
+			return nil, nil, errors.Annotate(berrors.ErrStorageUnknown, "gcs storage has no available active client slots")
+		}
+		lease = newGCSSlotLease(slot)
+	}
+	return slot, lease, nil
+}
+
+func (s *GCSStorage) newClientSlot(ctx context.Context) (*gcsClientSlot, error) {
+	client, err := s.newClient(ctx, s.clientOps...)
+	if err != nil {
+		return nil, err
+	}
+	client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
+	return &gcsClientSlot{
+		id:     s.nextSlotID.Inc(),
+		owner:  s,
+		client: client,
+		handle: client.Bucket(s.gcs.Bucket),
+	}, nil
+}
+
+func (s *GCSStorage) maxRetiredSlots() int {
+	return max(int(s.clientCnt), 1)
+}
+
+func (s *GCSStorage) replaceDrainingSlot(oldSlot *gcsClientSlot) {
+	s.slotsMu.RLock()
+	clientCtx := s.clientCtx
+	s.slotsMu.RUnlock()
+	if clientCtx == nil {
+		oldSlot.draining.Store(false)
+		oldSlot.resetErrorBudget()
+		return
+	}
+
+	newSlot, err := s.newClientSlot(clientCtx)
+	if err != nil {
+		oldSlot.draining.Store(false)
+		oldSlot.resetErrorBudget()
+		log.Warn("failed to create replacement gcs client slot",
+			zap.String("marker", gcsSlotRetireLogMarker),
+			zap.Int64("slot-id", oldSlot.id),
+			zap.Error(err))
+		return
+	}
+
+	replaced := false
+	s.slotsMu.Lock()
+	if len(s.retiredSlots) >= s.maxRetiredSlots() {
+		s.slotsMu.Unlock()
+		newSlot.close()
+		oldSlot.draining.Store(false)
+		oldSlot.resetErrorBudget()
+		log.Warn("skip retiring gcs client slot because retired slot limit is reached",
+			zap.String("marker", gcsSlotRetireLogMarker),
+			zap.Int64("slot-id", oldSlot.id),
+			zap.Int("retired-slot-count", len(s.retiredSlots)),
+			zap.Int("max-retired-slots", s.maxRetiredSlots()))
+		return
+	}
+	for i, slot := range s.slots {
+		if slot.id == oldSlot.id {
+			s.slots[i] = newSlot
+			if s.retiredSlots == nil {
+				s.retiredSlots = make(map[int64]*gcsClientSlot)
+			}
+			s.retiredSlots[oldSlot.id] = oldSlot
+			replaced = true
+			break
+		}
+	}
+	s.slotsMu.Unlock()
+
+	if !replaced {
+		newSlot.close()
+		oldSlot.draining.Store(false)
+		oldSlot.resetErrorBudget()
+		return
+	}
+
+	log.Info("replaced draining gcs client slot",
+		zap.String("marker", gcsSlotRetireLogMarker),
+		zap.Int64("old-slot-id", oldSlot.id),
+		zap.Int64("new-slot-id", newSlot.id))
+}
+
+func (s *GCSStorage) reapRetiredSlots() {
+	var closable []*gcsClientSlot
+
+	s.slotsMu.Lock()
+	for id, slot := range s.retiredSlots {
+		if slot.inflight.Load() > 0 {
+			continue
+		}
+		delete(s.retiredSlots, id)
+		closable = append(closable, slot)
+	}
+	s.slotsMu.Unlock()
+
+	for _, slot := range closable {
+		slot.close()
+		log.Info("drained and closed retired gcs client slot",
+			zap.String("marker", gcsSlotRetireLogMarker),
+			zap.Int64("slot-id", slot.id))
+	}
+}
+
+func (s *GCSStorage) runRetiredSlotReaper(ctx context.Context) {
+	ticker := time.NewTicker(gcsSlotRetireReapInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.reapRetiredSlots()
+		}
+	}
+}
+
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
-	i := s.idx.Inc() % int64(len(s.handles))
-	return s.handles[i]
+	s.slotsMu.RLock()
+	defer s.slotsMu.RUnlock()
+	slot := s.pickSlotLocked(int(s.idx.Inc()), true)
+	if slot == nil {
+		return nil
+	}
+	return slot.handle
 }
 
 // getClient gets the GCS client.
 func (s *GCSStorage) getClient() *storage.Client {
-	i := s.idx.Inc() % int64(len(s.clients))
-	return s.clients[i]
+	s.slotsMu.RLock()
+	defer s.slotsMu.RUnlock()
+	slot := s.pickSlotLocked(int(s.idx.Inc()), true)
+	if slot == nil {
+		return nil
+	}
+	return slot.client
 }
 
 // GetOptions gets the external storage operations for the GCS.
@@ -186,8 +493,14 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 
 // DeleteFile delete the file in storage
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return err
+	}
+	defer lease.release()
+
 	object := s.objectName(name)
-	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	err = slot.handle.Object(object).Delete(ctx)
 	// for delete single file, files are deleted should be considered
 	if err != nil {
 		if goerrors.Is(err, storage.ErrObjectNotExist) {
@@ -220,11 +533,17 @@ func (s *GCSStorage) objectName(name string) string {
 
 // WriteFile writes data to a file to storage.
 func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return err
+	}
+	defer lease.release()
+
 	object := s.objectName(name)
-	wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
+	wc := slot.handle.Object(object).NewWriter(ctx)
 	wc.StorageClass = s.gcs.StorageClass
 	wc.PredefinedACL = s.gcs.PredefinedAcl
-	_, err := wc.Write(data)
+	_, err = wc.Write(data)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -234,8 +553,14 @@ func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) er
 
 // ReadFile reads the file from the storage and returns the contents.
 func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.release()
+
 	object := s.objectName(name)
-	rc, err := s.GetBucketHandle().Object(object).NewReader(ctx)
+	rc, err := slot.handle.Object(object).NewReader(ctx)
 	if err != nil {
 		return nil, errors.Annotatef(err,
 			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
@@ -258,8 +583,14 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 
 // FileExists return true if file exists.
 func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return false, err
+	}
+	defer lease.release()
+
 	object := s.objectName(name)
-	_, err := s.GetBucketHandle().Object(object).Attrs(ctx)
+	_, err = slot.handle.Object(object).Attrs(ctx)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
 			return false, nil
@@ -271,11 +602,24 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open a Reader by file path.
 func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return nil, err
+	}
+
 	object := s.objectName(path)
-	handle := s.GetBucketHandle().Object(object)
+	handle := slot.handle.Object(object)
+	if cfg, ok := getGlobalSortGCSReadRetry(ctx); ok {
+		handle = handle.Retryer(
+			storage.WithErrorFunc(slot.shouldRetryForGlobalSort),
+			storage.WithPolicy(storage.RetryAlways),
+			storage.WithMaxAttempts(cfg.maxAttempts),
+		)
+	}
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
+		lease.release()
 		if goerrors.Is(err, storage.ErrObjectNotExist) {
 			return nil, errors.Annotatef(err,
 				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
@@ -300,6 +644,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOp
 
 	return &gcsObjectReader{
 		storage:      s,
+		lease:        lease,
 		name:         path,
 		objHandle:    handle,
 		reader:       nil, // lazy create
@@ -311,6 +656,41 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOp
 	}, nil
 }
 
+// WithGlobalSortGCSReadRetry marks a GCS read context to use a bounded retry
+// budget for one object request on the global sort read path.
+func WithGlobalSortGCSReadRetry(ctx context.Context, maxAttempts int) context.Context {
+	if maxAttempts <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, globalSortGCSReadRetryKey{}, globalSortGCSReadRetryConfig{
+		maxAttempts: maxAttempts,
+	})
+}
+
+func getGlobalSortGCSReadRetry(ctx context.Context) (globalSortGCSReadRetryConfig, bool) {
+	if ctx == nil {
+		return globalSortGCSReadRetryConfig{}, false
+	}
+	cfg, ok := ctx.Value(globalSortGCSReadRetryKey{}).(globalSortGCSReadRetryConfig)
+	return cfg, ok
+}
+
+// IsRetryableGCSHTTP2InternalError reports whether err is the specific GCS
+// HTTP/2 internal stream error that we want to escalate to round-level retry.
+func IsRetryableGCSHTTP2InternalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if e := (http2.StreamError{}); goerrors.As(err, &e) {
+		return e.Code == http2.ErrCodeInternal
+	}
+	return false
+}
+
+func isSlotRetirementCandidate(err error) bool {
+	return IsRetryableGCSHTTP2InternalError(err)
+}
+
 // WalkDir traverse all the files in a dir.
 //
 // fn is the function called for each regular file visited by WalkDir.
@@ -318,6 +698,12 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOp
 // function; the second argument is the size in byte of the file determined
 // by path.
 func (s *GCSStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return err
+	}
+	defer lease.release()
+
 	if opt == nil {
 		opt = &storeapi.WalkOption{}
 	}
@@ -331,11 +717,11 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
-	err := query.SetAttrSelection([]string{"Name", "Size"})
+	err = query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	iter := s.GetBucketHandle().Objects(ctx, query)
+	iter := slot.handle.Objects(ctx, query)
 	for {
 		attrs, err := iter.Next()
 		if err == iterator.Done {
@@ -364,23 +750,34 @@ func (s *GCSStorage) URI() string {
 
 // Create implements Storage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *storeapi.WriterOption) (objectio.Writer, error) {
+	slot, lease, err := s.acquireSlot(true)
+	if err != nil {
+		return nil, err
+	}
 	// NewGCSWriter requires real testing environment on Google Cloud.
 	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
 	if wo == nil || wo.Concurrency <= 1 || mockGCS {
 		object := s.objectName(name)
-		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
+		wc := slot.handle.Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &objectio.EmptyFlusher{}, wc, s.accessRec), nil
+		return newFlushStorageWriter(wc, &objectio.EmptyFlusher{}, &gcsLeaseCloser{
+			closer: wc,
+			lease:  lease,
+		}, s.accessRec), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
 	partSize := max(wo.PartSize, int64(gcsMinimumChunkSize))
-	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
+	w, err := NewGCSWriter(ctx, slot.client, uri, partSize, wo.Concurrency, s.gcs.Bucket)
 	if err != nil {
+		lease.release()
 		return nil, errors.Trace(err)
 	}
-	fw := newFlushStorageWriter(w, &objectio.EmptyFlusher{}, w, s.accessRec)
+	fw := newFlushStorageWriter(w, &objectio.EmptyFlusher{}, &gcsLeaseCloser{
+		closer: w,
+		lease:  lease,
+	}, s.accessRec)
 	// we already pass the accessRec to flushStorageWriter.
 	bw := objectio.NewBufferedWriter(fw, int(partSize), compressedio.NoCompression, nil)
 	return bw, nil
@@ -401,18 +798,103 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 
 // Close implements Storage interface.
 func (s *GCSStorage) Close() {
-	s.clientCancel()
-	for _, client := range s.clients {
-		if err := client.Close(); err != nil {
-			log.Warn("failed to close gcs client", zap.Error(err))
-		}
-	}
+	s.cancelAndCloseGCSClients()
 }
 
 // used in tests
 var mustReportCredErr = false
 
-const gcsClientCnt = 16
+const (
+	defaultGCSClientCnt = 16
+	minGCSClientCnt     = 1
+	maxGCSClientCnt     = 256
+	// TIDB_GCS_CLIENT_CNT controls how many GCS clients are created for one
+	// storage instance. It is used to spread HTTP/2 pressure during global sort.
+	gcsClientCntEnv = "TIDB_GCS_CLIENT_CNT"
+
+	gcsRetryLogMarker      = "global-sort-gcs-retry"
+	gcsTuneLogMarker       = "global-sort-gcs-tuning"
+	gcsSlotRetireLogMarker = "global-sort-gcs-slot-retire"
+	// Reduce retry log flooding when a burst of HTTP/2 INTERNAL_ERROR happens.
+	gcsRetryLogInterval = 5 * time.Second
+)
+
+var (
+	gcsClientCntOnce sync.Once
+	gcsConfiguredCnt int64 = defaultGCSClientCnt
+	gcsTuneLogOnce   sync.Once
+
+	gcsRetryLastLogNano = atomic.NewInt64(0)
+	gcsRetrySuppressed  = atomic.NewInt64(0)
+
+	gcsSlotRetireHTTP2InternalErrThreshold = int64(32)
+	gcsSlotRetireHTTP2InternalErrWindow    = 30 * time.Second
+	gcsSlotRetireReapInterval              = time.Second
+)
+
+func getConfiguredGCSClientCnt() int64 {
+	gcsClientCntOnce.Do(func() {
+		v := strings.TrimSpace(os.Getenv(gcsClientCntEnv))
+		if v == "" {
+			return
+		}
+
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			log.Warn("invalid gcs tuning value, fallback to default",
+				zap.String("marker", gcsTuneLogMarker),
+				zap.String("env", gcsClientCntEnv),
+				zap.String("value", v),
+				zap.Int("default", defaultGCSClientCnt),
+				zap.Error(err))
+			return
+		}
+		if n < minGCSClientCnt {
+			log.Warn("gcs tuning value too small, clamped",
+				zap.String("marker", gcsTuneLogMarker),
+				zap.String("env", gcsClientCntEnv),
+				zap.Int64("value", n),
+				zap.Int("min", minGCSClientCnt))
+			n = minGCSClientCnt
+		} else if n > maxGCSClientCnt {
+			log.Warn("gcs tuning value too large, clamped",
+				zap.String("marker", gcsTuneLogMarker),
+				zap.String("env", gcsClientCntEnv),
+				zap.Int64("value", n),
+				zap.Int("max", maxGCSClientCnt))
+			n = maxGCSClientCnt
+		}
+		gcsConfiguredCnt = n
+	})
+	return gcsConfiguredCnt
+}
+
+func logGCSTuningOnce(clientCnt int64) {
+	gcsTuneLogOnce.Do(func() {
+		log.Info("gcs tuning applied",
+			zap.String("marker", gcsTuneLogMarker),
+			zap.String("env", gcsClientCntEnv),
+			zap.Int64("gcs-client-cnt", clientCnt))
+	})
+}
+
+func logGCSRetryLimited(msg string, err error) {
+	now := time.Now().UnixNano()
+	last := gcsRetryLastLogNano.Load()
+	if now-int64(gcsRetryLogInterval) < last || !gcsRetryLastLogNano.CompareAndSwap(last, now) {
+		gcsRetrySuppressed.Inc()
+		return
+	}
+
+	fields := []zap.Field{
+		zap.String("marker", gcsRetryLogMarker),
+		zap.Error(err),
+	}
+	if suppressed := gcsRetrySuppressed.Swap(0); suppressed > 0 {
+		fields = append(fields, zap.Int64("suppressed", suppressed))
+	}
+	log.Warn(msg, fields...)
+}
 
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Options) (*GCSStorage, error) {
@@ -482,12 +964,17 @@ skipHandleCred:
 		gcs.CredentialsBlob = ""
 	}
 
+	clientCnt := getConfiguredGCSClientCnt()
+	logGCSTuningOnce(clientCnt)
+
 	ret := &GCSStorage{
-		gcs:       gcs,
-		idx:       atomic.NewInt64(0),
-		clientCnt: gcsClientCnt,
-		clientOps: clientOps,
-		accessRec: opts.AccessRecording,
+		gcs:        gcs,
+		idx:        atomic.NewInt64(0),
+		nextSlotID: atomic.NewInt64(0),
+		clientCnt:  clientCnt,
+		clientOps:  clientOps,
+		accessRec:  opts.AccessRecording,
+		newClient:  storage.NewClient,
 	}
 	if err := ret.Reset(ctx); err != nil {
 		return nil, errors.Trace(err)
@@ -503,14 +990,15 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	s.cancelAndCloseGCSClients()
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
-	s.clients = make([]*storage.Client, 0, gcsClientCnt)
+	clientCnt := max(int(s.clientCnt), minGCSClientCnt)
 	wg := util.WaitGroupWrapper{}
-	cliCh := make(chan *storage.Client)
+	slotCh := make(chan *gcsClientSlot)
+	newSlots := make([]*gcsClientSlot, 0, clientCnt)
 	wg.RunWithLog(func() {
-		for range gcsClientCnt {
+		for range clientCnt {
 			select {
-			case cli := <-cliCh:
-				s.clients = append(s.clients, cli)
+			case slot := <-slotCh:
+				newSlots = append(newSlots, slot)
 			case <-ctx.Done():
 				clientCancel()
 				return
@@ -520,18 +1008,18 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 		}
 	})
 	firstErr := atomic.NewError(nil)
-	for range gcsClientCnt {
+	for range clientCnt {
 		wg.RunWithLog(func() {
-			client, err := storage.NewClient(clientCtx, s.clientOps...)
+			slot, err := s.newClientSlot(clientCtx)
 			if err != nil {
 				firstErr.CompareAndSwap(nil, err)
 				clientCancel()
 				return
 			}
-			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
 			select {
-			case cliCh <- client:
+			case slotCh <- slot:
 			case <-clientCtx.Done():
+				slot.close()
 			}
 		})
 	}
@@ -541,24 +1029,39 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	s.slotsMu.Lock()
+	s.clientCtx = clientCtx
 	s.clientCancel = clientCancel
-	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
-	for i := range s.handles {
-		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
-	}
+	s.slots = newSlots
+	s.retiredSlots = make(map[int64]*gcsClientSlot)
+	s.slotsMu.Unlock()
+	go s.runRetiredSlotReaper(clientCtx)
 	return nil
 }
 
 func (s *GCSStorage) cancelAndCloseGCSClients() {
-	if s.clientCancel != nil {
-		s.clientCancel()
-		s.clientCancel = nil
+	s.slotsMu.Lock()
+	clientCancel := s.clientCancel
+	s.clientCancel = nil
+	s.clientCtx = nil
+	currentSlots := append([]*gcsClientSlot(nil), s.slots...)
+	retiredSlots := make([]*gcsClientSlot, 0, len(s.retiredSlots))
+	for _, slot := range s.retiredSlots {
+		retiredSlots = append(retiredSlots, slot)
+	}
+	s.slots = nil
+	s.retiredSlots = nil
+	s.slotsMu.Unlock()
+
+	if clientCancel != nil {
+		clientCancel()
 	}
 
-	for _, client := range s.clients {
-		if client != nil {
-			_ = client.Close()
-		}
+	for _, slot := range currentSlots {
+		slot.close()
+	}
+	for _, slot := range retiredSlots {
+		slot.close()
 	}
 }
 
@@ -625,6 +1128,7 @@ func shouldRetry(err error) bool {
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
 type gcsObjectReader struct {
 	storage   *GCSStorage
+	lease     *gcsSlotLease
 	name      string
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
@@ -667,6 +1171,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 
 // Close implement the io.Closer interface.
 func (r *gcsObjectReader) Close() error {
+	defer r.lease.release()
 	if r.reader == nil {
 		return nil
 	}

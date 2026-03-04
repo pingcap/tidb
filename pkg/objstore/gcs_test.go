@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -623,6 +624,158 @@ func TestGCSShouldRetry(t *testing.T) {
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+}
+
+func TestGlobalSortGCSReadRetryContext(t *testing.T) {
+	ctx := context.Background()
+	_, ok := getGlobalSortGCSReadRetry(ctx)
+	require.False(t, ok)
+
+	ctx = WithGlobalSortGCSReadRetry(ctx, 32)
+	cfg, ok := getGlobalSortGCSReadRetry(ctx)
+	require.True(t, ok)
+	require.Equal(t, 32, cfg.maxAttempts)
+
+	ctx = WithGlobalSortGCSReadRetry(ctx, 0)
+	cfg, ok = getGlobalSortGCSReadRetry(ctx)
+	require.True(t, ok)
+	require.Equal(t, 32, cfg.maxAttempts)
+}
+
+func TestIsRetryableGCSHTTP2InternalError(t *testing.T) {
+	require.True(t, IsRetryableGCSHTTP2InternalError(http2.StreamError{Code: http2.ErrCodeInternal}))
+	require.True(t, IsRetryableGCSHTTP2InternalError(fmt.Errorf("wrapped: %w", http2.StreamError{Code: http2.ErrCodeInternal})))
+	require.False(t, IsRetryableGCSHTTP2InternalError(http2.StreamError{Code: http2.ErrCodeCancel}))
+	require.False(t, IsRetryableGCSHTTP2InternalError(io.EOF))
+}
+
+func TestGCSSlotLeaseLifecycle(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+	stg.clientCnt = 1
+	require.NoError(t, stg.Reset(ctx))
+	require.NoError(t, stg.WriteFile(ctx, "key", []byte("0123456789")))
+
+	reader, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+
+	gcsReader, ok := reader.(*gcsObjectReader)
+	require.True(t, ok)
+	require.NotNil(t, gcsReader.lease)
+	require.EqualValues(t, 1, gcsReader.lease.slot.inflight.Load())
+
+	require.NoError(t, reader.Close())
+	require.EqualValues(t, 0, gcsReader.lease.slot.inflight.Load())
+}
+
+func TestGCSRetireDrainingSlot(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	oldThreshold := gcsSlotRetireHTTP2InternalErrThreshold
+	oldWindow := gcsSlotRetireHTTP2InternalErrWindow
+	oldReapInterval := gcsSlotRetireReapInterval
+	gcsSlotRetireHTTP2InternalErrThreshold = 1
+	gcsSlotRetireHTTP2InternalErrWindow = time.Minute
+	gcsSlotRetireReapInterval = 10 * time.Millisecond
+	defer func() {
+		gcsSlotRetireHTTP2InternalErrThreshold = oldThreshold
+		gcsSlotRetireHTTP2InternalErrWindow = oldWindow
+		gcsSlotRetireReapInterval = oldReapInterval
+	}()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+	stg.clientCnt = 1
+	require.NoError(t, stg.Reset(ctx))
+	require.NoError(t, stg.WriteFile(ctx, "key", []byte("0123456789")))
+
+	reader, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+	gcsReader := reader.(*gcsObjectReader)
+	oldSlot := gcsReader.lease.slot
+
+	oldSlot.recordRetryableHTTP2InternalError()
+
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		defer stg.slotsMu.RUnlock()
+		return len(stg.slots) == 1 && stg.slots[0].id != oldSlot.id
+	}, 5*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		defer stg.slotsMu.RUnlock()
+		_, ok := stg.retiredSlots[oldSlot.id]
+		return ok
+	}, 5*time.Second, 20*time.Millisecond)
+
+	require.True(t, oldSlot.draining.Load())
+	require.False(t, oldSlot.closed.Load())
+
+	reader2, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+	newSlot := reader2.(*gcsObjectReader).lease.slot
+	require.NotEqual(t, oldSlot.id, newSlot.id)
+	require.NoError(t, reader2.Close())
+
+	time.Sleep(50 * time.Millisecond)
+	require.False(t, oldSlot.closed.Load())
+	stg.slotsMu.RLock()
+	_, stillRetired := stg.retiredSlots[oldSlot.id]
+	stg.slotsMu.RUnlock()
+	require.True(t, stillRetired)
+
+	require.NoError(t, reader.Close())
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		_, ok := stg.retiredSlots[oldSlot.id]
+		stg.slotsMu.RUnlock()
+		return oldSlot.closed.Load() && oldSlot.inflight.Load() == 0 && !ok
+	}, 5*time.Second, 20*time.Millisecond)
+}
+
+func TestGCSAcquireSlotSkipsDrainingSlot(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	oldThreshold := gcsSlotRetireHTTP2InternalErrThreshold
+	oldWindow := gcsSlotRetireHTTP2InternalErrWindow
+	oldReapInterval := gcsSlotRetireReapInterval
+	gcsSlotRetireHTTP2InternalErrThreshold = 1
+	gcsSlotRetireHTTP2InternalErrWindow = time.Minute
+	gcsSlotRetireReapInterval = 10 * time.Millisecond
+	defer func() {
+		gcsSlotRetireHTTP2InternalErrThreshold = oldThreshold
+		gcsSlotRetireHTTP2InternalErrWindow = oldWindow
+		gcsSlotRetireReapInterval = oldReapInterval
+	}()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+	stg.clientCnt = 1
+	require.NoError(t, stg.Reset(ctx))
+	require.NoError(t, stg.WriteFile(ctx, "key", []byte("0123456789")))
+
+	reader, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+	oldSlot := reader.(*gcsObjectReader).lease.slot
+
+	oldSlot.recordRetryableHTTP2InternalError()
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		defer stg.slotsMu.RUnlock()
+		return len(stg.slots) == 1 && stg.slots[0].id != oldSlot.id
+	}, 5*time.Second, 20*time.Millisecond)
+
+	slot, lease, err := stg.acquireSlot(true)
+	require.NoError(t, err)
+	require.NotEqual(t, oldSlot.id, slot.id)
+	lease.release()
+
+	require.NoError(t, reader.Close())
 }
 
 func TestCtxUsage(t *testing.T) {
