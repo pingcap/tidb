@@ -28,8 +28,6 @@ import (
 // ErrInvalidCharacterString returns when the string is invalid in the specific charset.
 var ErrInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
-const hexDigits = "0123456789abcdef"
-
 // encodingBase defines some generic functions.
 type encodingBase struct {
 	enc  encoding.Encoding
@@ -57,6 +55,7 @@ func (b encodingBase) IsValid(src []byte) bool {
 	return isValid
 }
 
+
 func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
 		dest = &bytes.Buffer{}
@@ -70,15 +69,6 @@ func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result [
 			}
 			if op&opTruncateTrim != 0 {
 				return false
-			}
-			if op&opTruncateHexReplace != 0 {
-				for _, b := range from {
-					dest.WriteByte('\\')
-					dest.WriteByte('x')
-					dest.WriteByte(hexDigits[b>>4])
-					dest.WriteByte(hexDigits[b&0xf])
-				}
-				return true
 			}
 			if op&opTruncateReplace != 0 {
 				dest.WriteByte('?')

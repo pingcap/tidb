@@ -31,11 +31,9 @@ func TestNodeSetText(t *testing.T) {
 		expectUTF8Text string
 		expectText     string
 	}{
-		// GBK encoding
 		{"你好", nil, "你好", "你好"},
 		{"\xd2\xbb", charset.EncodingGBKImpl, "一", "\xd2\xbb"},
 		{"\xc1\xd0", charset.EncodingGBKImpl, "列", "\xc1\xd0"},
-		{"\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7", charset.EncodingUTF8Impl, `\xd2䦸\xc1\xf3\xe5\xd7`, "\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7"},
 	}
 	for _, tt := range tests {
 		n.SetText(tt.enc, tt.text)
@@ -93,11 +91,44 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 		{"mixed binary and text args", "SELECT '\xd2\xe4', 'hello', _binary '\xa1\xb2'", "SELECT 0xd2e4, 'hello', 0xa1b2"},
 		{"column name ending in _word not stripped", "SELECT * FROM t WHERE some_column = '\xd2\xe4'", "SELECT * FROM t WHERE some_column = 0xd2e4"},
 		{"identifier_word before binary string", "SELECT some_value '\xd2\xe4'", "SELECT some_value 0xd2e4"},
+		// stripCharsetIntroducer must not truncate identifiers ending in a charset name
+		{"identifier ending in _utf8mb4", "SELECT foo_utf8mb4, _utf8mb4 '\xd2\xe4'", "SELECT foo_utf8mb4, 0xd2e4"},
+		{"identifier ending in _binary", "SELECT tbl_binary, _binary '\xd2\xe4'", "SELECT tbl_binary, 0xd2e4"},
 	}
 	for _, tt := range binaryTests {
 		n.SetText(charset.EncodingUTF8Impl, tt.text)
 		require.Equal(t, tt.want, n.Text(), tt.name)
 	}
+}
+
+func TestBinaryStringLiteralNoBackslashEscapes(t *testing.T) {
+	n := &node{}
+
+	n.SetText(charset.EncodingUTF8Impl, "SELECT '\\n'")
+	n.SetNoBackslashEscapes(true)
+	require.Equal(t, "SELECT '\\n'", n.Text(), "NO_BACKSLASH_ESCAPES literal \\n")
+
+	n.SetText(charset.EncodingUTF8Impl, "SELECT '\\' , 'after'")
+	n.SetNoBackslashEscapes(true)
+	require.Equal(t, "SELECT '\\' , 'after'", n.Text(), "NO_BACKSLASH_ESCAPES quote boundary")
+
+	n.SetText(charset.EncodingUTF8Impl, "SELECT '\xd2\xe4'")
+	n.SetNoBackslashEscapes(true)
+	require.Equal(t, "SELECT 0xd2e4", n.Text(), "NO_BACKSLASH_ESCAPES binary")
+}
+
+func TestBinaryStringLiteralGBK(t *testing.T) {
+	n := &node{}
+
+	// GBK Chinese text: \xb1\xed is 表 in GBK, \x31 is '1'.
+	// This should be decoded as valid GBK and left as a printable string,
+	// not converted to a hex literal.
+	n.SetText(charset.EncodingGBKImpl, "select '\xb1\xed\x31'")
+	require.Equal(t, "select '表1'", n.Text(), "GBK printable")
+
+	// GBK with actual invalid bytes should still convert to hex
+	n.SetText(charset.EncodingGBKImpl, "select '\x80\xff'")
+	require.Equal(t, "select 0x80ff", n.Text(), "GBK binary")
 }
 
 func buildBinaryClause() string {
@@ -110,6 +141,22 @@ func buildPrintableClause() string {
 
 func buildNoQuotesClause() string {
 	return "c1 = 12345"
+}
+
+func buildMixedQuery(n int) string {
+	var b strings.Builder
+	b.WriteString("SELECT * FROM t1 WHERE ")
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(" OR ")
+		}
+		if i%2 == 0 {
+			b.WriteString(buildBinaryClause())
+		} else {
+			b.WriteString(buildPrintableClause())
+		}
+	}
+	return b.String()
 }
 
 func buildQuery(clause string, n int) string {
@@ -133,36 +180,50 @@ func BenchmarkConvertBinaryStringLiterals(b *testing.B) {
 	printableLong := buildQuery(buildPrintableClause(), 200)
 	binaryShort := buildQuery(buildBinaryClause(), 1)
 	binaryLong := buildQuery(buildBinaryClause(), 200)
+	mixedShort := buildMixedQuery(2)
+	mixedLong := buildMixedQuery(200)
 
 	b.Run("NoQuotes/Short", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertBinaryStringLiterals(noQuotesShort, enc)
+			convertBinaryStringLiterals(noQuotesShort, enc, false)
 		}
 	})
 	b.Run("NoQuotes/Long", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertBinaryStringLiterals(noQuotesLong, enc)
+			convertBinaryStringLiterals(noQuotesLong, enc, false)
 		}
 	})
 	b.Run("Printable/Short", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertBinaryStringLiterals(printableShort, enc)
+			convertBinaryStringLiterals(printableShort, enc, false)
 		}
 	})
 	b.Run("Printable/Long", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertBinaryStringLiterals(printableLong, enc)
+			convertBinaryStringLiterals(printableLong, enc, false)
 		}
 	})
 	b.Run("Binary/Short", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertBinaryStringLiterals(binaryShort, enc)
+			convertBinaryStringLiterals(binaryShort, enc, false)
 		}
 	})
 	b.Run("Binary/Long", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertBinaryStringLiterals(binaryLong, enc)
+			convertBinaryStringLiterals(binaryLong, enc, false)
+		}
+	})
+	b.Run("Mixed/Short", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			convertBinaryStringLiterals(mixedShort, enc, false)
+		}
+	})
+	b.Run("Mixed/Long", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			convertBinaryStringLiterals(mixedLong, enc, false)
 		}
 	})
 }
+
+
 
