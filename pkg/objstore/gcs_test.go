@@ -649,6 +649,78 @@ func TestIsRetryableGCSHTTP2InternalError(t *testing.T) {
 	require.False(t, IsRetryableGCSHTTP2InternalError(io.EOF))
 }
 
+func TestGCSSlotLeaseLifecycle(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+	stg.clientCnt = 1
+	require.NoError(t, stg.Reset(ctx))
+	require.NoError(t, stg.WriteFile(ctx, "key", []byte("0123456789")))
+
+	reader, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+
+	gcsReader, ok := reader.(*gcsObjectReader)
+	require.True(t, ok)
+	require.NotNil(t, gcsReader.lease)
+	require.EqualValues(t, 1, gcsReader.lease.slot.inflight.Load())
+
+	require.NoError(t, reader.Close())
+	require.EqualValues(t, 0, gcsReader.lease.slot.inflight.Load())
+}
+
+func TestGCSRetireDrainingSlot(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	oldThreshold := gcsSlotRetireHTTP2InternalErrThreshold
+	oldWindow := gcsSlotRetireHTTP2InternalErrWindow
+	oldPoll := gcsSlotRetireDrainPollInterval
+	gcsSlotRetireHTTP2InternalErrThreshold = 1
+	gcsSlotRetireHTTP2InternalErrWindow = time.Minute
+	gcsSlotRetireDrainPollInterval = 10 * time.Millisecond
+	defer func() {
+		gcsSlotRetireHTTP2InternalErrThreshold = oldThreshold
+		gcsSlotRetireHTTP2InternalErrWindow = oldWindow
+		gcsSlotRetireDrainPollInterval = oldPoll
+	}()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+	stg.clientCnt = 1
+	require.NoError(t, stg.Reset(ctx))
+	require.NoError(t, stg.WriteFile(ctx, "key", []byte("0123456789")))
+
+	reader, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+	gcsReader := reader.(*gcsObjectReader)
+	oldSlot := gcsReader.lease.slot
+
+	oldSlot.recordRetryableHTTP2InternalError()
+
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		defer stg.slotsMu.RUnlock()
+		return len(stg.slots) == 1 && stg.slots[0].id != oldSlot.id
+	}, 5*time.Second, 20*time.Millisecond)
+
+	require.True(t, oldSlot.draining.Load())
+	require.False(t, oldSlot.closed.Load())
+
+	reader2, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+	newSlot := reader2.(*gcsObjectReader).lease.slot
+	require.NotEqual(t, oldSlot.id, newSlot.id)
+	require.NoError(t, reader2.Close())
+
+	require.NoError(t, reader.Close())
+	require.Eventually(t, func() bool {
+		return oldSlot.closed.Load() && oldSlot.inflight.Load() == 0
+	}, 5*time.Second, 20*time.Millisecond)
+}
+
 func TestCtxUsage(t *testing.T) {
 	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer httpSvr.Close()
