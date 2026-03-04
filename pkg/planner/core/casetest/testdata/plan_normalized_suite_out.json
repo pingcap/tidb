@@ -381,8 +381,8 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
+          "   └─Selection       cop[tiflash] in(...)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
