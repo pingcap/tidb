@@ -756,7 +756,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 func validateVersionConfigPolicy(cfg *config.Config) error {
 	// allow users to set version info is a bad feature, we forbid it in next-gen.
 	if kerneltype.IsNextGen() && (len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0) {
-		return errors.New("config options tidb_edition, tidb_release_version and server_version are not allowed to set in nextgen kernel")
+		return errors.New("config options tidb-edition, tidb-release-version and server-version are not allowed to set in nextgen kernel")
 	}
 	return nil
 }
