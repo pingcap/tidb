@@ -1576,89 +1576,40 @@ type skylineCrossCacheEntry struct {
 // for a DataSource. When multiple sort properties are evaluated (e.g., different ORDER BY
 // clauses from different parent operators), each gets its own entry. Empty-property calls
 // cross-prune against all entries, so pruning is not dependent on evaluation order.
+// Entries are deduplicated by sort items and capped at maxCrossCacheEntries.
 type skylineCrossCache struct {
 	entries []skylineCrossCacheEntry
 }
 
+// maxCrossCacheEntries bounds the number of distinct sort-property entries stored per
+// DataSource. In practice a DataSource rarely sees more than 2-3 sort properties; the
+// cap prevents unbounded growth in pathological cases (e.g. many correlated subqueries).
+const maxCrossCacheEntries = 4
+
+// sameSortItems returns true if a and b have identical SortItems (same columns in same order).
+func sameSortItems(a, b *property.PhysicalProperty) bool {
+	if len(a.SortItems) != len(b.SortItems) {
+		return false
+	}
+	for i := range a.SortItems {
+		if a.SortItems[i].Desc != b.SortItems[i].Desc {
+			return false
+		}
+		if !a.SortItems[i].Col.EqualColumn(b.SortItems[i].Col) {
+			return false
+		}
+	}
+	return true
+}
+
 // matchPropertyReadOnly checks whether a path can satisfy the sort property without
-// mutating the AccessPath. The full matchProperty function has side effects: it writes
-// GroupedRanges and GroupByColIdxs onto the path for merge-sort planning. Since
-// cross-pruning only needs the boolean Matched() result for compareCandidates, this
-// read-only variant avoids those mutations on the shared AccessPath.
+// mutating the original AccessPath. It shallow-copies the path so that matchProperty's
+// side effects (writing GroupedRanges and GroupByColIdxs) are isolated to the copy.
+// This keeps the real matchProperty as the single source of truth for match logic,
+// avoiding divergence (e.g. missing the maxGroupCount guard).
 func matchPropertyReadOnly(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
-	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
-		return property.PropNotMatched
-	}
-	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return property.PropNotMatched
-		}
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return property.PropNotMatched
-		}
-		return property.PropMatched
-	}
-	if path.IsIntHandlePath {
-		pkCol := ds.GetPKIsHandleCol()
-		if len(prop.SortItems) != 1 || pkCol == nil {
-			return property.PropNotMatched
-		}
-		if !prop.SortItems[0].Col.EqualColumn(pkCol) ||
-			path.StoreType == kv.TiFlash && prop.SortItems[0].Desc {
-			return property.PropNotMatched
-		}
-		return property.PropMatched
-	}
-	all, _ := prop.AllSameOrder()
-	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
-		return property.PropNotMatched
-	}
-	colIdx := 0
-	for _, sortItem := range prop.SortItems {
-		found := false
-		for ; colIdx < len(path.IdxCols); colIdx++ {
-			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
-				found = true
-				colIdx++
-				break
-			}
-			if path.ConstCols != nil && colIdx < len(path.ConstCols) && path.ConstCols[colIdx] {
-				continue
-			}
-			// For the merge-sort case (IN conditions on index prefix columns), we check
-			// whether all ranges are point values on this column. If so, the path can
-			// provide the order (with merge sort), so we skip and continue matching.
-			// Unlike matchProperty, we do NOT write GroupedRanges/GroupByColIdxs here.
-			allRangesPoint := true
-			for _, ran := range path.Ranges {
-				if len(ran.LowVal) <= colIdx || len(ran.HighVal) <= colIdx {
-					allRangesPoint = false
-					break
-				}
-				cmpResult, err := ran.LowVal[colIdx].Compare(
-					ds.SCtx().GetSessionVars().StmtCtx.TypeCtx(),
-					&ran.HighVal[colIdx],
-					ran.Collators[colIdx],
-				)
-				if err != nil || cmpResult != 0 {
-					allRangesPoint = false
-					break
-				}
-			}
-			if allRangesPoint {
-				continue
-			}
-			break
-		}
-		if !found {
-			return property.PropNotMatched
-		}
-	}
-	// Return PropMatched regardless of whether merge sort would be needed.
-	// For cross-pruning, we only need the Matched() boolean; the distinction
-	// between PropMatched and PropMatchedNeedMergeSort does not affect
-	// compareCandidates.
-	return property.PropMatched
+	pathCopy := *path
+	return matchProperty(ds, &pathCopy, prop)
 }
 
 // crossSkylinePrune compares candidates from an empty-property skyline call against
@@ -1688,6 +1639,12 @@ func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidateP
 		}
 		// Index merge paths are handled separately and should not be cross-pruned.
 		if current.path.PartialIndexPaths != nil || len(current.path.PartialAlternativeIndexPaths) > 0 {
+			result = append(result, current)
+			continue
+		}
+		// Forced paths (USE_INDEX/FORCE_INDEX hints) must not be pruned, matching
+		// the protection in skylinePruning's preferRange post-processing.
+		if current.path.Forced {
 			result = append(result, current)
 			continue
 		}
@@ -2144,16 +2101,27 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 	// Cache sort-aware candidates for future cross-pruning by empty-property calls.
 	// Multiple sort properties are accumulated so pruning is not order-dependent.
+	// Entries are deduplicated by sort items and capped to prevent unbounded growth.
 	if !prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil {
 		cache, _ := ds.CrossSkylineCache.(*skylineCrossCache)
 		if cache == nil {
 			cache = &skylineCrossCache{}
 			ds.CrossSkylineCache = cache
 		}
-		cache.entries = append(cache.entries, skylineCrossCacheEntry{
-			candidates: candidates,
-			sortProp:   prop.CloneEssentialFields(),
-		})
+		// Deduplicate: skip if an entry with identical sort items already exists.
+		duplicate := false
+		for _, entry := range cache.entries {
+			if sameSortItems(entry.sortProp, prop) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate && len(cache.entries) < maxCrossCacheEntries {
+			cache.entries = append(cache.entries, skylineCrossCacheEntry{
+				candidates: candidates,
+				sortProp:   prop.CloneEssentialFields(),
+			})
+		}
 	}
 
 	pruningInfo := getPruningInfo(ds, candidates, prop)
