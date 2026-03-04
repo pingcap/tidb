@@ -2770,38 +2770,40 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && prop.IndexJoinProp == nil {
-		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
-		if hasMPPJoinHints(p.PreferJoinType) {
-			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
-			// even all mpp join is invalid, they can still resort to root joins as an alternative.
-			joins = append(joins, tryToGetMppHashJoin(super, prop, true)...)
-			joins = append(joins, tryToGetMppHashJoin(super, prop, false)...)
-		} else {
-			// join don't have a mpp join hints, only generate preferMppBCJ mpp joins.
-			if preferMppBCJ(super) {
+	if prop.IndexJoinProp == nil {
+		if p.SCtx().GetSessionVars().IsMPPAllowed() {
+			// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
+			if hasMPPJoinHints(p.PreferJoinType) {
+				// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
+				// even all mpp join is invalid, they can still resort to root joins as an alternative.
 				joins = append(joins, tryToGetMppHashJoin(super, prop, true)...)
-			} else {
 				joins = append(joins, tryToGetMppHashJoin(super, prop, false)...)
+			} else {
+				// join don't have a mpp join hints, only generate preferMppBCJ mpp joins.
+				if preferMppBCJ(super) {
+					joins = append(joins, tryToGetMppHashJoin(super, prop, true)...)
+				} else {
+					joins = append(joins, tryToGetMppHashJoin(super, prop, false)...)
+				}
+			}
+		} else {
+			hasMppHints := false
+			var errMsg string
+			if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
+				errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+				hasMppHints = true
+			}
+			if (p.PreferJoinType & h.PreferBCJoin) > 0 {
+				errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+				hasMppHints = true
+			}
+			if hasMppHints {
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 			}
 		}
-	} else {
-		hasMppHints := false
-		var errMsg string
-		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
-			hasMppHints = true
+		if prop.IsFlashProp() {
+			return joins, true, nil
 		}
-		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
-			hasMppHints = true
-		}
-		if hasMppHints {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
-		}
-	}
-	if prop.IsFlashProp() {
-		return joins, true, nil
 	}
 
 	if !p.IsNAAJ() && prop.IndexJoinProp == nil { // gen merge join and index join only when non-naaj and index join prop is nil
