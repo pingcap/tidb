@@ -42,6 +42,13 @@ const (
 	// TiDBXPlaceholderReleaseVersion is the default release version for nextgen when no
 	// release version is injected during build.
 	TiDBXPlaceholderReleaseVersion = "v26.3.0"
+	// TiDBXVerMinYear is set to 2025 just for sanity check.
+	// our first release of next-gen since 2025
+	TiDBXVerMinYear = 2025
+	// TiDBXVerMaxYear is set to 2099 just for sanity check, we don't expect the
+	// year part of release version to be larger than this.
+	// enough for now.
+	TiDBXVerMaxYear = 2099
 )
 
 // Version information.
@@ -73,11 +80,11 @@ func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 	if err != nil {
 		return "", errors.Errorf("invalid TiDB release version %q, expect a semantic version", releaseVersion)
 	}
-	// our first release of next-gen since 2025
-	if ver.Major < 25 || ver.Major > 99 || ver.Minor < 1 || ver.Minor > 12 {
+	year := 2000 + ver.Major
+	if year < TiDBXVerMinYear || year > TiDBXVerMaxYear || ver.Minor < 1 || ver.Minor > 12 {
 		return "", errors.Errorf("invalid TiDB release version %q, the semantic version part should be in [2-digit-year].[month].[fix-version]-[xxx] format", releaseVersion)
 	}
-	return fmt.Sprintf("%s20%02d%02d.%d", tidbXReleaseVersionPrefix, ver.Major, ver.Minor, ver.Patch), nil
+	return fmt.Sprintf("%s%d%02d.%d", tidbXReleaseVersionPrefix, year, ver.Minor, ver.Patch), nil
 }
 
 // BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version

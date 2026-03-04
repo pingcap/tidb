@@ -504,10 +504,10 @@ func TestNormalizeBackupVersion(t *testing.T) {
 }
 
 type detectServerInfoCase struct {
-	tag              int
-	versionStr       string
-	expectedType     ServerType
-	expectedSemVer   *semver.Version
+	tag            int
+	versionStr     string
+	expectedType   ServerType
+	expectedSemVer *semver.Version
 }
 
 func commonDetectServerInfoCases() []detectServerInfoCase {

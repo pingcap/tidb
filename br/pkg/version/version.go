@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
@@ -410,7 +411,7 @@ func parseTiDBXVersion(versionStr string) string {
 		return ""
 	}
 	year, err := strconv.Atoi(match[1])
-	if err != nil || year < 2000 || year > 2099 {
+	if err != nil || year < mysql.TiDBXVerMinYear || year > mysql.TiDBXVerMaxYear {
 		return ""
 	}
 	month, err := strconv.Atoi(match[2])
