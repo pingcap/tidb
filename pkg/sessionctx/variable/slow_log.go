@@ -255,9 +255,6 @@ type SlowQueryLogItems struct {
 	PlanDigest        string
 	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
-	KVTotal           time.Duration
-	PDTotal           time.Duration
-	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
 	KVExecDetail      *util.ExecDetails
 	ExecRetryCount    uint64

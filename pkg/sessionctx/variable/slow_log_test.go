@@ -157,6 +157,8 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		// ExecDetail != nil && d.CommitDetail == nil && d.ScanDetail == nil
 		accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)]
 		accessor.Setter(context.Background(), seVar, items)
+		copExecDetail := &execdetails.CopExecDetails{BackoffTime: time.Millisecond}
+		seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(copExecDetail, 0)
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
