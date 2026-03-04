@@ -947,7 +947,13 @@ func (p *UserPrivileges) fetchPrivilege(user *auth.UserIdentity, accessAll bool,
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
-	u, h := auth.GetUserAndHostName(user)
+	u, h := "", ""
+	if user != nil {
+		u, h = user.Username, user.Hostname
+		if user.AuthUsername != "" {
+			u, h = user.AuthUsername, user.AuthHostname
+		}
+	}
 	if u == "" || accessAll {
 		mysqlPrivilege.user.Ascend(func(itm itemUser) bool {
 			for _, u := range itm.data {
