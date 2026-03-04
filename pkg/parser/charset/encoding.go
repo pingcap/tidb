@@ -118,7 +118,6 @@ const (
 	opCollectFrom
 	opCollectTo
 	opSkipError
-	opTruncateHexReplace
 )
 
 //revive:disable
@@ -131,8 +130,7 @@ const (
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
 	OpDecodeNoErr   = OpDecode | opSkipError
-	OpDecodeReplace        = opToUTF8 | opTruncateReplace | opCollectTo
-	OpDecodeHexReplace     = opToUTF8 | opTruncateHexReplace | opCollectTo
+	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
 
 //revive:enable

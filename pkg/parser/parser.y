@@ -12993,6 +12993,7 @@ StatementList:
 			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
+			s.SetNoBackslashEscapes(parser.lexer.sqlMode.HasNoBackslashEscapesMode())
 			parser.result = append(parser.result, s)
 		}
 	}
@@ -13003,6 +13004,7 @@ StatementList:
 			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
+			s.SetNoBackslashEscapes(parser.lexer.sqlMode.HasNoBackslashEscapesMode())
 			parser.result = append(parser.result, s)
 		}
 	}

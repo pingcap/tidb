@@ -29,9 +29,10 @@ const hexDigits = "0123456789abcdef"
 // node is the struct implements Node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
-	utf8Text string
-	enc      charset.Encoding
-	once     *sync.Once
+	utf8Text           string
+	enc                charset.Encoding
+	noBackslashEscapes bool
+	once               *sync.Once
 
 	text   string
 	offset int
@@ -54,6 +55,13 @@ func (n *node) SetText(enc charset.Encoding, text string) {
 	n.once = &sync.Once{}
 }
 
+// SetNoBackslashEscapes marks that the SQL mode NO_BACKSLASH_ESCAPES was active
+// when this node was parsed, so backslash is not treated as an escape character
+// in string literals
+func (n *node) SetNoBackslashEscapes(val bool) {
+	n.noBackslashEscapes = val
+}
+
 // Text implements Node interface.
 func (n *node) Text() string {
 	if n.once == nil {
@@ -64,7 +72,7 @@ func (n *node) Text() string {
 			n.utf8Text = n.text
 			return
 		}
-		n.utf8Text = convertBinaryStringLiterals(n.text, n.enc)
+		n.utf8Text = convertBinaryStringLiterals(n.text, n.enc, n.noBackslashEscapes)
 	})
 	return n.utf8Text
 }
@@ -74,36 +82,33 @@ func (n *node) OriginalText() string {
 	return n.text
 }
 
-// isPrintable checks if a string contains only valid, printable UTF-8.
 func isPrintable(s []byte) bool {
-	for len(s) > 0 {
-		r, size := utf8.DecodeRune(s)
-		if r == utf8.RuneError && size <= 1 {
-			return false
-		}
+	if !utf8.Valid(s) {
+		return false
+	}
+	for _, r := range string(s) {
 		if unicode.IsControl(r) {
 			return false
 		}
-		s = s[size:]
 	}
 	return true
 }
 
 // convertBinaryStringLiterals processes raw SQL text, converting non-printable
 // single- or double-quoted string literals to 0x hex literals and applying
-// OpDecodeHexReplace to everything else.
-func convertBinaryStringLiterals(text string, enc charset.Encoding) string {
+// OpDecodeReplace to everything else.
+func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashEscapes bool) string {
 	src := charset.HackSlice(text)
 
 	// Fast path: if no quotes, just transform the whole thing
 	if bytes.IndexByte(src, '\'') < 0 && bytes.IndexByte(src, '"') < 0 {
-		result, _ := enc.Transform(nil, src, charset.OpDecodeHexReplace)
+		result, _ := enc.Transform(nil, src, charset.OpDecodeReplace)
 		return charset.HackString(result)
 	}
 
-	var buf bytes.Buffer
+	var buf *bytes.Buffer
 	var tmp bytes.Buffer
-	buf.Grow(len(src))
+	lastCopied := 0
 	i := 0
 
 	for i < len(src) {
@@ -112,61 +117,84 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding) string {
 			continue
 		}
 
-		// Flush non-string text before this quote through the encoding transform
-		flushTo(&buf, &tmp, src[:i], enc)
-		src = src[i:]
-		i = 0
+		quoteStart := i
+		quote := src[i]
+		i++
 
-		quote := src[0]
-		i = 1
-
-		// Collect unescaped content bytes and find closing quote
-		var content []byte
+		// Find closing quote
 		terminated := false
 		for i < len(src) {
 			ch := src[i]
 			if ch == quote {
 				i++
-				if i < len(src) && src[i] == quote {
-					content = append(content, quote)
-					i++
-				} else {
+				if i >= len(src) || src[i] != quote {
 					terminated = true
 					break
 				}
-			} else if ch == '\\' && i+1 < len(src) {
-				i++
-				content = append(content, util.UnescapeChar(src[i])...)
-				i++
+				i++ // doubled quote escape
+			} else if ch == '\\' && !noBackslashEscapes && i+1 < len(src) {
+				i += 2 // skip escaped char
 			} else {
-				content = append(content, ch)
 				i++
 			}
 		}
 
-		if !terminated || isPrintable(content) {
-			// Not a binary string — transform the raw literal through encoding
-			flushTo(&buf, &tmp, src[:i], enc)
-			src = src[i:]
-			i = 0
+		decoded, err := enc.Transform(nil, src[quoteStart+1:i-1], charset.OpDecode)
+		if (!terminated) || (err == nil && isPrintable(decoded)) {
 			continue
 		}
 
-		// Binary string literal — check for _<charset> prefix in buf and strip it
-		stripCharsetIntroducer(&buf)
+		// String contains non-printable UTF8 characters so rescan
+		// the string literal to build the content bytes
+		var content []byte
+		j := quoteStart + 1
+		for j < i-1 {
+			ch := src[j]
+			if ch == quote {
+				j++
+				if j < i-1 && src[j] == quote {
+					content = append(content, quote)
+					j++
+				}
+			} else if ch == '\\' && !noBackslashEscapes && j+1 < i-1 {
+				j++
+				content = append(content, util.UnescapeChar(src[j])...)
+				j++
+			} else {
+				content = append(content, ch)
+				j++
+			}
+		}
+
+		// Lazy-allocate output buffer on first binary string found
+		if buf == nil {
+			buf = &bytes.Buffer{}
+			buf.Grow(len(src))
+		}
+
+		// Flush everything from lastCopied to quoteStart through Transform
+		flushTo(buf, &tmp, src[lastCopied:quoteStart], enc)
+
+		// Strip _<charset> prefix if present
+		stripCharsetIntroducer(buf)
 
 		buf.WriteString("0x")
 		for _, b := range content {
 			buf.WriteByte(hexDigits[b>>4])
 			buf.WriteByte(hexDigits[b&0xf])
 		}
-		src = src[i:]
-		i = 0
+		lastCopied = i
 	}
 
-	// Flush any remaining text
-	if len(src) > 0 {
-		flushTo(&buf, &tmp, src, enc)
+	// No binary strings found — transform the whole thing in one call
+	if buf == nil {
+		utf8Lit, _ := enc.Transform(nil, src, charset.OpDecodeReplace)
+		return charset.HackString(utf8Lit)
+	}
+
+	// Flush remaining text
+	if lastCopied < len(src) {
+		flushTo(buf, &tmp, src[lastCopied:], enc)
 	}
 	return buf.String()
 }
@@ -177,8 +205,8 @@ func flushTo(buf, tmp *bytes.Buffer, src []byte, enc charset.Encoding) {
 	if len(src) == 0 {
 		return
 	}
-	result, _ := enc.Transform(tmp, src, charset.OpDecodeHexReplace)
-	buf.Write(result)
+	utf8Lit, _ := enc.Transform(tmp, src, charset.OpDecodeReplace)
+	buf.Write(utf8Lit)
 }
 
 // stripCharsetIntroducer removes a trailing _<charset> introducer
@@ -186,8 +214,8 @@ func flushTo(buf, tmp *bytes.Buffer, src []byte, enc charset.Encoding) {
 func stripCharsetIntroducer(buf *bytes.Buffer) {
 	b := buf.Bytes()
 	end := len(b)
-	// Trim trailing spaces between introducer and the quote
-	for end > 0 && b[end-1] == ' ' {
+	// Trim trailing whitespace between introducer and the quote
+	for end > 0 && unicode.IsSpace(rune(b[end-1])) {
 		end--
 	}
 	if end == 0 {
@@ -200,6 +228,13 @@ func stripCharsetIntroducer(buf *bytes.Buffer) {
 	}
 	if end == 0 || b[end-1] != '_' {
 		return
+	}
+	// The underscore must be a token boundary, not part of an identifier like col_binary
+	if end >= 2 {
+		prev := b[end-2]
+		if prev >= 'a' && prev <= 'z' || prev >= 'A' && prev <= 'Z' || prev >= '0' && prev <= '9' || prev == '_' {
+			return
+		}
 	}
 	// Validate that this is a known charset name
 	name := string(b[end:nameEnd])
