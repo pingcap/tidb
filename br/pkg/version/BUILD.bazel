@@ -11,6 +11,7 @@ go_library(
         "//br/pkg/version/build",
         "//pkg/config/kerneltype",
         "//pkg/meta/model",
+        "//pkg/parser/mysql",
         "//pkg/util/dbutil",
         "//pkg/util/engine",
         "@com_github_coreos_go_semver//semver",
