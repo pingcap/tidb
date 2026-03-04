@@ -431,6 +431,7 @@ main() {
             -table "${TABLE}" \
             -set-variable "tidb_enable_sample_based_global_stats=${mode}" \
             -truncate-stats \
+            -check-accuracy \
             -output-dir "${OUTPUT_BASE}/${run_label}_full" \
             ${tidb_log_flag} \
             2>&1 | tee "${OUTPUT_BASE}/${run_label}_full/analyze-profile.log"
