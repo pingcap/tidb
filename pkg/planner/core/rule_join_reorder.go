@@ -37,15 +37,15 @@ import (
 func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
-		group              []base.LogicalPlan
-		joinOrderHintInfo  []*h.PlanHints
-		eqEdges            []*expression.ScalarFunction
-		otherConds         []expression.Expression
-		joinTypes          []*joinTypeWithExtMsg
-		nullExtendedCols   []*expression.Column
-		nullExtendedColSet = make(map[int64]struct{})
-		hasOuterJoin       bool
-		currentLeadingHint *h.PlanHints // Track the active LEADING hint
+		group               []base.LogicalPlan
+		joinOrderHintInfo   []*h.PlanHints
+		eqEdges             []*expression.ScalarFunction
+		otherConds          []expression.Expression
+		joinTypes           []*joinTypeWithExtMsg
+		nullExtendedCols    []*expression.Column
+		nullExtendedColSet  = make(map[int64]struct{})
+		hasOuterJoin        bool
+		currentLeadingHint  *h.PlanHints // Track the active LEADING hint
 		indexJoinFirstHints *h.PlanHints // Tracks INDEX_JOIN_FIRST hint across the join group
 	)
 	appendNullExtendedCols := func(schema *expression.Schema) {
