@@ -938,8 +938,6 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	return
 }
 
-<<<<<<< HEAD
-=======
 func (p *UserPrivileges) fetchPrivilege(user *auth.UserIdentity, accessAll bool, fetchFunc func(users, hosts []string) [][]types.Datum) ([][]types.Datum, error) {
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
@@ -994,7 +992,6 @@ func (p *UserPrivileges) FetchSchemaPrivileges(sctx sessionctx.Context, user *au
 	)
 }
 
->>>>>>> 95a0c2265cd (privilege/privileges: refactor the data struct for user privilege data (#61719))
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
 func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
 	if SkipWithGrant {
