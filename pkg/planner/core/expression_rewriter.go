@@ -252,15 +252,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx: &exprRewriterPlanCtx{
-				plan:    p,
-				builder: b,
-
-				curClause:  b.curClause,
-				rollExpand: b.currentBlockExpand,
-
-				colNamesForLazilyPrivilegeCheck: make([]*ast.ColumnName, 0, 8),
-			},
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand, colNamesForLazilyPrivilegeCheck: make([]*ast.ColumnName, 0, 8)},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
