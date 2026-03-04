@@ -671,7 +671,7 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
+          "   └─Selection       cop[tiflash] in(...)",
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
@@ -810,7 +810,7 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
+          "   └─Selection       cop[tiflash] in(...)",
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
