@@ -18,8 +18,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -28,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -45,155 +44,6 @@ const (
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
-
-const (
-	legacyBackupMetaPartCount = 4
-	taggedMetaTagValueLen     = 17
-
-	backupMetaMinBeginTSTag byte = 'd'
-	backupMetaMinTSTag      byte = 'l'
-	backupMetaMaxTSTag      byte = 'u'
-)
-
-var (
-	legacyBackupMetaPattern = regexp.MustCompile(
-		`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
-	taggedBackupMetaPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}-(?:[0-9A-Za-z][0-9a-fA-F]{16})+$`)
-)
-
-type parsedBackupMetaFileName struct {
-	flushTs      uint64
-	storeID      uint64
-	minDefaultTs uint64
-	minTs        uint64
-	maxTs        uint64
-}
-
-func parseBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
-	switch {
-	case taggedBackupMetaPattern.MatchString(fileName):
-		return parseTaggedBackupMetaFileName(fileName)
-	case legacyBackupMetaPattern.MatchString(fileName):
-		return parseLegacyBackupMetaFileName(fileName)
-	default:
-		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta file name format: %s", fileName)
-	}
-}
-
-func parseLegacyBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
-	parts := strings.Split(fileName, "-")
-	if len(parts) != legacyBackupMetaPartCount {
-		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta legacy file name format: %s", fileName)
-	}
-
-	flushTs, err := parseBackupMetaHexU64(fileName, "flushTs", parts[0])
-	if err != nil {
-		return parsedBackupMetaFileName{}, err
-	}
-	minDefaultTs, err := parseBackupMetaHexU64(fileName, "minDefaultTs", parts[1])
-	if err != nil {
-		return parsedBackupMetaFileName{}, err
-	}
-	minTs, err := parseBackupMetaHexU64(fileName, "minTs", parts[2])
-	if err != nil {
-		return parsedBackupMetaFileName{}, err
-	}
-	maxTs, err := parseBackupMetaHexU64(fileName, "maxTs", parts[3])
-	if err != nil {
-		return parsedBackupMetaFileName{}, err
-	}
-
-	return parsedBackupMetaFileName{
-		flushTs:      flushTs,
-		minDefaultTs: minDefaultTs,
-		minTs:        minTs,
-		maxTs:        maxTs,
-	}, nil
-}
-
-func parseTaggedBackupMetaFileName(fileName string) (parsedBackupMetaFileName, error) {
-	prefix, suffix, ok := strings.Cut(fileName, "-")
-	if !ok {
-		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta tagged file name format: %s", fileName)
-	}
-	if len(prefix) != 32 {
-		return parsedBackupMetaFileName{}, errors.Errorf("invalid backupmeta tagged prefix length in %s", fileName)
-	}
-
-	flushTs, err := parseBackupMetaHexU64(fileName, "flushTs", prefix[:16])
-	if err != nil {
-		return parsedBackupMetaFileName{}, err
-	}
-	storeID, err := parseBackupMetaHexU64(fileName, "storeID", prefix[16:])
-	if err != nil {
-		return parsedBackupMetaFileName{}, err
-	}
-
-	var (
-		minDefaultTs uint64
-		minTs        uint64
-		maxTs        uint64
-		seenTags     [256]bool
-	)
-	for pos := 0; pos < len(suffix); {
-		remain := len(suffix) - pos
-		if remain < taggedMetaTagValueLen {
-			return parsedBackupMetaFileName{}, errors.Errorf("incomplete tag segment in %s", fileName)
-		}
-		tag := suffix[pos]
-		if !isASCIIAlphanumeric(tag) {
-			return parsedBackupMetaFileName{}, errors.Errorf("invalid suffix tag %q in %s", tag, fileName)
-		}
-		hexValue := suffix[pos+1 : pos+taggedMetaTagValueLen]
-		value, err := parseBackupMetaHexU64(fileName, "tag value", hexValue)
-		if err != nil {
-			return parsedBackupMetaFileName{}, err
-		}
-		if seenTags[tag] {
-			return parsedBackupMetaFileName{}, errors.Errorf("duplicate suffix tag %q in %s", tag, fileName)
-		}
-		seenTags[tag] = true
-		switch tag {
-		case backupMetaMinBeginTSTag:
-			minDefaultTs = value
-		case backupMetaMinTSTag:
-			minTs = value
-		case backupMetaMaxTSTag:
-			maxTs = value
-		}
-		pos += taggedMetaTagValueLen
-	}
-
-	required := []byte{backupMetaMinBeginTSTag, backupMetaMinTSTag, backupMetaMaxTSTag}
-	for _, tag := range required {
-		if !seenTags[tag] {
-			return parsedBackupMetaFileName{}, errors.Errorf("missing %q tag in %s", tag, fileName)
-		}
-	}
-
-	return parsedBackupMetaFileName{
-		flushTs:      flushTs,
-		storeID:      storeID,
-		minDefaultTs: minDefaultTs,
-		minTs:        minTs,
-		maxTs:        maxTs,
-	}, nil
-}
-
-func parseBackupMetaHexU64(fileName, partName, hexPart string) (uint64, error) {
-	if len(hexPart) != 16 {
-		return 0, errors.Errorf("%s must be 16 hex digits in %s", partName, fileName)
-	}
-	value, err := strconv.ParseUint(hexPart, 16, 64)
-	if err != nil {
-		return 0, errors.Annotatef(err, "failed to parse %s in %s", partName, fileName)
-	}
-	return value, nil
-}
-
-func isASCIIAlphanumeric(ch byte) bool {
-	return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z'
-}
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -520,25 +370,25 @@ func (m *MetadataHelper) Close() {
 func FilterPathByTs(path string, left, right uint64) string {
 	filename := strings.TrimSuffix(path, metaSuffix)
 	filename = filename[strings.LastIndex(filename, "/")+1:]
-	metaFile, err := parseBackupMetaFileName(filename)
+	metaFile, err := backupmetas.ParseName(filename)
 	if err != nil {
 		// keep consistency with old behaviour, tolerate future file path changes.
 		return path
 	}
 
-	minDefaultTs := metaFile.minDefaultTs
-	if minDefaultTs == 0 || minDefaultTs > metaFile.minTs {
+	minDefaultTs := metaFile.MinDefaultTS
+	if minDefaultTs == 0 || minDefaultTs > metaFile.MinTS {
 		log.Warn("minDefaultTs is not correct, fallback to minTs",
 			zap.String("file", path),
-			zap.Uint64("flushTs", metaFile.flushTs),
-			zap.Uint64("storeID", metaFile.storeID),
-			zap.Uint64("minTs", metaFile.minTs),
+			zap.Uint64("flushTs", metaFile.FlushTS),
+			zap.Uint64("storeID", metaFile.StoreID),
+			zap.Uint64("minTs", metaFile.MinTS),
 			zap.Uint64("minDefaultTs", minDefaultTs),
 		)
-		minDefaultTs = metaFile.minTs
+		minDefaultTs = metaFile.MinTS
 	}
 
-	if right < minDefaultTs || metaFile.maxTs < left {
+	if right < minDefaultTs || metaFile.MaxTS < left {
 		return ""
 	}
 

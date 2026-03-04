@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,40 +27,43 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 	f.Add(uint64(10), uint64(11), uint64(5), uint64(10), uint64(30), byte('x'))
 
 	f.Fuzz(func(t *testing.T, flushTs, storeID, minDefaultTs, minTs, maxTs uint64, extraTag byte) {
-		if !isASCIIAlphanumeric(extraTag) || extraTag == backupMetaMinBeginTSTag || extraTag == backupMetaMinTSTag || extraTag == backupMetaMaxTSTag {
+		if !isASCIIAlphanumeric(extraTag) ||
+			extraTag == backupmetas.NameMinBeginTSTag ||
+			extraTag == backupmetas.NameMinTSTag ||
+			extraTag == backupmetas.NameMaxTSTag {
 			extraTag = 'x'
 		}
 
 		legacyFileName := fmt.Sprintf("%016x-%016x-%016x-%016x", flushTs, minDefaultTs, minTs, maxTs)
-		legacyParsed, err := parseBackupMetaFileName(legacyFileName)
+		legacyParsed, err := backupmetas.ParseName(legacyFileName)
 		require.NoError(t, err)
-		require.Equal(t, parsedBackupMetaFileName{
-			flushTs:      flushTs,
-			minDefaultTs: minDefaultTs,
-			minTs:        minTs,
-			maxTs:        maxTs,
+		require.Equal(t, backupmetas.ParsedName{
+			FlushTS:      flushTs,
+			MinDefaultTS: minDefaultTs,
+			MinTS:        minTs,
+			MaxTS:        maxTs,
 		}, legacyParsed)
 
 		taggedFileName := fmt.Sprintf(
 			"%016X%016X-%c%016Xd%016Xu%016Xl%016X",
 			flushTs, storeID, extraTag, uint64(0), minDefaultTs, maxTs, minTs,
 		)
-		taggedParsed, err := parseBackupMetaFileName(taggedFileName)
+		taggedParsed, err := backupmetas.ParseName(taggedFileName)
 		require.NoError(t, err)
-		require.Equal(t, parsedBackupMetaFileName{
-			flushTs:      flushTs,
-			storeID:      storeID,
-			minDefaultTs: minDefaultTs,
-			minTs:        minTs,
-			maxTs:        maxTs,
+		require.Equal(t, backupmetas.ParsedName{
+			FlushTS:      flushTs,
+			StoreID:      storeID,
+			MinDefaultTS: minDefaultTs,
+			MinTS:        minTs,
+			MaxTS:        maxTs,
 		}, taggedParsed)
 
 		tagValues := map[byte]uint64{
-			backupMetaMinBeginTSTag: minDefaultTs,
-			backupMetaMinTSTag:      minTs,
-			backupMetaMaxTSTag:      maxTs,
+			backupmetas.NameMinBeginTSTag: minDefaultTs,
+			backupmetas.NameMinTSTag:      minTs,
+			backupmetas.NameMaxTSTag:      maxTs,
 		}
-		tagOrder := []byte{backupMetaMinBeginTSTag, backupMetaMaxTSTag, backupMetaMinTSTag}
+		tagOrder := []byte{backupmetas.NameMinBeginTSTag, backupmetas.NameMaxTSTag, backupmetas.NameMinTSTag}
 		for _, missingTag := range tagOrder {
 			segments := make([]string, 0, len(tagOrder)-1)
 			for _, tag := range tagOrder {
@@ -69,9 +73,13 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 				segments = append(segments, fmt.Sprintf("%c%016X", tag, tagValues[tag]))
 			}
 			missingTagFileName := fmt.Sprintf("%016X%016X-%s", flushTs, storeID, strings.Join(segments, ""))
-			_, err := parseBackupMetaFileName(missingTagFileName)
+			_, err := backupmetas.ParseName(missingTagFileName)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), fmt.Sprintf("missing %q tag", missingTag))
 		}
 	})
+}
+
+func isASCIIAlphanumeric(ch byte) bool {
+	return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z'
 }
