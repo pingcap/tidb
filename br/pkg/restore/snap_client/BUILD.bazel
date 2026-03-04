@@ -37,6 +37,11 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version",
         "//pkg/bindinfo",
+<<<<<<< HEAD
+=======
+        "//pkg/config/kerneltype",
+        "//pkg/ddl/label",
+>>>>>>> 33bbbf2352a (br: support backup for merge_option attribute (#65252))
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
