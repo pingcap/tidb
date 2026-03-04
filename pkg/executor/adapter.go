@@ -1640,15 +1640,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
 	var slowItems *variable.SlowQueryLogItems
-	var matchRules bool
+
+	matchRules := stmtCtx.WriteSlowLog
+	sessVars.StmtCtx.ExecSuccess = succ
+	sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
 	if !stmtCtx.WriteSlowLog {
 		// If the level is Debug, or trace is enabled, print slow logs anyway.
 		force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
 		if !cfg.Instance.EnableSlowLog.Load() && !force {
 			return
 		}
-		sessVars.StmtCtx.ExecSuccess = succ
-		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
 		globalRules := variable.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
 		// EffectiveFields is not empty (unique fields for this session including global rules),
