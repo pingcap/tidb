@@ -390,9 +390,8 @@ func TestStmtSummaryBinaryValues(t *testing.T) {
 		"where digest_text like 'select * from `t1` where%'").Rows()
 	require.Len(t, rows, 1)
 	sampleText := rows[0][0].(string)
-	// Verify the invalid UTF-8 bytes are preserved as \xNN hex escapes rather
-	// than being replaced by '?'.
-	require.Equal(t, "select * from t1 where c1 = '\\xd2䦸\\xc1\\xf3\\xe5ש\\xb2\\xc4\\xd6\\xe8\\xf1\\xa3\\xb5'", sampleText)
+	// Verify the binary value is converted to a replayable 0x hex literal
+	require.Equal(t, "select * from t1 where c1 = 0xd2e4a6b8c1f3e5d7a9b2c4d6e8f1a3b5", sampleText)
 }
 
 func TestStmtSummarySensitiveQuery(t *testing.T) {
