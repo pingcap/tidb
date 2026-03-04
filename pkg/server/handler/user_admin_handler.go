@@ -16,10 +16,8 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -54,12 +52,6 @@ const (
 )
 
 type resetPasswordRequest struct {
-	Reason    string `json:"reason"`
-	ExpireNow bool   `json:"expire_now"`
-}
-
-type resetPasswordResponse struct {
-	Status      string `json:"status"`
 	NewPassword string `json:"new_password"`
 }
 
@@ -119,11 +111,10 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		WriteErrorWithCode(w, http.StatusBadRequest, wrapped)
 		return
 	}
-
-	newPassword, err := generateSecurePassword()
-	if err != nil {
+	if strings.TrimSpace(payload.NewPassword) == "" {
+		err := errors.New("missing new_password")
 		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
-		WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -151,7 +142,7 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 
 	for _, host := range hosts {
 		stmtText := buildAlterUserPasswordSQL(username, host)
-		if _, err := se.ExecuteInternal(ctx, "ALTER USER %?@%? IDENTIFIED BY %?", username, host, newPassword); err != nil {
+		if _, err := se.ExecuteInternal(ctx, "ALTER USER %?@%? IDENTIFIED BY %?", username, host, payload.NewPassword); err != nil {
 			auditUserAdminStmt(req, stmtText, err)
 			WriteErrorWithCode(w, http.StatusInternalServerError, err)
 			return
@@ -159,14 +150,11 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		auditUserAdminStmt(req, stmtText, nil)
 	}
 
-	logutil.Logger(req.Context()).Info("internal user password reset",
-		zap.String("user", username),
-		zap.Bool("expire_now", payload.ExpireNow),
-		zap.String("reason", payload.Reason))
+	logutil.Logger(req.Context()).Info("internal user password reset", zap.String("user", username))
 
-	WriteData(w, resetPasswordResponse{
-		Status:      "success",
-		NewPassword: newPassword,
+	WriteData(w, statusResponse{
+		Status:  "success",
+		Message: "Password reset done.",
 	})
 }
 
@@ -558,57 +546,6 @@ func buildGrantRoleSQL(roleName, roleHost, username, userHost string) string {
 	return sqlescape.MustEscapeSQL("GRANT %?@%? TO %?@%?", roleName, roleHost, username, userHost)
 }
 
-func generateSecurePassword() (string, error) {
-	const (
-		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
-		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-		digitChars   = "0123456789"
-		specialChars = "!#$*-_=+"
-		passwordLen  = 24
-	)
-
-	allChars := lowerChars + upperChars + digitChars + specialChars
-	password := make([]byte, passwordLen)
-	requiredSets := []string{lowerChars, upperChars, digitChars, specialChars}
-	for i, charset := range requiredSets {
-		ch, err := randomPasswordChar(charset)
-		if err != nil {
-			return "", err
-		}
-		password[i] = ch
-	}
-	for i := len(requiredSets); i < passwordLen; i++ {
-		ch, err := randomPasswordChar(allChars)
-		if err != nil {
-			return "", err
-		}
-		password[i] = ch
-	}
-	for i := len(password) - 1; i > 0; i-- {
-		j, err := secureRandomInt(i + 1)
-		if err != nil {
-			return "", err
-		}
-		password[i], password[j] = password[j], password[i]
-	}
-	return string(password), nil
-}
-
-func randomPasswordChar(charset string) (byte, error) {
-	idx, err := secureRandomInt(len(charset))
-	if err != nil {
-		return 0, err
-	}
-	return charset[idx], nil
-}
-
-func secureRandomInt(max int) (int, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
-	if err != nil {
-		return 0, err
-	}
-	return int(n.Int64()), nil
-}
 
 func auditUserAdminStmt(req *http.Request, stmtText string, err error) {
 	extensions, extErr := extension.GetExtensions()

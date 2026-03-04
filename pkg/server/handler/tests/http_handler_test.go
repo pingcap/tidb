@@ -542,7 +542,7 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		waitForStatus(t, client, ts.StatusURL("/status"))
 		resp, err := client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
 			"application/json",
-			bytes.NewBufferString(`{"reason":"test","expire_now":true}`))
+			bytes.NewBufferString(`{"new_password":"KXMF*ivNaLWd*oNhKC+REY2+"}`))
 		require.NoError(t, err)
 		defer func() { require.NoError(t, resp.Body.Close()) }()
 		require.Equal(t, http.StatusForbidden, resp.StatusCode)
@@ -585,19 +585,19 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 
 		resp, err := client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
 			"application/json",
-			bytes.NewBufferString(`{"reason":"compromise","expire_now":true}`))
+			bytes.NewBufferString(`{"new_password":"KXMF*ivNaLWd*oNhKC+REY2+"}`))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		var resetResp struct {
-			Status      string `json:"status"`
-			NewPassword string `json:"new_password"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
 		}
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&resetResp))
 		require.NoError(t, resp.Body.Close())
 		require.Equal(t, "success", resetResp.Status)
-		require.NotEmpty(t, resetResp.NewPassword)
+		require.Equal(t, "Password reset done.", resetResp.Message)
 
-		userDB, err := sql.Open("mysql", fmt.Sprintf("testuser:%s@tcp(127.0.0.1:%d)/test", resetResp.NewPassword, ts.Port))
+		userDB, err := sql.Open("mysql", fmt.Sprintf("testuser:%s@tcp(127.0.0.1:%d)/test", "KXMF*ivNaLWd*oNhKC+REY2+", ts.Port))
 		require.NoError(t, err)
 		defer func() { require.NoError(t, userDB.Close()) }()
 		require.NoError(t, userDB.Ping())
