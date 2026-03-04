@@ -754,9 +754,11 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 }
 
 func initVersions(cfg *config.Config) error {
-	// in next-gen, wo forbid users to set version info.
-	// and we need to init the cluster version from component version.
+	// allow users to set version info is a bad feature, we forbid it in next-gen,
 	if kerneltype.IsNextGen() {
+		if len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0 {
+			return errors.New("config options tidb_edition, tidb_release_version and server_version are not allowed to set in nextgen kernel")
+		}
 		normalizedReleaseVersion := mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion)
 		serverVersion, err := mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
 		if err != nil {

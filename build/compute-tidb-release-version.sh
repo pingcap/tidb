@@ -29,12 +29,6 @@ if [[ "${NEXT_GEN:-0}" != "1" ]]; then
     exit 0
 fi
 
-# Nextgen explicit override from env has the highest priority.
-if [[ -n "${TIDB_X_RELEASE_VERSION:-}" ]]; then
-    echo "${TIDB_X_RELEASE_VERSION}"
-    exit 0
-fi
-
 # If input already matches nextgen release format, reuse it directly.
 # This happens when callers already provide a nextgen version in TIDB_RELEASE_VERSION,
 # for example release jobs/tagged builds like v26.3.1 (instead of legacy v8.x.y).
@@ -44,8 +38,8 @@ if echo "${tidb_release_version}" | grep -Eq '^v(2[5-9]|[3-9][0-9])\.(1[0-2]|[1-
 fi
 
 # Nextgen fallback: synthesize date-based major/minor and append commit identity.
-# This branch is used when NEXT_GEN=1, no TIDB_X_RELEASE_VERSION is provided,
-# and TIDB_RELEASE_VERSION is still legacy/non-nextgen (for example v8.5.0 or
-# plain git-describe output on non-release branches).
+# This branch is used when NEXT_GEN=1, and TIDB_RELEASE_VERSION is still
+# legacy/non-nextgen (for example v8.5.0 or plain git-describe output on
+# non-release branches).
 tidb_x_release_version_by_date="v$(date '+%y').$(date '+%m' | sed 's/^0//').0-$(git describe --always --dirty --exclude '*')"
 echo "${tidb_x_release_version_by_date}"

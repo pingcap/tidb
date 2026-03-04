@@ -401,7 +401,7 @@ var (
 	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|TiDB-X-CLOUD\.\d{6}\.\d+)`)
 )
 
-func parseTiDBXVersion(versionStr string) string {
+func parseTiDBXVersionToSemver(versionStr string) string {
 	// NextGen exposes release version as TiDB-X-CLOUD.<YYYYMM>.<patch>.
 	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
 	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
@@ -448,7 +448,7 @@ func ParseServerInfo(src string) ServerInfo {
 	var versionStr string
 	if serverInfo.ServerType == ServerTypeTiDB {
 		if kerneltype.IsNextGen() {
-			versionStr = parseTiDBXVersion(src)
+			versionStr = parseTiDBXVersionToSemver(src)
 		} else {
 			if isReleaseVersion {
 				versionStr = tidbReleaseVersionRegex.FindString(src)
