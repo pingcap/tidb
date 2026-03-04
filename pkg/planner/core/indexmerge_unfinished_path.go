@@ -183,7 +183,7 @@ func initUnfinishedPathsFromExpr(
 		// the primary key has index columns, so we use the gradual filter collection below to collect
 		// partial filters (e.g. a=1) and merge with top-level AND conditions (e.g. id=1) later.
 		// This enables IndexMerge with primary key for predicates like id=? and (a=? or b=?).
-		if path.IsTablePath() && path.Index == nil {
+		if path.IsTablePath() && (path.Index == nil || !path.Index.Primary) {
 			continue
 		}
 		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblColsByID, false)
