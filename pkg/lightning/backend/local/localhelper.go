@@ -35,21 +35,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
-<<<<<<< HEAD
-=======
 // 64 is chosen based on nextgen import shape: subtask size is ~100 GiB and each region is ~1 GiB,
 // so split key count is often around 100. A threshold of 100 may miss coarse split/scatter on boundary
 // cases, while 64 triggers early load spreading and still avoids this stage for smaller tasks.
 const coarseGrainedSplitKeysThreshold = 64
 
-var (
-
-	// the base exponential backoff time
-	// the variable is only changed in unit test for running test faster.
-	splitRegionBaseBackOffTime = time.Second
-)
-
->>>>>>> 4ffecda589a (lightning: restore two-level split/scatter while keeping limiter behavior (#66312))
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) splitAndScatterRegionInBatches(

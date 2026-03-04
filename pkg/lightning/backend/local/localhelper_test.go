@@ -44,6 +44,67 @@ type testSplitClient struct {
 	splitCount           atomic.Int32
 	splitKeysAndScatterF func(context.Context, [][]byte, int32) ([]*split.RegionInfo, error)
 	hook                 clientHook
+func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
+	makeSplitKeys := func(n int) [][]byte {
+		keys := make([][]byte, n)
+		for i := 0; i < n; i++ {
+			keys[i] = []byte{byte(i >> 8), byte(i)}
+		}
+		return keys
+	}
+
+	t.Run("large split keys trigger coarse and fine layers", func(t *testing.T) {
+		splitCli := &testSplitClient{}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
+		require.NoError(t, err)
+		// 121 keys => coarse pass(11 keys, 1 batch) + fine pass(121 keys, 3 batches) = 4 calls.
+		require.Equal(t, int32(4), splitCli.splitCount.Load())
+	})
+
+	t.Run("small split keys only use fine layer", func(t *testing.T) {
+		splitCli := &testSplitClient{}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(coarseGrainedSplitKeysThreshold), 50, 0)
+		require.NoError(t, err)
+		require.Equal(t, int32(2), splitCli.splitCount.Load())
+	})
+
+	t.Run("coarse layer error returns immediately", func(t *testing.T) {
+		splitCli := &testSplitClient{
+			splitKeysAndScatterF: func(_ context.Context, _ [][]byte, splitCnt int32) ([]*split.RegionInfo, error) {
+				if splitCnt == 1 {
+					return nil, errors.New("mock split error")
+				}
+				return []*split.RegionInfo{
+					{
+						Region: &metapb.Region{Id: 1},
+					},
+				}, nil
+			},
+		}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
+		require.ErrorContains(t, err, "mock split error")
+		require.Equal(t, int32(1), splitCli.splitCount.Load())
+	})
+
+	t.Run("limiter is still enforced after restoring two levels", func(t *testing.T) {
+		splitCli := &testSplitClient{}
+		local := &Backend{splitCli: splitCli}
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		// maxCntPerSec=0.5 => burstPerSec=1, so after first batch, limiter blocks
+		// and should hit context deadline before entering fine-grained stage.
+		err := local.splitAndScatterRegionInBatches(ctx, makeSplitKeys(121), 50, 0.5)
+		require.ErrorContains(t, err, "context deadline")
+		require.Equal(t, int32(1), splitCli.splitCount.Load())
+	})
+}
 }
 
 func newTestSplitClient(
@@ -340,7 +401,6 @@ func TestStoreWriteLimiter(t *testing.T) {
 	wg.Wait()
 }
 
-<<<<<<< HEAD
 func TestTuneStoreWriteLimiter(t *testing.T) {
 	limiter := newStoreWriteLimiter(100)
 	testLimiter := func(ctx context.Context, maxT int) {
@@ -462,5 +522,4 @@ func TestGetCoarseGrainedSplitKeys(t *testing.T) {
 
 		require.Equal(t, 1, lastKeyCount)
 	})
->>>>>>> 4ffecda589a (lightning: restore two-level split/scatter while keeping limiter behavior (#66312))
 }
