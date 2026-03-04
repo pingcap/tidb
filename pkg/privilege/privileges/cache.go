@@ -1372,6 +1372,24 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	columnPriv = 0
+	// When column is "*", treat it as "any column" privilege check.
+	//
+	// This is used by COUNT() privilege collection (e.g. COUNT(*), COUNT(1)) where MySQL
+	// requires SELECT privilege on at least one column of the table.
+	// Wildcard expansion (SELECT *) is handled by collecting per-column visit info in the plan builder.
+	if column == "*" && priv == mysql.SelectPriv {
+		for _, r := range roleList {
+			for i := 0; i < len(p.columnsPriv); i++ {
+				record := &p.columnsPriv[i]
+				if record.baseRecord.match(r.Username, r.Hostname) &&
+					strings.EqualFold(record.DB, db) &&
+					strings.EqualFold(record.TableName, table) &&
+					record.ColumnPriv&priv > 0 {
+					return true
+				}
+			}
+		}
+	}
 	for _, r := range roleList {
 		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
 		if columnRecord != nil {
