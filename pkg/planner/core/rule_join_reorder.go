@@ -277,19 +277,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
-<<<<<<< HEAD
-			eqEdges:            eqEdges,
-			otherConds:         otherConds,
-			joinTypes:          joinTypes,
-			nullExtendedCols:   nullExtendedSchema,
-			joinMethodHintInfo: joinMethodHintInfo,
-=======
 			eqEdges:             eqEdges,
 			otherConds:          otherConds,
 			joinTypes:           joinTypes,
+			nullExtendedCols:    nullExtendedSchema,
 			joinMethodHintInfo:  joinMethodHintInfo,
 			indexJoinFirstHints: indexJoinFirstHints,
->>>>>>> 400a7b7049 (planner: support index_join_first() hint to prefer index join)
 		},
 	}
 }
