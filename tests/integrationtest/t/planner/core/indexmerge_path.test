@@ -398,6 +398,21 @@ INSERT INTO t1 VALUES('1988-07-19','[0.9233398239291353, 0.9396459773262974, 0.5
 SELECT col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
 explain format='plan_tree' SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
 
+# TestIndexMergeWithPrimaryKey (issue #66668)
+# IndexMerge should support primary key as partial path for id=? and (a=? or b=?)
+drop table if exists t;
+create table if not exists t (
+    id int,
+    a int,
+    b int,
+    primary key (id, a),
+    key ka (id, a),
+    key kb (id, b)
+);
+explain format='plan_tree' select /*+ use_index_merge(t, primary, kb) */ * from t where id=1 and (a=1 or b=1);
+explain format='plan_tree' select /*+ use_index_merge(t, ka, kb) */ * from t where id=1 and (a=1 or b=1);
+drop table if exists t;
+
 # TestIssue52869
 drop table if exists t;
 create table t(pk varbinary(255) primary key, a int, b varchar(50), c int, d varchar(45), index ia(a), index ib(b), index ic(c), index id(d));

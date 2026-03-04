@@ -968,6 +968,29 @@ Selection	root		or(json_contains(planner__core__indexmerge_path.t1.col_45, cast(
   └─Selection(Probe)	cop[tikv]		or(lt(planner__core__indexmerge_path.t1.col_44, 1980-03-18 00:00:00.000000), gt(planner__core__indexmerge_path.t1.col_44, 2011-10-24 00:00:00.000000))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
+create table if not exists t (
+    id int,
+    a int,
+    b int,
+    primary key (id, a),
+    key ka (id, a),
+    key kb (id, b)
+);
+explain format='plan_tree' select /*+ use_index_merge(t, primary, kb) */ * from t where id=1 and (a=1 or b=1);
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:PRIMARY(id, a)	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kb(id, b)	range:[1 1,1 1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(planner__core__indexmerge_path.t.id, 1), or(eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 1))
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t, ka, kb) */ * from t where id=1 and (a=1 or b=1);
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ka(id, a)	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kb(id, b)	range:[1 1,1 1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(planner__core__indexmerge_path.t.id, 1), or(eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 1))
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
 create table t(pk varbinary(255) primary key, a int, b varchar(50), c int, d varchar(45), index ia(a), index ib(b), index ic(c), index id(d));
 explain format='plan_tree' SELECT /*+ use_index_merge(t) */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
 id	task	access object	operator info
