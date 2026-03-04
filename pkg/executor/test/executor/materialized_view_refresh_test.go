@@ -82,6 +82,42 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("success complete manually 1 1 1 1"))
 }
 
+func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_quota_refresh (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_quota_refresh values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_quota_refresh (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_quota_refresh (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_quota_refresh group by a")
+	tk.MustExec("set @@session.tidb_mem_quota_query = 1073741824")
+	tk.MustExec("set @@global.tidb_mv_maintain_mem_quota = 536870912")
+	tk.MustExec("set @@session.tidb_mv_maintain_mem_quota = 268435456")
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_mv_maintain_mem_quota = %d", 2*1024*1024*1024))
+
+	applied := false
+	lastAppliedMemQuotaQuery := int64(0)
+	lastAppliedMaintainQuota := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnRefreshSession", func(memQuotaQuery int64, maintainMemQuota int64) {
+		applied = true
+		lastAppliedMemQuotaQuery = memQuotaQuery
+		lastAppliedMaintainQuota = maintainMemQuota
+	})
+
+	tk.MustExec("refresh materialized view mv_mv_quota_refresh complete")
+	require.True(t, applied)
+	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
+	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+
+	applied = false
+	lastAppliedMemQuotaQuery = 0
+	lastAppliedMaintainQuota = 0
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_quota_refresh complete")
+	require.True(t, applied)
+	require.Equal(t, int64(536870912), lastAppliedMaintainQuota)
+	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+}
+
 func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

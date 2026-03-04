@@ -2707,6 +2707,17 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMVMaintainMemQuota, Value: strconv.FormatInt(DefTiDBMVMaintainMemQuota, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MVMaintainMemQuota = TidbOptInt64(val, DefTiDBMVMaintainMemQuota)
+		return nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		intVal := TidbOptInt64(normalizedValue, DefTiDBMVMaintainMemQuota)
+		if intVal > 0 && intVal < 128 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBMVMaintainMemQuota, originalValue))
+			normalizedValue = "128"
+		}
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalIgnoreError, Value: BoolToOnOff(DefTiDBBatchDMLIgnoreError), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.NonTransactionalIgnoreError = TiDBOptOn(val)

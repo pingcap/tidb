@@ -118,6 +118,17 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return err
 	}
 	defer e.ReleaseSysSession(kctx, purgeSctx)
+	purgeSessVars := purgeSctx.GetSessionVars()
+	targetMaintainMemQuota, err := resolveMVMaintenanceMemQuota(kctx, e.Ctx().GetSessionVars(), isInternalSQL)
+	if err != nil {
+		return err
+	}
+	restorePurgeMemQuota, err := applyMVMaintenanceMemQuota(purgeSessVars, targetMaintainMemQuota)
+	if err != nil {
+		return err
+	}
+	defer restorePurgeMemQuota()
+	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeSession", purgeSessVars.MemQuotaQuery, targetMaintainMemQuota)
 	sqlExec := purgeSctx.GetSQLExecutor()
 
 	histSctx, err := e.GetSysSession()
@@ -822,6 +833,16 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	defer e.ReleaseSysSession(kctx, refreshSctx)
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
+	targetMaintainMemQuota, err := resolveMVMaintenanceMemQuota(kctx, e.Ctx().GetSessionVars(), isInternalSQL)
+	if err != nil {
+		return err
+	}
+	restoreRefreshMemQuota, err := applyMVMaintenanceMemQuota(sessVars, targetMaintainMemQuota)
+	if err != nil {
+		return err
+	}
+	defer restoreRefreshMemQuota()
+	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnRefreshSession", sessVars.MemQuotaQuery, targetMaintainMemQuota)
 
 	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
 	if err != nil {
@@ -1014,6 +1035,47 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		)
 	}
 	return nil
+}
+
+func applyMVMaintenanceMemQuota(sessVars *variable.SessionVars, targetMemQuota int64) (func(), error) {
+	if sessVars == nil {
+		return nil, errors.New("mv maintenance: session vars is nil")
+	}
+	originMemQuota := sessVars.MemQuotaQuery
+	if originMemQuota == targetMemQuota {
+		return func() {}, nil
+	}
+	if err := sessVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(targetMemQuota, 10)); err != nil {
+		return nil, errors.Annotate(err, "mv maintenance: failed to apply tidb_mv_maintain_mem_quota to tidb_mem_quota_query")
+	}
+	return func() {
+		if err := sessVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
+			logutil.BgLogger().Warn(
+				"mv maintenance: failed to restore tidb_mem_quota_query after using tidb_mv_maintain_mem_quota",
+				zap.Int64("originMemQuota", originMemQuota),
+				zap.Int64("targetMemQuota", targetMemQuota),
+				zap.Error(err),
+			)
+		}
+	}, nil
+}
+
+func resolveMVMaintenanceMemQuota(kctx context.Context, sessVars *variable.SessionVars, isInternalSQL bool) (int64, error) {
+	if sessVars == nil {
+		return 0, errors.New("mv maintenance: session vars is nil")
+	}
+	if !isInternalSQL {
+		return sessVars.MVMaintainMemQuota, nil
+	}
+	globalQuotaVal, err := sessVars.GetGlobalSystemVar(kctx, variable.TiDBMVMaintainMemQuota)
+	if err != nil {
+		return 0, errors.Annotate(err, "mv maintenance: failed to read global tidb_mv_maintain_mem_quota")
+	}
+	globalQuota, err := strconv.ParseInt(globalQuotaVal, 10, 64)
+	if err != nil {
+		return 0, errors.Annotate(err, "mv maintenance: invalid global tidb_mv_maintain_mem_quota")
+	}
+	return globalQuota, nil
 }
 
 func initRefreshMaterializedViewSession(

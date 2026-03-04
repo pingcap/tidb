@@ -508,6 +508,46 @@ func TestPurgeMaterializedViewLogMissingMLog(t *testing.T) {
 	require.ErrorContains(t, err, "materialized view log does not exist")
 }
 
+func TestPurgeMaterializedViewLogUsesMVMaintainMemQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_quota (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_quota (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_quota values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("set @@session.tidb_mem_quota_query = 1073741824")
+	tk.MustExec("set @@global.tidb_mv_maintain_mem_quota = 536870912")
+	tk.MustExec("set @@session.tidb_mv_maintain_mem_quota = 268435456")
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_mv_maintain_mem_quota = %d", 2*1024*1024*1024))
+
+	applied := false
+	lastAppliedMemQuotaQuery := int64(0)
+	lastAppliedMaintainQuota := int64(0)
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeSession"
+	require.NoError(t, failpoint.EnableCall(failpointName, func(memQuotaQuery int64, maintainMemQuota int64) {
+		applied = true
+		lastAppliedMemQuotaQuery = memQuotaQuery
+		lastAppliedMaintainQuota = maintainMemQuota
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_quota")
+	require.True(t, applied)
+	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
+	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+
+	tk.MustExec("insert into t_purge_quota values (4, 40)")
+	applied = false
+	lastAppliedMemQuotaQuery = 0
+	lastAppliedMaintainQuota = 0
+	mustExecInternal(t, tk, "purge materialized view log on t_purge_quota")
+	require.True(t, applied)
+	require.Equal(t, int64(536870912), lastAppliedMaintainQuota)
+	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+}
+
 func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
