@@ -108,7 +108,7 @@ func TestJoinReorderPushSelection(tt *testing.T) {
 		tk.MustExec("create table t3(id int not null primary key, name varchar(100))")
 		tk.MustExec("create table t4(id int not null primary key, name varchar(100))")
 		tk.MustExec("create table t5(id int not null primary key, name varchar(100))")
-        tk.MustExec("set @@tidb_opt_join_reorder_through_sel = 1")
+		tk.MustExec("set @@tidb_opt_join_reorder_through_sel = 1")
 
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
 
