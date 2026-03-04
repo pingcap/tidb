@@ -167,19 +167,10 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 	return nil
 }
 
-// standardConnectorAttrs is the set of underscore-prefixed attribute names
-// defined by the MySQL connector specification. Only these are accepted from
-// clients; any other "_"-prefixed key (including "_truncated", which is
-// written by the server) is silently dropped to prevent name collisions.
-var standardConnectorAttrs = map[string]struct{}{
-	"_client_name":    {},
-	"_client_version": {},
-	"_os":             {},
-	"_pid":            {},
-	"_platform":       {},
-	"_source_host":    {},
-	"_client_license": {},
-}
+// reservedConnAttrTruncated is injected by TiDB when connection attributes
+// are truncated. A client-provided key with the same name is ignored to avoid
+// collisions with server-generated metadata.
+const reservedConnAttrTruncated = "_truncated"
 
 func parseAttrs(data []byte) (map[string]string, string, error) {
 	attrs := make(map[string]string)
@@ -188,6 +179,10 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 	var acceptedSize int64
 	truncated := false
 	limit := vardef.ConnectAttrsSize.Load()
+	if limit == 0 {
+		// Disabled: do not collect, truncate, or emit metadata.
+		return attrs, "", nil
+	}
 
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
@@ -201,15 +196,10 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 		}
 		pos += off
 
-		// Accept only known standard connector attributes whose names start with
-		// "_". Unknown underscore-prefixed keys (including "_truncated", which is
-		// written by the server after parsing) are silently dropped.
-		// Note: the whitelist check happens before totalSize is updated, so
-		// filtered-out bytes do not count toward the size limit or LongestSeen.
-		if len(key) > 0 && key[0] == '_' {
-			if _, ok := standardConnectorAttrs[string(key)]; !ok {
-				continue
-			}
+		// Keep all client-provided keys (including underscore-prefixed MySQL
+		// connector attributes) except the server-reserved "_truncated" key.
+		if string(key) == reservedConnAttrTruncated {
+			continue
 		}
 
 		kvSize := int64(len(key)) + int64(len(value))
@@ -260,7 +250,7 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 		}
 
 		truncatedBytes := totalSize - acceptedSize
-		attrs["_truncated"] = strconv.FormatInt(truncatedBytes, 10)
+		attrs[reservedConnAttrTruncated] = strconv.FormatInt(truncatedBytes, 10)
 		warning = fmt.Sprintf(
 			"session connection attributes truncated: total size %d bytes exceeds "+
 				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
