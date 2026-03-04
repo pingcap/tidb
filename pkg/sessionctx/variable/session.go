@@ -2290,6 +2290,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      DefTiDBMemQuotaQuery,
+		MVMaintainMemQuota: DefTiDBMVMaintainMemQuota,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{
@@ -3236,6 +3237,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+	// MVMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MVMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }

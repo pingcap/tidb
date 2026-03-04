@@ -57,6 +57,24 @@ func TestForbidSettingBothTSVariable(t *testing.T) {
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
 }
 
+func TestMVMaintainMemQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Default is 2GiB.
+	tk.MustQuery("select @@tidb_mv_maintain_mem_quota").Check(testkit.Rows("2147483648"))
+
+	// Session scope should work independently.
+	tk.MustExec("set @@session.tidb_mv_maintain_mem_quota = 536870912")
+	tk.MustQuery("select @@tidb_mv_maintain_mem_quota").Check(testkit.Rows("536870912"))
+	tk.MustQuery("select @@tidb_mem_quota_query").Check(testkit.Rows("1073741824"))
+
+	// Global scope should be visible to a new session.
+	tk.MustExec("set @@global.tidb_mv_maintain_mem_quota = 3221225472")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@tidb_mv_maintain_mem_quota").Check(testkit.Rows("3221225472"))
+}
+
 func TestCoprocessorOOMAction(t *testing.T) {
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)
