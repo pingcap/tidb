@@ -56,7 +56,8 @@ const (
 )
 
 var (
-	legacyBackupMetaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
+	legacyBackupMetaPattern = regexp.MustCompile(
+		`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
 	taggedBackupMetaPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}-(?:[0-9A-Za-z][0-9a-fA-F]{16})+$`)
 )
 
