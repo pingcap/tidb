@@ -458,7 +458,7 @@ func TestIndexJoinFirstHint(t *testing.T) {
 		hasIndexJoin := false
 		for _, row := range rows {
 			planType := row[0].(string)
-			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") || strings.Contains(planType, "IndexMergeJoin") {
 				hasIndexJoin = true
 				break
 			}
@@ -470,7 +470,7 @@ func TestIndexJoinFirstHint(t *testing.T) {
 		hasIndexJoin = false
 		for _, row := range rows {
 			planType := row[0].(string)
-			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") || strings.Contains(planType, "IndexMergeJoin") {
 				hasIndexJoin = true
 				break
 			}
@@ -489,7 +489,7 @@ func TestIndexJoinFirstHint(t *testing.T) {
 		hasIndexJoin = false
 		for _, row := range rows {
 			planType := row[0].(string)
-			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") || strings.Contains(planType, "IndexMergeJoin") {
 				hasIndexJoin = true
 				break
 			}
@@ -501,7 +501,7 @@ func TestIndexJoinFirstHint(t *testing.T) {
 		hasIndexJoin = false
 		for _, row := range rows {
 			planType := row[0].(string)
-			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") || strings.Contains(planType, "IndexMergeJoin") {
 				hasIndexJoin = true
 				break
 			}
@@ -513,11 +513,38 @@ func TestIndexJoinFirstHint(t *testing.T) {
 		hasIndexJoin = false
 		for _, row := range rows {
 			planType := row[0].(string)
-			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") || strings.Contains(planType, "IndexMergeJoin") {
 				hasIndexJoin = true
 				break
 			}
 		}
 		require.True(t, hasIndexJoin, "INDEX_JOIN_FIRST() should prefer index join even when STRAIGHT_JOIN() controls join order")
+
+		// Regression: INDEX_JOIN_FIRST + INL_* should defer to the more specific hint.
+		// INL_JOIN/INL_HASH_JOIN constrains both inner-side and method; INDEX_JOIN_FIRST must not
+		// short-circuit to accept any index-join plan and silently violate those constraints.
+		checkPlan := func(query, wantOp string, msg string) {
+			rows = testKit.MustQuery(query).Rows()
+			found := false
+			for _, row := range rows {
+				if strings.Contains(row[0].(string), wantOp) {
+					found = true
+					break
+				}
+			}
+			require.True(t, found, msg)
+		}
+		// INL_JOIN(t1): must choose IndexJoin (not IndexHashJoin) with t1 as inner.
+		checkPlan(
+			"explain format='brief' select /*+ INDEX_JOIN_FIRST() INL_JOIN(t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a",
+			"IndexJoin",
+			"INL_JOIN(t1) should win over INDEX_JOIN_FIRST(): IndexJoin with t1 as inner required",
+		)
+		// INL_HASH_JOIN(t1): must choose IndexHashJoin (not plain IndexJoin) with t1 as inner.
+		checkPlan(
+			"explain format='brief' select /*+ INDEX_JOIN_FIRST() INL_HASH_JOIN(t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a",
+			"IndexHashJoin",
+			"INL_HASH_JOIN(t1) should win over INDEX_JOIN_FIRST(): IndexHashJoin with t1 as inner required",
+		)
 	})
 }

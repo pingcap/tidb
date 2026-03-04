@@ -2269,13 +2269,17 @@ func preferIndexJoinFamily(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (p
 	if physicPlan == nil {
 		return false
 	}
-	// index_join_first: prefer any index join method on either side.
-	if p.PreferAny(h.PreferIndexJoinFirst) {
+	hasSpecificINLHint := p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner)
+	// index_join_first: prefer any index join method on either side, but only when no
+	// table-specific INL_* hint (INL_JOIN/INL_HASH_JOIN/INL_MERGE_JOIN) is present.
+	// Table-specific hints constrain both the method and inner side; deferring to them
+	// ensures their inapplicable-hint warnings fire correctly.
+	if p.PreferAny(h.PreferIndexJoinFirst) && !hasSpecificINLHint {
 		_, _, isIndexJoin := getIndexJoinSideAndMethod(physicPlan)
 		return isIndexJoin
 	}
-	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
-		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
+	if !hasSpecificINLHint {
 		return false // no force index join hints
 	}
 	innerSide, joinMethod, ok := getIndexJoinSideAndMethod(physicPlan)
