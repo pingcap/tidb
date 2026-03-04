@@ -2420,7 +2420,8 @@ func TestConsolidateSingleColIndexStats(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
-		histID, _ := strconv.ParseInt(row[0].(string), 10, 64)
+		histID, parseErr := strconv.ParseInt(row[0].(string), 10, 64)
+		require.NoErrorf(t, parseErr, "unexpected hist_id value: %v", row[0])
 		for _, idx := range tblInfo.Indices {
 			if idx.ID == histID {
 				require.Falsef(t, eligibleIdxNames[idx.Name.L],
