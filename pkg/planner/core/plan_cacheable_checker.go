@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -69,6 +70,7 @@ func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, i
 		schema:       is,
 		sumInListLen: 0,
 		maxNumParam:  getMaxParamLimit(sctx),
+		cteCanUsed:   make([]string, 0),
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -84,11 +86,20 @@ type cacheableChecker struct {
 
 	sumInListLen int // the accumulated number of elements in all in-lists
 	maxNumParam  int
+	// cteCanUsed tracks CTE names visible at current traversal point.
+	cteCanUsed []string
+	// withScopeOffset stores offsets for query block scopes that have WITH clause.
+	withScopeOffset []int
 }
 
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.SelectStmt:
+		if node.With != nil {
+			// Record the CTE visibility boundary for this query block.
+			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -113,13 +124,16 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
-	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-			checker.cacheable = false
-			checker.reason = "query has sub-queries is un-cacheable"
-			return in, true
+	case *ast.ExistsSubqueryExpr:
+		return in, checker.skipForSubqueryDisabled()
+	case *ast.CommonTableExpression:
+		if node.IsRecursive {
+			// Recursive CTE can reference itself, so expose the name before traversing Query.
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
 		return in, false
+	case *ast.SubqueryExpr:
+		return in, checker.skipForSubqueryDisabled()
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
@@ -165,6 +179,10 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
+			if node.Schema.L == "" && slices.Contains(checker.cteCanUsed, node.Name.L) {
+				// Unqualified names can refer to CTEs in current scope; do not resolve them as physical tables.
+				return in, false
+			}
 			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 			if !checker.cacheable {
 				return in, true
@@ -174,9 +192,41 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	return in, false
 }
 
+func (checker *cacheableChecker) skipForSubqueryDisabled() bool {
+	if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		checker.cacheable = false
+		checker.reason = "query has sub-queries is un-cacheable"
+		return true
+	}
+	return false
+}
+
 // Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	switch node := in.(type) {
+	case *ast.CommonTableExpression:
+		if !node.IsRecursive {
+			// Non-recursive CTE becomes visible only after its definition has been fully traversed.
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
+		}
+	case *ast.SelectStmt:
+		if node.With != nil {
+			// Leave query-block WITH scope and restore CTE visibility from outer context.
+			checker.leaveWithScope()
+		}
+	}
 	return in, checker.cacheable
+}
+
+func (checker *cacheableChecker) leaveWithScope() {
+	l := len(checker.withScopeOffset)
+	if l == 0 {
+		return
+	}
+	offset := checker.withScopeOffset[l-1]
+	// Pop one WITH scope and roll back CTE names introduced in this query block.
+	checker.withScopeOffset = checker.withScopeOffset[:l-1]
+	checker.cteCanUsed = checker.cteCanUsed[:offset]
 }
 
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}

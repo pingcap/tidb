@@ -261,11 +261,23 @@
 - `pkg/executor/test/analyzetest/analyze_test.go` - executor/test/analyzetest: Tests analyze partition.
 - `pkg/executor/test/analyzetest/main_test.go` - Configures default goleak settings and registers testdata.
 
+## pkg/executor/test/analyzetest/columns
+
+### Tests
+- `pkg/executor/test/analyzetest/columns/analyze_columns_with_test.go` - executor/test/analyzetest/columns: Tests analyze columns with options interactions and related column-choice flows.
+- `pkg/executor/test/analyzetest/columns/main_test.go` - Configures default goleak settings and registers testdata.
+
 ## pkg/executor/test/analyzetest/memorycontrol
 
 ### Tests
 - `pkg/executor/test/analyzetest/memorycontrol/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/executor/test/analyzetest/memorycontrol/memory_control_test.go` - executor/test/analyzetest/memorycontrol: Tests global memory control for analyze.
+
+## pkg/executor/test/analyzetest/options
+
+### Tests
+- `pkg/executor/test/analyzetest/options/analyze_saved_options_test.go` - executor/test/analyzetest/options: Tests persisted analyze options on table/partition/multi-table/column flows.
+- `pkg/executor/test/analyzetest/options/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/executor/test/analyzetest/panictest
 

@@ -1,6 +1,6 @@
 # Planner Rule AI Notes
 
-This file records planner rule related PR experience and pitfalls. Append a new entry after each relevant change.
+This file records planner rule related PR experience and pitfalls. Update an existing section when the topic overlaps; append a new dated entry only for a genuinely new topic.
 
 ## 2026-01-31 - NOT NOT in Outer Join ON / Double NOT handling
 
@@ -18,7 +18,7 @@ Implementation choice:
 
 Test and verification:
 - Add cases to `pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`.
-- Run: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -record -tags=intest`.
+- Run: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -record -tags=intest,deadlock`.
 - Confirm `left outer join` keeps `equal:[eq(t0.k0, t2.k0)]`.
 
 Test data pattern used:
@@ -43,5 +43,47 @@ Implementation choice:
 
 Test and verification:
 - Add SQL-only case to `predicate_pushdown_suite_in.json`; keep DDL in the test setup, otherwise `explain` will try to run `DROP/CREATE`.
-- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation --tags=intest -record`.
-- Add integration test to `tests/integrationtest/t/select.test` and record via `./run-tests.sh -r select` (integration tests use `-r`, not `-record`).
+- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -tags=intest,deadlock -record`.
+- Add integration test to `tests/integrationtest/t/select.test` and record via `pushd tests/integrationtest && ./run-tests.sh -r select && popd` (integration tests use `-r`, not `-record`).
+
+## 2026-02-16 - Index range dimension mismatch with appended handle column (issue #66291)
+
+Background:
+- A panic was reported under query + DDL interleaving: `runtime error: index out of range [2] with length 2`.
+- The DDL worker for `ADD/DROP INDEX` on the same table is serialized, so the issue is not caused by concurrent index DDL jobs running at the same time.
+
+Root cause:
+- For non-unique index paths, planner may append a handle column to `path.IdxCols` for execution-range construction.
+- In `detachCondAndBuildRangeForPath`, ranges were built from the extended column set, but row-count estimation used `indexCols` truncated to index-definition columns.
+- In the partial-stats branch (`index stats invalid` + `column stats available`), cardinality estimation iterated using range dimension and read `idxCols[i]`, which could overflow when ranges had an extra handle dimension.
+
+Why it is not deterministic:
+- It only triggers when several conditions overlap:
+  - optimizer chooses the affected index path,
+  - estimation enters the partial-stats path,
+  - range construction includes appended handle dimension,
+  - query/DDL timing hits the same optimization window.
+
+Implementation choice:
+- Fix at the source invariant instead of adding defensive checks in lower-level cardinality code.
+- Keep row-count estimation on index-definition columns (`indexCols`) to preserve existing plan-estimation behavior.
+- In `pkg/planner/core/stats.go`, if execution ranges carry appended handle dimensions, prune each range to the first `len(indexCols)` dimensions and use the pruned ranges for estimation.
+- Keep execution-range building unchanged and avoid a second `DetachCondAndBuildRangeForIndex` for estimation only.
+- This removes range/column dimension mismatch while keeping estimation inputs comparable with previous behavior (same estimation column slice and row-count API).
+
+Test and verification:
+- Add regression test `TestIndexRangeEstimationWithAppendedHandleColumn` in `pkg/planner/cardinality/selectivity_test.go`.
+- The test uses a non-unique index + PK handle shape and mocked stats (`missing index stats + available column stats`) and verifies `EXPLAIN` does not panic.
+- Reference command:
+  - `go test ./pkg/planner/cardinality -run TestIndexRangeEstimationWithAppendedHandleColumn --tags=intest -count=1`
+
+Reusable lessons:
+- Prefer fixing cross-layer shape mismatch at the producer boundary (planner/stats boundary), not by adding deep defensive guards in estimation internals.
+- When execution paths append handle columns, do not blindly reuse execution ranges for stats estimation. First align dimensions with estimation columns; prefer range pruning/projection over a second range build when possible.
+- For bugfixes in estimation paths, keep inputs comparable with previous baselines whenever possible (minimize semantic movement while removing the panic condition).
+- For flaky panic reports under query/DDL interleaving, first separate:
+  - DDL job serialization facts,
+  - metadata version visibility,
+  - optimizer path/branch conditions.
+  This avoids misattributing the issue to impossible DDL concurrency.
+- Regression tests should intentionally force the vulnerable branch (here: `index stats invalid + partial column stats`) instead of relying on random timing.

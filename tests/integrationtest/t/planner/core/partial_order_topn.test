@@ -297,6 +297,29 @@ explain format='brief' select  /*+ force_index(t_varchar, idx_name_prefix) */ id
 explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ id, length(name) as name_len from t_varchar order by name_len limit 5;
 
 # ==========================================
+# Section 5.7: The index column has been pruned - NOT supported
+# ==========================================
+drop table if exists t12, t15;
+CREATE TABLE `t12` (
+  `c0` varchar(30) DEFAULT NULL,
+  `c1` varchar(30) DEFAULT NULL,
+  `c2` varchar(30) DEFAULT NULL,
+  KEY `idx1` (`c0`,`c2`(10))
+);
+CREATE TABLE `t15` (
+  `c1` int DEFAULT NULL,
+  `c2` varchar(30) DEFAULT NULL,
+  `c3` varchar(30) DEFAULT NULL,
+  `c4` varchar(30) DEFAULT NULL,
+  KEY `idx1` (`c1`,`c2`,`c3`(10))
+);
+
+# The middle column of the index is pruned, partial order optimization cannot be applied
+explain format='brief' select /*+ use_index(t15, idx1) */ c1 from t15 where length(c1) > 13 order by c1, c4, c3 limit 10922 offset 55010;
+# The last column of index which is prefix column is pruned, partial order optimization cannot be applied
+explain format='brief' select /*+ use_index(t12, idx1) */ c0, c1 from t12 where length(c0) > 13 order by c0, c1 limit 10922 offset 55010;
+
+# ==========================================
 # Section 6: Dirty write scenarios (uncommitted data)
 # ==========================================
 
@@ -511,4 +534,5 @@ select @@tidb_opt_partial_ordered_index_for_topn;
 
 drop table if exists t_varchar, t_char, t_text, t_multi_col, t_no_prefix;
 drop table if exists t_join1, t_join2, t_empty, t_prefix_len, t_null;
+drop table if exists t12, t15;
 
