@@ -52,6 +52,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 skip analyze locked table: test.t",
 	))
 	tblStats1 := handle.GetPhysicalTableStats(tbl.ID, tbl)
@@ -102,6 +103,7 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 skip analyze locked tables: test.t partition (p0), test.t partition (p1)",
 	))
 
@@ -214,6 +216,7 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t1, test.t2")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 skip analyze locked tables: test.t1, test.t2",
 	))
 	tbl1Stats1 := handle.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
