@@ -252,11 +252,15 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-<<<<<<< HEAD
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand},
-=======
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand, colNamesForLazilyPrivilegeCheck: make([]*ast.ColumnName, 0, 8)},
->>>>>>> 382a93d3e48 (planner: adapt the normal plan build process to collect column-level visit info (#61741))
+			planCtx: &exprRewriterPlanCtx{
+				plan:    p,
+				builder: b,
+
+				curClause:  b.curClause,
+				rollExpand: b.currentBlockExpand,
+
+				colNamesForLazilyPrivilegeCheck: make([]*ast.ColumnName, 0, 8),
+			},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -2743,7 +2747,6 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-<<<<<<< HEAD
 // hasLimit checks if the plan already contains a LIMIT operator
 func hasLimit(plan base.LogicalPlan) bool {
 	if plan == nil {
@@ -2760,7 +2763,8 @@ func hasLimit(plan base.LogicalPlan) bool {
 		}
 	}
 	return false
-=======
+}
+
 func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName) {
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 	views := b.SavedViews
@@ -2820,5 +2824,4 @@ func (er *expressionRewriter) precollectColNames(fieldName *types.FieldName) {
 		}
 		er.planCtx.colNamesForLazilyPrivilegeCheck = append(er.planCtx.colNamesForLazilyPrivilegeCheck, colName)
 	}
->>>>>>> 382a93d3e48 (planner: adapt the normal plan build process to collect column-level visit info (#61741))
 }
