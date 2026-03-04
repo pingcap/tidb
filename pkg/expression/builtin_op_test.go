@@ -67,6 +67,34 @@ func TestUnary(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestUnaryMinusDecimalRetTypeFlen(t *testing.T) {
+	ctx := createContext(t)
+	arg := datumsToConstants(types.MakeDatums(types.NewDecFromStringForTest("123.45")))[0]
+	arg.GetType(ctx.GetEvalCtx()).SetFlen(10)
+	arg.GetType(ctx.GetEvalCtx()).SetDecimal(2)
+
+	f, err := newFunctionForTest(ctx, ast.UnaryMinus, arg)
+	require.NoError(t, err)
+	require.Equal(t, 10, f.GetType(ctx.GetEvalCtx()).GetFlen())
+	require.Equal(t, 2, f.GetType(ctx.GetEvalCtx()).GetDecimal())
+}
+
+func TestUnaryMinusIntRetTypeFlen(t *testing.T) {
+	ctx := createContext(t)
+
+	signedArg := datumsToConstants(types.MakeDatums(int64(123)))[0]
+	signedArg.GetType(ctx.GetEvalCtx()).SetFlen(11)
+	signedFunc, err := newFunctionForTest(ctx, ast.UnaryMinus, signedArg)
+	require.NoError(t, err)
+	require.Equal(t, 11, signedFunc.GetType(ctx.GetEvalCtx()).GetFlen())
+
+	unsignedArg := datumsToConstants(types.MakeDatums(uint64(123)))[0]
+	unsignedArg.GetType(ctx.GetEvalCtx()).SetFlen(10)
+	unsignedFunc, err := newFunctionForTest(ctx, ast.UnaryMinus, unsignedArg)
+	require.NoError(t, err)
+	require.Equal(t, 11, unsignedFunc.GetType(ctx.GetEvalCtx()).GetFlen())
+}
+
 func TestLogicAnd(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
