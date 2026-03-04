@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -35,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -1128,6 +1131,89 @@ func TestEstimateFileSize(t *testing.T) {
 	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+}
+
+type openCounterStorage struct {
+	storeapi.Storage
+	openCount atomic.Int64
+}
+
+func (s *openCounterStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
+	s.openCount.Add(1)
+	return s.Storage.Open(ctx, path, option)
+}
+
+type openErrorStorage struct {
+	storeapi.Storage
+}
+
+func (s openErrorStorage) Open(context.Context, string, *storeapi.ReaderOption) (objectio.Reader, error) {
+	return nil, errors.New("open disabled")
+}
+
+func TestMDLoaderSkipRealSizeEstimation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("compressed", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		for range 1000 {
+			_, err = gz.Write([]byte("aaaa\n"))
+			require.NoError(t, err)
+		}
+		require.NoError(t, gz.Close())
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.csv.gz", buf.Bytes()))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		store1 := &openCounterStorage{Storage: baseStore}
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, store1)
+		require.NoError(t, err)
+		require.Greater(t, store1.openCount.Load(), int64(0))
+
+		store2 := &openCounterStorage{Storage: baseStore}
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, store2, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+		require.Equal(t, int64(0), store2.openCount.Load())
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.csv.gz"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+	})
+
+	t.Run("parquet", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.parquet", []byte("not a parquet file")))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore})
+		require.Error(t, err)
+
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore}, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.parquet"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+		require.Zero(t, fi.FileMeta.Rows)
+	})
 }
 
 func testSampleParquetDataSize(t *testing.T, count int) {

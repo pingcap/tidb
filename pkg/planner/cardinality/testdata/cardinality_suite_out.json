@@ -26,69 +26,69 @@
         "End": 900,
         "Count": 763,
         "MinEst": 759,
-        "MaxEst": 2258
+        "MaxEst": 763
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 67,
+        "MinEst": 13,
+        "MaxEst": 247
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 62,
+        "MinEst": 13,
+        "MaxEst": 226
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 57,
+        "MinEst": 13,
+        "MaxEst": 205
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 52,
+        "MinEst": 13,
+        "MaxEst": 184
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 41,
+        "MinEst": 13,
+        "MaxEst": 143
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 59,
+        "MinEst": 13,
+        "MaxEst": 215
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 38,
+        "MinEst": 13,
+        "MaxEst": 131
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 18,
+        "MinEst": 13,
+        "MaxEst": 48
       },
       {
         "Start": 1500,
         "End": 1600,
         "Count": 13,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 1508
       },
       {
@@ -101,16 +101,16 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 763,
-        "MinEst": 759,
-        "MaxEst": 2258
+        "Count": 873,
+        "MinEst": 763,
+        "MaxEst": 1221
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 381,
+        "MinEst": 13,
+        "MaxEst": 1502
       },
       {
         "Start": 300,
@@ -122,23 +122,23 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 122,
+        "MinEst": 13,
+        "MaxEst": 467
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 101,
+        "MinEst": 13,
+        "MaxEst": 383
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 763,
-        "MinEst": 759,
-        "MaxEst": 2258
+        "Count": 872,
+        "MinEst": 763,
+        "MaxEst": 1217
       },
       {
         "Start": 200,
@@ -150,23 +150,23 @@
       {
         "Start": 0,
         "End": 100,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 80,
+        "MinEst": 13,
+        "MaxEst": 299
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 132,
+        "MinEst": 13,
+        "MaxEst": 507
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 13,
-        "MinEst": 9,
-        "MaxEst": 1508
+        "Count": 60,
+        "MinEst": 13,
+        "MaxEst": 216
       }
     ]
   },
@@ -854,24 +854,24 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 8.33 root partition:p0 data:Selection",
-          "└─Selection 8.33 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 191.04 root partition:p0 data:Selection",
+          "└─Selection 191.04 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a < 300",
         "Result": [
-          "TableReader 5.00 root partition:p0 data:Selection",
-          "└─Selection 5.00 cop[tikv]  lt(test.t.a, 300)",
+          "TableReader 187.71 root partition:p0 data:Selection",
+          "└─Selection 187.71 cop[tikv]  lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 675.00 root partition:p0,p1 data:Selection",
-          "└─Selection 675.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 857.71 root partition:p0,p1 data:Selection",
+          "└─Selection 857.71 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -886,72 +886,72 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 900",
         "Result": [
-          "TableReader 5.00 root partition:p3,p4 data:Selection",
-          "└─Selection 5.00 cop[tikv]  ge(test.t.a, 900)",
+          "TableReader 249.17 root partition:p3,p4 data:Selection",
+          "└─Selection 249.17 cop[tikv]  ge(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 5.00 root partition:p3,p4 data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 249.17 root partition:p3,p4 data:Selection",
+          "└─Selection 249.17 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300",
         "Result": [
-          "TableReader 1338.33 root partition:all data:Selection",
-          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300)",
+          "TableReader 1583.33 root partition:all data:Selection",
+          "└─Selection 1583.33 cop[tikv]  ge(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 900",
         "Result": [
-          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 1338.33 cop[tikv]  le(test.t.a, 900)",
+          "TableReader 1521.88 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1521.88 cop[tikv]  le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 335.00 root partition:p3 data:Selection",
-          "└─Selection 335.00 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 407.20 root partition:p3 data:Selection",
+          "└─Selection 407.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 5.00 root partition:p3 data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 76.37 root partition:p3 data:Selection",
+          "└─Selection 76.37 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 5.00 root partition:p3,p4 data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 138.80 root partition:p3,p4 data:Selection",
+          "└─Selection 138.80 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 5.00 root partition:p0 data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 76.50 root partition:p0 data:Selection",
+          "└─Selection 76.50 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 5.00 root partition:p0 data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 139.07 root partition:p0 data:Selection",
+          "└─Selection 139.07 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       }

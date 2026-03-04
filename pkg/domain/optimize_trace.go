@@ -18,10 +18,21 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 )
 
 // GetOptimizerTraceDirName returns optimizer trace directory path.
-// The path is related to the process id.
+// The path is a relative path for external storage.
 func GetOptimizerTraceDirName() string {
-	return filepath.Join(os.TempDir(), "optimizer_trace", strconv.Itoa(os.Getpid()))
+	instanceID := ""
+	if info, err := infosync.GetServerInfo(); err == nil && info != nil {
+		instanceID = info.ID
+	}
+	// If instanceID is empty, use the process ID as the instance ID.
+	// This is a fallback for the case where the instance ID is not set.
+	if instanceID == "" {
+		instanceID = strconv.Itoa(os.Getpid())
+	}
+	return filepath.Join("optimizer_trace", instanceID)
 }

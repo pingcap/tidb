@@ -252,6 +252,19 @@
           "3"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select /* issue:65994 */ * from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1_65994.a, test.t2_65994.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2_65994.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2_65994 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1_65994 keep order:false, stats:pseudo"
+        ],
+        "Result": null,
+        "Warning": null
       }
     ]
   }

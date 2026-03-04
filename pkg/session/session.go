@@ -969,9 +969,9 @@ func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infosc
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for _, item := range mapper {
-			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
+		for tableID, item := range mapper {
+			if tableID > 0 {
+				s.statsCollector.Update(tableID, item.Delta, item.Count)
 			}
 		}
 	}

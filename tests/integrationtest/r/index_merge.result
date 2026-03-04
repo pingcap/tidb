@@ -12,7 +12,7 @@ id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
-    └─HashJoin	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t1.c3)
+    └─HashJoin	root		left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c3, index_merge.t1.c3)]
       ├─TableReader(Build)	root		data:TableFullScan
       │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
       └─IndexMerge(Probe)	root		type: union
@@ -231,7 +231,7 @@ id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
-    └─HashJoin	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t2.c1)
+    └─HashJoin	root		left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c3, index_merge.t2.c1)]
       ├─HashJoin(Build)	root		inner join, equal:[eq(index_merge.t2.c2, index_merge.t2.c3)]
       │ ├─HashAgg(Build)	root		group by:index_merge.t2.c3, funcs:firstrow(index_merge.t2.c3)->index_merge.t2.c3
       │ │ └─TableReader	root		data:Selection
