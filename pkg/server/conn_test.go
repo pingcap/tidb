@@ -2302,11 +2302,11 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 
 		// Construct payload
 		// Capability: ClientProtocol41 | ClientConnectAtts
-		var cap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
 
 		var buf bytes.Buffer
 		// Header (32 bytes)
-		binary.Write(&buf, binary.LittleEndian, cap)
+		binary.Write(&buf, binary.LittleEndian, clientCap)
 		binary.Write(&buf, binary.LittleEndian, uint32(0)) // MaxPacketSize
 		buf.WriteByte(0)                                   // Collation
 		buf.Write(make([]byte, 23))                        // Reserved
@@ -2361,13 +2361,91 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		require.Equal(t, int64(8), vardef.ConnectAttrsLongestSeen.Load()) // 4+4=8
 	})
 
+	t.Run("limit 0 disables collection", func(t *testing.T) {
+		vardef.ConnectAttrsSize.Store(0)
+		vardef.ConnectAttrsLongestSeen.Store(0)
+		vardef.ConnectAttrsLost.Store(0)
+
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.LittleEndian, clientCap)
+		binary.Write(&buf, binary.LittleEndian, uint32(0))
+		buf.WriteByte(0)
+		buf.Write(make([]byte, 23))
+		buf.WriteString("root")
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+
+		attrsBuf := bytes.NewBuffer(nil)
+		attrsBuf.WriteByte(2)
+		attrsBuf.WriteString("ab")
+		attrsBuf.WriteByte(2)
+		attrsBuf.WriteString("cd")
+		attrsBytes := attrsBuf.Bytes()
+		buf.WriteByte(byte(len(attrsBytes)))
+		buf.Write(attrsBytes)
+		data := buf.Bytes()
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.NoError(t, err)
+
+		// limit 0 disables collection: no attrs and no truncation side effects.
+		require.Len(t, p.Attrs, 0)
+		require.Equal(t, int64(0), vardef.ConnectAttrsLost.Load())
+		require.Equal(t, int64(0), vardef.ConnectAttrsLongestSeen.Load())
+	})
+
+	t.Run("limit 65536 acceptance", func(t *testing.T) {
+		vardef.ConnectAttrsSize.Store(65536)
+		vardef.ConnectAttrsLongestSeen.Store(0)
+		vardef.ConnectAttrsLost.Store(0)
+
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.LittleEndian, clientCap)
+		binary.Write(&buf, binary.LittleEndian, uint32(0))
+		buf.WriteByte(0)
+		buf.Write(make([]byte, 23))
+		buf.WriteString("root")
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+
+		attrsBuf := bytes.NewBuffer(nil)
+		attrsBuf.WriteByte(2)
+		attrsBuf.WriteString("ab")
+		attrsBuf.WriteByte(2)
+		attrsBuf.WriteString("cd")
+		attrsBytes := attrsBuf.Bytes()
+		buf.WriteByte(byte(len(attrsBytes)))
+		buf.Write(attrsBytes)
+		data := buf.Bytes()
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.NoError(t, err)
+
+		// 65536 should easily accept everything
+		require.Len(t, p.Attrs, 1)
+		require.Equal(t, "cd", p.Attrs["ab"])
+
+		require.Equal(t, int64(0), vardef.ConnectAttrsLost.Load())
+		require.Equal(t, int64(4), vardef.ConnectAttrsLongestSeen.Load())
+	})
+
 	t.Run("limit 1MiB rejection", func(t *testing.T) {
 		// Construct payload declaring > 1 MiB of attributes.
-		var cap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
 
 		var buf bytes.Buffer
 		// Header (32 bytes)
-		binary.Write(&buf, binary.LittleEndian, cap)
+		binary.Write(&buf, binary.LittleEndian, clientCap)
 		binary.Write(&buf, binary.LittleEndian, uint32(0))
 		buf.WriteByte(0)
 		buf.Write(make([]byte, 23))
@@ -2402,11 +2480,11 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		vardef.ConnectAttrsLongestSeen.Store(0)
 		vardef.ConnectAttrsLost.Store(0)
 
-		var cap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
 
 		var buf bytes.Buffer
 		// Header (32 bytes)
-		binary.Write(&buf, binary.LittleEndian, cap)
+		binary.Write(&buf, binary.LittleEndian, clientCap)
 		binary.Write(&buf, binary.LittleEndian, uint32(0))
 		buf.WriteByte(0)
 		buf.Write(make([]byte, 23))
@@ -2455,10 +2533,10 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		vardef.ConnectAttrsLongestSeen.Store(100)
 		vardef.ConnectAttrsLost.Store(0)
 
-		var cap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
 
 		var buf bytes.Buffer
-		binary.Write(&buf, binary.LittleEndian, cap)
+		binary.Write(&buf, binary.LittleEndian, clientCap)
 		binary.Write(&buf, binary.LittleEndian, uint32(0))
 		buf.WriteByte(0)
 		buf.Write(make([]byte, 23))
@@ -2502,18 +2580,18 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 			"LongestSeen should not be updated for payloads >= 64KB")
 	})
 
-	t.Run("underscore-prefixed attr whitelist", func(t *testing.T) {
-		// Only standard connector attributes (_client_name, _os, etc.) whose
-		// names start with "_" are accepted. Unknown "_"-prefixed keys sent by
-		// a client (including "_truncated" and arbitrary custom ones) are dropped.
+	t.Run("underscore-prefixed attrs except reserved key", func(t *testing.T) {
+		// Keep underscore-prefixed attributes from clients for MySQL parity and
+		// observability, but always drop client-provided "_truncated" because it
+		// is reserved for server-generated truncation metadata.
 		vardef.ConnectAttrsSize.Store(-1) // Limit mapped to 65536 max internally
 		vardef.ConnectAttrsLongestSeen.Store(0)
 		vardef.ConnectAttrsLost.Store(0)
 
-		var cap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
+		var clientCap uint32 = mysql.ClientProtocol41 | mysql.ClientConnectAtts
 
 		var buf bytes.Buffer
-		binary.Write(&buf, binary.LittleEndian, cap)
+		binary.Write(&buf, binary.LittleEndian, clientCap)
 		binary.Write(&buf, binary.LittleEndian, uint32(0))
 		buf.WriteByte(0)
 		buf.Write(make([]byte, 23))
@@ -2522,17 +2600,19 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		buf.WriteByte(0)
 
 		// Attrs:
-		//   "_client_name":"Go-MySQL-Driver"  → standard, must be kept
-		//   "_os":"linux"                     → standard, must be kept
+		//   "_client_name":"Go-MySQL-Driver"  → must be kept
+		//   "_os":"linux"                     → must be kept
+		//   "_program_name":"mysql"           → must be kept
+		//   "_custom":"val"                   → must be kept
 		//   "_truncated":"fake"               → server-reserved, must be dropped
-		//   "_custom":"val"                   → unknown underscore key, must be dropped
-		//   "app_name":"myapp"                → user-defined (no underscore), must be kept
+		//   "app_name":"myapp"                → must be kept
 		attrsBuf := bytes.NewBuffer(nil)
 		for _, kv := range [][2]string{
 			{"_client_name", "Go-MySQL-Driver"},
 			{"_os", "linux"},
-			{"_truncated", "fake"},
+			{"_program_name", "mysql"},
 			{"_custom", "val"},
+			{"_truncated", "fake"},
 			{"app_name", "myapp"},
 		} {
 			attrsBuf.WriteByte(byte(len(kv[0])))
@@ -2553,16 +2633,16 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
 		require.NoError(t, err)
 
-		// Standard connector attrs and plain user attrs are kept.
-		require.Len(t, p.Attrs, 3)
+		// All keys are kept except the reserved _truncated key.
+		require.Len(t, p.Attrs, 5)
 		require.Equal(t, "Go-MySQL-Driver", p.Attrs["_client_name"])
 		require.Equal(t, "linux", p.Attrs["_os"])
+		require.Equal(t, "mysql", p.Attrs["_program_name"])
+		require.Equal(t, "val", p.Attrs["_custom"])
 		require.Equal(t, "myapp", p.Attrs["app_name"])
-		// Non-standard underscore keys must be absent.
+		// Reserved key must be absent.
 		_, hasTruncated := p.Attrs["_truncated"]
 		require.False(t, hasTruncated, "_truncated sent by client must be dropped")
-		_, hasCustom := p.Attrs["_custom"]
-		require.False(t, hasCustom, "unknown _-prefixed key sent by client must be dropped")
 
 		require.Equal(t, int64(0), vardef.ConnectAttrsLost.Load())
 	})
