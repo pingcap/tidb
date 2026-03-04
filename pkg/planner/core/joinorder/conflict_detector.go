@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -119,10 +120,16 @@ type edge struct {
 	// nonEQConds holds otherCond, leftCond, or rightCond — anything that is not
 	// an equi-join predicate.
 	nonEQConds expression.CNFExprs
+	// selConds holds original Selection conditions collected during extractJoinGroup.
+	// They are stored separately from eqConds/nonEQConds to avoid classifying them
+	// as join conditions. These conditions are applied as a LogicalSelection on top
+	// of the join during MakeJoin.
+	selConds []expression.Expression
 
 	// TES is the Total Eligibility Set: the set of base relations that must be
 	// present in the candidate subgraph for this edge to be applicable.
 	// For now, TES is totally same with SES, check the TODO in makeEdge().
+	// Note: didn't use pointer for TES because FastIntSet is relatively small and copying it is cheap.
 	tes intset.FastIntSet
 	// rules are conflict rules {from → to} derived during Build. They encode
 	// reordering constraints imposed by non-assoc/l-asscom/r-asscom join-type combinations.
@@ -245,7 +252,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		}
 	}
 
-	if _, _, err := d.buildRecursive(group.root, vertexMap); err != nil {
+	if _, _, err := d.buildRecursive(group, group.root, vertexMap); err != nil {
 		return nil, err
 	}
 	return d.groupVertexes, nil
@@ -257,10 +264,29 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 //  3. Returns the accumulated edges and the union of all vertex sets seen so far.
 //
 // The returned edges list is used by parent calls to generate conflict rules.
-func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
+func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil
+	}
+
+	// Look through Selection nodes that were kept in the original tree
+	// (e.g., Selection between two joins in a nested case).
+	if sel, ok := p.(*logicalop.LogicalSelection); ok {
+		childEdges, childVertexes, err := d.buildRecursive(group, sel.Children()[0], vertexMap)
+		if err != nil {
+			return nil, intset.FastIntSet{}, err
+		}
+		selID := sel.ID()
+		conds, ok := group.selConditions[selID]
+		if !ok {
+			return nil, intset.FastIntSet{}, errors.Errorf("unexpected Selection node (ID: %d) found in buildRecursive", selID)
+		}
+		// Create a Selection edge for filter conditions collected from Selection
+		// operators that were looked through during extractJoinGroup.
+		selEdge := d.makeEdgeInternal(base.InnerJoin, childVertexes, intset.FastIntSet{}, nil, nil, childVertexes)
+		selEdge.selConds = conds
+		return append(childEdges, selEdge), childVertexes, nil
 	}
 
 	var curVertexes intset.FastIntSet
@@ -270,11 +296,11 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]
 		return nil, intset.FastIntSet{}, errors.New("unexpected plan type in conflict detector")
 	}
 
-	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexMap)
+	leftEdges, leftVertexes, err := d.buildRecursive(group, joinop.Children()[0], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
-	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexMap)
+	rightEdges, rightVertexes, err := d.buildRecursive(group, joinop.Children()[1], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
@@ -367,6 +393,13 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 
 // makeEdge basically implements the pseudocode for CD-C in paper(Figure-11).
 func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
+	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
+	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
+	tes := d.calcSES(conds)
+	return d.makeEdgeInternal(joinType, leftVertexes, rightVertexes, leftEdges, rightEdges, tes)
+}
+
+func (d *ConflictDetector) makeEdgeInternal(joinType base.JoinType, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge, tes intset.FastIntSet) *edge {
 	e := &edge{
 		// Each new edge is appended to either d.innerEdges or d.nonInnerEdges
 		// (see below), so their combined length before the append is the next
@@ -378,11 +411,8 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		leftEdges:     leftEdges,
 		rightEdges:    rightEdges,
 		skipRules:     d.allInnerJoin,
+		tes:           tes.Copy(),
 	}
-
-	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
-	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
-	e.tes = d.calcSES(conds)
 
 	// The following corresponds to the secion 6.2 in the paper(Cross Products and Degenerate Predicates).
 	// For degenerate predicates (only one side referenced), force TES to include
@@ -707,8 +737,10 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	if err != nil {
 		return nil, err
 	}
+	alignedEQConds = alignScalarFuncsNotNullWithSchema(alignedEQConds, join.Schema())
+	alignedNonEQConds := alignExprsNotNullWithSchema(e.nonEQConds, join.Schema())
 	join.EqualConditions = alignedEQConds
-	for _, cond := range e.nonEQConds {
+	for _, cond := range alignedNonEQConds {
 		fromLeft := expression.ExprFromSchema(cond, left.Schema())
 		fromRight := expression.ExprFromSchema(cond, right.Schema())
 		if fromLeft && !fromRight {
@@ -722,6 +754,86 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	return join, nil
 }
 
+func alignScalarFuncsNotNullWithSchema(conds []*expression.ScalarFunction, schema *expression.Schema) []*expression.ScalarFunction {
+	if len(conds) == 0 {
+		return conds
+	}
+	aligned := make([]*expression.ScalarFunction, len(conds))
+	for i, cond := range conds {
+		expr := alignExprNotNullWithSchema(cond, schema)
+		if sf, ok := expr.(*expression.ScalarFunction); ok {
+			aligned[i] = sf
+			continue
+		}
+		aligned[i] = cond
+	}
+	return aligned
+}
+
+func alignExprsNotNullWithSchema(conds []expression.Expression, schema *expression.Schema) []expression.Expression {
+	if len(conds) == 0 {
+		return conds
+	}
+	aligned := make([]expression.Expression, len(conds))
+	for i, cond := range conds {
+		aligned[i] = alignExprNotNullWithSchema(cond, schema)
+	}
+	return aligned
+}
+
+func alignExprNotNullWithSchema(expr expression.Expression, schema *expression.Schema) expression.Expression {
+	switch e := expr.(type) {
+	case *expression.Column:
+		schemaCol := schema.RetrieveColumn(e)
+		if schemaCol == nil {
+			return e
+		}
+		schemaNotNull := mysql.HasNotNullFlag(schemaCol.RetType.GetFlag())
+		colNotNull := mysql.HasNotNullFlag(e.RetType.GetFlag())
+		if schemaNotNull == colNotNull {
+			return e
+		}
+		newCol := e.Clone().(*expression.Column)
+		newRetType := *newCol.RetType
+		if schemaNotNull {
+			newRetType.AddFlag(mysql.NotNullFlag)
+		} else {
+			newRetType.DelFlag(mysql.NotNullFlag)
+		}
+		newCol.RetType = &newRetType
+		return newCol
+	case *expression.CorrelatedColumn:
+		newColExpr := alignExprNotNullWithSchema(&e.Column, schema)
+		newCol, ok := newColExpr.(*expression.Column)
+		if !ok || newCol == &e.Column {
+			return e
+		}
+		newCorCol := e.Clone().(*expression.CorrelatedColumn)
+		newCorCol.Column = *newCol
+		return newCorCol
+	case *expression.ScalarFunction:
+		args := e.GetArgs()
+		changed := false
+		newArgs := make([]expression.Expression, len(args))
+		for i := range args {
+			newArgs[i] = alignExprNotNullWithSchema(args[i], schema)
+			if newArgs[i] != args[i] {
+				changed = true
+			}
+		}
+		if !changed {
+			return e
+		}
+		newFunc := e.Clone().(*expression.ScalarFunction)
+		for i := range newArgs {
+			newFunc.GetArgs()[i] = newArgs[i]
+		}
+		return newFunc
+	default:
+		return expr
+	}
+}
+
 func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
 	if existingJoin != nil {
 		// Append selections to existing join.
@@ -730,7 +842,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		// the second edge is a INNER JOIN edge, and we will append it as selection to the first LEFT JOIN edge.
 		condCap := 0
 		for _, e := range checkResult.appliedInnerEdges {
-			condCap += len(e.eqConds) + len(e.nonEQConds)
+			condCap += len(e.eqConds) + len(e.nonEQConds) + len(e.selConds)
 		}
 		selection := logicalop.LogicalSelection{
 			Conditions: make([]expression.Expression, 0, condCap),
@@ -739,6 +851,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 			eqExprs := expression.ScalarFuncs2Exprs(e.eqConds)
 			selection.Conditions = append(selection.Conditions, eqExprs...)
 			selection.Conditions = append(selection.Conditions, e.nonEQConds...)
+			selection.Conditions = append(selection.Conditions, e.selConds...)
 		}
 		resSelection := selection.Init(ctx, existingJoin.QueryBlockOffset())
 		resSelection.SetChildren(existingJoin)
@@ -756,6 +869,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		}
 		newEqConds = append(newEqConds, alignedEQConds...)
 		newOtherConds = append(newOtherConds, e.nonEQConds...)
+		newOtherConds = append(newOtherConds, e.selConds...)
 	}
 	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
 	if err != nil {
@@ -779,6 +893,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	}.Init(ctx, offset)
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
+	join.MergeSchema()
 	SetNewJoinWithHint(join, vertexHints)
 	return join, nil
 }
@@ -786,7 +901,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 // HasRemainingEdges checks if there are remaining edges not in usedEdges.
 func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (remaining bool) {
 	d.iterateEdges(func(e *edge) bool {
-		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
+		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 || len(e.selConds) > 0 {
 			if _, ok := usedEdges[e.idx]; !ok {
 				remaining = true
 				return false
