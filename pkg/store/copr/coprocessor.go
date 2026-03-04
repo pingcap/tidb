@@ -1670,7 +1670,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			if err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD
 			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+||||||| parent of 4286f82ab6 ([main-8.5-keyspace] store/copr: add defensive measures for bucket boundary bug (#65041) (#2310))
+=======
+			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task, ch)
+>>>>>>> 4286f82ab6 ([main-8.5-keyspace] store/copr: add defensive measures for bucket boundary bug (#65041) (#2310))
 		}
 
 		if strings.Contains(err.Error(), "write conflict") {
