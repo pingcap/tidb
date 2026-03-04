@@ -256,8 +256,9 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 					var canRemove bool
 					switch mChild := mChild.(type) {
 					case *logicalop.LogicalLimit:
-						// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
-						if mChild.Offset != 0 {
+						// LIMIT 0 returns no rows; removing it would change semantics.
+						// Non-zero offset also prevents safe removal.
+						if mChild.Offset != 0 || mChild.Count == 0 {
 							canRemove = false
 						} else {
 							// Check if join key is unique key
@@ -273,14 +274,19 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 						//   - HAVING clause: SELECT ... (SELECT AVG(...) FROM ... GROUP BY ... HAVING ... LIMIT 1)
 						//   - ORDER BY clause: SELECT ... (SELECT ... FROM ... ORDER BY ... LIMIT 1)
 						if li, ok := mChild.Children()[0].(*logicalop.LogicalLimit); ok {
-							// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
-							if li.Offset != 0 {
+							// LIMIT 0 returns no rows; removing it would change semantics.
+							// Non-zero offset also prevents safe removal.
+							if li.Offset != 0 || li.Count == 0 {
 								canRemove = false
 								break
 							}
-							// Check if join key is unique key
-							removePlan = li.Children()[0]
-							if isJoinKeyUniqueKey(apply, removePlan) {
+							// Check if join key is unique key using the plan below Limit.
+							// Keep Projection but remove MaxOneRow + Limit:
+							//   before: MaxOneRow -> Projection -> Limit -> child
+							//   after:  Projection -> child
+							if isJoinKeyUniqueKey(apply, li.Children()[0]) {
+								mChild.SetChildren(li.Children()[0])
+								removePlan = mChild
 								canRemove = true
 							}
 						}
