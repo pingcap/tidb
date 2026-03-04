@@ -131,10 +131,8 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// be able to satisfy ORDER BY PK via keep order on the index.
 		hasKeepOrderTrue := explainHas(rows, "keep order:true")
 		hasSortOp := explainHas(rows, "TopN") || explainHas(rows, "Sort")
-		if !hasKeepOrderTrue {
-			require.True(t, hasSortOp,
-				"case 4: unique index should not satisfy ORDER BY PK without sort")
-		}
+		require.True(t, !hasKeepOrderTrue || hasSortOp,
+			"case 4: unique index should not satisfy ORDER BY PK without sort")
 
 		// ---------------------------------------------------------------
 		// Case 5: DESC ordering — the index scan should satisfy
@@ -165,10 +163,8 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		).Rows()
 		hasKeepOrderTrue = explainHas(rows, "keep order:true")
 		hasSortOp = explainHas(rows, "TopN") || explainHas(rows, "Sort")
-		if !hasKeepOrderTrue {
-			require.True(t, hasSortOp,
-				"case 6: mixed ASC/DESC should not be satisfied by keep order alone")
-		}
+		require.True(t, !hasKeepOrderTrue || hasSortOp,
+			"case 6: mixed ASC/DESC should not be satisfied by keep order alone")
 
 		// ---------------------------------------------------------------
 		// Case 7: Prefixed clustered PK — PRIMARY KEY(p1(2), p2) stores
@@ -184,7 +180,10 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			PRIMARY KEY(p1(2), p2) CLUSTERED,
 			KEY ic_p(c)
 		)`)
-		tk.MustExec("insert into t_prefix values ('abc', 1, 0), ('abd', 2, 0), ('axy', 3, 0)")
+		// ('abz',1) and ('abc',2) share the 2-char prefix 'ab', so handle
+		// sort is by (prefix,p2): ('ab',1)=abz < ('ab',2)=abc < ('ax',3)=axy.
+		// Full ORDER BY p1,p2 gives: abc < abz < axy — a different order.
+		tk.MustExec(`insert into t_prefix values ('abz', 1, 0), ('abc', 2, 0), ('axy', 3, 0)`)
 		rows = tk.MustQuery(
 			"explain format = 'brief' select * from t_prefix use index(ic_p) where c = 0 order by p1, p2 limit 100",
 		).Rows()
@@ -192,10 +191,16 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		hasSortOp = explainHas(rows, "TopN") || explainHas(rows, "Sort")
 		// The prefixed PK column cannot satisfy ORDER BY on the full column,
 		// so either keep order should be false or a TopN/Sort must be present.
-		if !hasKeepOrderTrue {
-			require.True(t, hasSortOp,
-				"case 7: prefixed clustered PK should not satisfy ORDER BY without sort")
-		}
+		require.True(t, !hasKeepOrderTrue || hasSortOp,
+			"case 7: prefixed clustered PK should not satisfy ORDER BY without sort")
+
+		tk.MustQuery(
+			"select * from t_prefix use index(ic_p) where c = 0 order by p1, p2 limit 100",
+		).Check(testkit.Rows(
+			"abc 2 0",
+			"abz 1 0",
+			"axy 3 0",
+		))
 
 		// ---------------------------------------------------------------
 		// Case 8: Single varchar clustered PK — a single non-integer column
