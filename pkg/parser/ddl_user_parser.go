@@ -34,28 +34,18 @@ func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 
 	if stmt.IsCreateRole {
 		// CREATE ROLE: yacc RoleSpecList — only role names, no auth options
-		for {
-			spec := p.parseRoleSpec()
-			if spec == nil {
-				return nil
-			}
-			stmt.Specs = append(stmt.Specs, spec)
-			if _, ok := p.accept(','); !ok {
-				break
-			}
+		var ok bool
+		stmt.Specs, ok = parseCommaListPtr(p, p.parseRoleSpec)
+		if !ok {
+			return nil
 		}
 		return stmt
 	}
 
-	for {
-		spec := p.parseUserSpec()
-		if spec == nil {
-			return nil
-		}
-		stmt.Specs = append(stmt.Specs, spec)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.Specs, ok = parseCommaListPtr(p, p.parseUserSpec)
+	if !ok {
+		return nil
 	}
 
 	// Parse optional user attributes/options
@@ -309,16 +299,10 @@ func (p *HandParser) parseDropUserStmt() ast.StmtNode {
 
 	stmt.IfExists = p.acceptIfExists()
 
-	for {
-		user := p.parseUserIdentity()
-		if user == nil {
-			return nil
-		}
-
-		stmt.UserList = append(stmt.UserList, user)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.UserList, ok = parseCommaListPtr(p, p.parseUserIdentity)
+	if !ok {
+		return nil
 	}
 
 	return stmt
@@ -347,16 +331,11 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 			stmt.CurrentAuth.AuthString = tok.Lit
 		}
 	} else {
-		for {
-			spec := p.parseUserSpec()
-			if spec == nil {
-				p.syntaxErrorAt(p.peek())
-				return nil
-			}
-			stmt.Specs = append(stmt.Specs, spec)
-			if _, ok := p.accept(','); !ok {
-				break
-			}
+		var ok bool
+		stmt.Specs, ok = parseCommaListPtr(p, p.parseUserSpec)
+		if !ok {
+			p.syntaxErrorAt(p.peek())
+			return nil
 		}
 	}
 

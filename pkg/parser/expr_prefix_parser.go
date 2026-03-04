@@ -21,6 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
+// timeLiteralNames maps token types to their literal function names.
+var timeLiteralNames = map[int]string{
+	timeType:      ast.TimeLiteral,
+	timestampType: ast.TimestampLiteral,
+	dateType:      ast.DateLiteral,
+}
+
 // parsePrefixKeywordExpr handles prefix expressions starting with keywords (e.g. CASE, INTERVAL, Functions).
 func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive:disable-line
 	tok := p.peek()
@@ -96,7 +103,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	case singleAtIdentifier, doubleAtIdentifier:
 		return p.parseVariableExpr()
 
-	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs, curDate, curTime:
+	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs, utcDate, utcTime, utcTimestamp:
 		return p.parseCurrentFunc()
 
 	case builtinFnCast:
@@ -114,9 +121,32 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	case convert:
 		return p.tryBuiltinFunc(p.parseConvertFunc)
 
+	case timestampDiff:
+		return p.tryBuiltinFunc(p.parseTimestampDiffFunc)
+
+	case builtinFnNow, now, builtinFnCurTime:
+		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
+
+	case builtinFnCurDate:
+		return p.tryBuiltinFunc(p.parseCurDateFunc)
+
+	case builtinFnDateAdd, builtinFnDateSub:
+		return p.tryBuiltinFunc(p.parseDateArithFunc)
+
+	case builtinFnSubstring:
+		return p.tryBuiltinFunc(p.parseSubstringFunc)
+
+	case jsonSumCrc32:
+		return p.tryBuiltinFunc(p.parseJsonSumCrc32Func)
+
+	case timeType, timestampType, dateType:
+		return p.parsePrefixTimeLiteral(timeLiteralNames[tok.Tp])
+
+	case EOF:
+		return nil
+
 	case binaryType:
 		// BINARY expr → FuncCastExpr with binary charset (per parser.y:8242-8253).
-		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
 		p.next()
 		expr := p.parseExpression(precUnary)
 		if expr != nil {
@@ -130,51 +160,11 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 				FunctionType: ast.CastBinaryOperator,
 			}
 		}
-		// Fallback to identifier if not a binary expression.
 		return &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: ast.NewCIStr("binary")}}
-
-	case timestampDiff:
-		return p.tryBuiltinFunc(p.parseTimestampDiffFunc)
 
 	// Keywords that are also valid as function names in expression context.
 	case ifKwd, replace, coalesce, insert:
 		return p.parseKeywordFuncCall()
-
-	case timeType, timestampType, dateType:
-		var tp string
-		switch p.peek().Tp {
-		case timeType:
-			tp = ast.TimeLiteral
-		case timestampType:
-			tp = ast.TimestampLiteral
-		default:
-			tp = ast.DateLiteral
-		}
-		return p.parsePrefixTimeLiteral(tp)
-
-	case EOF:
-		return nil
-
-	// NowSymFunc: NOW(), CURRENT_TIMESTAMP(), LOCALTIME(), LOCALTIMESTAMP()
-	// Originally, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
-	// The scanner may produce either builtinFnNow or now depending on context.
-	case builtinFnNow, now, builtinFnCurTime, builtinSysDate:
-		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
-
-	case builtinFnCurDate:
-		return p.tryBuiltinFunc(p.parseCurDateFunc)
-
-	// DATE_ADD / DATE_SUB with INTERVAL syntax.
-	case builtinFnDateAdd, builtinFnDateSub:
-		return p.tryBuiltinFunc(p.parseDateArithFunc)
-
-	// SUBSTRING/SUBSTR with FROM/FOR and comma forms.
-	case builtinFnSubstring:
-		return p.tryBuiltinFunc(p.parseSubstringFunc)
-
-	// JSON_SUM_CRC32(expr AS type)
-	case jsonSumCrc32:
-		return p.tryBuiltinFunc(p.parseJsonSumCrc32Func)
 
 	// CHAR(expr, ...) - must route through parseScalarFuncCall for USING/NULL-sentinel handling.
 	case charType, character:
@@ -190,22 +180,10 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 		if p.peekN(1).Tp != '(' {
 			p.next() // consume INTERVAL
 			intervalExpr := p.parseExpression(precNone)
-			if intervalExpr == nil {
-				return nil
-			}
 			unit := p.parseTimeUnit()
-			if unit == nil {
-				return nil
-			}
-			// Expect '+' then date expression.
-			// yacc: INTERVAL Expression TimeUnit '+' BitExpr
-			if _, ok := p.expect('+'); !ok {
-				return nil
-			}
-			dateExpr := p.parseExpression(precPredicate + 1) // BitExpr level
-			if dateExpr == nil {
-				return nil
-			}
+			// Expect '+' then date expression
+			p.expect('+')
+			dateExpr := p.parseExpression(precNone)
 			return &ast.FuncCallExpr{
 				FnName: ast.NewCIStr("DATE_ADD"),
 				Args:   []ast.ExprNode{dateExpr, intervalExpr, unit},
@@ -239,22 +217,25 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			node.Args = []ast.ExprNode{seqArg}
 			return node
 		}
-		// Fallback: any keyword token (Tp >= identifier) can be used in
-		// expression context. Reserved clause-introducing keywords (FROM, WHERE,
-		// etc.) must NOT be consumed — they terminate the current expression.
+		// Fallback: any keyword token (Tp >= identifier) can be used as an
+		// identifier in expression context. MySQL allows most non-reserved keywords
+		// as column/table names. However, reserved clause-introducing keywords
+		// (FROM, WHERE, etc.) must NOT be consumed as identifiers — they terminate
+		// the current expression/field list.
 		if tok.Tp >= identifier && !isReservedClauseKeyword(tok.Tp) {
 			if p.peekN(1).Tp == '(' {
-				// keyword followed by '(' → function call (e.g., LEFT(...))
+				// keyword followed by '(' → function call (e.g., AVG(...))
 				p.next() // consume the keyword token
 				return p.parseFuncCall(tok.Lit)
 			}
-			// Bare keyword → treat as column name only for unreserved keywords.
-			// Reserved keywords (OF, RANGE, etc.) cannot be bare identifiers.
-			if isIdentLike(tok.Tp) {
-				return p.parseIdentOrFuncCall()
-			}
+			// Bare keyword → treat as column name reference (e.g., subject, score)
+			return p.parseIdentOrFuncCall()
 		}
-		p.syntaxErrorAt(tok)
+		tokLen := len(tok.Lit)
+		if tokLen == 0 {
+			tokLen = 1 // single-char tokens have empty Lit
+		}
+		p.errorNear(tok.Offset+tokLen, tok.Offset)
 		return nil
 	}
 }

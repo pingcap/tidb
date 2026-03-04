@@ -54,7 +54,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return stmt
 
-	case replica:
+	case replica, slave:
 		// SHOW REPLICA STATUS
 		p.next()
 		if p.peekKeyword(status, "STATUS") {
@@ -178,7 +178,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		stmt.Tp = ast.ShowProcessList
 		return stmt
 
-	case index, keys:
+	case index, keys, indexes:
 		// SHOW {INDEX|KEYS|INDEXES} {FROM|IN} tbl [{FROM|IN} db] [WHERE expr]
 		p.next()
 		p.parseShowIndexStmt(stmt)
@@ -254,6 +254,30 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		p.next()
 		stmt.Tp = ast.ShowBuiltins
 		return stmt
+
+	case master:
+		// SHOW MASTER STATUS → ShowMasterStatus
+		p.next()
+		p.expect(status)
+		stmt.Tp = ast.ShowMasterStatus
+		return stmt
+
+	case extended:
+		// SHOW EXTENDED [FULL] {COLUMNS|FIELDS} FROM tbl [FROM db] [LIKE|WHERE]
+		p.next()
+		stmt.Extended = true
+		if _, ok := p.accept(full); ok {
+			stmt.Full = true
+		}
+		tok := p.next()
+		if tok.Tp == columns || tok.Tp == fields {
+			stmt.Tp = ast.ShowColumns
+			p.parseShowTableClause(stmt)
+			p.parseShowLikeOrWhere(stmt)
+			return stmt
+		}
+		p.syntaxErrorAt(tok)
+		return nil
 
 	default:
 		if result := p.parseShowIdentBased(stmt); result != nil {

@@ -89,7 +89,7 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	p.expect(view)
 
 	// View name
-	stmt.ViewName = p.parseTableName()
+	stmt.ViewName = p.expectTableName()
 
 	// Optional column list: (col1, col2, ...)
 	if _, ok := p.accept('('); ok {

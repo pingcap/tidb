@@ -4155,8 +4155,10 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			table.Restore(ctx)
 		}
 	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown":
-		n.Tables[0].Restore(ctx)
-		ctx.WritePlain(" ")
+		if len(n.Tables) > 0 {
+			n.Tables[0].Restore(ctx)
+			ctx.WritePlain(" ")
+		}
 		for i, index := range n.Indexes {
 			if i != 0 {
 				ctx.WritePlain(", ")

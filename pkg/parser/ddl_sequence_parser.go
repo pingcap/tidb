@@ -25,7 +25,7 @@ func (p *HandParser) parseCreateSequenceStmt() ast.StmtNode {
 
 	stmt.IfNotExists = p.acceptIfNotExists()
 
-	stmt.Name = p.parseTableName()
+	stmt.Name = p.expectTableName()
 	if stmt.Name == nil {
 		return nil
 	}
@@ -50,7 +50,7 @@ func (p *HandParser) parseAlterSequenceStmt() ast.StmtNode {
 
 	stmt.IfExists = p.acceptIfExists()
 
-	stmt.Name = p.parseTableName()
+	stmt.Name = p.expectTableName()
 	if stmt.Name == nil {
 		return nil
 	}
@@ -77,15 +77,10 @@ func (p *HandParser) parseDropSequenceStmt() ast.StmtNode {
 
 	stmt.IfExists = p.acceptIfExists()
 
-	for {
-		name := p.parseTableName()
-		if name == nil {
-			return nil
-		}
-		stmt.Sequences = append(stmt.Sequences, name)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.Sequences, ok = parseCommaListPtr(p, p.parseTableName)
+	if !ok {
+		return nil
 	}
 	return stmt
 }

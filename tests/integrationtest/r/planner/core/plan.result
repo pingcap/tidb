@@ -388,7 +388,7 @@ select * from golang1;
 fcbpdt	fcbpsq	procst	cipstx	cipsst	dyngtg	blncdt
 20230925	12023092502158016	1	CI010000	ACSC	EAYT	20230925
 EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1);
-Error 1051 (42S02): Unknown table ''
+Error 1054 (42S22): Unknown column '1' in 'order clause'
 drop table if exists p, t;
 create table p (id int, c int, key i_id(id), key i_c(c));
 create table t (id int);

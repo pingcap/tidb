@@ -25,6 +25,66 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
+// parseCommaList parses a comma-separated list of items using the provided
+// parse function. It calls parseFn repeatedly, appending each result. After
+// each item, if no comma follows, the loop stops. Returns the collected slice.
+//
+// This eliminates the very common pattern:
+//
+//	var list []T
+//	for {
+//	    list = append(list, parseSomething())
+//	    if _, ok := p.accept(','); !ok { break }
+//	}
+func parseCommaList[T interface{}](p *HandParser, parseFn func() T) []T {
+	var list []T
+	for {
+		list = append(list, parseFn())
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return list
+}
+
+// parseCommaListPtr parses a comma-separated list of pointer items.
+// Unlike parseCommaList, if parseFn returns nil, parsing stops and
+// returns (nil, false) to signal the caller should bail.
+//
+// This eliminates the very common nil-check-and-bail pattern:
+//
+//	var list []*T
+//	for {
+//	    item := p.parseSomething()
+//	    if item == nil { return nil }
+//	    list = append(list, item)
+//	    if _, ok := p.accept(','); !ok { break }
+//	}
+func parseCommaListPtr[T interface{}](p *HandParser, parseFn func() *T) ([]*T, bool) {
+	var list []*T
+	for {
+		item := parseFn()
+		if item == nil {
+			return nil, false
+		}
+		list = append(list, item)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return list, true
+}
+
+// expectTableName parses a table name and reports a syntax error if not found.
+// Consolidates the common pattern: parseTableName() + nil check + syntaxErrorAt.
+func (p *HandParser) expectTableName() *ast.TableName {
+	tn := p.parseTableName()
+	if tn == nil {
+		p.syntaxErrorAt(p.peek())
+	}
+	return tn
+}
+
 // parseUint64 parses and returns an unsigned 64-bit integer literal.
 func (p *HandParser) parseUint64() uint64 {
 	tok := p.next()
@@ -387,16 +447,9 @@ func (p *HandParser) isValidFieldSep(val string) bool {
 // parseStatsTablesAndPartitions parses table list with optional PARTITION clause,
 // shared between LOCK STATS and UNLOCK STATS.
 func (p *HandParser) parseStatsTablesAndPartitions() []*ast.TableName {
-	var tables []*ast.TableName
-	for {
-		tbl := p.parseTableName()
-		if tbl == nil {
-			return nil
-		}
-		tables = append(tables, tbl)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	tables, ok := parseCommaListPtr(p, p.parseTableName)
+	if !ok {
+		return nil
 	}
 	// Optional PARTITION clause — yacc accepts with or without parentheses
 	if _, ok := p.accept(partition); ok {

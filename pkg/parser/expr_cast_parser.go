@@ -41,14 +41,20 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 		node.FnName = ast.NewCIStr("CURRENT_DATE")
 	case currentTime:
 		node.FnName = ast.NewCIStr("CURRENT_TIME")
-	case currentUser:
-		node.FnName = ast.NewCIStr("CURRENT_USER")
-	case currentRole:
-		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	case localTime:
 		node.FnName = ast.NewCIStr("LOCALTIME")
 	case localTs:
 		node.FnName = ast.NewCIStr("LOCALTIMESTAMP")
+	case utcDate:
+		node.FnName = ast.NewCIStr("UTC_DATE")
+	case utcTime:
+		node.FnName = ast.NewCIStr("UTC_TIME")
+	case utcTimestamp:
+		node.FnName = ast.NewCIStr("UTC_TIMESTAMP")
+	case currentUser:
+		node.FnName = ast.NewCIStr("CURRENT_USER")
+	case currentRole:
+		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	case curDate:
 		node.FnName = ast.NewCIStr("CURDATE")
 	case curTime:
@@ -697,78 +703,63 @@ func (p *HandParser) parseSubstringFunc() ast.ExprNode {
 	}
 }
 
+// sqlTsiTimeUnits maps SQL_TSI_* identifier names to their time unit constants.
+var sqlTsiTimeUnits = map[string]ast.TimeUnitType{
+	"SQL_TSI_SECOND":  ast.TimeUnitSecond,
+	"SQL_TSI_MINUTE":  ast.TimeUnitMinute,
+	"SQL_TSI_HOUR":    ast.TimeUnitHour,
+	"SQL_TSI_DAY":     ast.TimeUnitDay,
+	"SQL_TSI_WEEK":    ast.TimeUnitWeek,
+	"SQL_TSI_MONTH":   ast.TimeUnitMonth,
+	"SQL_TSI_QUARTER": ast.TimeUnitQuarter,
+	"SQL_TSI_YEAR":    ast.TimeUnitYear,
+}
+
+// timeUnitTokens maps token types to their time unit constants.
+var timeUnitTokens = map[int]ast.TimeUnitType{
+	microsecond:       ast.TimeUnitMicrosecond,
+	second:            ast.TimeUnitSecond,
+	sqlTsiSecond:      ast.TimeUnitSecond,
+	minute:            ast.TimeUnitMinute,
+	sqlTsiMinute:      ast.TimeUnitMinute,
+	hour:              ast.TimeUnitHour,
+	sqlTsiHour:        ast.TimeUnitHour,
+	day:               ast.TimeUnitDay,
+	sqlTsiDay:         ast.TimeUnitDay,
+	week:              ast.TimeUnitWeek,
+	sqlTsiWeek:        ast.TimeUnitWeek,
+	month:             ast.TimeUnitMonth,
+	sqlTsiMonth:       ast.TimeUnitMonth,
+	quarter:           ast.TimeUnitQuarter,
+	sqlTsiQuarter:     ast.TimeUnitQuarter,
+	yearType:          ast.TimeUnitYear,
+	sqlTsiYear:        ast.TimeUnitYear,
+	secondMicrosecond: ast.TimeUnitSecondMicrosecond,
+	minuteMicrosecond: ast.TimeUnitMinuteMicrosecond,
+	minuteSecond:      ast.TimeUnitMinuteSecond,
+	hourMicrosecond:   ast.TimeUnitHourMicrosecond,
+	hourSecond:        ast.TimeUnitHourSecond,
+	hourMinute:        ast.TimeUnitHourMinute,
+	dayMicrosecond:    ast.TimeUnitDayMicrosecond,
+	daySecond:         ast.TimeUnitDaySecond,
+	dayMinute:         ast.TimeUnitDayMinute,
+	dayHour:           ast.TimeUnitDayHour,
+	yearMonth:         ast.TimeUnitYearMonth,
+}
+
 // parseTimeUnit parses a MySQL time unit keyword.
 // Returns a *ast.TimeUnitExpr or nil on error.
 func (p *HandParser) parseTimeUnit() *ast.TimeUnitExpr {
 	tok := p.next()
-	var unit ast.TimeUnitType
-	switch tok.Tp {
-	case microsecond:
-		unit = ast.TimeUnitMicrosecond
-	case second, sqlTsiSecond:
-		unit = ast.TimeUnitSecond
-	case minute, sqlTsiMinute:
-		unit = ast.TimeUnitMinute
-	case hour, sqlTsiHour:
-		unit = ast.TimeUnitHour
-	case day, sqlTsiDay:
-		unit = ast.TimeUnitDay
-	case week, sqlTsiWeek:
-		unit = ast.TimeUnitWeek
-	case month, sqlTsiMonth:
-		unit = ast.TimeUnitMonth
-	case quarter, sqlTsiQuarter:
-		unit = ast.TimeUnitQuarter
-	case yearType, sqlTsiYear:
-		unit = ast.TimeUnitYear
-	case secondMicrosecond:
-		unit = ast.TimeUnitSecondMicrosecond
-	case minuteMicrosecond:
-		unit = ast.TimeUnitMinuteMicrosecond
-	case minuteSecond:
-		unit = ast.TimeUnitMinuteSecond
-	case hourMicrosecond:
-		unit = ast.TimeUnitHourMicrosecond
-	case hourSecond:
-		unit = ast.TimeUnitHourSecond
-	case hourMinute:
-		unit = ast.TimeUnitHourMinute
-	case dayMicrosecond:
-		unit = ast.TimeUnitDayMicrosecond
-	case daySecond:
-		unit = ast.TimeUnitDaySecond
-	case dayMinute:
-		unit = ast.TimeUnitDayMinute
-	case dayHour:
-		unit = ast.TimeUnitDayHour
-	case yearMonth:
-		unit = ast.TimeUnitYearMonth
-	case identifier:
-		// Handle any remaining identifier-based time unit aliases
-		switch strings.ToUpper(tok.Lit) {
-		case "SQL_TSI_SECOND":
-			unit = ast.TimeUnitSecond
-		case "SQL_TSI_MINUTE":
-			unit = ast.TimeUnitMinute
-		case "SQL_TSI_HOUR":
-			unit = ast.TimeUnitHour
-		case "SQL_TSI_DAY":
-			unit = ast.TimeUnitDay
-		case "SQL_TSI_WEEK":
-			unit = ast.TimeUnitWeek
-		case "SQL_TSI_MONTH":
-			unit = ast.TimeUnitMonth
-		case "SQL_TSI_QUARTER":
-			unit = ast.TimeUnitQuarter
-		case "SQL_TSI_YEAR":
-			unit = ast.TimeUnitYear
-		default:
-			p.syntaxErrorAt(tok)
-			return nil
-		}
-	default:
-		p.syntaxErrorAt(tok)
-		return nil
+	if unit, ok := timeUnitTokens[tok.Tp]; ok {
+		return &ast.TimeUnitExpr{Unit: unit}
 	}
-	return &ast.TimeUnitExpr{Unit: unit}
+	// Handle identifier-based SQL_TSI_* aliases
+	if tok.Tp == identifier {
+		if unit, ok := sqlTsiTimeUnits[strings.ToUpper(tok.Lit)]; ok {
+			return &ast.TimeUnitExpr{Unit: unit}
+		}
+	}
+	p.syntaxErrorAt(tok)
+	return nil
 }

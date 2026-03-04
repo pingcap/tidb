@@ -28,6 +28,16 @@ import (
 // Field Type Parsing
 // ---------------------------------------------------------------------------
 
+// geometryTypeNames is the set of geometry type identifier names.
+var geometryTypeNames = map[string]bool{
+	"LINESTRING":         true,
+	"POLYGON":            true,
+	"MULTIPOINT":         true,
+	"MULTILINESTRING":    true,
+	"MULTIPOLYGON":       true,
+	"GEOMETRYCOLLECTION": true,
+}
+
 // parseFieldType parses a data type definition: INT(10) UNSIGNED, VARCHAR(255) CHARSET utf8, etc.
 func (p *HandParser) parseFieldType() *types.FieldType {
 	tp := types.NewFieldType(mysql.TypeUnspecified)
@@ -241,14 +251,11 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		tp.SetType(mysql.TypeGeometry)
 	case identifier:
 		// Handle LINESTRING, POLYGON, etc. which are not keywords
-		str := token.Lit
-		switch strings.ToUpper(str) {
-		case "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION":
-			p.next()
-			tp.SetType(mysql.TypeGeometry)
-		default:
+		if !geometryTypeNames[strings.ToUpper(token.Lit)] {
 			return nil // Not a known type
 		}
+		p.next()
+		tp.SetType(mysql.TypeGeometry)
 	case vectorType:
 		p.next()
 		tp.SetType(mysql.TypeTiDBVectorFloat32)

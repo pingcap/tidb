@@ -81,7 +81,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	p.accept(into)
 
 	// Table reference. For INSERT the parser uses TableName + PartitionNameListOpt.
-	tn := p.parseTableName()
+	tn := p.expectTableName()
 	if tn == nil {
 		return nil
 	}
@@ -141,15 +141,10 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			stmt.Select = sub
 		} else {
 			// Column list: (c1, c2, ...)
-			for {
-				col := p.parseColumnName()
-				if col == nil {
-					return nil
-				}
-				stmt.Columns = append(stmt.Columns, col)
-				if _, ok := p.accept(','); !ok {
-					break
-				}
+			var ok bool
+			stmt.Columns, ok = parseCommaListPtr(p, p.parseColumnName)
+			if !ok {
+				return nil
 			}
 			p.expect(')')
 		}
@@ -226,15 +221,10 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			p.expect(duplicate)
 			p.expect(key)
 			p.expect(update)
-			for {
-				assign := p.parseAssignment()
-				if assign == nil {
-					return nil
-				}
-				stmt.OnDuplicate = append(stmt.OnDuplicate, assign)
-				if _, ok := p.accept(','); !ok {
-					break
-				}
+			var ok bool
+			stmt.OnDuplicate, ok = parseCommaListPtr(p, p.parseAssignment)
+			if !ok {
+				return nil
 			}
 		}
 	}
@@ -336,15 +326,10 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 
 	// SET
 	p.expect(set)
-	for {
-		assign := p.parseAssignment()
-		if assign == nil {
-			return nil
-		}
-		stmt.List = append(stmt.List, assign)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.List, ok = parseCommaListPtr(p, p.parseAssignment)
+	if !ok {
+		return nil
 	}
 
 	// [WHERE]
@@ -616,7 +601,7 @@ func (p *HandParser) convertToTableList(refs *ast.TableRefsClause, colOff, nearO
 func (p *HandParser) parseDeleteTableList() *ast.DeleteTableList {
 	list := Alloc[ast.DeleteTableList](p.arena)
 	for {
-		tn := p.parseTableName()
+		tn := p.expectTableName()
 		if tn == nil {
 			return nil
 		}
@@ -640,7 +625,7 @@ func (p *HandParser) parseTableStmt() ast.StmtNode {
 	stmt.Kind = ast.SelectStmtKindTable
 	p.expect(tableKwd)
 
-	tn := p.parseTableName()
+	tn := p.expectTableName()
 	stmt.From = p.wrapTableNameInRefs(tn)
 
 	p.parseSelectStmtSuffix(stmt)

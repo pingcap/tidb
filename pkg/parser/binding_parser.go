@@ -98,16 +98,7 @@ func (p *HandParser) parseShowGrants() ast.StmtNode {
 
 		// USING role, ...
 		if _, ok := p.accept(using); ok {
-			for {
-				role := p.parseRoleIdentity()
-				if role == nil {
-					break
-				}
-				stmt.Roles = append(stmt.Roles, role)
-				if _, ok := p.accept(','); !ok {
-					break
-				}
-			}
+			stmt.Roles, _ = parseCommaListPtr(p, p.parseRoleIdentity)
 		}
 	}
 
@@ -158,7 +149,7 @@ func (p *HandParser) parseCreateStatisticsStmt() ast.StmtNode {
 
 	// ON tbl(cols)
 	p.expect(on)
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	p.expect('(')
 	for {
 		col := p.parseColumnName()

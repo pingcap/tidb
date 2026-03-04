@@ -124,21 +124,15 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.StrValue = tok.Lit
 		}
 	case comment, connection, password, encryption, secondaryEngineAttribute:
-		isEncryption := p.peek().Tp == encryption
-		var optTp ast.TableOptionType
-		switch p.peek().Tp {
-		case comment:
-			optTp = ast.TableOptionComment
-		case connection:
-			optTp = ast.TableOptionConnection
-		case password:
-			optTp = ast.TableOptionPassword
-		case encryption:
-			optTp = ast.TableOptionEncryption
-		default:
-			optTp = ast.TableOptionSecondaryEngineAttribute
+		optTypes := map[int]ast.TableOptionType{
+			comment:                  ast.TableOptionComment,
+			connection:               ast.TableOptionConnection,
+			password:                 ast.TableOptionPassword,
+			encryption:               ast.TableOptionEncryption,
+			secondaryEngineAttribute: ast.TableOptionSecondaryEngineAttribute,
 		}
-		p.parseTableOptionStringLit(opt, optTp)
+		isEncryption := p.peek().Tp == encryption
+		p.parseTableOptionStringLit(opt, optTypes[p.peek().Tp])
 		if isEncryption {
 			switch opt.StrValue {
 			case "Y", "y":
@@ -312,24 +306,18 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.StrValue = tok.Lit
 		}
 	case pageChecksum, pageCompressed, pageCompressionLevel, transactional:
-		var optTp ast.TableOptionType
-		var optName string
-		switch p.peek().Tp {
-		case pageChecksum:
-			optTp = ast.TableOptionPageChecksum
-			optName = "PAGE_CHECKSUM"
-		case pageCompressed:
-			optTp = ast.TableOptionPageCompressed
-			optName = "PAGE_COMPRESSED"
-		case pageCompressionLevel:
-			optTp = ast.TableOptionPageCompressionLevel
-			optName = "PAGE_COMPRESSION_LEVEL"
-		default:
-			optTp = ast.TableOptionTransactional
-			optName = "TRANSACTIONAL"
+		optInfo := map[int]struct {
+			tp   ast.TableOptionType
+			name string
+		}{
+			pageChecksum:         {ast.TableOptionPageChecksum, "PAGE_CHECKSUM"},
+			pageCompressed:       {ast.TableOptionPageCompressed, "PAGE_COMPRESSED"},
+			pageCompressionLevel: {ast.TableOptionPageCompressionLevel, "PAGE_COMPRESSION_LEVEL"},
+			transactional:        {ast.TableOptionTransactional, "TRANSACTIONAL"},
 		}
-		p.parseTableOptionUint(opt, optTp)
-		p.warnNear(p.peek().Offset, "The %s option is parsed but ignored by all storage engines.", optName)
+		info := optInfo[p.peek().Tp]
+		p.parseTableOptionUint(opt, info.tp)
+		p.warnNear(p.peek().Offset, "The %s option is parsed but ignored by all storage engines.", info.name)
 	case ietfQuotes:
 		p.parseTableOptionString(opt, ast.TableOptionIetfQuotes)
 		p.warnNear(p.peek().Offset, "The IETF_QUOTES option is parsed but ignored by all storage engines.")
@@ -375,19 +363,9 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.expect(')')
 		p.warnNear(p.peek().Offset, "The UNION option is parsed but ignored by all storage engines.")
 	case statsBuckets:
-		p.next()
-		p.accept(eq)
-		opt.Tp = ast.TableOptionStatsBuckets
-		if tok, ok := p.expect(intLit); ok {
-			opt.UintValue = tokenItemToUint64(tok.Item)
-		}
+		p.parseTableOptionUint(opt, ast.TableOptionStatsBuckets)
 	case statsTopN:
-		p.next()
-		p.accept(eq)
-		opt.Tp = ast.TableOptionStatsTopN
-		if tok, ok := p.expect(intLit); ok {
-			opt.UintValue = tokenItemToUint64(tok.Item)
-		}
+		p.parseTableOptionUint(opt, ast.TableOptionStatsTopN)
 	case statsSampleRate:
 		// yacc: "STATS_SAMPLE_RATE" EqOpt NumLiteral — no DEFAULT alternative
 		// NumLiteral = intLit | floatLit | decLit
@@ -398,25 +376,31 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.Value = ast.NewValueExpr(tok.Item, "", "")
 		}
 	case statsColChoice:
-		// yacc: "STATS_COL_CHOICE" EqOpt stringLit — no DEFAULT
-		p.next()
-		p.accept(eq)
-		opt.Tp = ast.TableOptionStatsColsChoice
-		if tok, ok := p.expect(stringLit); ok {
-			opt.StrValue = tok.Lit
-		}
+		p.parseTableOptionStringLit(opt, ast.TableOptionStatsColsChoice)
 	case statsColList:
-		// yacc: "STATS_COL_LIST" EqOpt stringLit — no DEFAULT
-		p.next()
-		p.accept(eq)
-		opt.Tp = ast.TableOptionStatsColList
-		if tok, ok := p.expect(stringLit); ok {
-			opt.StrValue = tok.Lit
-		}
+		p.parseTableOptionStringLit(opt, ast.TableOptionStatsColList)
 	default:
 		return nil
 	}
 	return opt
+}
+
+// rowFormatNames maps uppercase ROW_FORMAT names to their AST constants.
+var rowFormatNames = map[string]uint64{
+	"DYNAMIC":             ast.RowFormatDynamic,
+	"FIXED":               ast.RowFormatFixed,
+	"COMPRESSED":          ast.RowFormatCompressed,
+	"REDUNDANT":           ast.RowFormatRedundant,
+	"COMPACT":             ast.RowFormatCompact,
+	"TOKUDB_DEFAULT":      ast.TokuDBRowFormatDefault,
+	"TOKUDB_FAST":         ast.TokuDBRowFormatFast,
+	"TOKUDB_SMALL":        ast.TokuDBRowFormatSmall,
+	"TOKUDB_ZLIB":         ast.TokuDBRowFormatZlib,
+	"TOKUDB_ZSTD":         ast.TokuDBRowFormatZstd,
+	"TOKUDB_QUICKLZ":      ast.TokuDBRowFormatQuickLZ,
+	"TOKUDB_LZMA":         ast.TokuDBRowFormatLzma,
+	"TOKUDB_SNAPPY":       ast.TokuDBRowFormatSnappy,
+	"TOKUDB_UNCOMPRESSED": ast.TokuDBRowFormatUncompressed,
 }
 
 // parseTableOptionRowFormat populates a ROW_FORMAT table option.
@@ -428,36 +412,9 @@ func (p *HandParser) parseTableOptionRowFormat(opt *ast.TableOption) {
 		opt.UintValue = ast.RowFormatDefault
 		return
 	}
-	switch strings.ToUpper(tok.Lit) {
-	case "DYNAMIC":
-		opt.UintValue = ast.RowFormatDynamic
-	case "FIXED":
-		opt.UintValue = ast.RowFormatFixed
-	case "COMPRESSED":
-		opt.UintValue = ast.RowFormatCompressed
-	case "REDUNDANT":
-		opt.UintValue = ast.RowFormatRedundant
-	case "COMPACT":
-		opt.UintValue = ast.RowFormatCompact
-	case "TOKUDB_DEFAULT":
-		opt.UintValue = ast.TokuDBRowFormatDefault
-	case "TOKUDB_FAST":
-		opt.UintValue = ast.TokuDBRowFormatFast
-	case "TOKUDB_SMALL":
-		opt.UintValue = ast.TokuDBRowFormatSmall
-	case "TOKUDB_ZLIB":
-		opt.UintValue = ast.TokuDBRowFormatZlib
-	case "TOKUDB_ZSTD":
-		opt.UintValue = ast.TokuDBRowFormatZstd
-	case "TOKUDB_QUICKLZ":
-		opt.UintValue = ast.TokuDBRowFormatQuickLZ
-	case "TOKUDB_LZMA":
-		opt.UintValue = ast.TokuDBRowFormatLzma
-	case "TOKUDB_SNAPPY":
-		opt.UintValue = ast.TokuDBRowFormatSnappy
-	case "TOKUDB_UNCOMPRESSED":
-		opt.UintValue = ast.TokuDBRowFormatUncompressed
-	default:
+	if v, ok := rowFormatNames[strings.ToUpper(tok.Lit)]; ok {
+		opt.UintValue = v
+	} else {
 		opt.UintValue = ast.RowFormatDefault
 	}
 }

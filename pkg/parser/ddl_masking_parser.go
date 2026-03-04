@@ -65,7 +65,7 @@ func (p *HandParser) parseCreateMaskingPolicyStmt() ast.StmtNode {
 
 	// ON TableName
 	p.expect(on)
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 
 	// '(' Identifier ')'
 	p.expect('(')

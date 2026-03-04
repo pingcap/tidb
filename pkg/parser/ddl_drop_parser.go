@@ -156,20 +156,9 @@ func (p *HandParser) parseDropDatabase() ast.StmtNode {
 // parseTableNameList parses: tablename [, tablename ...]
 // Returns nil if the first table name cannot be parsed.
 func (p *HandParser) parseTableNameList() []*ast.TableName {
-	first := p.parseTableName()
-	if first == nil {
+	list, ok := parseCommaListPtr(p, p.parseTableName)
+	if !ok {
 		return nil
-	}
-	list := []*ast.TableName{first}
-	for {
-		if _, ok := p.accept(','); !ok {
-			break
-		}
-		tn := p.parseTableName()
-		if tn == nil {
-			return nil
-		}
-		list = append(list, tn)
 	}
 	return list
 }
@@ -206,7 +195,7 @@ func (p *HandParser) parseDropIndex() ast.StmtNode {
 	tok := p.next()
 	stmt.IndexName = tok.Lit
 	p.expect(on)
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	stmt.LockAlg = p.parseIndexLockAndAlgorithm()
 	return stmt
 }
@@ -220,7 +209,7 @@ func (p *HandParser) parseTruncateTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.TruncateTableStmt](p.arena)
 	p.expect(truncate)
 	p.accept(tableKwd) // optional TABLE keyword
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
 		return nil
 	}
@@ -237,33 +226,22 @@ func (p *HandParser) parseRenameTableStmt() ast.StmtNode {
 	p.expect(rename)
 	p.expect(tableKwd)
 
-	first := p.parseTableToTable()
-	if first == nil {
+	var ok bool
+	stmt.TableToTables, ok = parseCommaListPtr(p, p.parseTableToTable)
+	if !ok {
 		return nil
-	}
-	stmt.TableToTables = []*ast.TableToTable{first}
-
-	for {
-		if _, ok := p.accept(','); !ok {
-			break
-		}
-		next := p.parseTableToTable()
-		if next == nil {
-			return nil
-		}
-		stmt.TableToTables = append(stmt.TableToTables, next)
 	}
 	return stmt
 }
 
 // parseTableToTable parses: old_table TO new_table
 func (p *HandParser) parseTableToTable() *ast.TableToTable {
-	oldTable := p.parseTableName()
+	oldTable := p.expectTableName()
 	if oldTable == nil {
 		return nil
 	}
 	p.expect(to)
-	newTable := p.parseTableName()
+	newTable := p.expectTableName()
 	if newTable == nil {
 		return nil
 	}
@@ -415,6 +393,6 @@ func (p *HandParser) parseDropProcedureStmt() ast.StmtNode {
 	stmt := Alloc[ast.DropProcedureStmt](p.arena)
 	p.expect(procedure)
 	stmt.IfExists = p.acceptIfExists()
-	stmt.ProcedureName = p.parseTableName()
+	stmt.ProcedureName = p.expectTableName()
 	return stmt
 }

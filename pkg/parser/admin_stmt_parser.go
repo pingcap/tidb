@@ -263,7 +263,7 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 		p.next()
 		p.expect(tableKwd)
 		repairStmt := Alloc[ast.RepairTableStmt](p.arena)
-		repairStmt.Table = p.parseTableName()
+		repairStmt.Table = p.expectTableName()
 		cs := p.parseCreateTableStmt()
 		if cs != nil {
 			if ct, ok := cs.(*ast.CreateTableStmt); ok {
@@ -306,7 +306,7 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 		if _, ok := p.accept(index); ok {
 			// ADMIN CHECK INDEX t idx [(begin, end), ...]
 			stmt.Tp = ast.AdminCheckIndex
-			tbl := p.parseTableName()
+			tbl := p.expectTableName()
 			if tbl == nil {
 				return nil
 			}
@@ -649,7 +649,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 // Parses: table_name index_name (both required per yacc grammar)
 func (p *HandParser) parseAdminIndexOp(stmt *ast.AdminStmt, stmtType ast.AdminStmtType) ast.StmtNode {
 	stmt.Tp = stmtType
-	tbl := p.parseTableName()
+	tbl := p.expectTableName()
 	if tbl == nil {
 		return nil
 	}

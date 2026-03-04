@@ -216,7 +216,7 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 		return nil
 	}
 	ref := Alloc[ast.ReferenceDef](p.arena)
-	ref.Table = p.parseTableName()
+	ref.Table = p.expectTableName()
 	// Column list is optional (yacc: IndexPartSpecificationListOpt)
 	if p.peek().Tp == '(' {
 		ref.IndexPartSpecifications = p.parseIndexPartSpecifications()

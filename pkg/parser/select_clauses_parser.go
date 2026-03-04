@@ -14,10 +14,7 @@
 package parser
 
 import (
-	"math"
-
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
 // parseGroupByClause parses GROUP BY expr_list [WITH ROLLUP].
@@ -94,29 +91,38 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 }
 
 // parseLimitClause parses LIMIT [offset,] count or LIMIT count OFFSET offset
-// or FETCH {FIRST|NEXT} [count] {ROW|ROWS} ONLY
-// yacc: no standalone OFFSET before FETCH, no WITH TIES
+// or OFFSET offset {ROW|ROWS} FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
+// or FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
 func (p *HandParser) parseLimitClause() *ast.Limit {
 	limitNode := Alloc[ast.Limit](p.arena)
+
+	// Handle OFFSET first if present (Standard SQL)
+	if _, ok := p.accept(offset); ok {
+		limitNode.Offset = p.parseLimitOption()
+		// Optional ROW/ROWS
+		if p.peek().Tp == row || p.peek().Tp == rows {
+			p.next()
+		}
+	}
 
 	// Handle LIMIT or FETCH
 	if _, ok := p.accept(limit); ok {
 		// LIMIT count [OFFSET offset] or LIMIT offset, count
-		firstTok := p.peek()
-		first := p.parseExpression(precNone)
+		first := p.parseLimitOption()
+		if first == nil {
+			return nil
+		}
 		if _, ok := p.accept(','); ok {
 			// LIMIT offset, count
-			limitNode.Offset = p.toUint64Value(first, firstTok)
-			exprTok := p.peek()
-			limitNode.Count = p.toUint64Value(p.parseExpression(precNone), exprTok)
+			limitNode.Offset = first
+			limitNode.Count = p.parseLimitOption()
 		} else if _, ok := p.accept(offset); ok {
 			// LIMIT count OFFSET offset
-			limitNode.Count = p.toUint64Value(first, firstTok)
-			exprTok := p.peek()
-			limitNode.Offset = p.toUint64Value(p.parseExpression(precNone), exprTok)
+			limitNode.Count = first
+			limitNode.Offset = p.parseLimitOption()
 		} else {
 			// LIMIT count
-			limitNode.Count = p.toUint64Value(first, firstTok)
+			limitNode.Count = first
 		}
 	} else if _, ok := p.acceptKeyword(fetch, "FETCH"); ok {
 		// FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
@@ -132,8 +138,7 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		isRowOrRows := p.peekKeyword(row, "ROW") || p.peekKeyword(rows, "ROWS")
 
 		if !isRowOrRows {
-			exprTok := p.peek()
-			limitNode.Count = p.toUint64Value(p.parseExpression(precNone), exprTok)
+			limitNode.Count = p.parseLimitOption()
 		} else {
 			// Implicit count 1.
 			val := ast.NewValueExpr(uint64(1), "", "")
@@ -148,24 +153,33 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 			}
 		}
 
-		// yacc: ONLY (no WITH TIES in TiDB grammar)
+		// ONLY or WITH TIES
 		if _, ok := p.acceptKeyword(only, "ONLY"); !ok {
-			p.error(p.peek().Offset, "expected ONLY")
-			return nil
+			if _, ok := p.acceptKeyword(with, "WITH"); !ok {
+				p.error(p.peek().Offset, "expected ONLY or WITH TIES")
+				return nil
+			}
+			// Expect TIES
+			if ident, ok := p.expect(identifier); !ok || !ident.IsKeyword("TIES") {
+				p.error(p.peek().Offset, "expected TIES after WITH")
+				return nil
+			}
+			// ast.Limit doesn't support WithTies. Ignore.
 		}
+	} else if limitNode.Offset == nil {
+		p.error(p.peek().Offset, "expected LIMIT, OFFSET or FETCH")
+		return nil
 	}
 
 	return limitNode
 }
 
-// parseLimitClauseSimple parses LIMIT count only (no offset, no FETCH).
-// This matches yacc's LimitClause used by DELETE and UPDATE, which only accepts
-// "LIMIT" LimitOption (where LimitOption = LengthNum | paramMarker).
+// parseLimitClauseSimple parses a simple LIMIT count clause (no offset, no FETCH).
+// Used by UPDATE and DELETE which only support "LIMIT count" in the yacc grammar.
 func (p *HandParser) parseLimitClauseSimple() *ast.Limit {
 	limitNode := Alloc[ast.Limit](p.arena)
 	p.expect(limit)
-	exprTok := p.peek()
-	limitNode.Count = p.toUint64Value(p.parseExpression(precNone), exprTok)
+	limitNode.Count = p.parseLimitOption()
 	return limitNode
 }
 
@@ -178,7 +192,7 @@ func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
 		// LOCK IN SHARE MODE
 		p.expect(in)
 		p.expect(share)
-		p.expect(mode) // MODE is required (matching yacc)
+		p.accept(mode) // MODE is optional in some dialects
 		lockNode.LockType = ast.SelectLockForShare
 		return lockNode
 	}
@@ -209,16 +223,7 @@ func (p *HandParser) parseLockTablesAndModifiers(
 ) {
 	// Optional: OF tbl_name [, tbl_name ...]
 	if _, ok := p.accept(of); ok {
-		for {
-			tn := p.parseTableName()
-			if tn == nil {
-				return
-			}
-			lockNode.Tables = append(lockNode.Tables, tn)
-			if _, ok := p.accept(','); !ok {
-				break
-			}
-		}
+		lockNode.Tables = parseCommaList(p, p.parseTableName)
 	}
 	// Optional modifiers
 	if _, ok := p.accept(nowait); ok {
@@ -282,124 +287,70 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 	if tok.Lit == "" {
 		return false
 	}
-	// Exclude reserved SQL keywords and structural tokens that cannot be aliases.
+	// Exclude reserved SQL keywords that cannot be aliases.
 	switch tok.Tp {
 	case selectKwd, from, where, group, order, limit,
 		having, set, update, deleteKwd, insert, into,
 		values, on, using, as, ifKwd, exists,
 		join, inner, cross, left, right, natural, straightJoin,
 		union, except, intersect,
-		use, ignore, force, fetch,
+		use, ignore, force, fetch, offset,
 		forKwd, lock, in, not, and, or, is, null,
 		trueKwd, falseKwd, like, between, caseKwd, when, then, elseKwd,
 		create, alter, drop, tableKwd, index, column,
 		primary, key, unique, foreign, check, constraint,
 		defaultKwd, all, distinct,
 		partition, with, window, over, groups,
-		row, of, tableSample,
+		row, function, of, tableSample,
 		// Window function names are reserved and cannot be aliases.
 		cumeDist, denseRank, firstValue, lag, lastValue,
 		lead, nthValue, ntile, percentRank, rank, rowNumber,
-		intLit, floatLit, decLit, hexLit, bitLit,
-		paramMarker,
-		// Operator tokens and special tokens cannot be aliases.
-		eq, assignmentEq, andnot, ge, le, jss, juss, lsh,
-		neq, neqSynonym, nulleq, rsh, not2,
-		andand, pipes, hintComment:
+		intLit, floatLit, decLit, hexLit, bitLit:
 		return false
 	}
 	// Any other keyword token with a literal can be used as an alias.
 	return true
 }
 
-// toUint64Value converts a ValueExpr to uint64 to match the yacc LengthNum behavior.
-// - int64 values >= 0 are converted to uint64
-// - uint64 values are kept as-is
-// - decimal values (overflow from lexer for numbers > MaxUint64) produce a syntax error
-//
-// errTok is the token at the start of the expression, used for error positioning
-// when the literal overflows uint64.
-func (p *HandParser) toUint64Value(expr ast.ExprNode, errTok Token) ast.ExprNode {
+// toUint64Value converts a ValueExpr containing an int64 to uint64 if possible.
+// This is required to match the LengthNum behavior for LIMIT/OFFSET.
+func (p *HandParser) toUint64Value(expr ast.ExprNode) ast.ExprNode {
 	if expr == nil {
 		return nil
 	}
-	// ParamMarkerExpr embeds ValueExpr, so check for it first to avoid
-	// destroying parameter markers (e.g., LIMIT ? in prepared statements).
-	if _, ok := expr.(ast.ParamMarkerExpr); ok {
-		return expr
-	}
-	// Reject negative numbers (e.g., LIMIT -1). The yacc parser's LengthNum
-	// rule only accepted unsigned integer literals, so unary minus applied to
-	// a number is a syntax error in LIMIT/OFFSET context.
-	if ue, ok := expr.(*ast.UnaryOperationExpr); ok && ue.Op == opcode.Minus {
-		p.errorNear(errTok.EndOffset, errTok.Offset)
-		return ast.NewValueExpr(uint64(0), p.charset, p.collation)
-	}
-	ve, ok := expr.(ast.ValueExpr)
-	if !ok {
-		// The yacc parser's LimitOption rule only accepts LengthNum (bare integer)
-		// or paramMarker. Reject any other expression (e.g., 1+1, column refs).
-		p.errorNear(errTok.EndOffset, errTok.Offset)
-		return ast.NewValueExpr(uint64(0), p.charset, p.collation)
-	}
-	switch val := ve.GetValue().(type) {
-	case int64:
-		if val >= 0 {
+	if ve, ok := expr.(ast.ValueExpr); ok {
+		if val, ok := ve.GetValue().(int64); ok && val >= 0 {
 			return ast.NewValueExpr(uint64(val), p.charset, p.collation)
 		}
-	case uint64:
-		return ast.NewValueExpr(val, p.charset, p.collation)
-	default:
-		// Decimal overflow (number > MaxUint64): report a syntax error.
-		// The yacc parser's LengthNum rule only accepted intLit tokens,
-		// so numbers that overflow uint64 (tokenized as decLit) caused
-		// a parse error. We replicate that behavior here.
-		_ = val
-		p.errorNear(errTok.EndOffset, errTok.Offset)
-		return ast.NewValueExpr(uint64(math.MaxUint64), p.charset, p.collation)
 	}
 	return expr
+}
+
+// parseLimitOption parses an option for LIMIT or OFFSET: an integer literal, a param marker, or an identifier.
+func (p *HandParser) parseLimitOption() ast.ExprNode {
+	tok := p.peek()
+	if tok.Tp == intLit {
+		return p.toUint64Value(p.parseLiteral())
+	} else if tok.Tp == paramMarker {
+		return p.parseParamMarker()
+	} else if p.CanBeImplicitAlias(tok) { // equivalent to Identifier rule in yacc
+		idTok := p.next()
+		return &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: ast.NewCIStr(idTok.Lit)}}
+	}
+	// Note: yacc reports syntax error at the exact token that violated the rule.
+	p.syntaxErrorAt(tok)
+	return nil
 }
 
 // maybeParseUnion is the entry point for parsing set operations (UNION/EXCEPT/INTERSECT).
 // It starts with an already-parsed left-hand side (first) and parses the rest of the chain
 // using precedence climbing to build a correct binary tree (ast.SetOprStmt).
 func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode {
-	if first == nil {
-		return nil
-	}
 	res := p.parseSetOprRest(first, 0)
 
-	// Outer ORDER BY / LIMIT should only be parsed when:
-	// 1. A set operation was found (res != first), e.g. SELECT ... UNION SELECT ... ORDER BY ...
-	// 2. The input was a parenthesized query, e.g. (SELECT ...) ORDER BY ...
-	// For a plain SELECT that already parsed its own ORDER BY / LIMIT in parseSelectStmt,
-	// we must NOT re-parse here (that would accept invalid SQL like "SELECT 1 ORDER BY a ORDER BY b").
-	if res == first {
-		isInBraces := false
-		if s, ok := first.(*ast.SetOprStmt); ok && s.IsInBraces {
-			isInBraces = true
-		}
-		if s, ok := first.(*ast.SelectStmt); ok && s.IsInBraces {
-			isInBraces = true
-		}
-		if !isInBraces {
-			return res
-		}
-	}
-
-	// In yacc, when the last element of a UNION chain is a bare (unparenthesized)
-	// SELECT, its ORDER BY/LIMIT are "stolen" and placed on the SetOprStmt
-	// (SetOprStmtWoutLimitOrderBy rule). No trailing ORDER BY/LIMIT is allowed.
-	// Trailing clauses are only valid when the last element is parenthesized
-	// (SetOprStmtWithLimitOrderBy rule). If the SetOprStmt already has stolen
-	// ORDER BY/LIMIT, skip trailing clause parsing to reject e.g.
-	// "SELECT 1 UNION SELECT 1 LIMIT 1 ORDER BY 1".
-	if s, ok := res.(*ast.SetOprStmt); ok && !s.IsInBraces {
-		if s.OrderBy != nil || s.Limit != nil {
-			return res
-		}
-	}
+	// Parse optional ORDER BY and LIMIT applying to the result of the set operation (or the single statement).
+	// This covers cases like `(SELECT ...) UNION (SELECT ...) ORDER BY ... LIMIT ...`
+	// or `(SELECT ...) LIMIT ...` if `first` was a parenthesized subquery.
 
 	hasOuterOrderBy := p.peek().Tp == order
 	pt := p.peek().Tp
@@ -458,7 +409,6 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 // parseSetOprRest continues parsing set operators with precedence >= minPrec.
 // Precedence: UNION/EXCEPT = 1, INTERSECT = 2.
 func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.ResultSetNode {
-	var lastRhs ast.ResultSetNode
 	for {
 		opType := p.peekSetOprType()
 		if opType == nil {
@@ -592,9 +542,8 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			s.With = nil
 			lhsNode = wrapper
 		} else if s, ok := lhs.(*ast.SetOprStmt); ok && s.IsInBraces {
-			// Parenthesized set operation as LHS (e.g., "(SELECT UNION ALL SELECT) INTERSECT ...").
-			// Wrap in SetOprSelectList so the planner can handle it — it only handles
-			// *ast.SelectStmt and *ast.SetOprSelectList children, not bare *ast.SetOprStmt.
+			// Flatten LHS SetOprStmt: take the inner SelectList's Selects and wrap them
+			// in a new SetOprSelectList, plus any ORDER BY/LIMIT/WITH from the inner SetOprStmt.
 			wrapper := &ast.SetOprSelectList{
 				Selects: s.SelectList.Selects,
 			}
@@ -625,22 +574,8 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			stmt.SelectList = &ast.SetOprSelectList{Selects: selects}
 		}
 
-		lhs = stmt
-		lastRhs = rhs
-	}
-
-	// After the loop, steal ORDER BY / LIMIT from the LAST RHS only.
-	// In yacc, SetOprStmtWoutLimitOrderBy is:
-	//   SetOprClauseList SetOpr SelectStmt
-	// where only the final SelectStmt's ORDER BY/LIMIT are "stolen" to the SetOprStmt
-	// level. Intermediate SELECTs in SetOprClauseList keep their ORDER BY/LIMIT
-	// (the planner rejects them via checkSetOprSelectList → ErrWrongUsage).
-	//
-	// We steal from lastRhs (the original RHS node before flattening) rather than
-	// from the last element of Selects, because flattening may have decomposed a
-	// SetOprStmt into its children — the OrderBy/Limit stay on the original object.
-	if stmt, ok := lhs.(*ast.SetOprStmt); ok && lastRhs != nil {
-		if sel, ok := lastRhs.(*ast.SelectStmt); ok && !sel.IsInBraces {
+		// Move ORDER BY / LIMIT from RHS to SetOprStmt if RHS is unparenthesized
+		if sel, ok := rhs.(*ast.SelectStmt); ok && !sel.IsInBraces {
 			if sel.OrderBy != nil {
 				stmt.OrderBy = sel.OrderBy
 				sel.OrderBy = nil
@@ -649,7 +584,8 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 				stmt.Limit = sel.Limit
 				sel.Limit = nil
 			}
-		} else if set, ok := lastRhs.(*ast.SetOprStmt); ok && !set.IsInBraces {
+		} else if set, ok := rhs.(*ast.SetOprStmt); ok && !set.IsInBraces {
+			// If RHS is a SetOprStmt (parsed by recursion), it might have accumulated ORDER BY
 			if set.OrderBy != nil {
 				stmt.OrderBy = set.OrderBy
 				set.OrderBy = nil
@@ -659,6 +595,8 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 				set.Limit = nil
 			}
 		}
+
+		lhs = stmt
 	}
 
 	return lhs

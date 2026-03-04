@@ -97,7 +97,7 @@ func (p *HandParser) parseCreateProcedureStmt() ast.StmtNode {
 	// [IF NOT EXISTS]
 	stmt.IfNotExists = p.acceptIfNotExists()
 
-	stmt.ProcedureName = p.parseTableName()
+	stmt.ProcedureName = p.expectTableName()
 
 	// ( params )
 	p.expect('(')

@@ -437,7 +437,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 // parseSequenceTableArg parses a sequence name as a TableNameExpr.
 // Shared by nextval/lastval/setval function calls and NEXT VALUE FOR.
 func (p *HandParser) parseSequenceTableArg() ast.ExprNode {
-	tName := p.parseTableName()
+	tName := p.expectTableName()
 	if tName == nil {
 		return nil
 	}

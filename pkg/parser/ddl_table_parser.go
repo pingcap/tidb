@@ -58,7 +58,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	// [IF NOT EXISTS]
 	stmt.IfNotExists = p.acceptIfNotExists()
 
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
 		return nil
 	}
@@ -66,7 +66,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	// LIKE table
 	if _, ok := p.accept(like); ok {
 		// CREATE TABLE ... LIKE table
-		stmt.ReferTable = p.parseTableName()
+		stmt.ReferTable = p.expectTableName()
 		// Optional ( ... ) not supported in MySQL for LIKE but TiDB/MariaDB might allow hints/options?
 		// Standard MySQL syntax: CREATE TABLE t1 LIKE t2
 		if stmt.ReferTable == nil {
@@ -76,7 +76,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 		// ( ... )
 		// Check for (LIKE table) syntax
 		if _, ok := p.accept(like); ok {
-			stmt.ReferTable = p.parseTableName()
+			stmt.ReferTable = p.expectTableName()
 			p.expect(')')
 		} else {
 			cols, constraints := p.parseTableElementList()

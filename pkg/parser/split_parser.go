@@ -38,9 +38,8 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 	}
 
 	// Parse TableName
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
-		// Logged by parseTableName? Or return nil?
 		return nil
 	}
 
@@ -176,7 +175,7 @@ func (p *HandParser) parseDistributeTableStmt() ast.StmtNode {
 	p.expect(tableKwd)
 
 	stmt := Alloc[ast.DistributeTableStmt](p.arena)
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
 		return nil
 	}
