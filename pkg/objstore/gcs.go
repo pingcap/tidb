@@ -264,12 +264,12 @@ func (s *GCSStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec stor
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
 	}
-	dstSlot, dstLease, err := s.acquireSlot(false)
+	dstSlot, dstLease, err := s.acquireSlot(true)
 	if err != nil {
 		return err
 	}
 	defer dstLease.release()
-	srcSlot, srcLease, err := es.acquireSlot(false)
+	srcSlot, srcLease, err := es.acquireSlot(true)
 	if err != nil {
 		return err
 	}
@@ -307,6 +307,24 @@ func (s *GCSStorage) getSlots() []*gcsClientSlot {
 	return append([]*gcsClientSlot(nil), s.slots...)
 }
 
+func (s *GCSStorage) pickSlotLocked(start int, skipDraining bool) *gcsClientSlot {
+	if len(s.slots) == 0 {
+		return nil
+	}
+	if start < 0 {
+		start = -start
+	}
+	if skipDraining {
+		for i := range s.slots {
+			slot := s.slots[(start+i)%len(s.slots)]
+			if !slot.draining.Load() {
+				return slot
+			}
+		}
+	}
+	return s.slots[start%len(s.slots)]
+}
+
 func (s *GCSStorage) acquireSlot(skipDraining bool) (*gcsClientSlot, *gcsSlotLease, error) {
 	s.slotsMu.RLock()
 	defer s.slotsMu.RUnlock()
@@ -316,24 +334,20 @@ func (s *GCSStorage) acquireSlot(skipDraining bool) (*gcsClientSlot, *gcsSlotLea
 	}
 
 	start := int(s.idx.Inc())
-	if start < 0 {
-		start = -start
+	slot := s.pickSlotLocked(start, skipDraining)
+	if slot == nil {
+		return nil, nil, errors.Annotate(berrors.ErrStorageUnknown, "gcs storage has no available client slots")
 	}
-	for i := range s.slots {
-		slot := s.slots[(start+i)%len(s.slots)]
-		if skipDraining && slot.draining.Load() {
-			continue
+	lease := newGCSSlotLease(slot)
+	if skipDraining && slot.draining.Load() {
+		lease.release()
+		slot = s.pickSlotLocked(start+1, true)
+		if slot == nil {
+			return nil, nil, errors.Annotate(berrors.ErrStorageUnknown, "gcs storage has no available active client slots")
 		}
-		lease := newGCSSlotLease(slot)
-		if skipDraining && slot.draining.Load() {
-			lease.release()
-			continue
-		}
-		return slot, lease, nil
+		lease = newGCSSlotLease(slot)
 	}
-
-	slot := s.slots[start%len(s.slots)]
-	return slot, newGCSSlotLease(slot), nil
+	return slot, lease, nil
 }
 
 func (s *GCSStorage) newClientSlot(ctx context.Context) (*gcsClientSlot, error) {
@@ -348,6 +362,10 @@ func (s *GCSStorage) newClientSlot(ctx context.Context) (*gcsClientSlot, error) 
 		client: client,
 		handle: client.Bucket(s.gcs.Bucket),
 	}, nil
+}
+
+func (s *GCSStorage) maxRetiredSlots() int {
+	return max(int(s.clientCnt), 1)
 }
 
 func (s *GCSStorage) replaceDrainingSlot(oldSlot *gcsClientSlot) {
@@ -373,6 +391,18 @@ func (s *GCSStorage) replaceDrainingSlot(oldSlot *gcsClientSlot) {
 
 	replaced := false
 	s.slotsMu.Lock()
+	if len(s.retiredSlots) >= s.maxRetiredSlots() {
+		s.slotsMu.Unlock()
+		newSlot.close()
+		oldSlot.draining.Store(false)
+		oldSlot.resetErrorBudget()
+		log.Warn("skip retiring gcs client slot because retired slot limit is reached",
+			zap.String("marker", gcsSlotRetireLogMarker),
+			zap.Int64("slot-id", oldSlot.id),
+			zap.Int("retired-slot-count", len(s.retiredSlots)),
+			zap.Int("max-retired-slots", s.maxRetiredSlots()))
+		return
+	}
 	for i, slot := range s.slots {
 		if slot.id == oldSlot.id {
 			s.slots[i] = newSlot
@@ -397,45 +427,63 @@ func (s *GCSStorage) replaceDrainingSlot(oldSlot *gcsClientSlot) {
 		zap.String("marker", gcsSlotRetireLogMarker),
 		zap.Int64("old-slot-id", oldSlot.id),
 		zap.Int64("new-slot-id", newSlot.id))
+}
 
-	for oldSlot.inflight.Load() > 0 {
-		if oldSlot.closed.Load() {
-			return
-		}
-		time.Sleep(gcsSlotRetireDrainPollInterval)
-	}
-
-	oldSlot.close()
+func (s *GCSStorage) reapRetiredSlots() {
+	var closable []*gcsClientSlot
 
 	s.slotsMu.Lock()
-	delete(s.retiredSlots, oldSlot.id)
+	for id, slot := range s.retiredSlots {
+		if slot.inflight.Load() > 0 {
+			continue
+		}
+		delete(s.retiredSlots, id)
+		closable = append(closable, slot)
+	}
 	s.slotsMu.Unlock()
 
-	log.Info("drained and closed retired gcs client slot",
-		zap.String("marker", gcsSlotRetireLogMarker),
-		zap.Int64("slot-id", oldSlot.id))
+	for _, slot := range closable {
+		slot.close()
+		log.Info("drained and closed retired gcs client slot",
+			zap.String("marker", gcsSlotRetireLogMarker),
+			zap.Int64("slot-id", slot.id))
+	}
+}
+
+func (s *GCSStorage) runRetiredSlotReaper(ctx context.Context) {
+	ticker := time.NewTicker(gcsSlotRetireReapInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.reapRetiredSlots()
+		}
+	}
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
 	s.slotsMu.RLock()
 	defer s.slotsMu.RUnlock()
-	if len(s.slots) == 0 {
+	slot := s.pickSlotLocked(int(s.idx.Inc()), true)
+	if slot == nil {
 		return nil
 	}
-	i := s.idx.Inc() % int64(len(s.slots))
-	return s.slots[i].handle
+	return slot.handle
 }
 
 // getClient gets the GCS client.
 func (s *GCSStorage) getClient() *storage.Client {
 	s.slotsMu.RLock()
 	defer s.slotsMu.RUnlock()
-	if len(s.slots) == 0 {
+	slot := s.pickSlotLocked(int(s.idx.Inc()), true)
+	if slot == nil {
 		return nil
 	}
-	i := s.idx.Inc() % int64(len(s.slots))
-	return s.slots[i].client
+	return slot.client
 }
 
 // GetOptions gets the external storage operations for the GCS.
@@ -445,7 +493,7 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 
 // DeleteFile delete the file in storage
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
-	slot, lease, err := s.acquireSlot(false)
+	slot, lease, err := s.acquireSlot(true)
 	if err != nil {
 		return err
 	}
@@ -485,7 +533,7 @@ func (s *GCSStorage) objectName(name string) string {
 
 // WriteFile writes data to a file to storage.
 func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
-	slot, lease, err := s.acquireSlot(false)
+	slot, lease, err := s.acquireSlot(true)
 	if err != nil {
 		return err
 	}
@@ -505,7 +553,7 @@ func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) er
 
 // ReadFile reads the file from the storage and returns the contents.
 func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
-	slot, lease, err := s.acquireSlot(false)
+	slot, lease, err := s.acquireSlot(true)
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +583,7 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 
 // FileExists return true if file exists.
 func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) {
-	slot, lease, err := s.acquireSlot(false)
+	slot, lease, err := s.acquireSlot(true)
 	if err != nil {
 		return false, err
 	}
@@ -650,7 +698,7 @@ func isSlotRetirementCandidate(err error) bool {
 // function; the second argument is the size in byte of the file determined
 // by path.
 func (s *GCSStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
-	slot, lease, err := s.acquireSlot(false)
+	slot, lease, err := s.acquireSlot(true)
 	if err != nil {
 		return err
 	}
@@ -702,7 +750,7 @@ func (s *GCSStorage) URI() string {
 
 // Create implements Storage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *storeapi.WriterOption) (objectio.Writer, error) {
-	slot, lease, err := s.acquireSlot(false)
+	slot, lease, err := s.acquireSlot(true)
 	if err != nil {
 		return nil, err
 	}
@@ -781,7 +829,7 @@ var (
 
 	gcsSlotRetireHTTP2InternalErrThreshold = int64(32)
 	gcsSlotRetireHTTP2InternalErrWindow    = 30 * time.Second
-	gcsSlotRetireDrainPollInterval         = 100 * time.Millisecond
+	gcsSlotRetireReapInterval              = time.Second
 )
 
 func getConfiguredGCSClientCnt() int64 {
@@ -987,6 +1035,7 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	s.slots = newSlots
 	s.retiredSlots = make(map[int64]*gcsClientSlot)
 	s.slotsMu.Unlock()
+	go s.runRetiredSlotReaper(clientCtx)
 	return nil
 }
 

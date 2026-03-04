@@ -677,14 +677,14 @@ func TestGCSRetireDrainingSlot(t *testing.T) {
 
 	oldThreshold := gcsSlotRetireHTTP2InternalErrThreshold
 	oldWindow := gcsSlotRetireHTTP2InternalErrWindow
-	oldPoll := gcsSlotRetireDrainPollInterval
+	oldReapInterval := gcsSlotRetireReapInterval
 	gcsSlotRetireHTTP2InternalErrThreshold = 1
 	gcsSlotRetireHTTP2InternalErrWindow = time.Minute
-	gcsSlotRetireDrainPollInterval = 10 * time.Millisecond
+	gcsSlotRetireReapInterval = 10 * time.Millisecond
 	defer func() {
 		gcsSlotRetireHTTP2InternalErrThreshold = oldThreshold
 		gcsSlotRetireHTTP2InternalErrWindow = oldWindow
-		gcsSlotRetireDrainPollInterval = oldPoll
+		gcsSlotRetireReapInterval = oldReapInterval
 	}()
 
 	stg := createGCSStore(t)
@@ -705,6 +705,12 @@ func TestGCSRetireDrainingSlot(t *testing.T) {
 		defer stg.slotsMu.RUnlock()
 		return len(stg.slots) == 1 && stg.slots[0].id != oldSlot.id
 	}, 5*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		defer stg.slotsMu.RUnlock()
+		_, ok := stg.retiredSlots[oldSlot.id]
+		return ok
+	}, 5*time.Second, 20*time.Millisecond)
 
 	require.True(t, oldSlot.draining.Load())
 	require.False(t, oldSlot.closed.Load())
@@ -715,10 +721,61 @@ func TestGCSRetireDrainingSlot(t *testing.T) {
 	require.NotEqual(t, oldSlot.id, newSlot.id)
 	require.NoError(t, reader2.Close())
 
+	time.Sleep(50 * time.Millisecond)
+	require.False(t, oldSlot.closed.Load())
+	stg.slotsMu.RLock()
+	_, stillRetired := stg.retiredSlots[oldSlot.id]
+	stg.slotsMu.RUnlock()
+	require.True(t, stillRetired)
+
 	require.NoError(t, reader.Close())
 	require.Eventually(t, func() bool {
-		return oldSlot.closed.Load() && oldSlot.inflight.Load() == 0
+		stg.slotsMu.RLock()
+		_, ok := stg.retiredSlots[oldSlot.id]
+		stg.slotsMu.RUnlock()
+		return oldSlot.closed.Load() && oldSlot.inflight.Load() == 0 && !ok
 	}, 5*time.Second, 20*time.Millisecond)
+}
+
+func TestGCSAcquireSlotSkipsDrainingSlot(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	oldThreshold := gcsSlotRetireHTTP2InternalErrThreshold
+	oldWindow := gcsSlotRetireHTTP2InternalErrWindow
+	oldReapInterval := gcsSlotRetireReapInterval
+	gcsSlotRetireHTTP2InternalErrThreshold = 1
+	gcsSlotRetireHTTP2InternalErrWindow = time.Minute
+	gcsSlotRetireReapInterval = 10 * time.Millisecond
+	defer func() {
+		gcsSlotRetireHTTP2InternalErrThreshold = oldThreshold
+		gcsSlotRetireHTTP2InternalErrWindow = oldWindow
+		gcsSlotRetireReapInterval = oldReapInterval
+	}()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+	stg.clientCnt = 1
+	require.NoError(t, stg.Reset(ctx))
+	require.NoError(t, stg.WriteFile(ctx, "key", []byte("0123456789")))
+
+	reader, err := stg.Open(ctx, "key", nil)
+	require.NoError(t, err)
+	oldSlot := reader.(*gcsObjectReader).lease.slot
+
+	oldSlot.recordRetryableHTTP2InternalError()
+	require.Eventually(t, func() bool {
+		stg.slotsMu.RLock()
+		defer stg.slotsMu.RUnlock()
+		return len(stg.slots) == 1 && stg.slots[0].id != oldSlot.id
+	}, 5*time.Second, 20*time.Millisecond)
+
+	slot, lease, err := stg.acquireSlot(true)
+	require.NoError(t, err)
+	require.NotEqual(t, oldSlot.id, slot.id)
+	lease.release()
+
+	require.NoError(t, reader.Close())
 }
 
 func TestCtxUsage(t *testing.T) {
