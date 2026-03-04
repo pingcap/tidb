@@ -1107,6 +1107,7 @@ var hintTokenMap = map[string]int{
 	"LEADING":                  hintLeading,
 	"SEMI_JOIN_REWRITE":        hintSemiJoinRewrite,
 	"NO_DECORRELATE":           hintNoDecorrelate,
+	"PK_FILTER":                hintPKFilter,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

@@ -252,6 +252,10 @@ var defaultSysVars = []*SysVar{
 		s.AllowDeriveTopN = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptGeneratePKFilter, Value: BoolToOnOff(vardef.DefOptGeneratePKFilter), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AllowGeneratePKFilter = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptAggPushDown, Value: BoolToOnOff(vardef.DefOptAggPushDown), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
