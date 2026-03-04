@@ -39,9 +39,9 @@ const (
 	tidbXReleaseVersionPrefix = "TiDB-X-CLOUD."
 
 	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
-	// tidbxPlaceholderReleaseVersion is the default release version for nextgen when no
+	// tidbXPlaceholderReleaseVersion is the default release version for nextgen when no
 	// release version is injected during build, such as when running in IDE.
-	tidbxPlaceholderReleaseVersion = "v26.3.0"
+	tidbXPlaceholderReleaseVersion = "v26.3.0"
 	// TiDBXVerMinYear is set to 2025 just for sanity check.
 	// our first release of next-gen since 2025
 	TiDBXVerMinYear = 2025
@@ -65,7 +65,7 @@ var (
 func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
 	// the version is not set if we run next-gen tidb from IDE.
 	if releaseVersion == legacyTiDBReleaseVersionPlaceholder {
-		return tidbxPlaceholderReleaseVersion
+		return tidbXPlaceholderReleaseVersion
 	}
 	return releaseVersion
 }

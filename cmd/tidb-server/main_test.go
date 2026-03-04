@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
@@ -94,63 +93,34 @@ func TestSetGlobalVars(t *testing.T) {
 	}
 }
 
-func TestSetVersionByConfig(t *testing.T) {
-	originServerVersion := mysql.ServerVersion
-	originReleaseVersion := mysql.TiDBReleaseVersion
-	originEdition := versioninfo.TiDBEdition
+func TestSetVersionByConfigInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
 	cfg := config.GetGlobalConfig()
-	originCfgServerVersion := cfg.ServerVersion
-	originCfgReleaseVersion := cfg.TiDBReleaseVersion
 	originCfgEdition := cfg.TiDBEdition
 	t.Cleanup(func() {
-		mysql.ServerVersion = originServerVersion
-		mysql.TiDBReleaseVersion = originReleaseVersion
-		versioninfo.TiDBEdition = originEdition
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.ServerVersion = originCfgServerVersion
-			conf.TiDBReleaseVersion = originCfgReleaseVersion
 			conf.TiDBEdition = originCfgEdition
 		})
 	})
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.ServerVersion = "test"
-		conf.TiDBReleaseVersion = "v26.3.0"
 		conf.TiDBEdition = "Starter"
 	})
-	require.NoError(t, initVersions(config.GetGlobalConfig()))
-	if kerneltype.IsNextGen() {
-		require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
-		require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", mysql.ServerVersion)
-	} else {
-		require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
-		require.Equal(t, "test", mysql.ServerVersion)
-		require.Equal(t, "Starter", versioninfo.TiDBEdition)
-	}
+	require.ErrorContains(t, initVersions(config.GetGlobalConfig()), "are not allowed to set in nextgen kernel")
 }
 
 func TestSetVersionByConfigInvalidNextGenReleaseVersion(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen kernel")
 	}
-	originServerVersion := mysql.ServerVersion
 	originReleaseVersion := mysql.TiDBReleaseVersion
-	cfg := config.GetGlobalConfig()
-	originCfgReleaseVersion := cfg.TiDBReleaseVersion
-	originCfgServerVersion := cfg.ServerVersion
 	t.Cleanup(func() {
-		mysql.ServerVersion = originServerVersion
 		mysql.TiDBReleaseVersion = originReleaseVersion
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.ServerVersion = originCfgServerVersion
-			conf.TiDBReleaseVersion = originCfgReleaseVersion
-		})
 	})
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.ServerVersion = ""
-		conf.TiDBReleaseVersion = "v26.13.1"
-	})
+	mysql.TiDBReleaseVersion = "v26.13.1"
 	err := initVersions(config.GetGlobalConfig())
 	require.ErrorContains(t, err, "invalid tidb release version for nextgen kernel")
 }
@@ -159,24 +129,7 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen kernel")
 	}
-	originServerVersion := mysql.ServerVersion
-	originReleaseVersion := mysql.TiDBReleaseVersion
-	cfg := config.GetGlobalConfig()
-	originCfgReleaseVersion := cfg.TiDBReleaseVersion
-	originCfgServerVersion := cfg.ServerVersion
-	t.Cleanup(func() {
-		mysql.ServerVersion = originServerVersion
-		mysql.TiDBReleaseVersion = originReleaseVersion
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.ServerVersion = originCfgServerVersion
-			conf.TiDBReleaseVersion = originCfgReleaseVersion
-		})
-	})
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.ServerVersion = ""
-		conf.TiDBReleaseVersion = "v8.4.0-this-is-a-placeholder"
-	})
 	require.NoError(t, initVersions(config.GetGlobalConfig()))
 	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
 	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", mysql.ServerVersion)

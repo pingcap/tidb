@@ -37,9 +37,13 @@ if echo "${tidb_release_version}" | grep -Eq '^v(2[5-9]|[3-9][0-9])\.(1[0-2]|[1-
     exit 0
 fi
 
-# Nextgen fallback: synthesize date-based major/minor and append commit identity.
+# Nextgen fallback: synthesize date-based major/minor from commit time (UTC),
+# then append commit identity. Using commit timestamp in UTC keeps output
+# deterministic for the same revision across builders in different time zones.
 # This branch is used when NEXT_GEN=1, and TIDB_RELEASE_VERSION is still
 # legacy/non-nextgen (for example v8.5.0 or plain git-describe output on
 # non-release branches).
-tidb_x_release_version_by_date="v$(date '+%y').$(date '+%m' | sed 's/^0//').0-$(git describe --always --dirty --exclude '*')"
+commit_year=$(TZ=UTC0 git log -1 --date=format-local:%y --format=%cd HEAD)
+commit_month=$(TZ=UTC0 git log -1 --date=format-local:%m --format=%cd HEAD | sed 's/^0//')
+tidb_x_release_version_by_date="v${commit_year}.${commit_month}.0-$(git describe --always --dirty --exclude '*')"
 echo "${tidb_x_release_version_by_date}"

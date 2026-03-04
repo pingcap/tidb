@@ -753,16 +753,31 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 }
 
+func validateVersionConfigPolicy(cfg *config.Config) error {
+	// allow users to set version info is a bad feature, we forbid it in next-gen.
+	if kerneltype.IsNextGen() && (len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0) {
+		return errors.New("config options tidb_edition, tidb_release_version and server_version are not allowed to set in nextgen kernel")
+	}
+	return nil
+}
+
+func deriveRuntimeVersionsFromBuildInfo(releaseVersion string) (normalizedReleaseVersion string, serverVersion string, err error) {
+	normalizedReleaseVersion = mysql.NormalizeTiDBReleaseVersionForNextGen(releaseVersion)
+	serverVersion, err = mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
+	if err != nil {
+		return "", "", errors.Annotate(err, "invalid tidb release version for nextgen kernel")
+	}
+	return normalizedReleaseVersion, serverVersion, nil
+}
+
 func initVersions(cfg *config.Config) error {
-	// allow users to set version info is a bad feature, we forbid it in next-gen,
+	if err := validateVersionConfigPolicy(cfg); err != nil {
+		return err
+	}
 	if kerneltype.IsNextGen() {
-		if len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0 {
-			return errors.New("config options tidb_edition, tidb_release_version and server_version are not allowed to set in nextgen kernel")
-		}
-		normalizedReleaseVersion := mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion)
-		serverVersion, err := mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
+		normalizedReleaseVersion, serverVersion, err := deriveRuntimeVersionsFromBuildInfo(mysql.TiDBReleaseVersion)
 		if err != nil {
-			return errors.Annotate(err, "invalid tidb release version for nextgen kernel")
+			return err
 		}
 		mysql.TiDBReleaseVersion = normalizedReleaseVersion
 		mysql.ServerVersion = serverVersion

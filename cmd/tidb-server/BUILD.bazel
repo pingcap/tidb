@@ -114,7 +114,6 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit/testsetup",
-        "//pkg/util/versioninfo",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
