@@ -856,7 +856,6 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	_, err = sv.Validate(vars, "1", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
-
 	_, err = sv.Validate(vars, "0", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
@@ -893,6 +892,38 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	err = sv.SetSessionFromHook(vars, "DISABLE")
 	require.NoError(t, err)
 	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
+}
+
+func TestPerfSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originSize := vardef.ConnectAttrsSize.Load()
+	defer func() {
+		vardef.ConnectAttrsSize.Store(originSize)
+		tk.MustExec("set global performance_schema_session_connect_attrs_size = " + strconv.FormatInt(originSize, 10))
+	}()
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 0")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("0"))
+	require.Equal(t, int64(0), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 65536")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -1")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), vardef.ConnectAttrsSize.Load())
+
+	// Out-of-range values are normalized by int sysvar min/max.
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 70000")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -2")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), vardef.ConnectAttrsSize.Load())
 }
 
 func TestSetTiDBCloudStorageURI(t *testing.T) {

@@ -138,9 +138,38 @@ func TestIntValidation(t *testing.T) {
 	val, err = sv.Validate(vars, "300", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "300", val)
-
 	// out of range but permitted due to auto value
 	val, err = sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+}
+
+func TestPerfSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
+	sv := variable.GetSysVar(vardef.PerfSchemaSessionConnectAttrsSize)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasSessionScope())
+
+	vars := variable.NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "-1", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+
+	val, err = sv.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "65536", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	// Out-of-range values should be clamped by int sysvar validation.
+	val, err = sv.Validate(vars, "65537", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "-2", vardef.ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "-1", val)
 }
