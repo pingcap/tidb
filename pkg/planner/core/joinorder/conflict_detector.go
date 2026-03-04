@@ -460,7 +460,6 @@ func (d *ConflictDetector) makeEdgeInternal(joinType base.JoinType, leftVertexes
 	}
 
 	return e
-
 }
 
 // rightToLeftRule creates a conflict rule: if child's right vertexes appear in S,
