@@ -7,8 +7,8 @@
 # compaction cross-contamination. Run order uses counterbalanced ABBAAB.
 #
 # Prerequisites:
-#   - BR backup of the analyze_profile database containing all tables:
-#     tiup br:nightly backup db --db analyze_profile -s "local:///path/to/backup" --pd ...
+#   - Full BR backup with stats (so stats_* tables and their regions are pre-populated):
+#     tiup br:nightly backup full --ignore-stats=false -s "local:///path/to/backup" --pd ...
 #   - analyze-profile binary built:
 #     cd ~/repos/tidb-dev-hacks/analyze-profile && go build -o analyze-profile .
 #
@@ -477,11 +477,10 @@ main() {
         log "Auto-analyze: OFF, GC interval: 999h"
 
         # ── 3. Restore all tables ─────────────────────────────────────
-        log "Restoring ${DB} from backup..."
+        log "Restoring full backup (including stats)..."
         local abs_backup_path
         abs_backup_path=$(cd "${BACKUP_PATH}" && pwd)
-        tiup br:nightly restore db \
-            --db "${DB}" \
+        tiup br:nightly restore full \
             -s "local://${abs_backup_path}" \
             --pd "${PD_ADDR}" \
             --log-file "${run_dir}/logs/br_restore.log" \
