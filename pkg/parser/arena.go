@@ -23,10 +23,12 @@ const (
 	// Grows by doubling for larger queries.
 	defaultBlockSize = 8 * 1024
 
-	// slabSize is the number of elements pre-allocated per typed slab batch.
+	// slabSize is the maximum number of elements pre-allocated per typed slab batch.
 	// 64 gives a good balance: large enough to amortize allocation overhead,
 	// small enough to avoid excessive waste for small queries.
 	slabSize = 64
+
+	initialSlabSize = 8
 )
 
 // ---------------------------------------------------------------------------
@@ -46,15 +48,26 @@ const (
 
 // slab is a pre-allocated batch of typed objects.
 type slab[T interface{}] struct {
-	items []T
-	idx   int
+	items  []T
+	idx    int
+	nextSz int
 }
 
 // alloc returns a pointer to a zero-initialized element from the slab.
 // Allocates a new batch when the current one is exhausted.
 func (s *slab[T]) alloc() *T {
 	if s.idx >= len(s.items) {
-		s.items = make([]T, slabSize)
+		sz := s.nextSz
+		if sz == 0 {
+			sz = initialSlabSize
+		} else {
+			sz *= 2
+		}
+		if sz > slabSize {
+			sz = slabSize
+		}
+		s.nextSz = sz
+		s.items = make([]T, sz)
 		s.idx = 0
 	}
 	p := &s.items[s.idx]
@@ -67,6 +80,7 @@ func (s *slab[T]) alloc() *T {
 func (s *slab[T]) reset() {
 	s.items = nil
 	s.idx = 0
+	s.nextSz = 0
 }
 
 // ---------------------------------------------------------------------------
