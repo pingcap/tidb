@@ -379,6 +379,9 @@ func buildFromLocal(
 		expectedLen++
 	}
 
+	// TODO: Revisit dependency-check ownership. We currently validate/derive aggregate dependencies
+	// in planner mvmerge, but this may be moved to another stage (for example, MV creation-time checks)
+	// after we evaluate end-to-end guarantees and maintenance cost.
 	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, sumArgNotNullByOffset)
 	if err != nil {
 		return nil, err
@@ -428,6 +431,7 @@ func buildFromLocal(
 	if removedDelta != nil {
 		removedRowsDeltaOff = removedDelta.Offset
 	}
+	// TODO: See the TODO above; dependency validation location may be adjusted in future.
 	if err := validateAggDependencies(
 		outAggInfos,
 		mvColumnOffsetBase,
