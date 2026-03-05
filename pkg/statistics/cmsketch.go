@@ -248,6 +248,15 @@ func QueryValue(sctx planctx.PlanContext, c *CMSketch, t *TopN, val types.Datum)
 	return c.queryHashValue(sctx, h1, h2), nil
 }
 
+// QueryBytes is used to query the count of specified bytes.
+func (c *CMSketch) QueryBytes(d []byte) uint64 {
+	failpoint.Inject("mockQueryBytesMaxUint64", func(val failpoint.Value) {
+		failpoint.Return(uint64(val.(int)))
+	})
+	h1, h2 := murmur3.Sum128(d)
+	return c.queryHashValue(nil, h1, h2)
+}
+
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)

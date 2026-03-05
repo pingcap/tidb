@@ -226,7 +226,6 @@ const (
 		table_id 			BIGINT(64) NOT NULL,
 		is_index 			TINYINT(2) NOT NULL,
 		hist_id 			BIGINT(64) NOT NULL,
-		type                BLOB(256)  NOT NULL,
 		distinct_count 		BIGINT(64) NOT NULL,
 		null_count 			BIGINT(64) NOT NULL DEFAULT 0,
 		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,

@@ -17,7 +17,6 @@ package cardinality
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -211,20 +210,6 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if highVal.Kind() == types.KindString {
 			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
 		}
-		var topNType *types.FieldType
-		if topNType != nil {
-			if types.IsString(topNType.GetType()) {
-				lowVal.SetCollation(topNType.GetCollate())
-			} else if types.IsTypeInteger(topNType.GetType()) {
-				if mysql.HasUnsignedFlag(topNType.GetFlag()) {
-					lowVal = types.NewUintDatum(lowVal.GetUint64())
-				} else {
-					lowVal = types.NewIntDatum(lowVal.GetInt64())
-				}
-
-			}
-		}
-
 		if lowVal.Kind() == types.KindString {
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}

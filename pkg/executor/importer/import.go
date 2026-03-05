@@ -1236,72 +1236,6 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
-const estimationPerType = 256
-
-type compressionRecorder struct {
-	mu              sync.Mutex
-	compressions    map[mydump.Compression][]float64
-	compressionsRes sync.Map
-}
-
-func newCompressionRecorder() *compressionRecorder {
-	return &compressionRecorder{
-		compressions: make(map[mydump.Compression][]float64),
-	}
-}
-
-func getAverageValue(rs []float64) float64 {
-	if len(rs) == 0 {
-		return 1.0
-	}
-	var sum float64
-	for _, r := range rs {
-		sum += r
-	}
-	return sum / float64(len(rs))
-}
-
-func (r *compressionRecorder) estimate(
-	ctx context.Context,
-	fileMeta mydump.SourceFileMeta,
-	store storage.ExternalStorage,
-) float64 {
-	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
-	if compressTp == mydump.CompressionNone {
-		return 1.0
-	}
-	if v, ok := r.compressionsRes.Load(compressTp); ok {
-		return v.(float64)
-	}
-
-	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
-	if err != nil {
-		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
-			zap.String("category", "loader"),
-			zap.String("path", fileMeta.Path),
-			zap.Stringer("type", fileMeta.Type), zap.Error(err),
-		)
-		return 1.0
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.compressions[compressTp] == nil {
-		r.compressions[compressTp] = make([]float64, 0, 256)
-	}
-	rs := r.compressions[compressTp]
-	if len(rs) < estimationPerType {
-		r.compressions[compressTp] = append(rs, compressRatio)
-	}
-	if len(rs) >= estimationPerType {
-		avg := getAverageValue(rs)
-		r.compressionsRes.Store(compressTp, avg)
-		return avg
-	}
-	return compressRatio
-}
-
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
@@ -1415,9 +1349,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		var err error
 		var processedFiles []*mydump.SourceFileMeta
 		var once sync.Once
-
-		cr := newCompressionRecorder()
-
 		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
@@ -1444,7 +1375,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = int64(cr.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
+				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
