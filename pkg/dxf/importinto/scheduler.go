@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -271,6 +273,19 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 	}
 }
 
+func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
+	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, taskMeta.Plan.TableInfo)
+		if err2 != nil {
+			return err2
+		}
+		if !isEmpty {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+		}
+		return nil
+	})
+}
+
 // OnNextSubtasksBatch generate batch of next stage's plan.
 func (sch *importScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
@@ -298,6 +313,13 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
 	)
 	logger.Info("on next subtasks batch")
+
+	// Check table emptiness again after the task is started.
+	if kerneltype.IsClassic() && task.Step == proto.StepInit {
+		if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
@@ -479,11 +501,7 @@ func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
 	case proto.ImportStepWriteAndIngest:
-		if kerneltype.IsClassic() {
-			// will support nextgen later.
-			return proto.ImportStepCollectConflicts
-		}
-		return proto.ImportStepPostProcess
+		return proto.ImportStepCollectConflicts
 	case proto.ImportStepCollectConflicts:
 		return proto.ImportStepConflictResolution
 	case proto.ImportStepImport, proto.ImportStepConflictResolution:
@@ -664,7 +682,6 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 			Delta:    taskMeta.Summary.ImportedRows,
 			Count:    taskMeta.Summary.ImportedRows,
 			InitTime: time.Now(),
-			TableID:  taskMeta.Plan.TableInfo.ID,
 		},
 		TableID: taskMeta.Plan.TableInfo.ID,
 	}

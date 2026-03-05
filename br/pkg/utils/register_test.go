@@ -15,7 +15,6 @@ package utils
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -91,36 +90,38 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 	client := testEtcdCluster.RandClient()
 
 	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
+	defer func() {
+		require.NoError(t, register.Close(ctx))
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-retry-interval", "return(200)"))
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant")
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant")
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-retry-interval")
 	}()
 	err := register.RegisterTask(ctx)
 	require.NoError(t, err)
 
-	time.Sleep(RegisterRetryInternal)
-	list, err := GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(list.Tasks), list)
+	require.Eventually(t, func() bool {
+		list, err := GetImportTasksFrom(ctx, client)
+		return err == nil && len(list.Tasks) == 0
+	}, 5*time.Second, 50*time.Millisecond)
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant")
-	time.Sleep(RegisterRetryInternal)
-	list, err = GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
+	var list RegisterTasksList
+	require.Eventually(t, func() bool {
+		var err error
+		list, err = GetImportTasksFrom(ctx, client)
+		return err == nil && len(list.Tasks) > 0
+	}, 5*time.Second, 50*time.Millisecond)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
-	}
-	require.True(t, len(list.Tasks) > 0)
-	err = register.Close(ctx)
-	// for flaky test, the lease would expire
-	if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
-		require.NoError(t, err)
 	}
 }
 
@@ -133,35 +134,37 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 	client := testEtcdCluster.RandClient()
 
 	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
+	defer func() {
+		require.NoError(t, register.Close(ctx))
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-retry-interval", "return(200)"))
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput")
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant")
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-retry-interval")
 	}()
 	err := register.RegisterTask(ctx)
 	require.NoError(t, err)
 
-	time.Sleep(RegisterRetryInternal)
-	list, err := GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(list.Tasks), list)
+	require.Eventually(t, func() bool {
+		list, err := GetImportTasksFrom(ctx, client)
+		return err == nil && len(list.Tasks) == 0
+	}, 5*time.Second, 50*time.Millisecond)
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput")
-	time.Sleep(RegisterRetryInternal)
-	list, err = GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
+	var list RegisterTasksList
+	require.Eventually(t, func() bool {
+		var err error
+		list, err = GetImportTasksFrom(ctx, client)
+		return err == nil && len(list.Tasks) > 0
+	}, 5*time.Second, 50*time.Millisecond)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
-	}
-	require.True(t, len(list.Tasks) > 0)
-	err = register.Close(ctx)
-	// for flaky test, the lease would expire
-	if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
-		require.NoError(t, err)
 	}
 }

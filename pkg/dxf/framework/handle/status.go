@@ -76,6 +76,21 @@ func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 	return status, nil
 }
 
+// GetActiveTaskSummary returns the number of active tasks (i.e. rows in `mysql.tidb_global_task`)
+// and their breakdown by keyspace.
+func GetActiveTaskSummary(ctx context.Context) (*storage.ActiveTaskSummary, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	summary, err := manager.GetActiveTaskCountsByKeyspace(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return summary, nil
+}
+
 // GetNodesInfo retrieves the number of managed nodes and their CPU count.
 // exported for test.
 func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (nodeCount int, cpuCount int, err error) {
@@ -142,7 +157,7 @@ func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 	// run the subtask on existing nodes, if not enough resources, we will create
 	// new nodes.
 	for _, t := range tasks {
-		needed := t.MaxNodeCount
+		needed := getNeededNodes(t)
 		for i, avail := range availResources {
 			if needed <= 0 {
 				break
@@ -162,6 +177,17 @@ func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 	// make sure 1 node exist for DXF owner and works as a reserved node, to make
 	// small tasks more responsive.
 	return max(len(availResources), 1)
+}
+
+func getNeededNodes(task *proto.TaskBase) int {
+	// for below steps of IMPORT INTO task, we only have 1 subtask and only need
+	// 1 node.
+	if task.Type == proto.ImportInto && (task.Step == proto.ImportStepCollectConflicts ||
+		task.Step == proto.ImportStepConflictResolution ||
+		task.Step == proto.ImportStepPostProcess) {
+		return 1
+	}
+	return task.MaxNodeCount
 }
 
 // GetScheduleFlags returns the schedule flags, such as pause-scale-in flag.

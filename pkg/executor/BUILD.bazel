@@ -180,6 +180,7 @@ go_library(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
+        "//pkg/planner/extstore",
         "//pkg/planner/indexadvisor",
         "//pkg/planner/planctx",
         "//pkg/planner/util",

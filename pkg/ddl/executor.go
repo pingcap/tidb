@@ -1917,9 +1917,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableWithoutValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithoutValidation)
 		case ast.AlterTableAddStatistics:
-			err = e.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
+			err = e.AlterTableAddStatistics()
 		case ast.AlterTableDropStatistics:
-			err = e.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
+			err = e.AlterTableDropStatistics()
 		case ast.AlterTableAttributes:
 			err = e.AlterTableAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionAttributes:
@@ -3889,67 +3889,16 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 	return nil
 }
 
-// AlterTableAddStatistics registers extended statistics for a table.
-func (e *executor) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
-	if !ctx.GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	// Not support Cardinality and Dependency statistics type for now.
-	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
-		return errors.New("Cardinality and Dependency statistics types are not supported now")
-	}
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
-	if err != nil {
-		return err
-	}
-	tblInfo := tbl.Meta()
-	if tblInfo.GetPartitionInfo() != nil {
-		return errors.New("Extended statistics on partitioned tables are not supported now")
-	}
-	colIDs := make([]int64, 0, 2)
-	colIDSet := make(map[int64]struct{}, 2)
-	// Check whether columns exist.
-	for _, colName := range stats.Columns {
-		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
-		if col == nil {
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(colName.Name, ident.Name)
-		}
-		if stats.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("No need to create correlation statistics on the integer primary key column"))
-			return nil
-		}
-		if _, exist := colIDSet[col.ID]; exist {
-			return errors.Errorf("Cannot create extended statistics on duplicate column names '%s'", colName.Name.L)
-		}
-		colIDSet[col.ID] = struct{}{}
-		colIDs = append(colIDs, col.ID)
-	}
-	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {
-		return errors.New("Only support Correlation and Dependency statistics types on 2 columns")
-	}
-	if len(colIDs) < 1 && stats.StatsType == ast.StatsTypeCardinality {
-		return errors.New("Only support Cardinality statistics type on at least 2 columns")
-	}
-	// TODO: check whether covering index exists for cardinality / dependency types.
-
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return e.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
+// AlterTableAddStatistics would register extended statistics for a table.
+// The extended statistics feature has been removed; this always returns an error.
+func (*executor) AlterTableAddStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
-// AlterTableDropStatistics logically deletes extended statistics for a table.
-func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
-	if !ctx.GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
-	if err != nil {
-		return err
-	}
-	tblInfo := tbl.Meta()
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return e.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
+// AlterTableDropStatistics would logically delete extended statistics for a table.
+// The extended statistics feature has been removed; this always returns an error.
+func (*executor) AlterTableDropStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
