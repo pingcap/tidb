@@ -1405,9 +1405,9 @@ func IsImmutableFunc(expr Expression) bool {
 	}
 }
 
-// RemoveDupExprs removes identical exprs. Not that if expr contains functions which
+// RemoveDupExprs removes identical exprs. Note that if expr contains functions which
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
-// if the plan is going to be cached, we cannot remove expressions containing `?` neither.
+// if the plan is going to be cached, we cannot remove expressions containing `?` either.
 func RemoveDupExprs(exprs []Expression) []Expression {
 	if len(exprs) <= 1 {
 		return exprs

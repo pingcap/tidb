@@ -64,11 +64,11 @@ var (
 	// ResultCacheMemoryGauge records the memory usage of result cache on cached tables.
 	ResultCacheMemoryGauge prometheus.Gauge
 
-	// ResultCacheEvictCounter records the number of result cache evictions (lease expiry).
+	// ResultCacheEvictCounter records the number of cached result entries evicted from the result cache.
 	ResultCacheEvictCounter prometheus.Counter
 )
 
-// InitExecutorMetrics initializes excutor metrics.
+// InitExecutorMetrics initializes executor metrics.
 func InitExecutorMetrics() {
 	ExecutorCounter = NewCounterVec(
 		prometheus.CounterOpts{
@@ -174,7 +174,7 @@ func InitExecutorMetrics() {
 			Namespace: "tidb",
 			Subsystem: "executor",
 			Name:      "result_cache_evict_total",
-			Help:      "Total number of result cache evictions (lease expiry).",
+			Help:      "Total number of cached result entries evicted from the cached table result cache.",
 		},
 	)
 }
