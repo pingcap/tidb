@@ -1,34 +1,12 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
-go_library(
-    name = "drr",
-    srcs = [
-        "flush_sim.go",
-        "harness.go",
-        "pd_sim.go",
-        "pd_sim_service.go",
-        "storage_mask.go",
-        "types.go",
-    ],
-    importpath = "github.com/pingcap/tidb/br/pkg/stream/drr",
-    visibility = ["//visibility:public"],
+go_test(
+    name = "drr_test",
+    timeout = "short",
+    srcs = ["integration_test.go"],
+    flaky = True,
     deps = [
-        "//br/pkg/stream",
-        "//br/pkg/stream/backupmetas",
-        "//br/pkg/streamhelper",
-        "//pkg/kv",
-        "//pkg/objstore",
-        "//pkg/objstore/objectio",
-        "//pkg/objstore/storeapi",
-        "//pkg/util/codec",
-        "@com_github_pingcap_kvproto//pkg/brpb",
-        "@com_github_pingcap_kvproto//pkg/logbackuppb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_client_go_v2//txnkv/txnlock",
-        "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
+        "//br/pkg/stream/drr/internal/testutil",
+        "@com_github_stretchr_testify//require",
     ],
 )

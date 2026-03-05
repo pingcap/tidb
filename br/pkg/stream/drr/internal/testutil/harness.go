@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package drr
+package testutil
 
 import (
 	"context"
@@ -106,6 +106,14 @@ func (h *TestHarness) PullMessages(limit int) int {
 // Replicate copies buffered events to downstream.
 func (h *TestHarness) Replicate(ctx context.Context, limit int) (int, error) {
 	return h.CRRWorker.ReplicateBuffered(ctx, limit)
+}
+
+// UploadGlobalCheckpoint uploads task global checkpoint in simulator metadata.
+func (h *TestHarness) UploadGlobalCheckpoint(ctx context.Context, checkpoint uint64) error {
+	if err := h.PDSim.UploadV3GlobalCheckpointForTask(ctx, defaultTaskName, checkpoint); err != nil {
+		return fmt.Errorf("upload global checkpoint %d: %w", checkpoint, err)
+	}
+	return nil
 }
 
 func assertReadableFile(ctx context.Context, storage storeapi.Storage, name string) error {
