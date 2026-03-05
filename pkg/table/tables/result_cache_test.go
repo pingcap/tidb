@@ -109,6 +109,28 @@ func TestResultCacheMaxMemory(t *testing.T) {
 	require.Equal(t, mem, c.MemoryUsage())
 }
 
+func TestResultCachePutSameKey(t *testing.T) {
+	c := newResultSetCache()
+	chk := makeTestChunk()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	fts := []*types.FieldType{ft}
+	key := ResultCacheKey{PlanDigest: [16]byte{9}, ParamHash: 9}
+	pb := []byte("pb")
+
+	require.True(t, c.Put(key, pb, []*chunk.Chunk{chk}, fts))
+	mem := c.MemoryUsage()
+
+	// Put with the same key+paramBytes should be a no-op.
+	require.True(t, c.Put(key, pb, []*chunk.Chunk{chk}, fts))
+	require.Equal(t, 1, c.Len())
+	require.Equal(t, mem, c.MemoryUsage())
+
+	// Same hash key but different paramBytes should be rejected (hash collision).
+	require.False(t, c.Put(key, []byte("other"), []*chunk.Chunk{chk}, fts))
+	_, _, hit := c.Get(key, pb)
+	require.True(t, hit)
+}
+
 func TestResultCacheConcurrency(t *testing.T) {
 	c := newResultSetCache()
 	chk := makeTestChunk()

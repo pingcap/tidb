@@ -228,3 +228,26 @@ func TestCanCache_SystemVar(t *testing.T) {
 	q := compileQuery(t, tk, "select @@sql_mode, id from cached_t")
 	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
 }
+
+func TestCanCache_DatabaseFunc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	q := compileQuery(t, tk, "select database(), id from cached_t")
+	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+}
+
+func TestCanCache_InfoSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	// information_schema tables are represented by PhysicalMemTable and must not be cached.
+	q := compileQuery(t, tk, "select * from cached_t, information_schema.tables limit 1")
+	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+}

@@ -80,6 +80,11 @@ func (c *resultSetCache) Put(key ResultCacheKey, paramBytes []byte, chunks []*ch
 	memSize := estimateChunksMemory(chunks) + int64(len(paramBytes))
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if r, ok := c.items[key]; ok {
+		// Same hash key but different param bytes indicates a hash collision.
+		// Keep the existing entry and reject the new one to avoid cache thrash.
+		return bytes.Equal(r.paramBytes, paramBytes)
+	}
 	if len(c.items) >= c.maxEntries || c.totalMem+memSize > c.maxMemory {
 		return false
 	}
@@ -110,6 +115,9 @@ func (c *resultSetCache) MemoryUsage() int64 {
 func estimateChunksMemory(chunks []*chunk.Chunk) int64 {
 	var total int64
 	for _, chk := range chunks {
+		if chk == nil {
+			continue
+		}
 		total += chk.MemoryUsage()
 	}
 	return total
