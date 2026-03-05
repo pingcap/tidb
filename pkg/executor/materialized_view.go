@@ -100,6 +100,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return err
 	}
+	finalizeCtx := context.WithoutCancel(kctx)
 	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
 	batchSize := int64(e.Ctx().GetSessionVars().MLogPurgeBatchSize)
 	if batchSize <= 0 {
@@ -141,12 +142,14 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		if !purgeHistRunningInserted {
 			return errors.Trace(purgeErr)
 		}
+		purgeErrMsg := purgeErr.Error()
 		if histErr := finalizeMLogPurgeHist(
-			kctx,
+			finalizeCtx,
 			histSQLExec,
 			purgeJobID,
 			purgeHistStatusFailed,
 			totalPurgeRows,
+			&purgeErrMsg,
 		); histErr != nil {
 			return errors.Annotatef(histErr, "purge materialized view log: failed to finalize purge history after error %v", purgeErr)
 		}
@@ -156,12 +159,18 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		if !purgeHistRunningInserted {
 			return nil
 		}
+		failpoint.Inject("mockPurgeMaterializedViewLogFinalizeSuccessErr", func(val failpoint.Value) {
+			if v, ok := val.(bool); ok && v {
+				failpoint.Return(errors.New("mock purge finalize success error"))
+			}
+		})
 		return finalizeMLogPurgeHist(
-			kctx,
+			finalizeCtx,
 			histSQLExec,
 			purgeJobID,
 			purgeHistStatusSuccess,
 			totalPurgeRows,
+			nil,
 		)
 	}
 
@@ -175,7 +184,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 			if isMLogPurgeLockConflict(err) && totalPurgeRows > 0 {
 				if histErr := finalizeSuccess(); histErr != nil {
-					return errors.Trace(histErr)
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+						errors.Annotate(histErr, "purge materialized view log: purge committed but failed to finalize purge history"),
+					)
 				}
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
 					"purge materialized view log on %s.%s stopped before deleting all eligible rows due to lock conflict after deleting %d rows; please retry later",
@@ -211,6 +222,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					return errors.Trace(err)
 				}
 				purgeHistRunningInserted = true
+				failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
 			}
 
 			// Collect all dependent MV IDs (Public + in-building CREATE MATERIALIZED VIEW jobs).
@@ -281,7 +293,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		totalPurgeRows += batchPurgeRows
 		if batchPurgeRows < batchSize {
 			if err := finalizeSuccess(); err != nil {
-				return errors.Trace(err)
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+					errors.Annotate(err, "purge materialized view log: purge committed but failed to finalize purge history"),
+				)
 			}
 			return nil
 		}
@@ -664,14 +678,20 @@ func finalizeMLogPurgeHist(
 	purgeJobID uint64,
 	purgeStatus string,
 	purgeRows int64,
+	purgeFailedReason *string,
 ) error {
+	var purgeFailedReasonArg any
+	if purgeFailedReason != nil {
+		purgeFailedReasonArg = *purgeFailedReason
+	}
 	updateSQL := `UPDATE mysql.tidb_mlog_purge_hist
 	SET
 		PURGE_ENDTIME = NOW(6),
 		PURGE_ROWS = %?,
-		PURGE_STATUS = %?
+		PURGE_STATUS = %?,
+		PURGE_FAILED_REASON = %?
 	WHERE PURGE_JOB_ID = %?`
-	_, err := sqlExec.ExecuteInternal(kctx, updateSQL, purgeRows, purgeStatus, purgeJobID)
+	_, err := sqlExec.ExecuteInternal(kctx, updateSQL, purgeRows, purgeStatus, purgeFailedReasonArg, purgeJobID)
 	failpoint.Inject("mockUpdateMaterializedViewLogPurgeStateErr", func(val failpoint.Value) {
 		if val.(bool) {
 			err = errors.New("mock update mlog purge state error")
