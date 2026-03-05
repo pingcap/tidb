@@ -43,6 +43,7 @@ import (
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1162,7 +1163,7 @@ type SessionVars struct {
 
 	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
 	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
-	SlowLogRules *SlowLogRules
+	SlowLogRules *slowlogrule.SessionSlowLogRules
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
@@ -2320,6 +2321,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 	vars.LoadBindingTimeout = DefTiDBLoadBindingTimeout
+	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(nil)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
