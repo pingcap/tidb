@@ -937,17 +937,19 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
 	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
-		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
+		hasOrder := len(apply.GetChildReqProps(outerIdx).SortItems) > 0
 		_, err := physicalop.SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
-		if noOrder && supportClone {
+		if supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
-		} else {
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
-			} else {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			// When the outer side requires ordering, use a reorder buffer
+			// in the executor to preserve row order while still running
+			// inner workers in parallel.
+			if hasOrder {
+				apply.KeepOrder = true
 			}
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
 		}
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
 		// so we only invoke recursively for its outer child.

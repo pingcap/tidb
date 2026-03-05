@@ -19,7 +19,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -2846,16 +2845,14 @@ func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *prop
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
 func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ge, la := base.GetGEAndLogicalOp[*logicalop.LogicalApply](super)
-	_, _, schema0, _ := getJoinChildStatsAndSchema(ge, la)
+	stats0, _, schema0, _ := getJoinChildStatsAndSchema(ge, la)
 	if !prop.AllColsFromSchema(schema0) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
-	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
-		return nil, true, nil
-	}
+	// Parallel Apply now supports ordered output via a reorder buffer,
+	// so we no longer reject sort properties here.
 	join := GetHashJoin(ge, la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
@@ -2878,6 +2875,27 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		canUseCache = false
 	}
 
+	// Compute the expected row count for the outer child.  For a semi/anti-semi
+	// join, each outer row produces at most one output row, so if the parent
+	// expects N rows we need N / selectivity outer rows.  For other join types
+	// the ratio may differ, but using the Apply's own selectivity is still a
+	// reasonable approximation.
+	outerExpectedCnt := math.MaxFloat64
+	if prop.ExpectedCnt < math.MaxFloat64 {
+		outerRowCount := stats0.RowCount
+		applyRowCount := la.StatsInfo().RowCount
+		if applyRowCount > 0 && outerRowCount > 0 {
+			selectivity := applyRowCount / outerRowCount
+			if selectivity > 0 {
+				outerExpectedCnt = prop.ExpectedCnt / selectivity
+			}
+		}
+		// The outer side can never need fewer rows than the parent expects.
+		if outerExpectedCnt < prop.ExpectedCnt {
+			outerExpectedCnt = prop.ExpectedCnt
+		}
+	}
+
 	apply := physicalop.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -2886,7 +2904,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil

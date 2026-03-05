@@ -65,9 +65,12 @@ func TestParallelApplyPlan(t *testing.T) {
 	q3 := "select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a) order by t1.a"
 	checkApplyPlan(t, tk, q3, 0)
 	tk.MustExec("alter table t add index idx(a)")
+	// With ordered parallel apply, ordering is now preserved via a reorder
+	// buffer so we no longer reject the plan.  The Apply should show the
+	// configured concurrency.
 	checkApplyPlan(t, tk, q3, 1)
-	tk.MustQuery(q3).Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Parallel Apply rejects the possible order properties of its outer child currently"))
+	tk.MustQuery(q3).Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func TestApplyColumnType(t *testing.T) {
@@ -504,4 +507,98 @@ func TestParallelApplyCorrectness(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+}
+
+func TestOrderedParallelApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,10),(2,20),(3,30),(4,40),(5,50),(6,60),(7,70),(8,80),(9,90),(10,100)")
+	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
+
+	// ----------------------------------------------------------------
+	// 1. ORDER BY with scalar correlated subquery – verify row order
+	//    is preserved (not just sorted after the fact).
+	// ----------------------------------------------------------------
+	q1 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+	// Serial: get baseline
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult := tk.MustQuery(q1)
+	serialRows := serialResult.Rows()
+
+	// Parallel ordered: should produce identical order.
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=5")
+	checkApplyPlan(t, tk, q1, 5)
+	tk.MustQuery(q1).Check(testkit.RowsWithSep(" ", flattenRows(serialRows)...))
+
+	// ----------------------------------------------------------------
+	// 2. ORDER BY + LIMIT – should use Limit (not TopN) because the
+	//    ordered parallel apply preserves outer order.
+	// ----------------------------------------------------------------
+	q2 := "select t1.a, t1.b from t1 where t1.b > (select min(t2.b) from t2 where t2.a >= t1.a) order by t1.a limit 5"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult2 := tk.MustQuery(q2)
+	serialRows2 := serialResult2.Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	checkApplyPlan(t, tk, q2, 5)
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(serialRows2)...))
+
+	// ----------------------------------------------------------------
+	// 3. EXISTS semi-join with ORDER BY – common pattern from the
+	//    correlate branch.
+	// ----------------------------------------------------------------
+	q3 := "select t1.a from t1 where exists (select 1 from t2 where t2.a = t1.a and t2.b > 3) order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult3 := tk.MustQuery(q3)
+	serialRows3 := serialResult3.Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(serialRows3)...))
+
+	// ----------------------------------------------------------------
+	// 4. Varying concurrency levels – results must be identical.
+	// ----------------------------------------------------------------
+	q4 := "select t1.a, (select count(*) from t2 where t2.a > t1.a) from t1 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected := tk.MustQuery(q4).Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	for _, cc := range []int{2, 3, 5, 7, 10} {
+		tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency=%d", cc))
+		tk.MustQuery(q4).Check(testkit.RowsWithSep(" ", flattenRows(expected)...))
+	}
+
+	// ----------------------------------------------------------------
+	// 5. Ordered parallel apply with OFFSET.
+	// ----------------------------------------------------------------
+	q5 := "select t1.a, t1.b from t1 where t1.b > (select min(t2.b) from t2 where t2.a >= t1.a) order by t1.a limit 3 offset 2"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult5 := tk.MustQuery(q5)
+	serialRows5 := serialResult5.Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=5")
+	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(serialRows5)...))
+}
+
+// flattenRows converts [][]interface{} from MustQuery().Rows() into
+// []string suitable for testkit.RowsWithSep(" ", ...).
+func flattenRows(rows [][]any) []string {
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		s := ""
+		for i, col := range row {
+			if i > 0 {
+				s += " "
+			}
+			s += fmt.Sprintf("%v", col)
+		}
+		result = append(result, s)
+	}
+	return result
 }
