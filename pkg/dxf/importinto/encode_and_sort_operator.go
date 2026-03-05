@@ -200,7 +200,7 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
 	memPerCon := resource.MemoryPerCore()
-	// we use writerMemBudgetRatio of total available memory for data writer,
+	// we use writerMemBudgetRatio of available memory per core for the writer,
 	// and the remaining memory for encoding and other stuffs.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
 	// takes 3 shares, and each index KV writer takes 1 share.
