@@ -21,8 +21,8 @@ import (
 
 // Statement summary metrics.
 var (
-	// StmtSummaryWindowRecordCount is a gauge that tracks the number of distinct
-	// statement digests in the current statement summary window.
+	// StmtSummaryWindowRecordCount is a gauge that tracks the number of statement
+	// summary records in the current statement summary window.
 	StmtSummaryWindowRecordCount prometheus.Gauge
 
 	// StmtSummaryWindowEvictedCount is a gauge that tracks the number of LRU
@@ -38,7 +38,7 @@ func InitStmtSummaryMetrics() {
 			Namespace: "tidb",
 			Subsystem: "stmt_summary",
 			Name:      "window_record_count",
-			Help:      "The number of distinct statement digests in the current statement summary window (V2 persistent mode only).",
+			Help:      "The number of statement summary records in the current statement summary window (V2 persistent mode only).",
 		})
 
 	StmtSummaryWindowEvictedCount = metricscommon.NewGauge(
