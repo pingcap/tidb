@@ -85,7 +85,11 @@ func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 	if year < TiDBXVerMinYear || year > TiDBXVerMaxYear || ver.Minor < 1 || ver.Minor > 12 {
 		return "", errors.Errorf("invalid TiDB release version %q, the semantic version part should be in [2-digit-year].[month].[fix-version]-[xxx] format", releaseVersion)
 	}
-	return fmt.Sprintf("%s%d%02d.%d", tidbXReleaseVersionPrefix, year, ver.Minor, ver.Patch), nil
+	preRelease := string(ver.PreRelease)
+	if preRelease != "" {
+		preRelease = "-" + preRelease
+	}
+	return fmt.Sprintf("%s%d%02d.%d%s", tidbXReleaseVersionPrefix, year, ver.Minor, ver.Patch, preRelease), nil
 }
 
 // BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version

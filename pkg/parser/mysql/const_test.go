@@ -107,7 +107,7 @@ func TestBuildTiDBXReleaseVersion(t *testing.T) {
 
 	tidbXVersion, err = BuildTiDBXReleaseVersion("v26.3.0-xxx")
 	require.NoError(t, err)
-	require.Equal(t, "TiDB-X-CLOUD.202603.0", tidbXVersion)
+	require.Equal(t, "TiDB-X-CLOUD.202603.0-xxx", tidbXVersion)
 
 	serverVersion, err := BuildTiDBXServerVersion("v26.3.0")
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestBuildTiDBXReleaseVersion(t *testing.T) {
 
 	serverVersion, err = BuildTiDBXServerVersion("v26.3.0-xxx")
 	require.NoError(t, err)
-	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", serverVersion)
+	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0-xxx", serverVersion)
 
 	for _, ver := range []string{"26.1.1", "v26xxxx", "v24.1.1", "v26.0.1", "v26.13.1"} {
 		_, err = BuildTiDBXReleaseVersion(ver)

@@ -542,6 +542,7 @@ func nextGenDetectServerInfoCases() []detectServerInfoCase {
 		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(0, 0, 0, "")},
 		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(0, 0, 0, "")},
 		{10, "8.0.11-TiDB-X-CLOUD.202603.0", ServerTypeTiDB, mkVer(26, 3, 0, "")},
+		{10, "8.0.11-TiDB-X-CLOUD.202603.0-xxxx", ServerTypeTiDB, mkVer(26, 3, 0, "")},
 		{11, "Release Version: TiDB-X-CLOUD.202603.0\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 0, "")},
 	}
 }

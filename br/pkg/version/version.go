@@ -402,7 +402,7 @@ var (
 )
 
 func parseTiDBXVersionToSemver(versionStr string) string {
-	// NextGen exposes release version as TiDB-X-CLOUD.<YYYYMM>.<patch>.
+	// NextGen exposes release version as TiDB-X-CLOUD.<YYYYMM>.<patch>[-<pre-release>].
 	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
 	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
 	// BR version checks can keep working on semver-like values.
