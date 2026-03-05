@@ -160,18 +160,12 @@ Sort	0.30	root		planner__core__grouped_ranges_order_by.t2.a:desc, planner__core_
 └─IndexReader	0.30	root		index:Projection
   └─Projection	0.30	cop[tikv]		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
     └─IndexRangeScan	0.30	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo
-select a,c from t where a = 3 and b in (1, 3, 5) order by a desc, c desc;
+select a,c from t2 where a = 3 and b in (1, 3, 5) order by a desc, c desc;
 a	c
 3	10
 3	8
-3	6
 3	3
 3	3
-3	3
-3	2
-3	2
-3	2
-3	1
 3	1
 3	1
 explain format = 'brief' select a,c from t2 where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
@@ -182,18 +176,15 @@ Sort	0.10	root		planner__core__grouped_ranges_order_by.t2.a:desc, planner__core_
     ├─IndexRangeScan(Build)	0.30	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[2 1,2 1], [2 3,2 3], [2 5,2 5], keep order:false, stats:pseudo
     └─Selection(Probe)	0.10	cop[tikv]		gt(planner__core__grouped_ranges_order_by.t2.d, 60)
       └─TableRowIDScan	0.30	cop[tikv]	table:t2	keep order:false, stats:pseudo
-select a,c from t where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
+select a,c from t2 where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
 a	c
-2	9
 2	7
 2	5
-2	3
+2	4
 2	3
 2	3
 2	2
 2	2
-2	2
-2	1
 2	1
 2	1
 explain format = 'brief' select b,c from t2 where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
@@ -201,7 +192,7 @@ id	estRows	task	access object	operator info
 IndexReader	1.00	root		index:Projection
 └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.t2.b, planner__core__grouped_ranges_order_by.t2.c
   └─IndexRangeScan	1.00	cop[tikv]	table:t2, index:iabc(a, b, c)	range:(1 1 1,1 1 +inf], (1 3 1,1 3 +inf], (1 5 1,1 5 +inf], keep order:true, stats:pseudo
-select b,c from t where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
+select b,c from t2 where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
 b	c
 1	2
 1	3
@@ -209,9 +200,6 @@ b	c
 3	2
 3	3
 3	6
-5	2
-5	3
-5	8
 drop table if exists tp;
 CREATE TABLE tp (
 a int,
