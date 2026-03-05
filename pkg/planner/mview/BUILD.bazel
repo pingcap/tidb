@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "mvmerge",
+    name = "mview",
     srcs = ["mvmerge.go"],
-    importpath = "github.com/pingcap/tidb/pkg/planner/mvmerge",
+    importpath = "github.com/pingcap/tidb/pkg/planner/mview",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
@@ -23,13 +23,13 @@ go_library(
 )
 
 go_test(
-    name = "mvmerge_test",
+    name = "mview_test",
     timeout = "short",
     srcs = ["mvmerge_test.go"],
     flaky = True,
     shard_count = 6,
     deps = [
-        ":mvmerge",
+        ":mview",
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/meta/model",
