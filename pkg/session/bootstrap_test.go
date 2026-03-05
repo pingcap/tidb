@@ -53,7 +53,7 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
-	require.Len(t, systemTablesOfBaseNextGenVersion, 53, "DO NOT CHANGE IT")
+	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
 	for _, verBoot := range versionedBootstrapSchemas {
 		for _, schInfo := range verBoot.databases {
 			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
@@ -1867,28 +1867,29 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 
 func TestVersionedBootstrapSchemas(t *testing.T) {
 	// make sure that later change won't affect existing version schemas.
-	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 53)
+	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
+	// version 2: stats_table_data
+	require.Len(t, versionedBootstrapSchemas[1].databases[0].Tables, 1)
 
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
-	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
 
 			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
-				allIDs = append(allIDs, tbl.ID)
+				allTableIDs = append(allTableIDs, tbl.ID)
 			}
 		}
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
-	slices.Sort(allIDs)
-	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+	slices.Sort(allTableIDs)
+	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

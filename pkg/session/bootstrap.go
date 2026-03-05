@@ -329,7 +329,6 @@ var (
 		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
-		{ID: metadef.StatsTableDataTableID, Name: "stats_table_data", SQL: metadef.CreateStatsTableDataTable},
 	}
 )
 
@@ -347,6 +346,11 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfBaseNextGenVersion},
 		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+	{ver: meta.NextGenBootTableVersion2, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: []TableBasicInfo{
+			{ID: metadef.StatsTableDataTableID, Name: "stats_table_data", SQL: metadef.CreateStatsTableDataTable},
+		}},
 	}},
 }
 
