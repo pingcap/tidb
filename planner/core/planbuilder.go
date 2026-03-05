@@ -3332,6 +3332,9 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		if err != nil {
 			return nil, err
 		}
+		for _, user := range raw.Users {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user.User, "RESTRICTED_USER_ADMIN")
+		}
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema(raw.Kind))
 		if raw.Kind == ast.BRIEKindRestore {
@@ -3342,8 +3345,18 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
 		}
 	case *ast.GrantRoleStmt:
+<<<<<<< HEAD:planner/core/planbuilder.go
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
+=======
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
+		// If any of the roles are RESTRICTED, require RESTRICTED_ROLE_ADMIN
+		for _, role := range raw.Roles {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, &auth.UserIdentity{Username: role.Username, Hostname: role.Hostname},
+				"RESTRICTED_USER_ADMIN")
+		}
+>>>>>>> 3328284abcb (privileges,planner: implement checks for `RESTRICTED_USER_ADMIN` for granting privileges and roles (#64297)):pkg/planner/core/planbuilder.go
 	case *ast.RevokeRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
@@ -3351,11 +3364,19 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		for _, user := range raw.Users {
 			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
+		// If any of the roles are RESTRICTED, require RESTRICTED_ROLE_ADMIN
+		for _, role := range raw.Roles {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, &auth.UserIdentity{Username: role.Username, Hostname: role.Hostname},
+				"RESTRICTED_USER_ADMIN")
+		}
 	case *ast.RevokeStmt:
 		var err error
 		b.visitInfo, err = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 		if err != nil {
 			return nil, err
+		}
+		for _, user := range raw.Users {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user.User, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
