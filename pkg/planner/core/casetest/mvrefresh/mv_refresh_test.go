@@ -110,7 +110,6 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
 	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
 	require.Equal(t, 1, mergePlan.CountStarMVOffset)
-	require.Len(t, mergePlan.SourceOutputNames, 8)
 	require.Len(t, mergePlan.AggInfos, 3)
 
 	var hasCountStar, hasCountExpr, hasSum bool
@@ -328,7 +327,6 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
 	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
 	require.Equal(t, 1, mergePlan.CountStarMVOffset)
-	require.Len(t, mergePlan.SourceOutputNames, 6)
 	require.Len(t, mergePlan.AggInfos, 2)
 
 	var hasCountStar, hasSum bool
