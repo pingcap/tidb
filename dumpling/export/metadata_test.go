@@ -179,7 +179,7 @@ func TestMysqlWithFollowersMetaData_84(t *testing.T) {
 		AddRow(logFile, pos, "", "", gtidSet)
 	followerRows := sqlmock.NewRows([]string{"Exec_Source_Log_Pos", "Relay_Source_Log_File", "Source_Host", "Executed_Gtid_Set"}).
 		AddRow("256529431", "mysql-bin.001821", "192.168.1.100", gtidSet)
-	mock.ExpectQuery("SHOW BINARY LOG  STATUS").WillReturnRows(rows)
+	mock.ExpectQuery("SHOW BINARY LOG STATUS").WillReturnRows(rows)
 	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
 	mock.ExpectQuery("SHOW REPLICA STATUS").WillReturnRows(followerRows)
 
