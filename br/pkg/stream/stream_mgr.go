@@ -376,19 +376,19 @@ func FilterPathByTs(path string, left, right uint64) string {
 		return path
 	}
 
-	minDefaultTs := metaFile.MinDefaultTS
-	if minDefaultTs == 0 || minDefaultTs > metaFile.MinTS {
-		log.Warn("minDefaultTs is not correct, won't filter out this file",
+	minBeginTsInDefaultCf := metaFile.MinBeginTsInDefaultCf
+	if minBeginTsInDefaultCf == 0 || minBeginTsInDefaultCf > metaFile.MinTS {
+		log.Warn("minBeginTsInDefaultCf is not correct, won't filter out this file",
 			zap.String("file", path),
 			zap.Uint64("flushTs", metaFile.FlushTS),
 			zap.Uint64("storeID", metaFile.StoreID),
 			zap.Uint64("minTs", metaFile.MinTS),
-			zap.Uint64("minDefaultTs", minDefaultTs),
+			zap.Uint64("minBeginTsInDefaultCf", minBeginTsInDefaultCf),
 		)
 		return path
 	}
 
-	if right < minDefaultTs || metaFile.MaxTS < left {
+	if right < minBeginTsInDefaultCf || metaFile.MaxTS < left {
 		return ""
 	}
 
