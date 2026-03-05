@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/parser/ast",
-        "//pkg/parser/mysql",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/util",

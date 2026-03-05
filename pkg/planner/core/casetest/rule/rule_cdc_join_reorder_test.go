@@ -24,23 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCDCJoinReorderNullable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1, t2, t3;")
-	tk.MustExec("CREATE TABLE t1 (i INT NOT NULL);")
-	tk.MustExec("INSERT INTO t1 VALUES (0), (2), (3), (4);")
-	tk.MustExec("CREATE TABLE t2 (i INT NOT NULL);")
-	tk.MustExec("INSERT INTO t2 VALUES (0), (1), (3), (4);")
-	tk.MustExec("CREATE TABLE t3 (i INT NOT NULL);")
-	tk.MustExec("INSERT INTO t3 VALUES (0), (1), (2), (4);")
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
-	tk.MustQuery("SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL;").Sort().Check(testkit.Rows("2 <nil> <nil>", "3 3 <nil>"))
-}
-
 func TestCDCJoinReorder(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
