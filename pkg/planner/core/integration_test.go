@@ -1662,6 +1662,43 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 			}
 		}
 		require.True(t, foundRangeAccess, caller+": LE correlated predicate should be in index access conditions")
+
+		// Correctness for LE.
+		// (1,1) -> exists (1,1) with b=1, a=1 <= 1 -> included (self-match)
+		// (2,2) -> exists (2,2) with b=2, a=2 <= 2 -> included (self-match)
+		// (3,3) -> exists (3,3) with b=3, a=3 <= 3 -> included (self-match)
+		// (4,4) -> exists (4,4) with b=4, a=4 <= 4 -> included (self-match)
+		// (5,5) -> exists (5,5) with b=5, a=5 <= 5 -> included (self-match)
+		// (10,1) -> exists (1,1) with b=1, a=1 <= 10 -> included
+		// (20,2) -> exists (2,2) with b=2, a=2 <= 20 -> included
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a <= t1a.a) order by t1a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
+
+		// GE with correlated column.
+		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[4])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "ge(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": GE correlated predicate should be in index access conditions")
+
+		// Correctness for GE.
+		// (1,1) -> exists (1,1) with b=1, a=1 >= 1 -> included (self-match)
+		// (2,2) -> exists (2,2) with b=2, a=2 >= 2 -> included (self-match)
+		// (3,3) -> exists (3,3) with b=3, a=3 >= 3 -> included (self-match)
+		// (4,4) -> exists (4,4) with b=4, a=4 >= 4 -> included (self-match)
+		// (5,5) -> exists (5,5) with b=5, a=5 >= 5 -> included (self-match)
+		// (10,1) -> exists (10,1) with b=1, a=10 >= 10 -> included (self-match)
+		// (20,2) -> exists (20,2) with b=2, a=20 >= 20 -> included (self-match)
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a) order by t1a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
 	})
 }
 
