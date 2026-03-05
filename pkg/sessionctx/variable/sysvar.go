@@ -3625,27 +3625,27 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope:    vardef.ScopeGlobal,
-		Name:     vardef.TiDBSlowLogMaxPerSec,
+		Scope:    ScopeGlobal,
+		Name:     TiDBSlowLogMaxPerSec,
 		Value:    "0",
-		Type:     vardef.TypeInt,
+		Type:     TypeInt,
 		MinValue: 0, MaxValue: 1000000,
 		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
 			d := TidbOptInt(s, 0)
-			if d == int(vardef.GlobalSlowLogRateLimiter.Limit()) {
+			if d == int(GlobalSlowLogRateLimiter.Limit()) {
 				return nil
 			}
 
 			if d == 0 {
-				vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
+				GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
 				return nil
 			}
-			vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
-			vardef.GlobalSlowLogRateLimiter.SetBurst(d)
+			GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			GlobalSlowLogRateLimiter.SetBurst(d)
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
+			return strconv.Itoa(int(GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
 }
