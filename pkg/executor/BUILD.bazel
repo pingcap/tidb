@@ -394,6 +394,7 @@ go_test(
         "split_test.go",
         "stale_txn_test.go",
         "stmtsummary_test.go",
+        "table_reader_tablesplit_test.go",
         "table_readers_required_rows_test.go",
         "temporary_table_test.go",
         "tikv_regions_peers_table_test.go",
