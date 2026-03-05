@@ -62,7 +62,6 @@ func newResultSetCache() *resultSetCache {
 // Get looks up the cache. On hit it verifies paramBytes to guard against hash
 // collisions, then increments hitCount.
 func (c *resultSetCache) Get(key ResultCacheKey, paramBytes []byte) ([]*chunk.Chunk, []*types.FieldType, bool) {
-	return nil, nil, false
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if r, ok := c.items[key]; ok {
@@ -78,7 +77,6 @@ func (c *resultSetCache) Get(key ResultCacheKey, paramBytes []byte) ([]*chunk.Ch
 // Put inserts into the cache. If limits are exceeded the entry is rejected
 // (no eviction — the entire cache is cleared when the lease expires).
 func (c *resultSetCache) Put(key ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
-	return false
 	memSize := estimateChunksMemory(chunks) + int64(len(paramBytes))
 	c.mu.Lock()
 	defer c.mu.Unlock()
