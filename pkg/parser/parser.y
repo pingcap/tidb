@@ -214,7 +214,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	longblobType      "LONGBLOB"
 	longtextType      "LONGTEXT"
 	lowPriority       "LOW_PRIORITY"
-	masking           "MASKING"
 	match             "MATCH"
 	maxValue          "MAXVALUE"
 	mediumblobType    "MEDIUMBLOB"
@@ -503,6 +502,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	location                   "LOCATION"
 	locked                     "LOCKED"
 	logs                       "LOGS"
+	masking                    "MASKING"
 	master                     "MASTER"
 	maxConnectionsPerHour      "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum                 "MAX_IDXNUM"
@@ -918,6 +918,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
+	statsDelta                 "STATS_DELTA"
 	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
 	statsHistograms            "STATS_HISTOGRAMS"
@@ -1219,6 +1220,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	Fields                                 "Fields clause"
 	FieldList                              "field expression list"
 	FlushOption                            "Flush option"
+	ClusterOpt                             "Cluster option"
 	ForceOpt                               "Force opt"
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
@@ -1587,6 +1589,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ProcedureFetchList                     "Procedure fetch into variables"
 	ProcedureHandlerType                   "Procedure handler operation type"
 	ProcedureHcondList                     "Procedure handler condition value list"
+	SplitOptionBetween                     "Split index option, between format"
+	SplitIndexOption                       "Split index option in CREATE/ALTER table"
+	SplitIndexList                         "Split index option list in CREATE table"
+	SplitIndexListOpt                      "Optional split index option list"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1668,6 +1674,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence masking
 %precedence statsExtended
 %precedence as
 %precedence placement
@@ -1806,6 +1813,50 @@ AlterTableStmt:
 			Table:          $4.(*ast.TableName),
 			PartitionNames: $7.([]ast.CIStr),
 			ReplicaKind:    ast.CompactReplicaKindTiFlash,
+		}
+	}
+
+SplitIndexListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		$$ = nil
+	}
+|	SplitIndexList %prec lowerThanComma
+	{
+		$$ = $1.([]*ast.SplitIndexOption)
+	}
+
+SplitIndexList:
+	SplitIndexOption
+	{
+		$$ = []*ast.SplitIndexOption{$1.(*ast.SplitIndexOption)}
+	}
+|	SplitIndexList SplitIndexOption
+	{
+		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
+	}
+
+SplitIndexOption:
+	"SPLIT" "PRIMARY" "KEY" SplitOptionBetween
+	{
+		$$ = &ast.SplitIndexOption{
+			PrimaryKey: true,
+			IndexName:  ast.NewCIStr(mysql.PrimaryKeyName),
+			SplitOpt:   $4.(*ast.SplitOption),
+		}
+	}
+|	"SPLIT" "INDEX" Identifier SplitOptionBetween
+	{
+		$$ = &ast.SplitIndexOption{
+			IndexName: ast.NewCIStr($3),
+			SplitOpt:  $4.(*ast.SplitOption),
+		}
+	}
+|	"SPLIT" SplitOptionBetween
+	{
+		$$ = &ast.SplitIndexOption{
+			TableLevel: true,
+			SplitOpt:   $2.(*ast.SplitOption),
 		}
 	}
 
@@ -2189,6 +2240,13 @@ AlterTableSpecSingleOpt:
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
 	}
+|	SplitIndexOption
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:         ast.AlterTableSplitIndex,
+			SplitIndex: $1.(*ast.SplitIndexOption),
+		}
+	}
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
 		partitionMethod := ast.PartitionMethod{Expr: $7}
@@ -2397,6 +2455,47 @@ AlterTableSpec:
 			Statistics:  statsSpec,
 		}
 	}
+|	"ADD" "MASKING" Type ColumnOptionListOpt ColumnPosition
+	{
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      $3.(*types.FieldType),
+			Options: $4.(ast.ColumnOptionList).Options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfNotExists: false,
+			Tp:          ast.AlterTableAddColumns,
+			NewColumns:  []*ast.ColumnDef{colDef},
+			Position:    $5.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" "MASKING" "SERIAL" ColumnOptionListOpt ColumnPosition
+	{
+		// Keep behavior consistent with `ColumnDef: ColumnName "SERIAL" ...`.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		options = append(options, $4.(ast.ColumnOptionList).Options...)
+		tp.AddFlag(mysql.UnsignedFlag)
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      tp,
+			Options: options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfNotExists: false,
+			Tp:          ast.AlterTableAddColumns,
+			NewColumns:  []*ast.ColumnDef{colDef},
+			Position:    $5.(*ast.ColumnPosition),
+		}
+	}
 |	"ADD" "MASKING" "POLICY" PolicyName "ON" '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
 	{
 		state := $12.(*ast.MaskingPolicyState)
@@ -2430,7 +2529,15 @@ AlterTableSpec:
 			MaskingPolicyName: ast.NewCIStr($4),
 		}
 	}
-|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier EqOpt Expression
+|	"DROP" "MASKING" RestrictOrCascadeOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			IfExists:      false,
+			Tp:            ast.AlterTableDropColumn,
+			OldColumnName: &ast.ColumnName{Name: ast.NewCIStr("masking")},
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier "=" Expression
 	{
 		if !strings.EqualFold($6, "expression") {
 			yylex.AppendError(yylex.Errorf("unsupported masking policy modify option: %s", $6))
@@ -2440,6 +2547,47 @@ AlterTableSpec:
 			Tp:                ast.AlterTableModifyMaskingPolicyExpression,
 			MaskingPolicyName: ast.NewCIStr($4),
 			MaskingPolicyExpr: $8,
+		}
+	}
+|	"MODIFY" "MASKING" Type ColumnOptionListOpt ColumnPosition
+	{
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      $3.(*types.FieldType),
+			Options: $4.(ast.ColumnOptionList).Options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfExists:   false,
+			Tp:         ast.AlterTableModifyColumn,
+			NewColumns: []*ast.ColumnDef{colDef},
+			Position:   $5.(*ast.ColumnPosition),
+		}
+	}
+|	"MODIFY" "MASKING" "SERIAL" ColumnOptionListOpt ColumnPosition
+	{
+		// Keep behavior consistent with `ColumnDef: ColumnName "SERIAL" ...`.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		options = append(options, $4.(ast.ColumnOptionList).Options...)
+		tp.AddFlag(mysql.UnsignedFlag)
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      tp,
+			Options: options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfExists:   false,
+			Tp:         ast.AlterTableModifyColumn,
+			NewColumns: []*ast.ColumnDef{colDef},
+			Position:   $5.(*ast.ColumnPosition),
 		}
 	}
 |	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
@@ -3346,7 +3494,7 @@ SplitRegionStmt:
 		}
 	}
 
-SplitOption:
+SplitOptionBetween:
 	"BETWEEN" RowValue "AND" RowValue "REGIONS" Int64Num
 	{
 		$$ = &ast.SplitOption{
@@ -3354,6 +3502,12 @@ SplitOption:
 			Upper: $4.([]ast.ExprNode),
 			Num:   $6.(int64),
 		}
+	}
+
+SplitOption:
+	SplitOptionBetween
+	{
+		$$ = $1
 	}
 |	"BY" ValuesList
 	{
@@ -4662,7 +4816,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt OnCommitOpt
+	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt SplitIndexListOpt DuplicateOpt AsOpt CreateTableSelectOpt OnCommitOpt
 	{
 		stmt := $6.(*ast.CreateTableStmt)
 		stmt.Table = $5.(*ast.TableName)
@@ -4672,13 +4826,16 @@ CreateTableStmt:
 		if $8 != nil {
 			stmt.Partition = $8.(*ast.PartitionOptions)
 		}
-		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
-		stmt.Select = $11.(*ast.CreateTableStmt).Select
-		if ($12 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $12 == nil) {
+		if $9 != nil {
+			stmt.SplitIndex = $9.([]*ast.SplitIndexOption)
+		}
+		stmt.OnDuplicate = $10.(ast.OnDuplicateKeyHandlingType)
+		stmt.Select = $12.(*ast.CreateTableStmt).Select
+		if ($13 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $13 == nil) {
 			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if stmt.TemporaryKeyword == ast.TemporaryGlobal {
-				stmt.OnCommitDelete = $12.(bool)
+				stmt.OnCommitDelete = $13.(bool)
 			}
 		}
 		$$ = stmt
@@ -7260,6 +7417,7 @@ UnReservedKeyword:
 |	"MAX_QUERIES_PER_HOUR"
 |	"MAX_UPDATES_PER_HOUR"
 |	"MAX_USER_CONNECTIONS"
+|	"MASKING"
 |	"REPLICATION"
 |	"CLIENT"
 |	"SLAVE"
@@ -7472,6 +7630,7 @@ TiDBKeyword:
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_BUCKETS"
+|	"STATS_DELTA"
 |	"STATS_EXTENDED"
 |	"STATS_HEALTHY"
 |	"STATS_HISTOGRAMS"
@@ -12571,6 +12730,13 @@ FlushOption:
 			Tp: ast.FlushClientErrorsSummary,
 		}
 	}
+|	"STATS_DELTA" ClusterOpt
+	{
+		$$ = &ast.FlushStmt{
+			Tp:        ast.FlushStatsDelta,
+			IsCluster: $2.(bool),
+		}
+	}
 
 LogTypeOpt:
 	/* empty */
@@ -12596,6 +12762,16 @@ LogTypeOpt:
 |	"SLOW"
 	{
 		$$ = ast.LogTypeSlow
+	}
+
+ClusterOpt:
+	/* empty */
+	{
+		$$ = false
+	}
+|	"CLUSTER"
+	{
+		$$ = true
 	}
 
 NoWriteToBinLogAliasOpt:
@@ -16007,6 +16183,10 @@ MaskingPolicyRestrictOperation:
 CreateMaskingPolicyStmt:
 	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
 	{
+		if $2.(bool) && $5.(bool) {
+			yylex.AppendError(yylex.Errorf("'OR REPLACE' and 'IF NOT EXISTS' are mutually exclusive"))
+			return 1
+		}
 		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
 			OrReplace:           $2.(bool),
@@ -16369,6 +16549,34 @@ PlanReplayerStmt:
 			Analyze: true,
 			Load:    false,
 			File:    $7,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" '(' StringList ')'
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:     nil,
+			Analyze:  false,
+			Load:     false,
+			File:     "",
+			StmtList: $7.([]string),
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" '(' StringList ')'
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:     nil,
+			Analyze:  true,
+			Load:     false,
+			File:     "",
+			StmtList: $8.([]string),
 		}
 		if $4 != nil {
 			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
