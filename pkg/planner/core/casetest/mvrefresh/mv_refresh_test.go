@@ -535,7 +535,7 @@ func buildMVMergeResultForHandleTest(
 	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.BuildForTest(
+	res, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mvTbl,

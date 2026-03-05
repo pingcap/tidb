@@ -44,7 +44,7 @@ const (
 )
 
 // SQL construction overview:
-//   1) BuildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
+//   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
 //   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
 //   3) buildMergeSourceSelect LEFT JOINs stage-1 deltas with current MV rows to produce a fixed output schema:
 //      [all delta payload columns][all MV columns][optional rowid handle].
@@ -150,14 +150,14 @@ type aggColInfo struct {
 	argExpr   ast.ExprNode
 }
 
-// BuildLocalResult contains the parsed MV definition and all metadata derived from it.
+// buildLocalResult contains the parsed MV definition and all metadata derived from it.
 // It is used to decouple MV-definition parsing/analysis from building the merge-source SQL.
 //
 // The caller may further build/optimize the MV definition logical plan based on MVSelect.
-// After that, BuildFromLocal can be used to construct the final merge-source SELECT.
-type BuildLocalResult struct {
+// After that, buildFromLocal can be used to construct the final merge-source SELECT.
+type buildLocalResult struct {
 	// MVSelect is the parsed MV definition SELECT statement.
-	// Note: BuildFromLocal may mutate parts of this AST (e.g. strip column qualifiers in WHERE).
+	// Note: buildFromLocal may mutate parts of this AST (e.g. strip column qualifiers in WHERE).
 	MVSelect *ast.SelectStmt
 
 	mvDBName     pmodel.CIStr
@@ -174,27 +174,28 @@ type BuildLocalResult struct {
 	countStarMVOffset int
 }
 
-// BuildForTest constructs the merge-source plan and metadata for one MV incremental merge window.
-func BuildForTest(
+// Build constructs the merge-source plan and metadata for one MV incremental merge window.
+// Internally it runs two stages: buildLocal metadata derivation and buildFromLocal SQL assembly.
+func Build(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
 	opt BuildOptions,
 	sumArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
-	local, err := BuildLocal(sctx, is, mv)
+	local, err := buildLocal(sctx, is, mv)
 	if err != nil {
 		return nil, err
 	}
-	return BuildFromLocal(local, opt, sumArgNotNullByOffset)
+	return buildFromLocal(local, opt, sumArgNotNullByOffset)
 }
 
-// BuildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
-func BuildLocal(
+// buildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
+func buildLocal(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
-) (*BuildLocalResult, error) {
+) (*buildLocalResult, error) {
 	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
@@ -296,7 +297,7 @@ func BuildLocal(
 		return nil, errors.New("materialized view definition must include COUNT(*) for mvmerge")
 	}
 
-	return &BuildLocalResult{
+	return &buildLocalResult{
 		MVSelect:          mvSel,
 		mvDBName:          mvDBName,
 		mv:                mv,
@@ -312,7 +313,7 @@ func BuildLocal(
 	}, nil
 }
 
-// BuildFromLocal constructs merge-source SQL and dependency metadata from BuildLocalResult.
+// buildFromLocal constructs merge-source SQL and dependency metadata from buildLocalResult.
 //
 // Final SQL shape:
 //
@@ -326,8 +327,8 @@ func BuildLocal(
 //
 // Stage-1 delta columns are always contiguous at the beginning of output schema, so aggregate
 // dependency offsets remain stable and can be consumed directly by executor logic.
-func BuildFromLocal(
-	local *BuildLocalResult,
+func buildFromLocal(
+	local *buildLocalResult,
 	opt BuildOptions,
 	sumArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
@@ -538,7 +539,7 @@ func buildMVTablePKHandleCols(
 
 // inferSumArgNotNullByOffset infers SUM argument nullability from base-table column flags.
 // If SUM(arg) is known NOT NULL, executor does not need a matching COUNT(arg) dependency.
-func inferSumArgNotNullByOffset(local *BuildLocalResult) map[int]bool {
+func inferSumArgNotNullByOffset(local *buildLocalResult) map[int]bool {
 	if local == nil || local.baseTable == nil {
 		return nil
 	}
