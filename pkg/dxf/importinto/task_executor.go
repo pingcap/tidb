@@ -174,8 +174,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 // and adjusts concurrency if needed. For parquet format, it reads the first
 // row group with a tracking allocator to measure peak memory. This should only
 // be called once.
-func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, store storeapi.Storage, chunks []importer.Chunk) {
-	if len(chunks) == 0 || store == nil || chunks[0].Type != mydump.SourceTypeParquet {
+func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chunks []importer.Chunk) {
+	if len(chunks) == 0 || chunks[0].Type != mydump.SourceTypeParquet {
 		return
 	}
 
@@ -186,7 +186,7 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, stor
 		}
 	}
 
-	peakMem, err := mydump.EstimateParquetReaderMemory(ctx, store, targetChunk.Path)
+	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))
@@ -304,7 +304,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}()
 
 	s.estimateConcOnce.Do(func() {
-		s.estimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
+		s.estimateAndSetConcurrency(ctx, subtaskMeta.Chunks)
 	})
 
 	wctx := workerpool.NewContext(ctx)
