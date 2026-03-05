@@ -586,6 +586,106 @@ func TestOrderedParallelApply(t *testing.T) {
 	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(serialRows5)...))
 }
 
+func TestOrderedParallelApplyEdgeCases(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=4")
+
+	// ----------------------------------------------------------------
+	// 1. Outer filter with unselected rows — exercises the
+	//    processOneOuterRow !or.selected path.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+	// The WHERE t1.a > 2 acts as an outer filter so rows with a<=2 hit
+	// the unselected path in processOneOuterRow.
+	q1 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 where t1.a > 2 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected1 := tk.MustQuery(q1).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	checkApplyPlan(t, tk, q1, 4)
+	tk.MustQuery(q1).Check(testkit.RowsWithSep(" ", flattenRows(expected1)...))
+
+	// ----------------------------------------------------------------
+	// 2. NOT EXISTS (anti-semi-join) with ORDER BY — exercises
+	//    OnMissMatch in the ordered path.
+	// ----------------------------------------------------------------
+	q2 := "select t1.a from t1 where not exists (select 1 from t2 where t2.a = t1.a) order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(expected2)...))
+
+	// ----------------------------------------------------------------
+	// 3. ORDER BY + LIMIT 1 — the primary use-case for eager flush.
+	//    Verifies the reorder worker flushes partial output early.
+	// ----------------------------------------------------------------
+	q3 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a limit 1"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected3 := tk.MustQuery(q3).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(expected3)...))
+
+	// ----------------------------------------------------------------
+	// 4. Empty outer side — orderedResultCh closes immediately.
+	// ----------------------------------------------------------------
+	q4 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 where t1.a > 999 order by t1.a"
+	tk.MustQuery(q4).Check(testkit.Rows())
+
+	// ----------------------------------------------------------------
+	// 5. Single row outer — minimal ordered path exercise.
+	// ----------------------------------------------------------------
+	q5 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 where t1.a = 3 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected5 := tk.MustQuery(q5).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(expected5)...))
+
+	// ----------------------------------------------------------------
+	// 6. Left outer semi-join with ORDER BY — exercises the e.outer
+	//    path where OnMissMatch must emit the outer row.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3 (a int, index idx_a(a))")
+	tk.MustExec("create table t4 (a int)")
+	tk.MustExec("insert into t3 values (1),(2),(3),(4),(5)")
+	tk.MustExec("insert into t4 values (2),(4)")
+	// The IN subquery uses left-outer-semi-join producing a boolean column.
+	q6 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t4 where t4.a = t3.a) from t3 order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected6 := tk.MustQuery(q6).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q6).Check(testkit.RowsWithSep(" ", flattenRows(expected6)...))
+
+	// ----------------------------------------------------------------
+	// 7. Large result set — exercises the appendRow→IsFull→flushOutput
+	//    path where the output chunk fills to capacity and must be
+	//    flushed mid-drain.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t5, t6")
+	tk.MustExec("create table t5 (a int, index idx_a(a))")
+	tk.MustExec("create table t6 (a int)")
+	vals := ""
+	for i := 1; i <= 2000; i++ {
+		if i > 1 {
+			vals += ","
+		}
+		vals += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec("insert into t5 values " + vals)
+	tk.MustExec("insert into t6 values (1),(2),(3)")
+	q7 := "select t5.a, (select count(*) from t6 where t6.a <= t5.a) from t5 order by t5.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected7 := tk.MustQuery(q7).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q7).Check(testkit.RowsWithSep(" ", flattenRows(expected7)...))
+}
+
 // flattenRows converts [][]interface{} from MustQuery().Rows() into
 // []string suitable for testkit.RowsWithSep(" ", ...).
 func flattenRows(rows [][]any) []string {

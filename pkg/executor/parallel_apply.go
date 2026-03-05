@@ -92,6 +92,7 @@ type ParallelNestedLoopApplyExec struct {
 
 	// ordered-mode channels (keepOrder == true)
 	orderedResultCh chan orderedResult
+	outerPaceCh     chan struct{} // bounds how far the outer worker dispatches ahead of the reorder worker
 
 	// fields about cache
 	cache              *applycache.ApplyCache
@@ -138,6 +139,13 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 		// In ordered mode, freeChkCh is consumed by the reorder worker.
 		// Inner workers allocate their own temporary chunks.
 		e.orderedResultCh = make(chan orderedResult, e.concurrency*2)
+		// outerPaceCh bounds the gap between the outer worker's dispatch
+		// sequence and the reorder worker's consumption sequence.  Without
+		// this, a slow early-sequence row lets fast workers race ahead,
+		// growing the pending map to O(outerRows).  The outer worker
+		// acquires a token before dispatching; the reorder worker releases
+		// one each time it advances nextSeq.
+		e.outerPaceCh = make(chan struct{}, e.concurrency*4)
 	}
 
 	for range e.concurrency {
@@ -263,6 +271,16 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 			return
 		}
 		for i := range chk.NumRows() {
+			// In ordered mode, acquire a pace token to bound how far
+			// ahead we dispatch relative to the reorder worker's
+			// consumption.  This caps the pending map at O(concurrency).
+			if e.keepOrder {
+				select {
+				case e.outerPaceCh <- struct{}{}:
+				case <-e.exit:
+					return
+				}
+			}
 			row := chk.GetRow(i)
 			or := outerRow{row: &row, selected: selected[i], seq: seq}
 			seq++
@@ -336,14 +354,16 @@ func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id
 // processOneOuterRow executes the inner side for a single outer row and
 // returns the joined result chunks. For semi-joins this is typically 0–1 rows.
 func (e *ParallelNestedLoopApplyExec) processOneOuterRow(ctx context.Context, id int, or outerRow) ([]*chunk.Chunk, error) {
-	chk := exec.NewFirstChunk(e)
-
 	if !or.selected {
 		if e.outer {
+			chk := exec.NewFirstChunk(e)
 			e.joiners[id].OnMissMatch(false, *or.row, chk)
+			return []*chunk.Chunk{chk}, nil
 		}
-		return []*chunk.Chunk{chk}, nil
+		return nil, nil // no allocation needed for filtered-out rows
 	}
+
+	chk := exec.NewFirstChunk(e)
 
 	e.outerRow[id] = or.row
 	e.hasMatch[id] = false
@@ -457,6 +477,9 @@ func (e *ParallelNestedLoopApplyExec) reorderWorker(ctx context.Context) {
 				}
 				delete(pending, nextSeq)
 				nextSeq++
+				// Release a pace token so the outer worker can
+				// dispatch the next row, bounding the pending map.
+				<-e.outerPaceCh
 				if emitResult(pr) {
 					return
 				}

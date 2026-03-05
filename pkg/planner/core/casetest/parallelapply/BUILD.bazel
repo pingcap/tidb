@@ -8,9 +8,11 @@ go_test(
         "parallel_apply_test.go",
     ],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )
