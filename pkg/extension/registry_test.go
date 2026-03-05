@@ -311,15 +311,15 @@ func TestCustomAccessCheck(t *testing.T) {
 	tk1.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 10", "2 20"))
 
-	require.EqualError(t, tk2.ExecToErr("select * from t1 where id=1"), "[planner:1142]SELECT command denied to user 'u2'@'localhost' for table 't1'")
+	require.EqualError(t, tk2.ExecToErr("select * from t1 where id=1"), "[planner:1143]SELECT command denied to user 'u2'@'localhost' for column 'id' in table 't1'")
 	require.EqualError(t, tk2.ExecToErr("select * from t1"), "[planner:1142]SELECT command denied to user 'u2'@'localhost' for table 't1'")
 
 	tk.MustExec("GRANT priv1 on *.* TO u2@localhost")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 10", "2 20"))
 
-	require.EqualError(t, tk2.ExecToErr("update t1 set v=11 where id=1"), "[planner:8121]privilege check for 'Update' fail")
-	require.EqualError(t, tk2.ExecToErr("update t1 set v=11 where id<2"), "[planner:8121]privilege check for 'Update' fail")
+	require.EqualError(t, tk2.ExecToErr("update t1 set v=11 where id=1"), "[planner:1143]UPDATE command denied to user 'u2'@'localhost' for column 'v' in table 't1'")
+	require.EqualError(t, tk2.ExecToErr("update t1 set v=11 where id<2"), "[planner:1143]UPDATE command denied to user 'u2'@'localhost' for column 'v' in table 't1'")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 
 	tk.MustExec("GRANT priv2 on *.* TO u2@localhost")
@@ -332,12 +332,12 @@ func TestCustomAccessCheck(t *testing.T) {
 	sem.Enable()
 	defer sem.Disable()
 
-	require.EqualError(t, tk1.ExecToErr("update t1 set v=21 where id=1"), "[planner:8121]privilege check for 'Update' fail")
-	require.EqualError(t, tk1.ExecToErr("update t1 set v=21 where id<2"), "[planner:8121]privilege check for 'Update' fail")
+	require.EqualError(t, tk1.ExecToErr("update t1 set v=21 where id=1"), "[planner:1143]UPDATE command denied to user 'root'@'%' for column 'v' in table 't1'")
+	require.EqualError(t, tk1.ExecToErr("update t1 set v=21 where id<2"), "[planner:1143]UPDATE command denied to user 'root'@'%' for column 'v' in table 't1'")
 	tk1.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 12"))
 
-	require.EqualError(t, tk2.ExecToErr("update t1 set v=21 where id=1"), "[planner:8121]privilege check for 'Update' fail")
-	require.EqualError(t, tk2.ExecToErr("update t1 set v=21 where id<2"), "[planner:8121]privilege check for 'Update' fail")
+	require.EqualError(t, tk2.ExecToErr("update t1 set v=21 where id=1"), "[planner:1143]UPDATE command denied to user 'u2'@'localhost' for column 'v' in table 't1'")
+	require.EqualError(t, tk2.ExecToErr("update t1 set v=21 where id<2"), "[planner:1143]UPDATE command denied to user 'u2'@'localhost' for column 'v' in table 't1'")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 12"))
 
 	tk.MustExec("GRANT restricted_priv3 on *.* TO u2@localhost")

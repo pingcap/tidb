@@ -2598,10 +2598,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	rows := tk.MustQuery("show warnings").Rows()
-	require.Len(t, rows, 0)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -2610,7 +2609,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))

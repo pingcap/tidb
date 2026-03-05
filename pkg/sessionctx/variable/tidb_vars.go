@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -229,6 +230,9 @@ const (
 
 	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
 	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
+
+	// TiDBSlowLogRules defines multi-dimensional trigger rules for flexible slow log control.
+	TiDBSlowLogRules = "tidb_slow_log_rules"
 
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
@@ -1665,7 +1669,9 @@ var (
 	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	DDLSlowOprThreshold = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	GlobalSlowLogRules  = atomic.NewPointer[slowlogrule.GlobalSlowLogRules](
+		&slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)})
 	ForcePriority                        = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket         uint64 = 1073741824
 	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold

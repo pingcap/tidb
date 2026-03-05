@@ -59,7 +59,9 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/errno",
+        "//pkg/executor",
         "//pkg/kv",
+        "//pkg/lightning/mydump",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
