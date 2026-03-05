@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
@@ -71,8 +72,8 @@ func (m *testMemBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (m *testMemBuffer) Delete(kv.Key) error                              { panic("unused") }
 func (m *testMemBuffer) Get(_ context.Context, _ kv.Key) ([]byte, error)  { panic("unused") }
 func (m *testMemBuffer) IterReverse(kv.Key, kv.Key) (kv.Iterator, error)  { panic("unused") }
-func (m *testMemBuffer) RLock()                                            {}
-func (m *testMemBuffer) RUnlock()                                          {}
+func (m *testMemBuffer) RLock()                                           {}
+func (m *testMemBuffer) RUnlock()                                         {}
 func (m *testMemBuffer) GetFlags(kv.Key) (kv.KeyFlags, error)             { panic("unused") }
 func (m *testMemBuffer) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error { panic("unused") }
 func (m *testMemBuffer) UpdateFlags(kv.Key, ...kv.FlagsOp)                { panic("unused") }
@@ -83,13 +84,13 @@ func (m *testMemBuffer) Cleanup(kv.StagingHandle)                         { pani
 func (m *testMemBuffer) InspectStage(kv.StagingHandle, func(kv.Key, kv.KeyFlags, []byte)) {
 	panic("unused")
 }
-func (m *testMemBuffer) SnapshotGetter() kv.Getter                          { panic("unused") }
-func (m *testMemBuffer) SnapshotIter(kv.Key, kv.Key) kv.Iterator            { panic("unused") }
-func (m *testMemBuffer) SnapshotIterReverse(kv.Key, kv.Key) kv.Iterator     { panic("unused") }
-func (m *testMemBuffer) Len() int                                           { return len(m.kvs) }
-func (m *testMemBuffer) Size() int                                          { panic("unused") }
-func (m *testMemBuffer) RemoveFromBuffer(kv.Key)                            { panic("unused") }
-func (m *testMemBuffer) GetLocal(context.Context, []byte) ([]byte, error)   { panic("unused") }
+func (m *testMemBuffer) SnapshotGetter() kv.Getter                        { panic("unused") }
+func (m *testMemBuffer) SnapshotIter(kv.Key, kv.Key) kv.Iterator          { panic("unused") }
+func (m *testMemBuffer) SnapshotIterReverse(kv.Key, kv.Key) kv.Iterator   { panic("unused") }
+func (m *testMemBuffer) Len() int                                         { return len(m.kvs) }
+func (m *testMemBuffer) Size() int                                        { panic("unused") }
+func (m *testMemBuffer) RemoveFromBuffer(kv.Key)                          { panic("unused") }
+func (m *testMemBuffer) GetLocal(context.Context, []byte) ([]byte, error) { panic("unused") }
 func (m *testMemBuffer) BatchGet(context.Context, [][]byte) (map[string][]byte, error) {
 	panic("unused")
 }
@@ -190,6 +191,42 @@ func TestBuildCachedDatumDataBasic(t *testing.T) {
 
 	// FieldTypes should match.
 	require.Len(t, cd.FieldTypes, 3)
+}
+
+func TestBuildCachedDatumDataCommonHandleTimestamp(t *testing.T) {
+	mb := newTestMemBuf()
+
+	ftTs := types.NewFieldType(mysql.TypeTimestamp)
+	ftTs.SetDecimal(0)
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+
+	ts := types.NewTime(types.FromGoTime(time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
+	handleEncoded, err := codec.EncodeKey(time.UTC, nil, types.NewTimeDatum(ts))
+	require.NoError(t, err)
+	handle, err := kv.NewCommonHandle(handleEncoded)
+	require.NoError(t, err)
+
+	var encoder rowcodec.Encoder
+	rowBytes, err := encoder.Encode(time.UTC, []int64{2}, []types.Datum{types.NewIntDatum(123)}, nil, nil)
+	require.NoError(t, err)
+	key := tablecodec.EncodeRowKeyWithHandle(testTableID, handle)
+	require.NoError(t, mb.Set(key, rowBytes))
+
+	colInfos := []rowcodec.ColInfo{
+		{ID: 1, Ft: ftTs},
+		{ID: 2, Ft: ftInt},
+	}
+	fieldTypes := []*types.FieldType{ftTs, ftInt}
+	handleColIDs := []int64{1}
+
+	cd, err := BuildCachedDatumData(mb, testTableID, colInfos, handleColIDs, nilDefDatum, fieldTypes)
+	require.NoError(t, err)
+	require.Equal(t, 1, cd.TotalRows)
+	require.Equal(t, []int{0}, cd.TsColIndices)
+
+	row := cd.Chunks[0].GetRow(0)
+	require.Equal(t, ts.String(), row.GetTime(0).String())
+	require.Equal(t, int64(123), row.GetInt64(1))
 }
 
 func TestBuildCachedDatumDataEmpty(t *testing.T) {

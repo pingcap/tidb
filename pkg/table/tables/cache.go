@@ -44,9 +44,10 @@ var (
 
 type cachedTable struct {
 	TableCommon
-	cacheData   atomic.Pointer[cacheData]
-	resultCache atomic.Pointer[resultSetCache]
-	totalSize   int64
+	cacheData      atomic.Pointer[cacheData]
+	resultCache    atomic.Pointer[resultSetCache]
+	resultCacheMem atomic.Int64
+	totalSize      int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
 }
@@ -76,7 +77,7 @@ type cacheData struct {
 	Start uint64
 	Lease uint64
 	kv.MemBuffer
-	datumCache      *CachedDatumData                // pre-decoded datum cache for table scans
+	datumCache       *CachedDatumData                // pre-decoded datum cache for table scans
 	indexDatumCaches map[int64]*CachedIndexDatumData // pre-decoded datum caches for index scans, keyed by index ID
 }
 
@@ -219,8 +220,8 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 			MemBuffer: nil, // Async loading, this will be set later.
 		})
 
-		// Make the load data process async, in case that loading data takes longer the
-		// lease duration, then the loaded data get staled and that process repeats forever.
+		// Make the load data process async, in case that loading data takes longer than the
+		// lease duration, then the loaded data becomes stale and that process repeats forever.
 		go func() {
 			start := time.Now()
 			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
@@ -268,7 +269,7 @@ func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTab
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
-	// Prevent furthur writing when the table is already too large.
+	// Prevent further writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
@@ -331,12 +332,13 @@ func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
 	colInfo := make([]rowcodec.ColInfo, len(cols))
 	fieldTypes := make([]*types.FieldType, len(cols))
 	for i, col := range cols {
+		ft := rowcodec.FieldTypeFromModelColumn(col.ColumnInfo)
 		colInfo[i] = rowcodec.ColInfo{
 			ID:         col.ID,
 			IsPKHandle: tblMeta.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col.ColumnInfo),
+			Ft:         ft,
 		}
-		fieldTypes[i] = rowcodec.FieldTypeFromModelColumn(col.ColumnInfo)
+		fieldTypes[i] = ft
 	}
 
 	pkColIDs := TryGetCommonPkColumnIds(tblMeta)
@@ -433,12 +435,13 @@ func (c *cachedTable) getOrCreateResultCache() *resultSetCache {
 
 func (c *cachedTable) invalidateResultCache() {
 	old := c.resultCache.Swap(nil)
+	if accounted := c.resultCacheMem.Swap(0); accounted > 0 {
+		metrics.ResultCacheMemoryGauge.Sub(float64(accounted))
+	}
 	if old != nil {
-		n := old.Len()
-		if n > 0 {
+		if n := old.Len(); n > 0 {
 			metrics.ResultCacheEvictCounter.Add(float64(n))
 		}
-		metrics.ResultCacheMemoryGauge.Sub(float64(old.MemoryUsage()))
 	}
 }
 
@@ -452,9 +455,15 @@ func (c *cachedTable) GetCachedResult(key table.ResultCacheKey, paramBytes []byt
 
 func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
 	rc := c.getOrCreateResultCache()
-	ok := rc.Put(key, paramBytes, chunks, fieldTypes)
+	paramCopy := append([]byte(nil), paramBytes...)
+	ok := rc.Put(key, paramCopy, chunks, fieldTypes)
 	if ok {
-		metrics.ResultCacheMemoryGauge.Set(float64(rc.MemoryUsage()))
+		memSize := estimateChunksMemory(chunks) + int64(len(paramCopy))
+		// If the result cache is invalidated concurrently, don't account its memory in metrics.
+		if c.resultCache.Load() == rc {
+			c.resultCacheMem.Add(memSize)
+			metrics.ResultCacheMemoryGauge.Add(float64(memSize))
+		}
 	}
 	return ok
 }

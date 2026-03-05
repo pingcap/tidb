@@ -40,8 +40,8 @@ type CachedDatumData struct {
 // BuildCachedDatumData iterates all rows for tableID in membuf and decodes them
 // into chunks using a ChunkDecoder.
 //
-// loc is passed as nil so that TIMESTAMP values remain in UTC without timezone conversion.
-// This is safe because initCompiledCols sets needTZConvert = tp == mysql.TypeTimestamp && decoder.loc != nil.
+// TIMESTAMP values are decoded with time.UTC so they remain timezone-neutral in the cache.
+// Readers must convert to session timezone on read.
 func BuildCachedDatumData(
 	membuf kv.MemBuffer,
 	tableID int64,
@@ -50,7 +50,7 @@ func BuildCachedDatumData(
 	defDatum func(i int, chk *chunk.Chunk) error,
 	fieldTypes []*types.FieldType,
 ) (*CachedDatumData, error) {
-	cd := rowcodec.NewChunkDecoder(columns, handleColIDs, defDatum, nil)
+	cd := rowcodec.NewChunkDecoder(columns, handleColIDs, defDatum, time.UTC)
 
 	tsColIndices := findTimestampColumns(fieldTypes)
 
@@ -70,7 +70,7 @@ func BuildCachedDatumData(
 		key := it.Key()
 		value := it.Value()
 
-		if len(value) == 0 {
+		if !tablecodec.IsRecordKey(key) || len(value) == 0 {
 			if err := it.Next(); err != nil {
 				return nil, err
 			}
@@ -79,11 +79,7 @@ func BuildCachedDatumData(
 
 		handle, err := tablecodec.DecodeRowKey(key)
 		if err != nil {
-			// Not a record key (e.g. index key), skip.
-			if err := it.Next(); err != nil {
-				return nil, err
-			}
-			continue
+			return nil, err
 		}
 
 		if curChk.NumRows() >= datumCacheChunkSize {
@@ -112,7 +108,7 @@ func BuildCachedDatumData(
 func findTimestampColumns(fieldTypes []*types.FieldType) []int {
 	var indices []int
 	for i, ft := range fieldTypes {
-		if ft.GetType() == mysql.TypeTimestamp {
+		if ft != nil && ft.GetType() == mysql.TypeTimestamp {
 			indices = append(indices, i)
 		}
 	}
@@ -123,7 +119,7 @@ func findTimestampColumns(fieldTypes []*types.FieldType) []int {
 // TIMESTAMP columns are stored in UTC; readers must convert to session timezone.
 type CachedIndexDatumData struct {
 	Entries      map[string][]types.Datum // raw KV key → decoded datums (all index cols + handle cols)
-	TsColIndices []int                   // indices of TIMESTAMP columns in the datum slice
+	TsColIndices []int                    // indices of TIMESTAMP columns in the datum slice
 }
 
 // BuildCachedIndexDatumData iterates all index entries for the given index in membuf
@@ -175,7 +171,7 @@ func BuildCachedIndexDatumData(
 	loc := time.UTC
 
 	prefix := tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)
-	it, err := membuf.Iter(prefix, kv.Key(prefix).PrefixNext())
+	it, err := membuf.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +179,8 @@ func BuildCachedIndexDatumData(
 
 	entries := make(map[string][]types.Datum)
 	restoredDec := tablecodec.NewIndexRestoredDecoder(colInfos[:colsLen])
+	decodeBuff := make([][]byte, colsLen, colsLen+len(colInfos))
+	var buf [16]byte
 
 	for it.Valid() {
 		key := it.Key()
@@ -195,9 +193,7 @@ func BuildCachedIndexDatumData(
 			continue
 		}
 
-		decodeBuff := make([][]byte, colsLen, colsLen+len(colInfos))
-		var buf [16]byte
-		values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, hdStatus, colInfos, buf[:0], decodeBuff, restoredDec)
+		values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, hdStatus, colInfos, buf[:0], decodeBuff[:colsLen], restoredDec)
 		if err != nil {
 			return nil, err
 		}
