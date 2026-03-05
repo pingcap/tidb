@@ -30,16 +30,21 @@ import (
 // In both cases, the `use_index` hint doesn't take effect directly, since a specific qb_name is specified, and this
 // QBHintHandler is used to handle this cases.
 type QBHintHandler struct {
-	QBNameToSelOffset map[string]int                    // map[QBName]SelectOffset
-	QBOffsetToHints   map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
+	QBNameToSelOffset map[string]int // map[QBName]SelectOffset
 
 	// Used for the view's hint
 	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]HintedTable
 	ViewQBNameToHints map[string][]*ast.TableOptimizerHint // map[QBName]Hints
-	ViewQBNameUsed    map[string]struct{}                  // map[QBName]Used
 
 	warnHandler      hintWarnHandler
 	selectStmtOffset int
+}
+
+// QBHintBuildState stores the per-build runtime state for a QBHintHandler.
+// The handler itself only keeps AST-derived metadata and can be shared safely.
+type QBHintBuildState struct {
+	QBOffsetToHints map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
+	ViewQBNameUsed  map[string]struct{}               // map[QBName]Used
 }
 
 // hintWarnHandler is used to handle the warning when parsing hints.
@@ -53,6 +58,20 @@ func NewQBHintHandler(warnHandler hintWarnHandler) *QBHintHandler {
 	return &QBHintHandler{
 		warnHandler: warnHandler,
 	}
+}
+
+// NewBuildState creates the per-build runtime state for the handler.
+func (p *QBHintHandler) NewBuildState() *QBHintBuildState {
+	if p == nil {
+		return nil
+	}
+
+	state := &QBHintBuildState{}
+	if len(p.ViewQBNameToTable) == 0 {
+		return state
+	}
+	state.ViewQBNameUsed = make(map[string]struct{}, len(p.ViewQBNameToTable))
+	return state
 }
 
 // MaxSelectStmtOffset returns the current stmt offset.
@@ -132,7 +151,6 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 		usedHints[i] = true
 		if p.ViewQBNameToTable == nil {
 			p.ViewQBNameToTable = make(map[string][]ast.HintTable)
-			p.ViewQBNameUsed = make(map[string]struct{})
 		}
 		qbName := hint.QBName.L
 		if qbName == "" {
@@ -201,15 +219,21 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 }
 
 // HandleUnusedViewHints handle the unused view hints.
-func (p *QBHintHandler) HandleUnusedViewHints() {
+func (p *QBHintHandler) HandleUnusedViewHints(state *QBHintBuildState, warn []string) []string {
+	if state == nil {
+		return warn
+	}
+
+	warn = warn[:0]
 	if p.ViewQBNameToTable != nil {
 		for qbName := range p.ViewQBNameToTable {
-			_, ok := p.ViewQBNameUsed[qbName]
+			_, ok := state.ViewQBNameUsed[qbName]
 			if !ok && p.warnHandler != nil {
-				p.warnHandler.SetHintWarning(fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+				warn = append(warn, fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}
 		}
 	}
+	return warn
 }
 
 const (
@@ -240,6 +264,13 @@ func (p *QBHintHandler) getBlockOffset(blockName ast.CIStr) int {
 		return int(level)
 	}
 	return -1
+}
+
+// SetWarns set the warning from a list of strings.
+func (p *QBHintHandler) SetWarns(warns []string) {
+	for _, one := range warns {
+		p.warnHandler.SetHintWarning(one)
+	}
 }
 
 // GetHintOffset gets the offset of stmt that the hints take effects.
@@ -279,9 +310,12 @@ func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 }
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
-func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
-	if p.QBOffsetToHints == nil {
-		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
+func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int, state *QBHintBuildState) []*ast.TableOptimizerHint {
+	if state == nil {
+		state = &QBHintBuildState{}
+	}
+	if state.QBOffsetToHints == nil {
+		state.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
 		if hint.HintName.L == hintQBName {
@@ -295,11 +329,19 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 			}
 			continue
 		}
-		if !slices.Contains(p.QBOffsetToHints[offset], hint) {
-			p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		if !slices.Contains(state.QBOffsetToHints[offset], hint) {
+			state.QBOffsetToHints[offset] = append(state.QBOffsetToHints[offset], hint)
 		}
 	}
-	return p.QBOffsetToHints[currentOffset]
+	return state.QBOffsetToHints[currentOffset]
+}
+
+// MarkViewQBNameUsed records that the named view qb hint was used in the current build.
+func (*QBHintHandler) MarkViewQBNameUsed(qbName string, state *QBHintBuildState) {
+	if state == nil || state.ViewQBNameUsed == nil {
+		return
+	}
+	state.ViewQBNameUsed[qbName] = struct{}{}
 }
 
 // GenerateQBName builds QBName from offset.
