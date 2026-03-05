@@ -253,7 +253,7 @@ func TestMariaDBMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(rows)
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("10.11.15-MariaDB-ubu2204-log")
-	require.Equal(t, version.ServerType(version.ServerTypeMariaDB), si.ServerType)
+	require.Equal(t, version.ServerTypeMariaDB, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -356,7 +356,7 @@ func TestTiDBSnapshotMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.11-TiDB-v8.5.5")
-	require.Equal(t, version.ServerType(version.ServerTypeTiDB), si.ServerType)
+	require.Equal(t, version.ServerTypeTiDB, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -395,7 +395,7 @@ func TestNoPrivilege(t *testing.T) {
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	// some consistencyType will ignore this error, this test make sure no extra message is written
 	si := version.ParseServerInfo("8.0.11-TiDB-v8.5.5")
-	require.Equal(t, version.ServerType(version.ServerTypeTiDB), si.ServerType)
+	require.Equal(t, version.ServerTypeTiDB, si.ServerType)
 	require.Error(t, m.recordGlobalMetaData(conn, si, false))
 	require.Equal(t, "", m.buffer.String())
 }
