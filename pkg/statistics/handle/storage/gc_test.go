@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -29,16 +28,13 @@ import (
 )
 
 func TestGCStats(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
 	testKit.MustExec("insert into t values (1,1),(2,2),(3,3)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 
 	testKit.MustExec("alter table t drop index idx")
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
@@ -65,12 +61,9 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
@@ -78,7 +71,7 @@ func TestGCPartition(t *testing.T) {
 			    partition p0 values less than (3),
 			    partition p1 values less than (6))`)
 		testKit.MustExec("insert into t values (1,2),(2,3),(3,4),(4,5),(5,6)")
-		testKit.MustExec("analyze table t")
+		testKit.MustExec("analyze table t with 0 topn")
 
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))

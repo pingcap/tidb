@@ -61,7 +61,6 @@ go_test(
     shard_count = 46,
     deps = [
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/kv",
