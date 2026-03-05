@@ -110,7 +110,7 @@ const (
 	maxWriteSpeedOption       = "max_write_speed"
 	checksumTableOption       = "checksum_table"
 	recordErrorsOption        = "record_errors"
-	conflictHandlingOption    = "conflict_handling"
+	onDupKeyOption            = "on_duplicate_key"
 	detachedOption            = "detached"
 	// if 'import mode' enabled, TiKV will:
 	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
@@ -149,7 +149,7 @@ var (
 		maxWriteSpeedOption:         true,
 		checksumTableOption:         true,
 		recordErrorsOption:          true,
-		conflictHandlingOption:      true,
+		onDupKeyOption:              true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
@@ -188,9 +188,8 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
-		threadOption:           {},
-		disablePrecheckOption:  {},
-		conflictHandlingOption: {},
+		threadOption:          {},
+		disablePrecheckOption: {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -209,15 +208,15 @@ var (
 	defaultFieldNullDef = []string{`\N`}
 )
 
-// ConflictHandlingMode controls the behavior when IMPORT INTO finds conflicted rows.
-type ConflictHandlingMode string
+// OnDupKeyMode controls the behavior when IMPORT INTO finds conflicted rows.
+type OnDupKeyMode string
 
 const (
-	// ConflictHandlingModeRecord keeps current behavior, i.e. remove conflicted
+	// OnDupKeyModeRecord keeps current behavior, i.e. remove conflicted
 	// rows and record them for later inspection.
-	ConflictHandlingModeRecord ConflictHandlingMode = "record"
-	// ConflictHandlingModeError means fail on first conflict.
-	ConflictHandlingModeError ConflictHandlingMode = "error"
+	OnDupKeyModeRecord OnDupKeyMode = "record"
+	// OnDupKeyModeError means fail on first conflict.
+	OnDupKeyModeError OnDupKeyMode = "error"
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -302,7 +301,7 @@ type Plan struct {
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
-	ConflictHandling      ConflictHandlingMode
+	OnDupKey              OnDupKeyMode
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
@@ -335,18 +334,14 @@ type Plan struct {
 	Keyspace string
 }
 
-// GetConflictHandlingMode returns the normalized conflict handling mode.
+// GetOnDupKeyMode returns the normalized conflict handling mode.
 // For task metadata generated before this option was introduced, the value is
-// empty, and we keep the historical behavior for compatibility.
-func (p *Plan) GetConflictHandlingMode() ConflictHandlingMode {
-	switch p.ConflictHandling {
-	case ConflictHandlingModeRecord:
-		return ConflictHandlingModeRecord
-	case "":
-		return ConflictHandlingModeRecord
-	default:
-		return ConflictHandlingModeError
+// empty.
+func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
+	if p.OnDupKey == "" {
+		return OnDupKeyModeError
 	}
+	return p.OnDupKey
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -692,7 +687,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
-	p.ConflictHandling = ConflictHandlingModeError
+	p.OnDupKey = OnDupKeyModeError
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = getDefMaxEngineSize()
@@ -885,15 +880,15 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
-	if opt, ok := specifiedOptions[conflictHandlingOption]; ok {
+	if opt, ok := specifiedOptions[onDupKeyOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		mode := ConflictHandlingMode(strings.ToLower(v))
+		mode := OnDupKeyMode(strings.ToLower(v))
 		switch mode {
-		case ConflictHandlingModeRecord, ConflictHandlingModeError:
-			p.ConflictHandling = mode
+		case OnDupKeyModeRecord, OnDupKeyModeError:
+			p.OnDupKey = mode
 		default:
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}

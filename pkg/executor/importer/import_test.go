@@ -69,7 +69,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
-	require.Equal(t, ConflictHandlingModeError, plan.ConflictHandling)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey)
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
@@ -116,7 +116,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
-		conflictHandlingOption+"='record', "+
+		onDupKeyOption+"='record', "+
 		threadOption+"=100000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+", "+
@@ -140,7 +140,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, ConflictHandlingModeRecord, plan.ConflictHandling, sql)
+	require.Equal(t, OnDupKeyModeRecord, plan.OnDupKey, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
@@ -212,16 +212,16 @@ func TestAdjustOptions(t *testing.T) {
 
 func TestGetConflictHandlingMode(t *testing.T) {
 	plan := &Plan{}
-	require.Equal(t, ConflictHandlingModeRecord, plan.GetConflictHandlingMode())
+	require.Equal(t, OnDupKeyModeRecord, plan.GetOnDupKeyMode())
 
-	plan.ConflictHandling = ConflictHandlingModeRecord
-	require.Equal(t, ConflictHandlingModeRecord, plan.GetConflictHandlingMode())
+	plan.OnDupKey = OnDupKeyModeRecord
+	require.Equal(t, OnDupKeyModeRecord, plan.GetOnDupKeyMode())
 
-	plan.ConflictHandling = ConflictHandlingModeError
-	require.Equal(t, ConflictHandlingModeError, plan.GetConflictHandlingMode())
+	plan.OnDupKey = OnDupKeyModeError
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 
-	plan.ConflictHandling = ConflictHandlingMode("unknown")
-	require.Equal(t, ConflictHandlingModeError, plan.GetConflictHandlingMode())
+	plan.OnDupKey = OnDupKeyMode("unknown")
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 }
 
 func TestAdjustDiskQuota(t *testing.T) {

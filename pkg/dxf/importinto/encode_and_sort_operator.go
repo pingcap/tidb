@@ -52,7 +52,7 @@ type encodeAndSortOperator struct {
 	logger            *zap.Logger
 	errCh             chan error
 	indicesGenKV      map[int64]importer.GenKVIndex
-	conflictHandling  importer.ConflictHandlingMode
+	onDupKey          importer.OnDupKeyMode
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -68,16 +68,16 @@ func newEncodeAndSortOperator(
 	concurrency int,
 ) *encodeAndSortOperator {
 	op := &encodeAndSortOperator{
-		collector:        collector,
-		taskID:           executor.taskID,
-		subtaskID:        subtaskID,
-		taskKeyspace:     executor.taskMeta.Plan.Keyspace,
-		tableImporter:    executor.tableImporter,
-		sharedVars:       sharedVars,
-		logger:           executor.logger,
-		errCh:            make(chan error),
-		indicesGenKV:     executor.indicesGenKV,
-		conflictHandling: executor.taskMeta.Plan.GetConflictHandlingMode(),
+		collector:     collector,
+		taskID:        executor.taskID,
+		subtaskID:     subtaskID,
+		taskKeyspace:  executor.taskMeta.Plan.Keyspace,
+		tableImporter: executor.tableImporter,
+		sharedVars:    sharedVars,
+		logger:        executor.logger,
+		errCh:         make(chan error),
+		indicesGenKV:  executor.indicesGenKV,
+		onDupKey:      executor.taskMeta.Plan.GetOnDupKeyMode(),
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -121,7 +121,7 @@ func newChunkWorker(
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.conflictHandling)
+			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.onDupKey)
 			if err != nil {
 				return nil, err
 			}
@@ -149,7 +149,7 @@ func newChunkWorker(
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
-			SetOnDup(getOnDupForConflictedKV(op.conflictHandling)).
+			SetOnDup(getOnDupForConflictedKV(op.onDupKey)).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
