@@ -113,7 +113,7 @@ func TestBuildCountSum(t *testing.T) {
 		},
 		MaterializedView: &model.MaterializedViewInfo{
 			BaseTableIDs: []int64{baseID},
-			SQLContent:   "select a, count(1), count(b), sum(b) from t group by a",
+			SQLContent:   "select a, COUNT(1), CoUnT(b), sUm(b) from t group by a",
 		},
 	}
 
