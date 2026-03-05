@@ -2903,7 +2903,7 @@ func appendInt4(buf []byte, v int) []byte {
 }
 
 // AppendString appends the formatted time string to buf and returns the result.
-// Zero allocations — all formatting is done via direct byte writes.
+// It avoids fmt/bytes.Buffer; allocations occur only if buf needs to grow.
 func (t Time) AppendString(buf []byte) []byte {
 	buf = appendInt4(buf, t.Year())
 	buf = append(buf, '-')

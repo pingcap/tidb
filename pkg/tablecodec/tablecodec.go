@@ -946,7 +946,7 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
 			// NOTE: the corresponding datum is generated as `types.NewUintDatum(paddingSize)`, and the raw data is
-			// encoded via `encodeUint`. Thus we should mark the field type as unsigened here so that the BytesDecoder
+			// encoded via `encodeUint`. Thus we should mark the field type as unsigned here so that the BytesDecoder
 			// can decode it correctly later. Otherwise there might be issues like #47115.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
 			copyColInfo.Ft.AddFlag(mysql.UnsignedFlag)
@@ -1881,10 +1881,14 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 		return nil, err
 	}
 	if segs.RestoredValues != nil {
-		resultValues, err = decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.RestoredValues)
+		restored, err := decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.RestoredValues)
 		if err != nil {
 			return nil, err
 		}
+		if len(restored) != colsLen {
+			return nil, errors.Errorf("unexpected restored values length %d, expected %d", len(restored), colsLen)
+		}
+		copy(resultValues, restored)
 	}
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
@@ -1931,14 +1935,19 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return nil, err
 	}
 	if segs.RestoredValues != nil { // new collation
+		var restored [][]byte
 		if restoredDec != nil {
-			resultValues, err = restoredDec.Decode(segs.RestoredValues)
+			restored, err = restoredDec.Decode(segs.RestoredValues)
 		} else {
-			resultValues, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
+			restored, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
 		}
 		if err != nil {
 			return nil, err
 		}
+		if len(restored) != colsLen {
+			return nil, errors.Errorf("unexpected restored values length %d, expected %d", len(restored), colsLen)
+		}
+		copy(resultValues, restored)
 	}
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
