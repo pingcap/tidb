@@ -1,12 +1,28 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "crr",
+    srcs = ["checkpoint_calculator.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/stream/crr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/stream",
+        "//br/pkg/stream/backupmetas",
+        "//br/pkg/streamhelper",
+        "//pkg/objstore/storeapi",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+    ],
+)
 
 go_test(
     name = "drr_test",
     timeout = "short",
     srcs = ["integration_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
-        "//br/pkg/stream/drr/internal/testutil",
+        ":crr",
+        "//br/pkg/stream/crr/internal/testutil",
         "@com_github_stretchr_testify//require",
     ],
 )
@@ -15,6 +31,7 @@ go_test(
     name = "crr_test",
     srcs = ["integration_test.go"],
     deps = [
+        ":crr",
         "//br/pkg/stream/crr/internal/testutil",
         "@com_github_stretchr_testify//require",
     ],

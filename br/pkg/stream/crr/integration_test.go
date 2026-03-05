@@ -17,7 +17,9 @@ package crr_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/br/pkg/stream/crr"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -58,4 +60,74 @@ func TestPartialCRRReplicationFailsRestoreValidationEvenIfCheckpointMatches(t *t
 	err = h.AssertDownstreamCanRestoreTo(ctx, downstreamCheckpoint)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not readable")
+}
+
+func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
+	ctx := context.Background()
+	stores := testutil.StoreIDRange(1, 6)
+	boundaries, err := testutil.NewRegionLayoutBuilder().
+		AddRoundRobinRegions(10, stores...).
+		Build()
+	require.NoError(t, err)
+
+	h, err := testutil.NewLocalTestHarness(ctx, t.TempDir(), boundaries)
+	require.NoError(t, err)
+	t.Cleanup(h.Close)
+
+	var upstreamCheckpoint uint64
+	for range 3 {
+		for _, storeID := range stores {
+			_, err := h.FlushSim.FlushStore(ctx, storeID)
+			require.NoError(t, err)
+		}
+		upstreamCheckpoint = h.PDSim.CurrentTSO()
+	}
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, upstreamCheckpoint))
+
+	pulled := h.PullMessages(0)
+	require.Greater(t, pulled, 0)
+
+	replicated, err := h.Replicate(ctx, pulled/3)
+	require.NoError(t, err)
+	require.Greater(t, replicated, 0)
+	require.Less(t, replicated, pulled)
+
+	calculator, err := crr.NewCheckpointCalculator(
+		h.PDSim,
+		h.Upstream,
+		h.Downstream,
+		crr.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	type calcResult struct {
+		checkpoint uint64
+		err        error
+	}
+	calcResultCh := make(chan calcResult, 1)
+
+	calcCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	go func() {
+		checkpoint, err := calculator.ComputeNextCheckpoint(calcCtx)
+		calcResultCh <- calcResult{checkpoint: checkpoint, err: err}
+	}()
+
+	select {
+	case result := <-calcResultCh:
+		require.FailNowf(t, "checkpoint should wait for full sync", "unexpected early result: %+v", result)
+	case <-time.After(80 * time.Millisecond):
+	}
+
+	restReplicated, err := h.Replicate(ctx, 0)
+	require.NoError(t, err)
+	require.Greater(t, restReplicated, 0)
+
+	result := <-calcResultCh
+	require.NoError(t, result.err)
+	require.Equal(t, upstreamCheckpoint, result.checkpoint)
+	require.NoError(t, h.AssertDownstreamCanRestoreTo(ctx, result.checkpoint))
 }
