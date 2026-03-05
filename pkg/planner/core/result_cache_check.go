@@ -16,6 +16,7 @@ package core
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -25,19 +26,26 @@ import (
 )
 
 // resultCacheNonDeterministicFuncs lists functions whose results are
-// non-deterministic or have side effects, making query results non-cacheable.
-// This mirrors expression.mutableEffectsFunctions but is needed at the AST
-// level because the optimizer folds these to constants during planning.
+// non-deterministic, session-dependent, or have side effects, making query
+// results non-cacheable.
+// This mirrors expression.mutableEffectsFunctions and extends it with some
+// session-dependent/side-effect functions that may be constant-folded during
+// planning, making them undetectable in the physical plan.
 var resultCacheNonDeterministicFuncs = map[string]struct{}{
 	ast.Now: {}, ast.CurrentTimestamp: {}, ast.UTCTime: {},
 	ast.Curtime: {}, ast.CurrentTime: {}, ast.UTCTimestamp: {},
 	ast.UnixTimestamp: {}, ast.Sysdate: {}, ast.Curdate: {},
 	ast.CurrentDate: {}, ast.UTCDate: {},
+	ast.LocalTime: {}, ast.LocalTimestamp: {},
 	ast.Rand: {}, ast.RandomBytes: {},
 	ast.UUID: {}, ast.UUIDShort: {},
 	ast.Sleep: {}, ast.SetVar: {}, ast.GetVar: {},
-	ast.AnyValue:    {},
-	ast.ConnectionID: {}, ast.CurrentUser: {},
+	ast.AnyValue:     {},
+	ast.ConnectionID: {}, ast.CurrentUser: {}, ast.User: {},
+	ast.Database: {}, ast.CurrentRole: {}, ast.CurrentResourceGroup: {},
+	ast.LastInsertId: {}, ast.RowCount: {}, ast.FoundRows: {},
+	ast.NextVal: {}, ast.LastVal: {}, ast.SetVal: {},
+	ast.GetLock: {}, ast.ReleaseLock: {}, ast.IsFreeLock: {}, ast.IsUsedLock: {},
 }
 
 // CanCacheResultSet checks whether a physical plan's result set can be cached
@@ -58,7 +66,7 @@ func CanCacheResultSet(stmtNode ast.StmtNode, plan base.PhysicalPlan, inDML bool
 	// Point get plans bypass non-prepared plan cache parameterization.
 	// Skip result set caching for them.
 	switch plan.(type) {
-	case *PointGetPlan, *BatchPointGetPlan:
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
 		return false
 	}
 	// Check AST for non-deterministic functions and variable references
@@ -72,6 +80,9 @@ func CanCacheResultSet(stmtNode ast.StmtNode, plan base.PhysicalPlan, inDML bool
 // hasMutableExprInAST walks the AST to detect non-deterministic functions
 // and variable references that would make the result set non-cacheable.
 func hasMutableExprInAST(node ast.Node) bool {
+	if node == nil {
+		return true
+	}
 	checker := &mutableExprChecker{}
 	node.Accept(checker)
 	return checker.found
@@ -93,6 +104,11 @@ func (c *mutableExprChecker) Enter(in ast.Node) (ast.Node, bool) {
 			c.found = true
 			return in, true
 		}
+	case *ast.AggregateFuncExpr:
+		if _, ok := resultCacheNonDeterministicFuncs[strings.ToLower(node.F)]; ok {
+			c.found = true
+			return in, true
+		}
 	case *ast.VariableExpr:
 		// User variables (@var) and session variables (@@var).
 		c.found = true
@@ -107,6 +123,9 @@ func (c *mutableExprChecker) Leave(in ast.Node) (ast.Node, bool) {
 
 // checkPlanTreeCacheable recursively checks whether the plan tree is cacheable.
 func checkPlanTreeCacheable(plan base.PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
 	if !checkNodeCacheable(plan) {
 		return false
 	}
@@ -149,6 +168,9 @@ func checkPlanTreeCacheable(plan base.PhysicalPlan) bool {
 
 // checkNodeCacheable checks a single plan node for cacheability.
 func checkNodeCacheable(plan base.PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
 	// 1. Check FOR UPDATE / FOR SHARE lock.
 	if lock, ok := plan.(*physicalop.PhysicalLock); ok {
 		if lock.Lock != nil && lock.Lock.LockType != ast.SelectLockNone {
@@ -157,6 +179,8 @@ func checkNodeCacheable(plan base.PhysicalPlan) bool {
 	}
 	// 2. Check that scanned tables are cached tables.
 	switch x := plan.(type) {
+	case *physicalop.PhysicalMemTable:
+		return false
 	case *physicalop.PhysicalTableScan:
 		if x.Table.TableCacheStatusType != model.TableCacheStatusEnable {
 			return false

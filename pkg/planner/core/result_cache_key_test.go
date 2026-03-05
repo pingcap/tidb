@@ -53,19 +53,21 @@ func TestBuildResultCacheKey_NonPrepared(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table cached_t (id int primary key, v int)")
 	tk.MustExec("alter table cached_t cache")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache = ON")
 
 	// Two different queries with same shape but different constants.
-	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_t where id = 1")
+	// Use a non-PK filter to avoid PointGetPlan and keep the plan digest stable.
+	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_t where v = 1")
 	require.True(t, ok1)
 	require.NotNil(t, pb1)
 
-	key2, pb2, ok2 := execAndBuildKey(t, tk, "select * from cached_t where id = 2")
+	key2, pb2, ok2 := execAndBuildKey(t, tk, "select * from cached_t where v = 2")
 	require.True(t, ok2)
 	require.NotNil(t, pb2)
 
 	// With the same plan shape, the PlanDigest portion should be equal.
 	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
-	// Different literal values must produce different ParamHash via SQL fallback.
+	// Different literal values must produce different ParamHash.
 	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
 	// Different param bytes for different values.
 	require.NotEqual(t, pb1, pb2)
