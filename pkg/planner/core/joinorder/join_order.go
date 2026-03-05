@@ -569,7 +569,7 @@ func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, n
 		usedEdges = make(map[uint64]struct{})
 	}
 	addEdge := func(e *edge, missingList *[]string) {
-		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 && len(e.selConds) == 0 {
+		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 {
 			return
 		}
 		total++
