@@ -179,6 +179,9 @@ func BuildCachedIndexDatumData(
 
 	entries := make(map[string][]types.Datum)
 	restoredDec := tablecodec.NewIndexRestoredDecoder(colInfos[:colsLen])
+	// CachedIndexDatumData stores decoded datums. Some datum kinds (e.g. JSON/vector) may reference the encoded bytes
+	// directly, so the restored decoder must not reuse its arena across rows.
+	restoredDec.SetReuseArena(false)
 	decodeBuff := make([][]byte, colsLen, colsLen+len(colInfos))
 	var buf [16]byte
 

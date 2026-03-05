@@ -5910,8 +5910,12 @@ func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.Stmt
 	if !ok {
 		return e
 	}
+	execID := 0
+	if ex, ok := e.(interface{ ID() int }); ok {
+		execID = ex.ID()
+	}
 	return &CachedResultExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), e.ID(), e),
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), execID, e),
 		original:     e,
 		cachedTable:  b.cachedTbl,
 		cacheKey:     key,

@@ -189,7 +189,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
-		data, err := m.decodeIndexKeyValue(key, value, tps, colInfos)
+		data, err := m.decodeIndexKeyValue(key, value, tps, colInfos, true)
 		if err != nil {
 			return err
 		}
@@ -223,7 +223,10 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	return m.addedRows, nil
 }
 
-func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, colInfos []rowcodec.ColInfo) ([]types.Datum, error) {
+// decodeIndexKeyValue decodes index key/value into datums.
+// durableBytes controls whether the encoded bytes produced from restored values must remain valid
+// after subsequent DecodeIndexKVEx calls (e.g. when the returned datums are cached or accumulated).
+func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, colInfos []rowcodec.ColInfo, durableBytes bool) ([]types.Datum, error) {
 	// Lazy init cached per-scan invariants.
 	if m.loc == nil {
 		m.loc = m.ctx.GetSessionVars().Location()
@@ -258,6 +261,9 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	if m.restoredDec == nil {
 		m.restoredDec = tablecodec.NewIndexRestoredDecoder(colInfos[:colsLen])
 	}
+	// Restored values are decoded into bytes backed by restoredDec's arena. Some Datum kinds (e.g. JSON/vector)
+	// decode zero-copy from the encoded bytes, so we must avoid arena reuse if the datums will outlive this call.
+	m.restoredDec.SetReuseArena(!durableBytes)
 	values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, m.hdStatus, colInfos, buf, m.decodeBuff, m.restoredDec)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1474,7 +1480,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			}
 		}
 
-		data, err := iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos)
+		data, err := iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos, false)
 		if err != nil {
 			return nil, err
 		}

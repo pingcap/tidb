@@ -850,6 +850,8 @@ type IndexRestoredDecoder struct {
 	rd     *rowcodec.BytesDecoder
 	values [][]byte // pre-allocated, reused across rows
 	arena  []byte   // arena for encodeOldDatum allocations
+
+	reuseArena bool
 }
 
 // NewIndexRestoredDecoder creates a new IndexRestoredDecoder for the given columns.
@@ -866,15 +868,33 @@ func NewIndexRestoredDecoder(columns []rowcodec.ColInfo) *IndexRestoredDecoder {
 		rd:     rd,
 		values: make([][]byte, len(columns)),
 		arena:  make([]byte, 0, 256),
+
+		reuseArena: true,
 	}
 }
 
-// Decode decodes restored values using cached state. The returned slice is reused
-// across calls; callers must consume results before calling Decode again.
+// SetReuseArena controls whether the decoder reuses the internal arena across Decode calls.
+//
+// When reuse is enabled (default), the returned encoded bytes may alias the decoder's internal arena
+// and are only valid until the next Decode call.
+// When reuse is disabled, Decode allocates a fresh arena each call, so returned bytes are durable.
+func (d *IndexRestoredDecoder) SetReuseArena(reuse bool) {
+	d.reuseArena = reuse
+}
+
+// Decode decodes restored values using cached state. The returned slice header is reused
+// across calls; callers must consume/copy it before calling Decode again.
 func (d *IndexRestoredDecoder) Decode(restoredVal []byte) ([][]byte, error) {
-	d.arena = d.arena[:0]
-	values, arena, err := d.rd.DecodeToBytesNoHandleInto(d.colIDs, restoredVal, d.values, d.arena)
-	d.arena = arena
+	arena := d.arena
+	if d.reuseArena {
+		arena = arena[:0]
+	} else {
+		arena = make([]byte, 0, 256)
+	}
+	values, arena, err := d.rd.DecodeToBytesNoHandleInto(d.colIDs, restoredVal, d.values, arena)
+	if d.reuseArena {
+		d.arena = arena
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -17,11 +17,13 @@ package tables
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -227,6 +229,74 @@ func TestBuildCachedDatumDataCommonHandleTimestamp(t *testing.T) {
 	row := cd.Chunks[0].GetRow(0)
 	require.Equal(t, ts.String(), row.GetTime(0).String())
 	require.Equal(t, int64(123), row.GetInt64(1))
+}
+
+func TestBuildCachedIndexDatumDataRestoredDecoderDurability(t *testing.T) {
+	mb := newTestMemBuf()
+
+	ftPK := types.NewFieldType(mysql.TypeLonglong)
+	ftPK.AddFlag(mysql.PriKeyFlag)
+	ftJSON := types.NewFieldType(mysql.TypeJSON)
+
+	tblInfo := &model.TableInfo{
+		ID:         testTableID,
+		PKIsHandle: true,
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Offset: 0, FieldType: *ftPK},
+			{ID: 2, Offset: 1, FieldType: *ftJSON},
+		},
+	}
+	idxInfo := &model.IndexInfo{
+		ID:     1,
+		Unique: true,
+		Columns: []*model.IndexColumn{
+			{Offset: 1, Length: types.UnspecifiedLength},
+		},
+	}
+
+	buildIndexKV := func(handle int64, j types.BinaryJSON) (kv.Key, []byte) {
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, types.NewJSONDatum(j))
+		require.NoError(t, err)
+		key := tablecodec.EncodeIndexSeekKey(testTableID, idxInfo.ID, encodedCols)
+
+		rd := rowcodec.Encoder{Enable: true}
+		restoredBytes, err := rd.Encode(time.UTC, []int64{tblInfo.Columns[1].ID}, []types.Datum{types.NewJSONDatum(j)}, nil, nil)
+		require.NoError(t, err)
+
+		val := make([]byte, 0, 1+len(restoredBytes)+8)
+		val = append(val, 8) // tailLen = 8 (int handle)
+		val = append(val, restoredBytes...)
+		var hBuf [8]byte
+		binary.BigEndian.PutUint64(hBuf[:], uint64(handle))
+		val = append(val, hBuf[:]...)
+		return key, val
+	}
+
+	j1, err := types.ParseBinaryJSONFromString(`{"a":1}`)
+	require.NoError(t, err)
+	j2, err := types.ParseBinaryJSONFromString(`{"a":2}`)
+	require.NoError(t, err)
+
+	key1, val1 := buildIndexKV(1, j1)
+	key2, val2 := buildIndexKV(2, j2)
+	require.NoError(t, mb.Set(key1, val1))
+	require.NoError(t, mb.Set(key2, val2))
+
+	data, err := BuildCachedIndexDatumData(mb, testTableID, idxInfo, tblInfo)
+	require.NoError(t, err)
+	require.Len(t, data.Entries, 2)
+
+	row1, ok := data.Entries[string(key1)]
+	require.True(t, ok)
+	require.Len(t, row1, 2)
+	require.Equal(t, j1, row1[0].GetMysqlJSON())
+	require.Equal(t, int64(1), row1[1].GetInt64())
+
+	row2, ok := data.Entries[string(key2)]
+	require.True(t, ok)
+	require.Len(t, row2, 2)
+	require.Equal(t, j2, row2[0].GetMysqlJSON())
+	require.Equal(t, int64(2), row2[1].GetInt64())
 }
 
 func TestBuildCachedDatumDataEmpty(t *testing.T) {
