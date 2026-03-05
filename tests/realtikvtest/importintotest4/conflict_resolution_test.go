@@ -784,3 +784,120 @@ func (s *mockGCSSuite) TestGlobalSortOnDuplicateKeyError() {
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("2 2"))
 }
+
+func subtaskStateCount(subtasks []*proto.Subtask, state proto.SubtaskState) int {
+	count := 0
+	for _, st := range subtasks {
+		if st.State == state {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *mockGCSSuite) runImportWithGlobalSortOnDupError(sourceContents []string, extraOptions string) (int64, error) {
+	sourceBucket := fmt.Sprintf("on-duplicate-key-step-src-%d", rand.Int())
+	sortedBucket := fmt.Sprintf("on-duplicate-key-step-sorted-%d", rand.Int())
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortedBucket})
+	for i, content := range sourceContents {
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: sourceBucket,
+				Name:       fmt.Sprintf("t.%d.csv", i),
+			},
+			Content: []byte(content),
+		})
+	}
+	s.T().Cleanup(func() {
+		testutils.RemoveAllObjects(s.T(), s.server, sourceBucket)
+		testutils.RemoveAllObjects(s.T(), s.server, sortedBucket)
+	})
+
+	dbName := fmt.Sprintf("on_duplicate_key_step_%d", rand.Int())
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t(a int primary key, b int)")
+
+	sortStorageURI := fmt.Sprintf("gs://%s?endpoint=%s", sortedBucket, gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://%s/t.*.csv?endpoint=%s'
+		with cloud_storage_uri='%s', on_duplicate_key='error'`,
+		sourceBucket, gcsEndpoint, sortStorageURI)
+	if len(extraOptions) > 0 {
+		importSQL = fmt.Sprintf("%s, %s", importSQL, extraOptions)
+	}
+
+	storage.TestLastTaskID.Store(0)
+	err := s.tk.QueryToErr(importSQL)
+	return storage.TestLastTaskID.Load(), err
+}
+
+func (s *mockGCSSuite) assertNormalizedDuplicateKeyErr(err error) {
+	s.Require().Error(err)
+	s.Contains(err.Error(), "[executor:8167]")
+	s.NotContains(err.Error(), "found duplicate key")
+}
+
+func (s *mockGCSSuite) TestGlobalSortOnDuplicateKeyErrorByStep() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
+
+	s.Run("encode-step", func() {
+		taskID, err := s.runImportWithGlobalSortOnDupError(
+			[]string{
+				"1,1\n1,2\n2,2\n",
+			},
+			"",
+		)
+		s.assertNormalizedDuplicateKeyErr(err)
+		s.Greater(taskID, int64(0))
+
+		encodeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepEncodeAndSort)
+		s.Greater(len(encodeSubtasks), 0)
+		s.Greater(subtaskStateCount(encodeSubtasks, proto.SubtaskStateFailed), 0)
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepMergeSort), 0)
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepWriteAndIngest), 0)
+	})
+
+	s.Run("merge-step", func() {
+		taskID, err := s.runImportWithGlobalSortOnDupError(
+			[]string{
+				"1,1\n2,2\n",
+				"1,3\n3,3\n",
+			},
+			"__max_engine_size='1', __force_merge_step",
+		)
+		s.assertNormalizedDuplicateKeyErr(err)
+		s.Greater(taskID, int64(0))
+
+		encodeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepEncodeAndSort)
+		s.Greater(len(encodeSubtasks), 0)
+		s.Zero(subtaskStateCount(encodeSubtasks, proto.SubtaskStateFailed))
+
+		mergeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepMergeSort)
+		s.Greater(len(mergeSubtasks), 0)
+		s.Greater(subtaskStateCount(mergeSubtasks, proto.SubtaskStateFailed), 0)
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepWriteAndIngest), 0)
+	})
+
+	s.Run("ingest-step", func() {
+		taskID, err := s.runImportWithGlobalSortOnDupError(
+			[]string{
+				"1,1\n2,2\n",
+				"1,3\n3,3\n",
+			},
+			"__max_engine_size='1'",
+		)
+		s.assertNormalizedDuplicateKeyErr(err)
+		s.Greater(taskID, int64(0))
+
+		encodeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepEncodeAndSort)
+		s.Greater(len(encodeSubtasks), 0)
+		s.Zero(subtaskStateCount(encodeSubtasks, proto.SubtaskStateFailed))
+
+		// Overlap is intentionally tiny in this case, so merge-sort is skipped and
+		// duplicate check happens when write+ingest loads KVs.
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepMergeSort), 0)
+		ingestSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepWriteAndIngest)
+		s.Greater(len(ingestSubtasks), 0)
+		s.Greater(subtaskStateCount(ingestSubtasks, proto.SubtaskStateFailed), 0)
+	})
+}
