@@ -268,6 +268,9 @@ func (p *QBHintHandler) getBlockOffset(blockName ast.CIStr) int {
 
 // SetWarns set the warning from a list of strings.
 func (p *QBHintHandler) SetWarns(warns []string) {
+	if p == nil || p.warnHandler == nil || len(warns) == 0 {
+		return
+	}
 	for _, one := range warns {
 		p.warnHandler.SetHintWarning(one)
 	}
