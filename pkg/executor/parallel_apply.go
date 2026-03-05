@@ -178,11 +178,15 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			}
 			// Bridge goroutine: when all outer+inner workers finish,
 			// close orderedResultCh so the reorder worker can drain and exit.
+			// It is tracked by notifyWg so that Close() waits for all
+			// outer/inner workers to finish even if reorderWorker exits
+			// early (e.g. on e.exit signal).
+			e.notifyWg.Add(1)
 			go func() {
+				defer e.handleWorkerPanic(ctx, &e.notifyWg)
 				e.workerWg.Wait()
 				close(e.orderedResultCh)
 			}()
-			e.notifyWg.Add(1)
 			go e.reorderWorker(ctx)
 		} else {
 			for i := range e.concurrency {
@@ -401,7 +405,9 @@ func (e *ParallelNestedLoopApplyExec) processOneOuterRow(ctx context.Context, id
 // resultChkCh in monotonically increasing sequence order, batching small
 // per-row results into full output chunks. Used only in keepOrder mode.
 func (e *ParallelNestedLoopApplyExec) reorderWorker(ctx context.Context) {
-	defer e.handleWorkerPanic(ctx, &e.notifyWg)
+	// Panic recovery only; lifecycle is not tracked by notifyWg because
+	// the bridge goroutine (which waits on workerWg) owns that role.
+	defer e.handleWorkerPanic(ctx, nil)
 
 	pending := make(map[uint64]orderedResult)
 	nextSeq := uint64(0)
