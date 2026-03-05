@@ -42,7 +42,7 @@ func TestMysqlMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
-	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -76,7 +76,7 @@ func TestMetaDataAfterConn(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
-	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, true))
 
@@ -114,7 +114,7 @@ func TestMysqlWithFollowersMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
-	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -148,7 +148,7 @@ func TestMysqlWithNullFollowersMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
-	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -210,7 +210,7 @@ func TestMariaDBWithFollowersMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("10.11.15-MariaDB-ubu2204-log")
-	require.Equal(t, version.ServerType(version.ServerTypeMariaDB), si.ServerType)
+	require.Equal(t, version.ServerTypeMariaDB, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -255,7 +255,7 @@ func TestEarlierMysqlMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("5.5.65")
-	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
