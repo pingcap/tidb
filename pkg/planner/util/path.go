@@ -240,6 +240,8 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
+// It also supports a trailing range predicate (LT/GT/LE/GE) with a correlated column on the last
+// access column, e.g. `idx_col_1 = cor_col AND idx_col_2 < cor_col`.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
@@ -276,6 +278,29 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			break
 		}
 		if !matched {
+			// Try a range predicate (LT/GT/LE/GE) with a correlated column.
+			// A range predicate terminates the access prefix, so we only
+			// attempt this when no EQ match was found.
+			for j, filter := range path.TableFilters {
+				if used[j] {
+					continue
+				}
+				if isColRangeCorCol(filter, path.IdxCols[i]) {
+					ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
+					access[i-eqOrInCount] = filter
+					// Range predicates must also remain as post-scan filters
+					// because the index range is a superset when prefix lengths
+					// are involved, and to be safe we always keep the filter.
+					access = access[:i-eqOrInCount+1]
+					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
+					for k, ok := range used {
+						if !ok {
+							remained = append(remained, path.TableFilters[k]) // nozero
+						}
+					}
+					return access, remained
+				}
+			}
 			access = access[:i-eqOrInCount]
 			break
 		}
@@ -305,6 +330,42 @@ func isColEqCorCol(expr expression.Expression, col *expression.Column) bool {
 		return ok
 	}
 	return isColEqExpr(expr, col, isCorCol)
+}
+
+// isColRangeCorCol checks if the expression is a range comparison (LT/GT/LE/GE)
+// where one side is the given column and the other side is a correlated column.
+func isColRangeCorCol(expr expression.Expression, col *expression.Column) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.LT, ast.GT, ast.LE, ast.GE:
+	default:
+		return false
+	}
+	_, collation := f.CharsetAndCollation()
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isColEqExpr checks if the expression is eq function that one side is column and the other side passes checkFn.

@@ -1580,6 +1580,91 @@ func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 	})
 }
 
+// TestCorColRangePredicateAccess verifies that range predicates (LT/GT/LE/GE)
+// with correlated columns are used as index access conditions, not just
+// post-scan Selection filters.
+func TestCorColRangePredicateAccess(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1 (a int primary key, b int, index ib(b))")
+		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("insert into mysql.opt_rule_blacklist value(\"decorrelate\")")
+		tk.MustExec("admin reload opt_rule_blacklist")
+		defer func() {
+			tk.MustExec("delete from mysql.opt_rule_blacklist where name = \"decorrelate\"")
+			tk.MustExec("admin reload opt_rule_blacklist")
+		}()
+
+		// LT with correlated column on PK (appended to secondary index ib(b)).
+		// The index is effectively (b, a) on a clustered table, so t1b.a < t1a.a
+		// should appear as an access condition in "decided by".
+		rows := tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a)").Rows()
+		foundRangeAccess := false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[4])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "lt(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": LT correlated predicate should be in index access conditions")
+
+		// Correctness: rows where exists another row with same b but smaller a.
+		// (1,1) -> no row with b=1 and a<1 -> excluded
+		// (2,2) -> no row with b=2 and a<2 -> excluded
+		// ...all excluded since each (a,b) pair has a=b and is unique.
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a)").
+			Check(testkit.Rows())
+
+		// Insert duplicate b values so the EXISTS matches.
+		tk.MustExec("insert into t1 values (10,1),(20,2)")
+		// (1,1) -> exists (10,1) with b=1, a=10 > 1? No, need a < 1. -> excluded
+		// But (10,1) -> exists (1,1) with b=1, a=1 < 10 -> included
+		// (20,2) -> exists (2,2) with b=2, a=2 < 20 -> included
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a) order by t1a.a").
+			Check(testkit.Rows("10 1", "20 2"))
+
+		// GT with correlated column.
+		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a > t1a.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[4])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "gt(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": GT correlated predicate should be in index access conditions")
+
+		// Correctness for GT.
+		// (1,1) -> exists (10,1) with b=1, a=10 > 1 -> included
+		// (2,2) -> exists (20,2) with b=2, a=20 > 2 -> included
+		// (10,1) -> need b=1 and a>10, only (1,1) has b=1 but a=1 < 10 -> excluded
+		// (20,2) -> need b=2 and a>20, only (2,2) has b=2 but a=2 < 20 -> excluded
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a > t1a.a) order by t1a.a").
+			Check(testkit.Rows("1 1", "2 2"))
+
+		// LE with correlated column.
+		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a <= t1a.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[4])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "le(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": LE correlated predicate should be in index access conditions")
+	})
+}
+
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
 func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
