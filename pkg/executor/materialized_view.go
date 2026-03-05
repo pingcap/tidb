@@ -280,7 +280,7 @@ func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt) (st
 	case ast.RefreshMaterializedViewTypeComplete:
 		// supported
 	case ast.RefreshMaterializedViewTypeFast:
-		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
+		return "", errors.New("FAST refresh is not yet supported, please use COMPLETE refresh")
 	default:
 		return "", errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}
