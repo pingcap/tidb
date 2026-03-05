@@ -34,8 +34,24 @@ func (e *Exec) buildMinMaxMerger(
 	if len(mapping.ColID) != 1 {
 		return nil, errors.Errorf("%s mapping expects exactly 1 output column, got %d", mapping.AggFunc.Name, len(mapping.ColID))
 	}
-	if len(mapping.DependencyColID) != 4 && len(mapping.DependencyColID) != 5 {
-		return nil, errors.Errorf("%s mapping expects 4 or 5 dependencies, got %d", mapping.AggFunc.Name, len(mapping.DependencyColID))
+	exprNullable, err := e.isMinMaxExprNullable(mapping)
+	if err != nil {
+		return nil, errors.Annotatef(err, "%s mapping expression nullability", mapping.AggFunc.Name)
+	}
+	if exprNullable {
+		if len(mapping.DependencyColID) != 5 {
+			return nil, errors.Errorf(
+				"%s(nullable expr) requires final-count dependency (exactly 5 dependencies), got %d",
+				mapping.AggFunc.Name,
+				len(mapping.DependencyColID),
+			)
+		}
+	} else if len(mapping.DependencyColID) != 4 {
+		return nil, errors.Errorf(
+			"%s(non-nullable expr) must not set final-count dependency (exactly 4 dependencies), got %d",
+			mapping.AggFunc.Name,
+			len(mapping.DependencyColID),
+		)
 	}
 
 	outputColID := mapping.ColID[0]
@@ -53,11 +69,14 @@ func (e *Exec) buildMinMaxMerger(
 	if err != nil {
 		return nil, errors.Annotatef(err, "%s mapping removed dependency col %d", mapping.AggFunc.Name, removedColID)
 	}
-	if err := validateMinMaxValueTypes(mapping.AggFunc.Name, retTp, addedTp, removedTp); err != nil {
-		return nil, err
+	if err := validateMinMaxValueTypes(retTp, addedTp, removedTp); err != nil {
+		return nil, errors.Annotatef(err, "%s mapping value dependencies", mapping.AggFunc.Name)
 	}
 	addedRef, err := resolveDepRef(addedColID, colID2ComputedIdx, e.DeltaAggColCount)
 	if err != nil {
+		return nil, errors.Annotatef(err, "%s mapping added dependency col %d", mapping.AggFunc.Name, addedColID)
+	}
+	if err := validateDepRefSource(addedRef, depFromInput); err != nil {
 		return nil, errors.Annotatef(err, "%s mapping added dependency col %d", mapping.AggFunc.Name, addedColID)
 	}
 	addedCntColID := mapping.DependencyColID[1]
@@ -65,15 +84,21 @@ func (e *Exec) buildMinMaxMerger(
 	if err != nil {
 		return nil, errors.Annotatef(err, "%s mapping added-count dependency col %d", mapping.AggFunc.Name, addedCntColID)
 	}
-	if err := validateMinMaxCountType(mapping.AggFunc.Name, addedCntColID, addedCntTp); err != nil {
-		return nil, err
+	if err := validateSignedIntType(addedCntTp); err != nil {
+		return nil, errors.Annotatef(err, "%s mapping added-count dependency col %d", mapping.AggFunc.Name, addedCntColID)
 	}
 	addedCntRef, err := resolveDepRef(addedCntColID, colID2ComputedIdx, e.DeltaAggColCount)
 	if err != nil {
 		return nil, errors.Annotatef(err, "%s mapping added-count dependency col %d", mapping.AggFunc.Name, addedCntColID)
 	}
+	if err := validateDepRefSource(addedCntRef, depFromInput); err != nil {
+		return nil, errors.Annotatef(err, "%s mapping added-count dependency col %d", mapping.AggFunc.Name, addedCntColID)
+	}
 	removedRef, err := resolveDepRef(removedColID, colID2ComputedIdx, e.DeltaAggColCount)
 	if err != nil {
+		return nil, errors.Annotatef(err, "%s mapping removed dependency col %d", mapping.AggFunc.Name, removedColID)
+	}
+	if err := validateDepRefSource(removedRef, depFromInput); err != nil {
 		return nil, errors.Annotatef(err, "%s mapping removed dependency col %d", mapping.AggFunc.Name, removedColID)
 	}
 	removedCntColID := mapping.DependencyColID[3]
@@ -81,42 +106,59 @@ func (e *Exec) buildMinMaxMerger(
 	if err != nil {
 		return nil, errors.Annotatef(err, "%s mapping removed-count dependency col %d", mapping.AggFunc.Name, removedCntColID)
 	}
-	if err := validateMinMaxCountType(mapping.AggFunc.Name, removedCntColID, removedCntTp); err != nil {
-		return nil, err
+	if err := validateSignedIntType(removedCntTp); err != nil {
+		return nil, errors.Annotatef(err, "%s mapping removed-count dependency col %d", mapping.AggFunc.Name, removedCntColID)
 	}
 	removedCntRef, err := resolveDepRef(removedCntColID, colID2ComputedIdx, e.DeltaAggColCount)
 	if err != nil {
 		return nil, errors.Annotatef(err, "%s mapping removed-count dependency col %d", mapping.AggFunc.Name, removedCntColID)
 	}
+	if err := validateDepRefSource(removedCntRef, depFromInput); err != nil {
+		return nil, errors.Annotatef(err, "%s mapping removed-count dependency col %d", mapping.AggFunc.Name, removedCntColID)
+	}
 
 	base := minMaxMergerBase{
-		outputCols:     []int{outputColID},
-		addedRef:       addedRef,
-		addedCntRef:    addedCntRef,
-		removedRef:     removedRef,
-		removedCntRef:  removedCntRef,
-		mappingIdx:     mappingIdx,
-		isMax:          mapping.AggFunc.Name == ast.AggFuncMax,
-		retTp:          retTp,
-		hasCountExpr:   len(mapping.DependencyColID) == 5,
-		countExprRef:   depRef{},
-		countExprColID: -1,
+		outputCols:    []int{outputColID},
+		addedRef:      addedRef,
+		addedCntRef:   addedCntRef,
+		removedRef:    removedRef,
+		removedCntRef: removedCntRef,
+		mappingIdx:    mappingIdx,
+		isMax:         mapping.AggFunc.Name == ast.AggFuncMax,
+		retTp:         retTp,
+		countRef:      depRef{},
 	}
-	if base.hasCountExpr {
-		base.countExprColID = mapping.DependencyColID[4]
-		countExprTp, err := resolveFieldTypeByColID(base.countExprColID, childTypes)
+	if exprNullable {
+		countColID := mapping.DependencyColID[4]
+		countExprTp, err := resolveFieldTypeByColID(countColID, childTypes)
 		if err != nil {
-			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, base.countExprColID)
+			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, countColID)
 		}
-		if err := validateMinMaxCountType(mapping.AggFunc.Name, base.countExprColID, countExprTp); err != nil {
-			return nil, err
+		if err := validateSignedIntType(countExprTp); err != nil {
+			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, countColID)
 		}
-		base.countExprRef, err = resolveDepRef(base.countExprColID, colID2ComputedIdx, e.DeltaAggColCount)
+		base.countRef, err = resolveDepRef(countColID, colID2ComputedIdx, e.DeltaAggColCount)
 		if err != nil {
-			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, base.countExprColID)
+			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, countColID)
 		}
-		if base.countExprRef.source != depFromComputed {
-			return nil, errors.Errorf("%s(nullable expr) requires final COUNT(expr) from previously computed columns", mapping.AggFunc.Name)
+		if err := validateDepRefSource(base.countRef, depFromComputed); err != nil {
+			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, countColID)
+		}
+	} else {
+		countAllRowsColID := e.AggMappings[0].ColID[0]
+		countAllRowsTp, err := resolveFieldTypeByColID(countAllRowsColID, childTypes)
+		if err != nil {
+			return nil, errors.Annotatef(err, "%s mapping fallback count(*) output col %d", mapping.AggFunc.Name, countAllRowsColID)
+		}
+		if err := validateSignedIntType(countAllRowsTp); err != nil {
+			return nil, errors.Annotatef(err, "%s mapping fallback count(*) output col %d", mapping.AggFunc.Name, countAllRowsColID)
+		}
+		base.countRef, err = resolveDepRef(countAllRowsColID, colID2ComputedIdx, e.DeltaAggColCount)
+		if err != nil {
+			return nil, errors.Annotatef(err, "%s mapping fallback count(*) output col %d", mapping.AggFunc.Name, countAllRowsColID)
+		}
+		if err := validateDepRefSource(base.countRef, depFromComputed); err != nil {
+			return nil, errors.Annotatef(err, "%s mapping fallback count(*) output col %d", mapping.AggFunc.Name, countAllRowsColID)
 		}
 	}
 
@@ -152,14 +194,13 @@ func (e *Exec) buildMinMaxMerger(
 	}
 }
 
-func validateMinMaxValueTypes(aggName string, outputTp, addedTp, removedTp *types.FieldType) error {
+func validateMinMaxValueTypes(outputTp, addedTp, removedTp *types.FieldType) error {
 	if outputTp == nil || addedTp == nil || removedTp == nil {
-		return errors.Errorf("%s mapping type is unavailable", aggName)
+		return errors.New("type is unavailable")
 	}
 	if !outputTp.Equal(addedTp) || !outputTp.Equal(removedTp) {
 		return errors.Errorf(
-			"%s mapping value type mismatch: output=%s added=%s removed=%s",
-			aggName,
+			"value type mismatch: output=%s added=%s removed=%s",
 			outputTp.String(),
 			addedTp.String(),
 			removedTp.String(),
@@ -168,17 +209,18 @@ func validateMinMaxValueTypes(aggName string, outputTp, addedTp, removedTp *type
 	return nil
 }
 
-func validateMinMaxCountType(aggName string, colID int, tp *types.FieldType) error {
-	if tp == nil {
-		return errors.Errorf("%s mapping count col %d type is unavailable", aggName, colID)
+func (e *Exec) isMinMaxExprNullable(mapping Mapping) (bool, error) {
+	if mapping.AggFunc == nil {
+		return false, errors.New("AggFunc is nil")
 	}
-	if tp.EvalType() != types.ETInt {
-		return errors.Errorf("%s mapping count col %d must be integer, got %s", aggName, colID, tp.EvalType())
+	if len(mapping.AggFunc.Args) != 1 || mapping.AggFunc.Args[0] == nil {
+		return false, errors.Errorf("expects exactly 1 non-nil argument, got %d", len(mapping.AggFunc.Args))
 	}
-	if mysql.HasUnsignedFlag(tp.GetFlag()) {
-		return errors.Errorf("%s mapping count col %d must be signed integer", aggName, colID)
+	argTp := mapping.AggFunc.Args[0].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+	if argTp == nil {
+		return false, errors.New("argument type is unavailable")
 	}
-	return nil
+	return !mysql.HasNotNullFlag(argTp.GetFlag()), nil
 }
 
 type minMaxMergerBase struct {
@@ -189,9 +231,7 @@ type minMaxMergerBase struct {
 	removedRef    depRef
 	removedCntRef depRef
 
-	hasCountExpr   bool
-	countExprRef   depRef
-	countExprColID int
+	countRef depRef
 
 	mappingIdx int
 	isMax      bool
@@ -205,7 +245,7 @@ func (m *minMaxMergerBase) outputColIDs() []int {
 func (m *minMaxMergerBase) resolveColumns(
 	input *chunk.Chunk,
 	computedByOrder []*chunk.Column,
-) (oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol *chunk.Column, err error) {
+) (oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol *chunk.Column, err error) {
 	outputColID := m.outputCols[0]
 	if outputColID < 0 || outputColID >= input.NumCols() {
 		err = errors.Errorf("min/max output col %d out of input range", outputColID)
@@ -228,17 +268,21 @@ func (m *minMaxMergerBase) resolveColumns(
 	if err != nil {
 		return
 	}
-	if m.hasCountExpr {
-		countExprCol, err = getDepColumn(input, computedByOrder, m.countExprRef)
-		if err != nil {
-			return
-		}
+	countCol, err = getDepColumn(input, computedByOrder, m.countRef)
+	if err != nil {
+		return
 	}
 	return
 }
 
-func (m *minMaxMergerBase) rowCounts(rowIdx int, countExprCol, addedCntCol, removedCntCol *chunk.Column) (shouldExist bool, addedCnt, removedCnt int64, err error) {
-	shouldExist = true
+func (m *minMaxMergerBase) rowCounts(rowIdx int, countCol, addedCntCol, removedCntCol *chunk.Column) (shouldExist bool, addedCnt, removedCnt int64, err error) {
+	finalCnt, err := readNonNegativeCount(countCol, rowIdx)
+	if err != nil {
+		return false, 0, 0, err
+	}
+	if finalCnt == 0 {
+		return false, 0, 0, nil
+	}
 	addedCnt, err = readNonNegativeCount(addedCntCol, rowIdx)
 	if err != nil {
 		return
@@ -247,22 +291,13 @@ func (m *minMaxMergerBase) rowCounts(rowIdx int, countExprCol, addedCntCol, remo
 	if err != nil {
 		return
 	}
-	if m.hasCountExpr {
-		finalCnt, readErr := readNonNegativeCount(countExprCol, rowIdx)
-		if readErr != nil {
-			err = readErr
-			return
-		}
-		if finalCnt == 0 {
-			shouldExist = false
-		}
-	}
+	shouldExist = true
 	return
 }
 
 func readNonNegativeCount(col *chunk.Column, rowIdx int) (int64, error) {
-	if col == nil || col.IsNull(rowIdx) {
-		return 0, nil
+	if col.IsNull(rowIdx) {
+		return 0, errors.Errorf("count is null at row %d", rowIdx)
 	}
 	v := col.Int64s()[rowIdx]
 	if v < 0 {
@@ -373,15 +408,18 @@ func decideMinMaxFast(
 	}
 }
 
-func appendMinMaxRecomputeRow(workerData *mvMergeAggWorkerData, mappingIdx int, rowIdx int) error {
+func prepareMinMaxRecomputeRows(workerData *mvMergeAggWorkerData, mappingIdx int) ([]int, error) {
 	if workerData == nil {
-		return errors.New("min/max recompute requires worker data")
+		return nil, errors.New("min/max recompute requires worker data")
 	}
 	if mappingIdx < 0 || mappingIdx >= len(workerData.minMaxRecomputeRowsByMapping) {
-		return errors.Errorf("min/max mapping idx %d out of recompute slice range [0,%d)", mappingIdx, len(workerData.minMaxRecomputeRowsByMapping))
+		return nil, errors.Errorf("min/max mapping idx %d out of recompute slice range [0,%d)", mappingIdx, len(workerData.minMaxRecomputeRowsByMapping))
 	}
-	workerData.minMaxRecomputeRowsByMapping[mappingIdx] = append(workerData.minMaxRecomputeRowsByMapping[mappingIdx], rowIdx)
-	return nil
+	return workerData.minMaxRecomputeRowsByMapping[mappingIdx], nil
+}
+
+func storeMinMaxRecomputeRows(workerData *mvMergeAggWorkerData, mappingIdx int, rows []int) {
+	workerData.minMaxRecomputeRowsByMapping[mappingIdx] = rows
 }
 
 func cmpFloat32(a, b float32) int {
@@ -414,7 +452,11 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -426,7 +468,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 	addedVals := addedCol.Int64s()
 	removedVals := removedCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -471,9 +513,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -481,6 +521,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -493,7 +534,11 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -505,7 +550,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	addedVals := addedCol.Uint64s()
 	removedVals := removedCol.Uint64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -550,9 +595,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -560,6 +603,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -572,7 +616,11 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -584,7 +632,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Float32s()
 	removedVals := removedCol.Float32s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -629,9 +677,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -639,6 +685,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -651,7 +698,11 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -663,7 +714,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Float64s()
 	removedVals := removedCol.Float64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -708,9 +759,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -718,6 +767,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -730,7 +780,11 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -742,7 +796,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Decimals()
 	removedVals := removedCol.Decimals()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -787,9 +841,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -797,6 +849,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -809,7 +862,11 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -821,7 +878,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	addedVals := addedCol.Times()
 	removedVals := removedCol.Times()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -866,9 +923,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -876,6 +931,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -888,7 +944,11 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
@@ -900,7 +960,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 	addedVals := addedCol.GoDurations()
 	removedVals := removedCol.GoDurations()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -945,9 +1005,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 		case minMaxDecisionUseNull:
 			resultCol.SetNull(rowIdx, true)
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
 			} else {
@@ -955,6 +1013,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }
@@ -968,14 +1027,18 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
-	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countExprCol, err := m.resolveColumns(input, computedByOrder)
+	recomputeRows, err := prepareMinMaxRecomputeRows(workerData, m.mappingIdx)
+	if err != nil {
+		return err
+	}
+	oldCol, addedCol, addedCntCol, removedCol, removedCntCol, countCol, err := m.resolveColumns(input, computedByOrder)
 	if err != nil {
 		return err
 	}
 	numRows := input.NumRows()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countExprCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
 		if err != nil {
 			return err
 		}
@@ -1031,9 +1094,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 		case minMaxDecisionUseNull:
 			resultCol.AppendNull()
 		default:
-			if err := appendMinMaxRecomputeRow(workerData, m.mappingIdx, rowIdx); err != nil {
-				return err
-			}
+			recomputeRows = append(recomputeRows, rowIdx)
 			if oldExists {
 				resultCol.AppendString(oldVal)
 			} else {
@@ -1041,6 +1102,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			}
 		}
 	}
+	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
 	outputCols[0] = resultCol
 	return nil
 }

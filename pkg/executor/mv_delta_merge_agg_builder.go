@@ -25,8 +25,8 @@ type MVDeltaMergeAggMapping = mvdeltamergeagg.Mapping
 // MinMaxRecomputeExec is the alias for min/max recompute execution descriptor.
 type MinMaxRecomputeExec = mvdeltamergeagg.MinMaxRecomputeExec
 
-// MinMaxRecomputeMapping is the alias for per-mapping min/max recompute metadata.
-type MinMaxRecomputeMapping = mvdeltamergeagg.MinMaxRecomputeMapping
+// MinMaxRecomputeSpec is the alias for per-mapping min/max recompute metadata.
+type MinMaxRecomputeSpec = mvdeltamergeagg.MinMaxRecomputeSpec
 
 // MinMaxRecomputeStrategy is the alias for min/max recompute strategy enum.
 type MinMaxRecomputeStrategy = mvdeltamergeagg.MinMaxRecomputeStrategy

@@ -53,6 +53,9 @@ func (e *Exec) buildSumMerger(
 		return nil, err
 	}
 	deltaColID := mapping.DependencyColID[0]
+	if err := validateDepRefSource(deltaRef, depFromInput); err != nil {
+		return nil, errors.Annotatef(err, "SUM mapping delta dependency col %d", deltaColID)
+	}
 	deltaTp, err := resolveFieldTypeByColID(deltaColID, childTypes)
 	if err != nil {
 		return nil, errors.Annotatef(err, "SUM mapping dependency col %d", deltaColID)
@@ -72,16 +75,16 @@ func (e *Exec) buildSumMerger(
 		if err != nil {
 			return nil, err
 		}
-		if countRef.source != depFromComputed {
-			return nil, errors.New("SUM(nullable expr) requires final COUNT(expr) from previously computed columns")
-		}
 		countColID := mapping.DependencyColID[1]
+		if err := validateDepRefSource(countRef, depFromComputed); err != nil {
+			return nil, errors.Annotatef(err, "SUM mapping final-count dependency col %d", countColID)
+		}
 		countTp, err := resolveFieldTypeByColID(countColID, childTypes)
 		if err != nil {
 			return nil, errors.Annotatef(err, "SUM mapping count dependency col %d", countColID)
 		}
-		if countTp.EvalType() != types.ETInt {
-			return nil, errors.Errorf("SUM mapping count dependency col %d must be integer, got %s", countColID, countTp.EvalType())
+		if err := validateSignedIntType(countTp); err != nil {
+			return nil, errors.Annotatef(err, "SUM mapping count dependency col %d", countColID)
 		}
 	}
 
@@ -186,6 +189,9 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if countCol.IsNull(rowIdx) {
+			return errors.Errorf("count(expr) is null at row %d", rowIdx)
+		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -277,6 +283,9 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if countCol.IsNull(rowIdx) {
+			return errors.Errorf("count(expr) is null at row %d", rowIdx)
+		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -364,6 +373,9 @@ func (m *sumRealMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if countCol.IsNull(rowIdx) {
+			return errors.Errorf("count(expr) is null at row %d", rowIdx)
+		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -446,6 +458,9 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if countCol.IsNull(rowIdx) {
+			return errors.Errorf("count(expr) is null at row %d", rowIdx)
+		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}

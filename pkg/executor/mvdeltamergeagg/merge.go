@@ -16,6 +16,7 @@ package mvdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -83,4 +84,45 @@ func resolveFieldTypeByColID(colID int, childTypes []*types.FieldType) (*types.F
 		return nil, errors.Errorf("col id %d type is unavailable", colID)
 	}
 	return retTp, nil
+}
+
+func validateSignedIntType(tp *types.FieldType) error {
+	if tp == nil {
+		return errors.New("type is unavailable")
+	}
+	if tp.EvalType() != types.ETInt {
+		return errors.Errorf("eval type must be int, got %s", tp.EvalType())
+	}
+	if mysql.HasUnsignedFlag(tp.GetFlag()) {
+		return errors.New("type must be signed integer")
+	}
+	return nil
+}
+
+func validateSignedIntNullableType(tp *types.FieldType) error {
+	if err := validateSignedIntType(tp); err != nil {
+		return err
+	}
+	if mysql.HasNotNullFlag(tp.GetFlag()) {
+		return errors.New("type must be nullable")
+	}
+	return nil
+}
+
+func depRefSourceName(source depRefSource) string {
+	switch source {
+	case depFromInput:
+		return "delta aggregation input"
+	case depFromComputed:
+		return "previously computed columns"
+	default:
+		return "unknown source"
+	}
+}
+
+func validateDepRefSource(ref depRef, expected depRefSource) error {
+	if ref.source != expected {
+		return errors.Errorf("must come from %s", depRefSourceName(expected))
+	}
+	return nil
 }

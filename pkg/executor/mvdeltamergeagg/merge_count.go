@@ -16,7 +16,6 @@ package mvdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -38,6 +37,9 @@ func (e *Exec) buildCountMerger(
 		return nil, err
 	}
 	deltaColID := mapping.DependencyColID[0]
+	if err := validateDepRefSource(deltaRef, depFromInput); err != nil {
+		return nil, errors.Annotatef(err, "COUNT mapping dependency col %d", deltaColID)
+	}
 	deltaTp, err := resolveFieldTypeByColID(deltaColID, childTypes)
 	if err != nil {
 		return nil, errors.Annotatef(err, "COUNT mapping dependency col %d", deltaColID)
@@ -46,8 +48,11 @@ func (e *Exec) buildCountMerger(
 	if err != nil {
 		return nil, errors.Annotatef(err, "COUNT mapping output col %d", outputColID)
 	}
-	if err := validateCountValueTypes(retTp, deltaTp); err != nil {
-		return nil, err
+	if err := validateSignedIntNullableType(retTp); err != nil {
+		return nil, errors.Annotate(err, "COUNT mapping output")
+	}
+	if err := validateSignedIntType(deltaTp); err != nil {
+		return nil, errors.Annotate(err, "COUNT mapping dependency")
 	}
 	return &countMerger{
 		outputCols: []int{outputColID},
@@ -92,10 +97,10 @@ func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Co
 		if !oldCol.IsNull(rowIdx) {
 			oldVal = oldVals[rowIdx]
 		}
-		var deltaVal int64
-		if !deltaCol.IsNull(rowIdx) {
-			deltaVal = deltaVals[rowIdx]
+		if deltaCol.IsNull(rowIdx) {
+			return errors.Errorf("count delta is null at row %d", rowIdx)
 		}
+		deltaVal := deltaVals[rowIdx]
 		newVal, err := types.AddInt64(oldVal, deltaVal)
 		if err != nil {
 			return err
@@ -106,25 +111,5 @@ func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Co
 		resultVals[rowIdx] = newVal
 	}
 	outputCols[0] = resultCol
-	return nil
-}
-
-func validateCountValueTypes(outputTp, deltaTp *types.FieldType) error {
-	if outputTp == nil || deltaTp == nil {
-		return errors.New("COUNT mapping type is unavailable")
-	}
-	if outputTp.EvalType() != types.ETInt {
-		return errors.Errorf("COUNT mapping output eval type must be int, got %s", outputTp.EvalType())
-	}
-	if deltaTp.EvalType() != types.ETInt {
-		return errors.Errorf("COUNT mapping dependency eval type must be int, got %s", deltaTp.EvalType())
-	}
-	// COUNT merge requires signed integers.
-	if mysql.HasUnsignedFlag(outputTp.GetFlag()) {
-		return errors.New("COUNT mapping output type must be signed integer")
-	}
-	if mysql.HasUnsignedFlag(deltaTp.GetFlag()) {
-		return errors.New("COUNT mapping dependency type must be signed integer")
-	}
 	return nil
 }
