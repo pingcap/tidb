@@ -278,7 +278,7 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 			return nil, intset.FastIntSet{}, err
 		}
 		selID := sel.ID()
-		conds, ok := group.selConditions[selID]
+		conds, ok := group.selConds[selID]
 		if !ok {
 			return nil, intset.FastIntSet{}, errors.Errorf("unexpected Selection node (ID: %d) found in buildRecursive", selID)
 		}
