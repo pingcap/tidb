@@ -266,6 +266,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				mlogInfo.PurgeStartWith,
 				mlogInfo.PurgeNext,
 				isInternalSQL,
+				mlogInfo.DefinitionSQLMode,
 			)
 			if deriveErr != nil {
 				batchErr = deriveErr
@@ -894,6 +895,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		tblInfo.MaterializedView.RefreshStartWith,
 		tblInfo.MaterializedView.RefreshNext,
 		isInternalSQL,
+		tblInfo.MaterializedView.DefinitionSQLMode,
 	)
 	if err != nil {
 		return finalizeFailure(err)
@@ -1224,6 +1226,7 @@ func deriveRuntimeMaterializedScheduleNextTime(
 	startExpr string,
 	nextExpr string,
 	isInternalSQL bool,
+	scheduleSQLMode mysql.SQLMode,
 ) (*string, bool, error) {
 	if !isInternalSQL {
 		return nil, false, nil
@@ -1235,7 +1238,7 @@ func deriveRuntimeMaterializedScheduleNextTime(
 	nextExpr = strings.TrimSpace(nextExpr)
 
 	if nextExpr != "" {
-		nextAt, err := evalMaterializedScheduleExprToDatetimeUTC(kctx, evalSctx, templateSctx, nextExpr)
+		nextAt, err := evalMaterializedScheduleExprToDatetimeUTC(kctx, evalSctx, templateSctx, nextExpr, scheduleSQLMode)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1256,6 +1259,7 @@ func evalMaterializedScheduleExprToDatetimeUTC(
 	evalSctx sessionctx.Context,
 	templateSctx sessionctx.Context,
 	exprSQL string,
+	scheduleSQLMode mysql.SQLMode,
 ) (*types.Time, error) {
 	sessVars := evalSctx.GetSessionVars()
 	templateVars := templateSctx.GetSessionVars()
@@ -1264,7 +1268,7 @@ func evalMaterializedScheduleExprToDatetimeUTC(
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 	origTimeZone := sessVars.TimeZone
 	origStmtTimeZone := sessVars.StmtCtx.TimeZone()
-	sessVars.SQLMode = templateVars.SQLMode
+	sessVars.SQLMode = scheduleSQLMode
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
 	sessVars.StmtCtx.SetTypeFlags(templateVars.StmtCtx.TypeFlags())
 	sessVars.StmtCtx.SetErrLevels(templateVars.StmtCtx.ErrLevels())

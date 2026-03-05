@@ -47,6 +47,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
+	expectedSQLMode := tk.Session().GetSessionVars().SQLMode
 
 	tk.MustExec("create materialized view log on t (a) purge start with cast('2026-01-02 03:04:05' as datetime) next cast('2026-01-02 03:14:05' as datetime)")
 
@@ -72,6 +73,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.Equal(t, "DEFERRED", mlogInfo.PurgeMethod)
 	require.Equal(t, "CAST('2026-01-02 03:04:05' AS DATETIME)", mlogInfo.PurgeStartWith)
 	require.Equal(t, "CAST('2026-01-02 03:14:05' AS DATETIME)", mlogInfo.PurgeNext)
+	require.Equal(t, expectedSQLMode, mlogInfo.DefinitionSQLMode)
 
 	// Meta columns should exist on the log table.
 	dmlTypeColName := pmodel.NewCIStr("_MLOG$_DML_TYPE")

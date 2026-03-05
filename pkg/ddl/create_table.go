@@ -259,7 +259,7 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 
 	// Upsert the purge-state row used by PURGE MATERIALIZED VIEW LOG for mutual
 	// exclusion and deferred schedule bookkeeping.
-	if err = w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, job.SchemaName, mlogTblInfo, job.SQLMode); err != nil {
+	if err = w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, job.SchemaName, mlogTblInfo); err != nil {
 		if dbterror.ErrInvalidDDLJob.Equal(err) {
 			job.State = model.JobStateCancelled
 		}
@@ -786,7 +786,7 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvS
 	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, nextTime, shouldUpdateNextTime))
 }
 
-func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogSchemaName string, mlogTblInfo *model.TableInfo, sqlMode mysql.SQLMode) error {
+func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogSchemaName string, mlogTblInfo *model.TableInfo) error {
 	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid materialized view log metadata")
 	}
@@ -800,7 +800,8 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 		return errors.Trace(err)
 	}
 	evalSess := sess.NewSession(evalSessCtx)
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, sqlMode)
+	evalSQLMode := mlogTblInfo.MaterializedViewLog.DefinitionSQLMode
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, evalSQLMode)
 	defer func() {
 		restoreEvalSession()
 		w.sessPool.Put(evalSessCtx)
