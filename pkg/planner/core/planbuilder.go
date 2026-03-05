@@ -750,7 +750,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		if vars.ExtendValue != nil {
 			assign.ExtendValue = &expression.Constant{
 				Value:   vars.ExtendValue.(*driver.ValueExpr).Datum,
-				RetType: &vars.ExtendValue.(*driver.ValueExpr).Type,
+				RetType: vars.ExtendValue.(*driver.ValueExpr).Type.DeepCopy(),
 			}
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
@@ -4351,7 +4351,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalo
 	case *driver.ValueExpr:
 		outExpr = &expression.Constant{
 			Value:   x.Datum,
-			RetType: &x.Type,
+			RetType: x.Type.DeepCopy(),
 		}
 	case *driver.ParamMarkerExpr:
 		outExpr, err = expression.ParamMarkerExpression(b.ctx.GetExprCtx(), x, false)
@@ -5185,7 +5185,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 	case *driver.ValueExpr:
 		expr = &expression.Constant{
 			Value:   x.Datum,
-			RetType: &x.Type,
+			RetType: x.Type.DeepCopy(),
 		}
 	default:
 		expr, _, err = b.rewrite(context.TODO(), valueItem, mockTablePlan, nil, true)
