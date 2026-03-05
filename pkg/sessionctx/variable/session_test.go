@@ -303,6 +303,7 @@ func TestSlowLogFormat(t *testing.T) {
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
+		KVExecDetail:      &tikvExecDetail,
 		MemMax:            memMax,
 		DiskMax:           diskMax,
 		Prepared:          true,
@@ -391,6 +392,8 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
+		"TimeParse", "TimeCompile", "TimeOptimize", "TimeWaitTS",
+		"RRU", "WRU", "WaitRUDuration",
 		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
