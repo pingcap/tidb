@@ -25,6 +25,7 @@ go_library(
         "session.go",
         "sli.go",
         "stats.go",
+        "stmtsummary.go",
         "telemetry.go",
         "topsql.go",
         "ttl.go",
