@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
@@ -581,6 +582,19 @@ type MVDeltaMerge struct {
 	// SourceOutputNames matches the result schema of Source (delta columns first, then MV columns).
 	// Physical plans may not keep output names, so they are carried explicitly for executor-side usage/debug.
 	SourceOutputNames types.NameSlice `plan-cache-clone:"shallow"`
+	// FullUpdateInnerSource is an optional inner template for group-level full recomputation.
+	// It follows IndexJoin-style lookup contract and outputs the MV row shape directly.
+	FullUpdateInnerSource base.PhysicalPlan
+	// FullUpdateInnerColumnCount is the expected output column count of FullUpdateInnerSource.
+	FullUpdateInnerColumnCount int
+	// FullUpdateIndexRanges stores the index-range template used together with FullUpdateKeyOff2IdxOff.
+	FullUpdateIndexRanges ranger.MutableRanges
+	// FullUpdateKeyOff2IdxOff maps lookup key offsets to index column offsets in FullUpdateIndexRanges.
+	FullUpdateKeyOff2IdxOff []int
+	// FullUpdateKeyResultColIdxes maps lookup key offsets to output column indexes in FullUpdateInnerSource.
+	FullUpdateKeyResultColIdxes []int `plan-cache-clone:"shallow"`
+	// FullUpdateOutputMVOffsets maps FullUpdateInnerSource output columns to MV output offsets.
+	FullUpdateOutputMVOffsets []int `plan-cache-clone:"shallow"`
 
 	MVTableID   int64
 	BaseTableID int64
@@ -594,8 +608,6 @@ type MVDeltaMerge struct {
 	CountStarMVOffset int
 
 	AggInfos []mvmerge.AggInfo `plan-cache-clone:"shallow"`
-
-	RemovedRowCountDelta *mvmerge.DeltaColumn `plan-cache-clone:"shallow"`
 }
 
 // ExplainInfo returns aggregate dependency information for MV delta merge.
@@ -613,6 +625,9 @@ func (p *MVDeltaMerge) ExplainInfo() string {
 		builder.WriteString(formatMVDeltaMergeAggDependency(p.AggInfos[i]))
 	}
 	builder.WriteString("]")
+	if p.FullUpdateInnerSource != nil {
+		builder.WriteString(", full_update:index_lookup")
+	}
 	return builder.String()
 }
 
@@ -675,15 +690,24 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64*3 + size.SizeOfInt*3 + size.SizeOfSlice*2 + size.SizeOfPointer
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfInt*4 + size.SizeOfSlice*3
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.SourceOutputNames)) * size.SizeOfPointer
 	for _, name := range p.SourceOutputNames {
 		sum += name.MemoryUsage()
 	}
+	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
+	sum += int64(cap(p.FullUpdateKeyResultColIdxes)) * size.SizeOfInt
+	sum += int64(cap(p.FullUpdateOutputMVOffsets)) * size.SizeOfInt
 	if p.Source != nil {
 		sum += p.Source.MemoryUsage()
+	}
+	if p.FullUpdateInnerSource != nil {
+		sum += p.FullUpdateInnerSource.MemoryUsage()
+	}
+	if p.FullUpdateIndexRanges != nil {
+		sum += p.FullUpdateIndexRanges.Range().MemUsage()
 	}
 	return
 }

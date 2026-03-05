@@ -275,7 +275,7 @@ func (m *minMaxMergerBase) resolveColumns(
 	return
 }
 
-func (m *minMaxMergerBase) rowCounts(rowIdx int, countCol, addedCntCol, removedCntCol *chunk.Column) (shouldExist bool, addedCnt, removedCnt int64, err error) {
+func (*minMaxMergerBase) rowCounts(rowIdx int, countCol, addedCntCol, removedCntCol *chunk.Column) (shouldExist bool, addedCnt, removedCnt int64, err error) {
 	finalCnt, err := readNonNegativeCount(countCol, rowIdx)
 	if err != nil {
 		return false, 0, 0, err

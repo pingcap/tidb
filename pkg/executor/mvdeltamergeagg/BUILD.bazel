@@ -42,7 +42,7 @@ go_test(
     ],
     embed = [":mvdeltamergeagg"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 38,
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/expression",

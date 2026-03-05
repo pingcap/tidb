@@ -41,7 +41,6 @@ const (
 	mvTableAlias    = "mv"
 
 	deltaCntStarName = "__mvmerge_delta_cnt_star"
-	removedRowsName  = "__mvmerge_removed_rows"
 )
 
 func optimizeForTest(sctx sessionctx.Context, is infoschema.InfoSchema) func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
@@ -271,6 +270,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 
 func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	sctx := core.MockContext()
+	sctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
 
 	baseID := int64(10)
 	mlogID := int64(20)
@@ -284,8 +284,19 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 			mkCol(1, "a", 0, mysql.TypeLong),
 			mkCol(2, "b", 1, mysql.TypeLong),
 		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  pmodel.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
 		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
 	}
+	base.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
 	mlog := &model.TableInfo{
 		ID:    mlogID,
 		Name:  pmodel.NewCIStr("$mlog$t"),
@@ -301,6 +312,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
 		},
 	}
+	mlog.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
 	mv := &model.TableInfo{
 		ID:    mvID,
 		Name:  pmodel.NewCIStr("mv_minmax_tbl"),
@@ -330,18 +342,26 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	require.NoError(t, err)
 	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
 	require.NoError(t, err)
-	require.NotNil(t, res.RemovedRowCountDelta)
 	require.Equal(t, 1, res.CountStarMVOffset)
+	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
+	fullPlan, fullOutputNames, err := optimizeForTest(sctx, is)(context.Background(), res.FullUpdateLookupTemplateSelect)
+	require.NoError(t, err)
+	require.NotNil(t, fullPlan)
+	indexJoin := findIndexJoinPlan(fullPlan)
+	require.NotNilf(t, indexJoin, "lookup template best plan: %s", core.ToString(fullPlan))
+	require.Equal(t, res.FullUpdateLookupColumnCount, fullPlan.Schema().Len())
+	require.Equal(t, res.FullUpdateLookupColumnCount, len(fullOutputNames))
+	requireOutputColNames(t, fullOutputNames, []string{"x", "mx", "mn"})
 
 	var hasMax, hasMin bool
 	for _, ai := range res.AggInfos {
 		if ai.Kind == mvmerge.AggMax {
 			hasMax = true
-			requireDependencies(t, ai, []int{1, 3})
+			requireDependencies(t, ai, []int{1, 2, 3, 4})
 		}
 		if ai.Kind == mvmerge.AggMin {
 			hasMin = true
-			requireDependencies(t, ai, []int{2, 3})
+			requireDependencies(t, ai, []int{5, 6, 7, 8})
 		}
 		if ai.Kind == mvmerge.AggCountStar {
 			requireDependencies(t, ai, []int{0})
@@ -357,14 +377,95 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
 		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
 		{Pos: 1, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_added_2"},
-		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
-		{Pos: 3, Tbl: deltaTableAlias, Col: removedRowsName},
-		{Pos: 4, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
-		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
-		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
-		{Pos: 8, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_max_cnt_in_added_2"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_removed_2"},
+		{Pos: 4, Tbl: deltaTableAlias, Col: "__mvmerge_max_cnt_in_removed_2"},
+		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
+		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_min_cnt_in_added_3"},
+		{Pos: 7, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_removed_3"},
+		{Pos: 8, Tbl: deltaTableAlias, Col: "__mvmerge_min_cnt_in_removed_3"},
+		{Pos: 9, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 10, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 11, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
+		{Pos: 12, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
+		{Pos: 13, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
+}
+
+func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(110)
+	mlogID := int64(120)
+	mvID := int64(130)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_minmax_nullable_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkCol(4, "mx", 3, mysql.TypeLong),
+			mkCol(5, "mn", 4, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.BuildForTest(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mvmerge.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{1})
+		case mvmerge.AggMax:
+			requireDependencies(t, ai, []int{2, 3, 4, 5, 12})
+		case mvmerge.AggMin:
+			requireDependencies(t, ai, []int{6, 7, 8, 9, 12})
+		}
+	}
 }
 
 func TestBuildSumWithoutCountExpr(t *testing.T) {
@@ -543,6 +644,29 @@ func TestBuildMissingOldNew(t *testing.T) {
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
 }
 
+func findIndexJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalIndexJoin {
+	if plan == nil {
+		return nil
+	}
+	switch x := plan.(type) {
+	case *core.PhysicalIndexJoin:
+		return x
+	case *core.PhysicalIndexHashJoin:
+		return &x.PhysicalIndexJoin
+	case *core.PhysicalIndexMergeJoin:
+		return &x.PhysicalIndexJoin
+	}
+	for _, child := range plan.Children() {
+		if child == nil {
+			continue
+		}
+		if found := findIndexJoinPlan(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 func mkCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
 	ft := types.NewFieldType(tp)
 	return &model.ColumnInfo{
@@ -597,4 +721,12 @@ func requireMergePlanOutputNames(t *testing.T, plan corebase.PhysicalPlan, outpu
 	require.Len(t, outputNames, plan.Schema().Len())
 	require.Len(t, expected, len(outputNames))
 	require.Equal(t, expected, nameSliceInfo(outputNames))
+}
+
+func requireOutputColNames(t *testing.T, outputNames types.NameSlice, expected []string) {
+	t.Helper()
+	require.Len(t, outputNames, len(expected))
+	for i, colName := range expected {
+		require.Equal(t, colName, outputNames[i].ColName.O)
+	}
 }

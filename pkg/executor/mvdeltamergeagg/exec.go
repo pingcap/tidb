@@ -112,6 +112,9 @@ type MinMaxRecomputeSpec struct {
 type MinMaxRecomputeExec struct {
 	// KeyInputColIDs are group-key columns in child schema.
 	KeyInputColIDs []int
+	// KeyResultColIdxes are group-key columns in batch recompute result schema, in the same order as KeyInputColIDs.
+	// When empty, [0..len(KeyInputColIDs)) is used.
+	KeyResultColIdxes []int
 	// BatchBuilder creates one batch recompute executor.
 	// Build must be safe for concurrent calls across MV merge workers.
 	BatchBuilder MinMaxBatchExecBuilder
@@ -634,6 +637,20 @@ func isMinMaxAgg(aggName string) bool {
 	return aggName == ast.AggFuncMin || aggName == ast.AggFuncMax
 }
 
+func resolveMinMaxKeyResultColIdxes(meta *MinMaxRecomputeExec) []int {
+	if meta == nil || len(meta.KeyInputColIDs) == 0 {
+		return nil
+	}
+	if len(meta.KeyResultColIdxes) == 0 {
+		idxes := make([]int, len(meta.KeyInputColIDs))
+		for i := range idxes {
+			idxes[i] = i
+		}
+		return idxes
+	}
+	return meta.KeyResultColIdxes
+}
+
 func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 	if e.MinMaxRecompute == nil {
 		for mappingIdx, agg := range e.AggMappings {
@@ -656,6 +673,24 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 			return errors.Errorf("duplicate MinMaxRecompute key col %d", keyColID)
 		}
 		seenKey[keyColID] = struct{}{}
+	}
+	keyResultColIdxes := resolveMinMaxKeyResultColIdxes(meta)
+	if len(keyResultColIdxes) != len(meta.KeyInputColIDs) {
+		return errors.Errorf(
+			"MinMaxRecompute key result column count mismatch: expect %d, got %d",
+			len(meta.KeyInputColIDs),
+			len(keyResultColIdxes),
+		)
+	}
+	seenKeyResult := make(map[int]struct{}, len(keyResultColIdxes))
+	for _, resultColIdx := range keyResultColIdxes {
+		if resultColIdx < 0 {
+			return errors.Errorf("MinMaxRecompute key result col idx %d must be non-negative", resultColIdx)
+		}
+		if _, dup := seenKeyResult[resultColIdx]; dup {
+			return errors.Errorf("duplicate MinMaxRecompute key result col idx %d", resultColIdx)
+		}
+		seenKeyResult[resultColIdx] = struct{}{}
 	}
 	hasBatch := false
 	for mappingIdx := range e.AggMappings {
@@ -715,12 +750,11 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 				if resultColIdx < 0 {
 					return errors.Errorf("MinMaxRecompute mapping %d batch result col idx %d must be non-negative", mappingIdx, resultColIdx)
 				}
-				if resultColIdx < len(meta.KeyInputColIDs) {
+				if _, conflictsWithKey := seenKeyResult[resultColIdx]; conflictsWithKey {
 					return errors.Errorf(
-						"MinMaxRecompute mapping %d batch result col idx %d conflicts with key prefix [0,%d)",
+						"MinMaxRecompute mapping %d batch result col idx %d conflicts with key prefix/result columns",
 						mappingIdx,
 						resultColIdx,
-						len(meta.KeyInputColIDs),
 					)
 				}
 				if _, dup := seenBatchResult[resultColIdx]; dup {
@@ -1303,20 +1337,35 @@ func (e *Exec) recomputeMinMaxBatch(
 	}()
 
 	batchTypes := exec.RetTypes(batchExec)
-	if len(batchTypes) < len(keyColIDs) {
+	resultKeyColIdxes := resolveMinMaxKeyResultColIdxes(e.MinMaxRecompute)
+	if len(resultKeyColIdxes) != len(keyColIDs) {
 		return errors.Errorf(
-			"min/max batch recompute result schema too small: key columns=%d, result columns=%d",
+			"min/max batch recompute key result column count mismatch: key columns=%d, result key columns=%d",
 			len(keyColIDs),
-			len(batchTypes),
+			len(resultKeyColIdxes),
 		)
 	}
-	if err := e.validateMinMaxBatchSchemaTypes(childTypes, keyTypes, batchMappings, batchTypes, len(keyColIDs)); err != nil {
-		return err
+	resultKeyTypes := make([]*types.FieldType, len(keyColIDs))
+	for keyPos, resultKeyColIdx := range resultKeyColIdxes {
+		if resultKeyColIdx < 0 || resultKeyColIdx >= len(batchTypes) {
+			return errors.Errorf(
+				"min/max batch recompute result key col idx %d out of range [0,%d) at key position %d",
+				resultKeyColIdx,
+				len(batchTypes),
+				keyPos,
+			)
+		}
+		resultKeyTypes[keyPos] = batchTypes[resultKeyColIdx]
 	}
-
-	resultKeyColIdxes := make([]int, len(keyColIDs))
-	for i := range resultKeyColIdxes {
-		resultKeyColIdxes[i] = i
+	if err := e.validateMinMaxBatchSchemaTypes(
+		childTypes,
+		keyTypes,
+		resultKeyColIdxes,
+		resultKeyTypes,
+		batchMappings,
+		batchTypes,
+	); err != nil {
+		return err
 	}
 	resultChk := exec.NewFirstChunk(batchExec)
 
@@ -1334,7 +1383,7 @@ func (e *Exec) recomputeMinMaxBatch(
 			typeCtx,
 			resultChk,
 			resultKeyColIdxes,
-			batchTypes[:len(keyColIDs)],
+			resultKeyTypes,
 			resultRows,
 			workerData.batchResultNullByRow,
 			workerData.batchResultEncodedKeys,
@@ -1587,21 +1636,54 @@ func encodeChunkKeyRowsColumnar(
 func (e *Exec) validateMinMaxBatchSchemaTypes(
 	childTypes []*types.FieldType,
 	keyTypes []*types.FieldType,
+	resultKeyColIdxes []int,
+	resultKeyTypes []*types.FieldType,
 	batchMappings []int,
 	batchTypes []*types.FieldType,
-	keyPrefixLen int,
 ) error {
-	if keyPrefixLen > len(batchTypes) {
-		return errors.Errorf("min/max batch key column count mismatch: expected=%d result=%d", keyPrefixLen, len(batchTypes))
+	if len(resultKeyColIdxes) != len(keyTypes) {
+		return errors.Errorf(
+			"min/max batch key column count mismatch: key types=%d result key indexes=%d",
+			len(keyTypes),
+			len(resultKeyColIdxes),
+		)
 	}
-	if len(keyTypes) != keyPrefixLen {
-		return errors.Errorf("min/max batch key column count mismatch: expected=%d result=%d", len(keyTypes), keyPrefixLen)
+	if len(resultKeyTypes) != len(keyTypes) {
+		return errors.Errorf(
+			"min/max batch key column count mismatch: key types=%d result key types=%d",
+			len(keyTypes),
+			len(resultKeyTypes),
+		)
 	}
+
+	keyResultSet := make(map[int]struct{}, len(resultKeyColIdxes))
 	for i := range keyTypes {
 		keyTp := keyTypes[i]
-		resultTp := batchTypes[i]
+		resultColIdx := resultKeyColIdxes[i]
+		if resultColIdx < 0 || resultColIdx >= len(batchTypes) {
+			return errors.Errorf(
+				"min/max batch result key col idx %d out of schema range [0,%d) at key position %d",
+				resultColIdx,
+				len(batchTypes),
+				i,
+			)
+		}
+		if _, dup := keyResultSet[resultColIdx]; dup {
+			return errors.Errorf("duplicate min/max batch result key col idx %d", resultColIdx)
+		}
+		keyResultSet[resultColIdx] = struct{}{}
+
+		resultTp := resultKeyTypes[i]
 		if keyTp == nil || resultTp == nil {
 			return errors.Errorf("min/max batch key type is unavailable at position %d", i)
+		}
+		if !resultTp.Equal(batchTypes[resultColIdx]) {
+			return errors.Errorf(
+				"min/max batch key type mismatch at position %d: result key type=%s batch schema=%s",
+				i,
+				resultTp.String(),
+				batchTypes[resultColIdx].String(),
+			)
 		}
 		if !keyTp.Equal(resultTp) {
 			return errors.Errorf(
@@ -1631,15 +1713,14 @@ func (e *Exec) validateMinMaxBatchSchemaTypes(
 			)
 		}
 		for pos, resultColIdx := range minMaxRecompute.BatchResultColIdxes {
-			if resultColIdx < keyPrefixLen {
+			if _, conflictsWithKey := keyResultSet[resultColIdx]; conflictsWithKey {
 				return errors.Errorf(
-					"min/max batch result col idx %d for mapping %d conflicts with key prefix [0,%d)",
+					"min/max batch result col idx %d for mapping %d conflicts with key prefix/result columns",
 					resultColIdx,
 					mappingIdx,
-					keyPrefixLen,
 				)
 			}
-			if resultColIdx >= len(batchTypes) {
+			if resultColIdx < 0 || resultColIdx >= len(batchTypes) {
 				return errors.Errorf(
 					"min/max batch result col idx %d out of schema range [0,%d) for mapping %d",
 					resultColIdx,

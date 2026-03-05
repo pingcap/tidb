@@ -932,7 +932,7 @@ func TestRejectMaxSingleRowRecomputeMultipleRows(t *testing.T) {
 		),
 		keyCols: []*expression.CorrelatedColumn{keyCol},
 		values: map[int64][]int64{
-			1: []int64{9, 8},
+			1: {9, 8},
 		},
 	}
 

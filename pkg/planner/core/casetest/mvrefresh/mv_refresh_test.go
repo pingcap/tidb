@@ -152,6 +152,135 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	)
 }
 
+func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
+	sctx := plannercore.MockContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(10001)
+	mlogID := int64(10002)
+	mvID := int64(10003)
+
+	baseColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	baseColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	baseColB.FieldType.AddFlag(mysql.NotNullFlag)
+	baseTbl := &model.TableInfo{
+		ID:      baseID,
+		Name:    pmodel.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: []*model.ColumnInfo{baseColA, baseColB},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  pmodel.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlogColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	mlogColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	mlogColB.FieldType.AddFlag(mysql.NotNullFlag)
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mlogColA,
+			mlogColB,
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_minmax"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "mx", 2, mysql.TypeLong),
+			mkTestCol(4, "mn", 3, mysql.TypeLong),
+			mkTestCol(5, "s", 4, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.Source)
+	require.NotNil(t, mergePlan.FullUpdateInnerSource)
+	minMaxCount := 0
+	for _, ai := range mergePlan.AggInfos {
+		if ai.Kind == mvmerge.AggMin || ai.Kind == mvmerge.AggMax {
+			minMaxCount++
+		}
+	}
+	require.Equal(t, len(mergePlan.GroupKeyMVOffsets)+minMaxCount, mergePlan.FullUpdateInnerColumnCount)
+	require.NotNil(t, mergePlan.FullUpdateIndexRanges)
+	require.Len(t, mergePlan.FullUpdateKeyOff2IdxOff, len(mergePlan.GroupKeyMVOffsets))
+	require.Len(t, mergePlan.FullUpdateKeyResultColIdxes, len(mergePlan.GroupKeyMVOffsets))
+	require.Len(t, mergePlan.FullUpdateOutputMVOffsets, mergePlan.FullUpdateInnerColumnCount)
+	for i, keyResultColIdx := range mergePlan.FullUpdateKeyResultColIdxes {
+		require.GreaterOrEqual(t, keyResultColIdx, 0)
+		require.Less(t, keyResultColIdx, mergePlan.FullUpdateInnerColumnCount)
+		require.Equal(t, mergePlan.GroupKeyMVOffsets[i], mergePlan.FullUpdateOutputMVOffsets[keyResultColIdx])
+	}
+	mvOffsetCount := make(map[int]int, len(mergePlan.FullUpdateOutputMVOffsets))
+	for _, mvOffset := range mergePlan.FullUpdateOutputMVOffsets {
+		mvOffsetCount[mvOffset]++
+	}
+	for _, ai := range mergePlan.AggInfos {
+		if ai.Kind == mvmerge.AggMin || ai.Kind == mvmerge.AggMax {
+			require.Equal(t, 1, mvOffsetCount[ai.MVOffset])
+		}
+	}
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.NotEmpty(t, explain.Rows)
+	require.Contains(t, explain.Rows[0][4], "full_update:index_lookup")
+}
+
 func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 	sctx := plannercore.MockContext()
 	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
@@ -240,6 +369,118 @@ func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 		{"  │       └─TableFullScan", "10000.00", "cop[tikv]", "table:$mlog$t", "keep order:false, stats:pseudo"},
 		{"  └─TableReader(Probe)", "10000.00", "root", "", "data:TableFullScan"},
 		{"    └─TableFullScan", "10000.00", "cop[tikv]", "table:mv", "keep order:false, stats:pseudo"},
+	}, explain.Rows)
+}
+
+func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
+	sctx := plannercore.MockContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(201)
+	mlogID := int64(202)
+	mvID := int64(203)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  pmodel.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	baseTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mlogTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_explain_minmax"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "mx", 2, mysql.TypeLong),
+			mkTestCol(4, "mn", 3, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.Equal(t, [][]string{
+		{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], max(b)@2->[1,2,3,4], min(b)@3->[5,6,7,8]], full_update:index_lookup"},
+		{"├─HashJoin", "8000.00", "root", "", "left outer join, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain_minmax.a)]"},
+		{"│ ├─HashAgg(Build)", "6400.00", "root", "", "group by:Column#31, funcs:sum_int(Column#22)->Column#7, funcs:max(Column#23)->Column#8, funcs:max_count(Column#24)->Column#9, funcs:max(Column#25)->Column#10, funcs:max_count(Column#26)->Column#11, funcs:min(Column#27)->Column#12, funcs:min_count(Column#28)->Column#13, funcs:min(Column#29)->Column#14, funcs:min_count(Column#30)->Column#15, funcs:firstrow(Column#31)->test.$mlog$t.a"},
+		{"│ │ └─Projection", "8000.00", "root", "", "test.$mlog$t._mlog$_old_new->Column#22, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#23, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#24, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#25, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#26, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#27, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#28, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#29, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#30, test.$mlog$t.a->Column#31"},
+		{"│ │   └─TableReader", "8000.00", "root", "", "data:Selection"},
+		{"│ │     └─Selection", "8000.00", "cop[tikv]", "", "gt(test.$mlog$t._tidb_commit_ts, 0)"},
+		{"│ │       └─TableFullScan", "10000.00", "cop[tikv]", "table:$mlog$t", "keep order:false, stats:pseudo"},
+		{"│ └─TableReader(Probe)", "10000.00", "root", "", "data:TableFullScan"},
+		{"│   └─TableFullScan", "10000.00", "cop[tikv]", "table:mv", "keep order:false, stats:pseudo"},
+		{"└─HashAgg", "1.00", "root", "", "group by:test.t.a, funcs:max(Column#43)->Column#40, funcs:min(Column#44)->Column#41, funcs:firstrow(test.t.a)->test.t.a"},
+		{"  └─IndexLookUp", "1.00", "root", "", ""},
+		{"    ├─IndexRangeScan(Build)", "1.00", "cop[tikv]", "table:t, index:idx_a(a)", "range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo"},
+		{"    └─HashAgg(Probe)", "1.00", "cop[tikv]", "", "group by:test.t.a, funcs:max(test.t.b)->Column#43, funcs:min(test.t.b)->Column#44"},
+		{"      └─TableRowIDScan", "1.00", "cop[tikv]", "table:t", "keep order:false, stats:pseudo"},
 	}, explain.Rows)
 }
 

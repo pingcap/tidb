@@ -218,6 +218,32 @@ func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T)
 }
 */
 
+func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mv_fast_minmax (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_fast_minmax (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_minmax (a, cnt, mx, mn) refresh fast next now() as select a, count(1), max(b), min(b) from t_mv_fast_minmax group by a")
+
+	tk.MustExec("insert into t_mv_fast_minmax values (1, 10), (1, 20), (1, 30), (2, 5), (2, 8)")
+	tk.MustExec("refresh materialized view mv_fast_minmax complete")
+	tk.MustQuery("select * from mv_fast_minmax order by a").Check(testkit.Rows(
+		"1 3 30 10",
+		"2 2 8 5",
+	))
+
+	tk.MustExec("delete from t_mv_fast_minmax where a = 1 and b = 30")
+	tk.MustExec("delete from t_mv_fast_minmax where a = 2 and b = 5")
+	tk.MustExec("insert into t_mv_fast_minmax values (2, 12)")
+	tk.MustExec("refresh materialized view mv_fast_minmax fast")
+	tk.MustQuery("select * from mv_fast_minmax order by a").Check(testkit.Rows(
+		"1 2 20 10",
+		"2 2 12 8",
+	))
+}
+
 func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
