@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -164,6 +165,10 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
 	var (
@@ -390,6 +395,10 @@ func (m *mergeSortStepExecutor) Init(context.Context) error {
 }
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	sm := &MergeSortStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -517,6 +526,16 @@ func getOnDupForConflictedKV(onDupKeyMode importer.OnDupKeyMode) engineapi.OnDup
 	return engineapi.OnDuplicateKeyError
 }
 
+func normalizeSubtaskErr(err error) error {
+	if err == nil {
+		return err
+	}
+	if !common.ErrFoundDuplicateKeys.Equal(err) {
+		return err
+	}
+	return exeerrors.ErrLoadDataDuplicateKeyConflict.FastGenByArgs()
+}
+
 func getOnDupForKVGroup(
 	indicesGenKV map[int64]importer.GenKVIndex,
 	kvGroup string,
@@ -597,6 +616,10 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 }
 
 func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	sm := &WriteIngestStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {

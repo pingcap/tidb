@@ -1986,6 +1986,11 @@ error = '''
 Unsupported option %s for %s
 '''
 
+["executor:8167"]
+error = '''
+Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'record'
+'''
+
 ["executor:8170"]
 error = '''
 Job ID %d doesn't exist

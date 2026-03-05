@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -118,5 +119,30 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number", importer.OnDupKeyModeRecord)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
+	})
+}
+
+func TestNormalizeSubtaskErr(t *testing.T) {
+	dupErr := errors.Normalize(
+		"found duplicate key '%s', value '%s'",
+		errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"),
+	).FastGenByArgs([]byte{0x80, 0x81}, []byte{0x01})
+
+	t.Run("duplicate-key-always-converted", func(t *testing.T) {
+		err := normalizeSubtaskErr(dupErr)
+		require.ErrorContains(t, err, "[executor:8167]")
+		require.NotContains(t, err.Error(), "found duplicate key")
+		require.NotContains(t, err.Error(), "\\x80")
+	})
+
+	t.Run("wrapped-duplicate-key", func(t *testing.T) {
+		err := normalizeSubtaskErr(errors.Trace(dupErr))
+		require.ErrorContains(t, err, "[executor:8167]")
+	})
+
+	t.Run("other-error-not-converted", func(t *testing.T) {
+		otherErr := errors.New("some other error")
+		err := normalizeSubtaskErr(otherErr)
+		require.Equal(t, otherErr, err)
 	})
 }
