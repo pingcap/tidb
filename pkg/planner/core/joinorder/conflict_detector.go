@@ -279,7 +279,10 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 		}
 		// Create a Selection edge for filter conditions collected from Selection
 		// operators that were looked through during extractJoinGroup.
-		selEdge := d.makeEdgeInternal(base.InnerJoin, childVertexes, intset.FastIntSet{}, nil, nil, childVertexes)
+		// Selection-derived edge doesn't have child-edges and child-vertexes,
+		// because no need to generate ConflictRule for this edge.
+		// But its TES is its all children vertexes for correctness.
+		selEdge := d.makeEdgeInternal(base.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
 		selEdge.nonEQConds = conds
 		return append(childEdges, selEdge), childVertexes, nil
 	}

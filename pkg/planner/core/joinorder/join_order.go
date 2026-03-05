@@ -87,6 +87,10 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		if p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
 			!slices.ContainsFunc(sel.Conditions, expression.IsMutableEffectsExpr) {
 			childGroup := extractJoinGroup(sel.Children()[0])
+			// This check is necessary: the child JoinGroup must contain at least one join operator.
+			// If a table outside the Selection subtree needs to be reordered with tables inside it,
+			// the connectivity must be verified through CR. Since the CR of Selection-derived edge will not be generated,
+			// so we need rely on CRs of joins in Selection's subtree.
 			if len(childGroup.vertexes) > 1 {
 				if childGroup.selConds == nil {
 					childGroup.selConds = make(map[int][]expression.Expression)
