@@ -36,6 +36,11 @@ const (
 	DefaultPollInterval = 5 * time.Second
 	// DefaultLogInterval is the default interval for logging progress.
 	DefaultLogInterval = 1 * time.Minute
+	// submitGraceTimeout bounds how long an already-started detached submit can
+	// continue after the batch context is canceled. This gives the client enough
+	// time to get the job ID and record the checkpoint so later cleanup can find
+	// the job reliably.
+	submitGraceTimeout = 30 * time.Second
 )
 
 const (
@@ -315,6 +320,11 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 		mu   sync.Mutex
 		jobs []*ImportJob
 	)
+	appendJob := func(job *ImportJob) {
+		mu.Lock()
+		jobs = append(jobs, job)
+		mu.Unlock()
+	}
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(o.submitConcurrency)
@@ -328,6 +338,10 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 		}
 		eg.Go(func() error {
 			logger := o.logger.With(zap.String("database", table.Database), zap.String("table", table.Table))
+
+			if err := egCtx.Err(); err != nil {
+				return errors.Trace(err)
+			}
 
 			// Check if we can resume an existing job
 			cp, err := o.cpMgr.Get(egCtx, common.UniqueTable(table.Database, table.Table))
@@ -361,21 +375,26 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 					logger.Info("submitting new import job")
 				}
 
-				job, err = o.submitter.SubmitTable(egCtx, table)
+				if err := egCtx.Err(); err != nil {
+					return errors.Trace(err)
+				}
+
+				submitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), submitGraceTimeout)
+				defer cancel()
+
+				job, err = o.submitter.SubmitTable(submitCtx, table)
 				if err != nil {
 					return errors.Annotatef(err, "submit table %s.%s", table.Database, table.Table)
 				}
 
-				cpCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
-				defer cancel()
-				if err := o.recordSubmission(cpCtx, job); err != nil {
+				appendJob(job)
+				if err := o.recordSubmission(submitCtx, job); err != nil {
 					return errors.Annotatef(err, "record submission for %s.%s", table.Database, table.Table)
 				}
+				return nil
 			}
 
-			mu.Lock()
-			jobs = append(jobs, job)
-			mu.Unlock()
+			appendJob(job)
 			return nil
 		})
 	}
