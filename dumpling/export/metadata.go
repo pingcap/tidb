@@ -68,13 +68,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverInfo version.S
 func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverInfo version.ServerInfo, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
 	serverType := serverInfo.ServerType
 	writeMasterStatusHeader := func() {
-		if serverInfo.ServerVersion == nil {
-			buffer.WriteString("SHOW MASTER STATUS:")
-		} else if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
-			buffer.WriteString("SHOW MASTER STATUS:")
-		} else {
-			buffer.WriteString("SHOW BINARY LOG STATUS:")
-		}
+		buffer.WriteString("SHOW MASTER STATUS:")
 		if afterConn {
 			buffer.WriteString(" /* AFTER CONNECTION POOL ESTABLISHED */")
 		}
@@ -203,11 +197,11 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 				switch col {
 				case "connection_name":
 					connName = data[i].String
-				case "exec_master_log_pos":
+				case "exec_master_log_pos", "exec_source_log_pos":
 					pos = data[i].String
-				case "relay_master_log_file":
+				case "relay_master_log_file", "relay_source_log_file":
 					logFile = data[i].String
-				case "master_host":
+				case "master_host", "source_host":
 					host = data[i].String
 				case "executed_gtid_set":
 					gtidSet = data[i].String
