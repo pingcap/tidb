@@ -443,7 +443,7 @@ func TestTopRUPubSub(t *testing.T) {
 		require.False(t, topsqlstate.TopSQLEnabled())
 	})
 
-	t.Run("subscribe invalid topru interval does not enable", func(t *testing.T) {
+	t.Run("subscribe invalid topru interval normalizes to default", func(t *testing.T) {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
@@ -460,12 +460,14 @@ func TestTopRUPubSub(t *testing.T) {
 		registererCtx, registererCancel := context.WithCancel(context.Background())
 		t.Cleanup(registererCancel)
 		registerer := NewDefaultDataSinkRegisterer(registererCtx)
-		svc := NewTopSQLPubSubService(&registerer)
 
-		req := mockTopRUSubRequest(tipb.ItemInterval(99))
-		err := svc.Subscribe(req, &mockPubSubDataSinkStream{})
-		require.ErrorIs(t, err, topsqlstate.ErrInvalidTopRUItemInterval)
-		require.False(t, topsqlstate.TopRUEnabled())
+		req := mockTopRUOnlySubRequest(tipb.ItemInterval(99))
+		ds, err := newPubSubDataSink(req, &mockPubSubDataSinkStream{}, &registerer)
+		require.NoError(t, err)
+		require.NoError(t, registerer.Register(ds))
+		t.Cleanup(func() { registerer.Deregister(ds) })
+
+		require.True(t, topsqlstate.TopRUEnabled())
 		require.False(t, topsqlstate.TopSQLEnabled())
 		require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
 	})
