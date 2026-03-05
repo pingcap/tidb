@@ -22,7 +22,7 @@ const (
 	gtidSet = "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 )
 
-func TestMysqlMetaData(t *testing.T) {
+func TestMysqlMetaData_80(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -41,6 +41,42 @@ func TestMysqlMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
+	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
+
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// MySQL 8.4 no longer supports SHOW MASTER STATUS, but requires SHOW BINARY LOG STATUS
+// Also in column names master is replaced with source
+func TestMysqlMetaData_84(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mockerr := errors.New("mock error")
+	mock.ExpectQuery("SHOW BINARY LOG STATUS").WillReturnRows(
+		sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
+			AddRow(logFile, pos, "", "", gtidSet),
+	)
+
+	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(mockerr)
+
+	mock.ExpectQuery("SHOW REPLICA STATUS").WillReturnRows(
+		sqlmock.NewRows([]string{"Exec_Source_Log_Pos", "Relay_Source_Log_File", "Source_Host", "Executed_Gtid_Set"}))
+
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	si := version.ParseServerInfo("8.4.8")
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
@@ -93,7 +129,7 @@ func TestMetaDataAfterConn(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestMysqlWithFollowersMetaData(t *testing.T) {
+func TestMysqlWithFollowersMetaData_80(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -113,6 +149,42 @@ func TestMysqlWithFollowersMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
+	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
+
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n" +
+		"SHOW SLAVE STATUS:\n" +
+		"\tHost: 192.168.1.100\n" +
+		"\tLog: mysql-bin.001821\n" +
+		"\tPos: 256529431\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMysqlWithFollowersMetaData_84(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
+		AddRow(logFile, pos, "", "", gtidSet)
+	followerRows := sqlmock.NewRows([]string{"Exec_Source_Log_Pos", "Relay_Source_Log_File", "Source_Host", "Executed_Gtid_Set"}).
+		AddRow("256529431", "mysql-bin.001821", "192.168.1.100", gtidSet)
+	mock.ExpectQuery("SHOW BINARY LOG  STATUS").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
+	mock.ExpectQuery("SHOW REPLICA STATUS").WillReturnRows(followerRows)
+
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	si := version.ParseServerInfo("8.4.8")
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
