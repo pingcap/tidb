@@ -187,6 +187,37 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
 }
 
+func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	sql := "import into t from '/file.csv' with on_duplicate_key='record'"
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	vardef.CloudStorageURI.Store("")
+	plan := &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+	require.ErrorContains(t, err, onDupKeyOption)
+	require.ErrorContains(t, err, "local sort")
+}
+
 func TestAdjustOptions(t *testing.T) {
 	plan := &Plan{
 		DiskQuota:      1,

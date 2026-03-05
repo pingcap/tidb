@@ -953,6 +953,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ManualRecovery = true
 	}
 
+	if _, ok := specifiedOptions[onDupKeyOption]; ok && p.IsLocalSort() {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(onDupKeyOption, "local sort")
+	}
+
 	if kerneltype.IsClassic() {
 		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
