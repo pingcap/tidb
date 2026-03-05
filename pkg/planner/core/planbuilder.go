@@ -2621,7 +2621,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	var predicateCols, mustAnalyzedCols calcOnceMap
 	ver := version
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	// If existing stats are not version 2, analyze all columns to rewrite incompatible legacy stats.
+	// If existing stats are not version 2, analyze all columns to rewrite legacy stats.
 	mustAllColumns := statsHandle.CheckAnalyzeVersionAndForceV2(tbl.TableInfo, physicalIDs, &ver)
 	if mustAllColumns && !as.IndexFlag {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
