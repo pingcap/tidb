@@ -15,16 +15,20 @@
 package importintotest
 
 import (
+	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -32,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -750,17 +755,31 @@ func (s *mockGCSSuite) TestGlobalSortOnDuplicateKeyError() {
 	s.prepareAndUseDB(dbName)
 	s.tk.MustExec("create table t(a int primary key, b int)")
 
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
 	sortStorageURI := fmt.Sprintf("gs://%s?endpoint=%s", sortedBucket, gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://%s/t.*.csv?endpoint=%s'
 		with __max_engine_size='1', cloud_storage_uri='%s'`, sourceBucket, gcsEndpoint, sortStorageURI)
 	err := s.tk.QueryToErr(importSQL)
 	s.Error(err)
 	s.Contains(strings.ToLower(err.Error()), "duplicate")
+	s.T().Logf("the task id is %d", storage.TestLastTaskID.Load())
+	taskMgr, err := storage.GetTaskManager()
+	s.NoError(err)
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	// wait cleanup done, so the table mode is switched back to normal
+	s.Eventually(func() bool {
+		_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
+		return goerrors.Is(err2, storage.ErrTaskNotFound)
+	}, 30*time.Second, 100*time.Millisecond)
 	s.tk.MustExec("truncate table t")
 	err = s.tk.QueryToErr(fmt.Sprintf(`%s, on_duplicate_key='error'`, importSQL))
 	s.Error(err)
 	s.Contains(strings.ToLower(err.Error()), "duplicate")
 
+	s.Eventually(func() bool {
+		_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
+		return goerrors.Is(err2, storage.ErrTaskNotFound)
+	}, 30*time.Second, 100*time.Millisecond)
 	importSQL = fmt.Sprintf(`%s, on_duplicate_key='record'`, importSQL)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("2 2"))
