@@ -670,7 +670,7 @@ id	task	access object	operator info
 Sort	root		explain_easy.t.a, explain_easy.t.b
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-ScalarSubQuery	root		Output: ScalarQueryCol#6
+ScalarSubQuery	root		Output: ScalarQueryCol#7
 └─MaxOneRow	root		
   └─Projection	root		2->Column
     └─TableDual	root		rows:1
@@ -763,7 +763,7 @@ explain format = 'plan_tree' select a, b from (select a, b, avg(b) over (partiti
 id	task	access object	operator info
 Projection	root		explain_easy.t.a, explain_easy.t.b
 └─Selection	root		gt(cast(explain_easy.t.a, decimal(10,0) BINARY), Column), lt(explain_easy.t.b, 10)
-  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column#5 over(partition by explain_easy.t.a)
+  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column#6 over(partition by explain_easy.t.a)
     └─Sort	root		explain_easy.t.a
       └─TableReader	root		data:Selection
         └─Selection	cop[tikv]		gt(explain_easy.t.a, 10)

@@ -554,15 +554,6 @@ func TestSetVar(t *testing.T) {
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
 	}
 
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = 'tiflash'")
 	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = ''")

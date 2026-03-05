@@ -20,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -80,11 +82,11 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		tkProcess := testKit.Session().ShowProcess()
 		ps := []*sessmgr.ProcessInfo{tkProcess}
 		testKit.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-		testKit.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#7)->Column#5",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#7",
-			"    └─IndexRangeScan_18 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		testKit.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkProcess.ID)).Check(testkit.Rows(
+			"StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+			"└─IndexReader 1.00 root  index:StreamAgg",
+			"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
+			"    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 	})
 }
 
@@ -93,15 +95,15 @@ func TestInvisibleIndex(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t1 ( a INT, KEY( a ) INVISIBLE );")
 		testKit.MustExec("INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);")
-		testKit.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testKit.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT a FROM t1;`).Check(
 			testkit.Rows(
-				`TableReader_6 10000.00 root  data:TableFullScan_5`,
-				`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				`TableReader 10000.00 root  data:TableFullScan`,
+				`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		testKit.MustExec("set session tidb_opt_use_invisible_indexes=on;")
-		testKit.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testKit.MustQuery(`EXPLAIN format = 'brief' SELECT a FROM t1;`).Check(
 			testkit.Rows(
-				`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
-				`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
+				`IndexReader 10000.00 root  index:IndexFullScan`,
+				`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 	})
 }
 
@@ -225,20 +227,20 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t1 (a int key, b int, c int, index (b, c));")
-		testKit.MustQuery("explain select a from t1 where b is null order by c").Check(testkit.Rows(
-			"Projection_6 10.00 root  test.t1.a",
-			"└─IndexReader_14 10.00 root  index:IndexRangeScan_13",
-			"  └─IndexRangeScan_13 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
+		testKit.MustQuery("explain format = 'brief' select a from t1 where b is null order by c").Check(testkit.Rows(
+			"Projection 10.00 root  test.t1.a",
+			"└─IndexReader 10.00 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
 		))
 		// https://github.com/pingcap/tidb/issues/56116
 		testKit.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
 		testKit.MustExec("insert into t2 values (), (), ()")
 		testKit.MustExec("analyze table t2")
-		testKit.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#5)->Column#3",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#5",
-			"    └─IndexRangeScan_18 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+		testKit.MustQuery("explain format = 'brief' select count(*) from t2 where id is null;").Check(testkit.Rows(
+			"StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+			"└─IndexReader 1.00 root  index:StreamAgg",
+			"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+			"    └─IndexRangeScan 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
 	})
 }
 
@@ -369,5 +371,116 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
 			"Warning 1105 analyzing columnar index is not supported, skip idx",
 			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+	})
+}
+
+func TestPartialIndexWithPlanCache(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+
+		tk.MustExec("prepare stmt from 'select * from t where a = ?'")
+		tk.MustExec("set @a = 123")
+
+		// IS NOT NULL pre condition can use plan cache.
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*sessmgr.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		// Normal pre condition can not use plan cache.
+		tk.MustExec("prepare stmt from 'select * from t where b = ?'")
+		tk.MustExec("set @a = 20")
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
+}
+
+func TestPartialIndexWithIndexPrune(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+		tk.MustQuery("explain select * from t use index(idx1) where a > 1").CheckContain("idx1")
+
+		// Set the prune behavior to prune all non interesting ones.
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
+
+		// The failpoint will check whether all partial indexes are pruned.
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/rule/InjectCheckForIndexPrune"
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.ConditionExprString != "" {
+					require.True(t, false, "Partial index should be pruned")
+				}
+			}
+		}))
+		tk.MustQuery("select * from t")
+
+		// idx1 is pruned because a is not referenced as interesting one.
+		// idx2 is kept though its constraint is not matched.
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			idx2Found := false
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx1" {
+					require.True(t, false, "Partial index idx1 should be pruned")
+				}
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx2" {
+					idx2Found = true
+				}
+			}
+			require.True(t, idx2Found, "Partial index idx2 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t order by b").CheckNotContain("idx2")
+
+		// idx2 is pruned because b is not referenced as interesting one.
+		// idx1 is kept though its constraint is not matched.
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			idx1Found := false
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx2" {
+					require.True(t, false, "Partial index idx2 should be pruned")
+				}
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx1" {
+					idx1Found = true
+				}
+			}
+			require.True(t, idx1Found, "Partial index idx1 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t where a is null").CheckNotContain("idx1")
+		require.NoError(t, failpoint.Disable(fpName))
+	})
+}
+
+func TestForceIndexLimit(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20) ,
+  b bigint(20) ,
+  c bigint(20) ,
+  PRIMARY KEY (object_id),
+  KEY ab (a,b))`)
+		tk.MustQuery(`explain format='brief' select count(1) from (select /* issue:54213 */ /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+			testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#7",
+				"└─Limit 1.00 root  offset:0, count:100",
+				"  └─IndexReader 1.25 root  index:Limit",
+				"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+				"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 	})
 }

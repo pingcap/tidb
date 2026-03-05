@@ -743,7 +743,7 @@ func TestIssue20779(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIssue20779"))
 	}()
 
-	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t1 t2 on t1.b=t2.b order by t1.b;")
+	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 use index(idx) left join t1 t2 use index(idx) on t1.b=t2.b order by t1.b;")
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.EqualError(t, err, "testIssue20779")

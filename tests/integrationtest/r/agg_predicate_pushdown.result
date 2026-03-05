@@ -156,8 +156,8 @@ WHERE t0.tran_id = t1.tran_id
 );
 id	estRows	task	access object	operator info
 Projection	6.40	root		agg_predicate_pushdown.t.id, agg_predicate_pushdown.t.tran_id
-└─Selection	6.40	root		eq(agg_predicate_pushdown.t.id, Column#5)
-  └─HashAgg	8.00	root		group by:agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.id)->agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.tran_id)->agg_predicate_pushdown.t.tran_id, funcs:max(agg_predicate_pushdown.t.id)->Column#5
+└─Selection	6.40	root		eq(agg_predicate_pushdown.t.id, Column#7)
+  └─HashAgg	8.00	root		group by:agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.id)->agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.tran_id)->agg_predicate_pushdown.t.tran_id, funcs:max(agg_predicate_pushdown.t.id)->Column#7
     └─HashJoin	12.50	root		left outer join, left side:TableReader, equal:[eq(agg_predicate_pushdown.t.tran_id, agg_predicate_pushdown.t.tran_id)]
       ├─TableReader(Build)	10.00	root		data:Selection
       │ └─Selection	10.00	cop[tikv]		eq(agg_predicate_pushdown.t.tran_id, 1540776)

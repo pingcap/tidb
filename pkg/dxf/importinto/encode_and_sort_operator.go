@@ -21,8 +21,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -122,17 +120,9 @@ func newChunkWorker(
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			onDup := engineapi.OnDuplicateKeyIgnore
-			if kerneltype.IsClassic() {
-				idx, ok := op.indicesGenKV[indexID]
-				if !ok {
-					// shouldn't happen normally, unless we have bug at getIndicesGenKV
-					return nil, errors.Errorf("unknown index with ID: %d", indexID)
-				}
-				onDup = engineapi.OnDuplicateKeyRemove
-				if idx.Unique {
-					onDup = engineapi.OnDuplicateKeyRecord
-				}
+			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID)
+			if err != nil {
+				return nil, err
 			}
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
@@ -151,10 +141,6 @@ func newChunkWorker(
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
-		onDup := engineapi.OnDuplicateKeyIgnore
-		if kerneltype.IsClassic() {
-			onDup = engineapi.OnDuplicateKeyRecord
-		}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
@@ -162,7 +148,7 @@ func newChunkWorker(
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
-			SetOnDup(onDup).
+			SetOnDup(engineapi.OnDuplicateKeyRecord).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}

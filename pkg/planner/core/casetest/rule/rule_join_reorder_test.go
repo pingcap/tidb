@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
+func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades string) {
 	var input []string
 	var output []struct {
 		SQL     string
@@ -32,7 +32,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Warning []string
 	}
 	joinReorderSuiteData := GetJoinReorderSuiteData()
-	joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output)
+	joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output, cascades)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -54,7 +54,7 @@ func TestOptEnableHashJoin(t *testing.T) {
 		testKit.MustExec("create table t2(a int, b int, key(a));")
 		testKit.MustExec("create table t3(a int, b int, key(a));")
 		testKit.MustExec("create table t4(a int, b int, key(a));")
-		runJoinReorderTestData(t, testKit, "TestOptEnableHashJoin")
+		runJoinReorderTestData(t, testKit, "TestOptEnableHashJoin", cascades)
 	})
 }
 
@@ -81,7 +81,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 		testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 		testKit.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
-		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4TiFlash")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4TiFlash", cascades)
 	})
 }
 
@@ -100,7 +100,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 
 		testKit.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
-		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4DynamicPartitionTable")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4DynamicPartitionTable", cascades)
 	})
 }
 
@@ -115,6 +115,38 @@ func TestJoinOrderHint4NestedLeading(t *testing.T) {
 		testKit.MustExec("create table t4(a int, b int, key(a));")
 		testKit.MustExec("create table t5(a int, b int, key(a));")
 		testKit.MustExec("create table t6(a int, b int, key(a));")
-		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeading")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeading", cascades)
+	})
+}
+
+func TestJoinOrderHint4NestedLeadingPK(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1, t2, t3, t4;")
+		testKit.MustExec("create table t1(a int not null, b int, key(a));")
+		testKit.MustExec("create table t2(a int not null, b int, key(a));")
+		testKit.MustExec("create table t3(a int not null, b int not null, primary key(a));")
+		testKit.MustExec("create table t4(a int not null, b int not null, primary key(b));")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeadingPK", cascades)
+	})
+}
+
+func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
+		testKit.MustExec("drop table if exists t0_lh, t1_lh, t2_lh, t3_lh;")
+		testKit.MustExec("create table t0_lh(k0 int, k1 int, k2 int);")
+		testKit.MustExec("create table t1_lh(k0 int, k1 int, k2 int);")
+		testKit.MustExec("create table t2_lh(k0 int, k1 int, k2 int);")
+		testKit.MustExec("create table t3_lh(k0 int, k1 int, k2 int);")
+
+		testKit.MustQuery("explain format = 'brief' " +
+			"select /*+ leading(t0_lh, t2_lh, t3_lh, t1_lh) */ t1_lh.k0 " +
+			"from t0_lh right join t2_lh on (t0_lh.k1 = t2_lh.k1) " +
+			"join t3_lh on (t0_lh.k2 = t3_lh.k2 and t2_lh.k1 < t3_lh.k2) " +
+			"left join t1_lh on (t0_lh.k0 <=> t1_lh.k0);").
+			CheckContain("lt(test.t2_lh.k1, test.t3_lh.k2)")
+		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
 	})
 }

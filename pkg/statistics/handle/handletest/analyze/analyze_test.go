@@ -102,7 +102,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 }
 
 // nolint:unused
@@ -126,7 +126,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 }
 
 func TestAnalyzeVirtualCol(t *testing.T) {
@@ -290,7 +290,7 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 	tk.MustExec("create table t_metrics_auto(a int)")
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
 	tk.MustExec("insert into t_metrics_auto values (1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	origMinCnt := statistics.AutoAnalyzeMinCnt

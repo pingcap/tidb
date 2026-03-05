@@ -72,7 +72,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
@@ -88,7 +88,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*2), stats1.RealtimeCount)
@@ -99,7 +99,7 @@ func TestSingleSessionInsert(t *testing.T) {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	testKit.MustExec("commit")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*3), stats1.RealtimeCount)
@@ -115,7 +115,7 @@ func TestSingleSessionInsert(t *testing.T) {
 		testKit.MustExec("update t2 set c2 = c1")
 	}
 	testKit.MustExec("commit")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*3), stats1.RealtimeCount)
@@ -125,7 +125,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	testKit.MustExec("begin")
 	testKit.MustExec("delete from t1")
 	testKit.MustExec("commit")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(0), stats1.RealtimeCount)
@@ -146,19 +146,17 @@ func TestSingleSessionInsert(t *testing.T) {
 	for range rowCount1 {
 		testKit.MustExec("insert into t1 values (1,2)")
 	}
-	err = h.DumpStatsDeltaToKV(false)
-	require.NoError(t, err)
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	// not dumped
 	testKit.MustExec("insert into t1 values (1,2)")
-	err = h.DumpStatsDeltaToKV(false)
-	require.NoError(t, err)
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
-	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
+	require.Equal(t, int64(rowCount1+1), stats1.RealtimeCount)
 
 	h.FlushStats()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -182,7 +180,7 @@ func TestRollback(t *testing.T) {
 	h := dom.StatsHandle()
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 
 	stats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -217,7 +215,7 @@ func TestMultiSession(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
@@ -237,7 +235,7 @@ func TestMultiSession(t *testing.T) {
 	testKit.Session().Close()
 	testKit2.Session().Close()
 
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit1.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*2), stats1.RealtimeCount)
@@ -286,7 +284,7 @@ func TestTxnWithFailure(t *testing.T) {
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	testKit.MustExec("insert into t1 values(-1, 2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1+1), stats1.RealtimeCount)
@@ -317,7 +315,7 @@ func TestUpdatePartition(t *testing.T) {
 		bColID := tableInfo.Columns[1].ID
 
 		testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
@@ -327,7 +325,7 @@ func TestUpdatePartition(t *testing.T) {
 		}
 
 		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
@@ -337,7 +335,7 @@ func TestUpdatePartition(t *testing.T) {
 		}
 
 		testKit.MustExec("delete from t")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
@@ -384,7 +382,7 @@ func TestAutoUpdate(t *testing.T) {
 
 		_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
@@ -402,7 +400,7 @@ func TestAutoUpdate(t *testing.T) {
 		defer func() { h.SetLease(0) }()
 		_, err = testKit.Exec("insert into t values ('fff')")
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
@@ -412,7 +410,7 @@ func TestAutoUpdate(t *testing.T) {
 
 		_, err = testKit.Exec("insert into t values ('fff')")
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
@@ -422,7 +420,7 @@ func TestAutoUpdate(t *testing.T) {
 
 		_, err = testKit.Exec("insert into t values ('eee')")
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
@@ -488,7 +486,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 		require.Equal(t, int64(0), stats.RealtimeCount)
 
 		testKit.MustExec("insert into t values (1)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		stats = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
@@ -515,7 +513,7 @@ func TestIssue25700(t *testing.T) {
 	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	tk.MustExec("analyze table t")
 	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(statistics.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -602,11 +600,11 @@ func TestOutOfOrderUpdate(t *testing.T) {
 
 	// Simulate the case that another tidb has inserted some value, but delta info has not been dumped to kv yet.
 	testKit.MustExec("insert into t values (2,2),(4,5)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 1 where table_id = %d", tableInfo.ID))
 
 	testKit.MustExec("delete from t")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	// If count < -Delta, then update count to 0.
 	// Check https://github.com/pingcap/tidb/pull/38301#discussion_r1094050951 for details.
 	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("0"))
@@ -614,7 +612,7 @@ func TestOutOfOrderUpdate(t *testing.T) {
 	// Now another tidb has updated the delta info.
 	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 3 where table_id = %d", tableInfo.ID))
 
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("3"))
 }
 
@@ -628,7 +626,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(c int, index idx(c))")
 	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	testKit.MustExec("analyze table t")
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -799,7 +797,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		require.NoError(t, err)
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		testKit.MustExec("set @@tidb_analyze_version = 2")
 		testKit.MustExec("analyze table t")
 
@@ -823,7 +821,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		require.Equal(t, int64(0), partitionStats.ModifyCount)
 
 		testKit.MustExec("insert into t values (3, 'g')")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), is))
 		globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		partitionStats = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
@@ -862,7 +860,7 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	// To pass the stats.Pseudo check in autoAnalyzeTable
@@ -881,19 +879,19 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	}
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 44)
 	require.True(t, h.HandleAutoAnalyze())
 
 	tk.MustExec("delete from t limit 12")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 61)
 	require.False(t, h.HandleAutoAnalyze())
 
 	tk.MustExec("delete from t limit 4")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 48)
 	require.True(t, h.HandleAutoAnalyze())
@@ -1065,7 +1063,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	// To pass the stats.Pseudo check in autoAnalyzeTable
@@ -1076,7 +1074,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
 
@@ -1092,7 +1090,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	tk.MustExec("lock stats t")
 
 	tk.MustExec("delete from t limit 12")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.False(t, h.HandleAutoAnalyze())
 
@@ -1146,7 +1144,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, stats1.RealtimeCount, int64(0))
@@ -1161,7 +1159,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, stats1.RealtimeCount, int64(0))
@@ -1175,7 +1173,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(30), stats1.RealtimeCount)
@@ -1214,22 +1212,22 @@ func TestFillMissingStatsMeta(t *testing.T) {
 	}
 
 	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(false))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	ver1 := checkStatsMeta(tbl1ID, "2", "2")
 	tk.MustExec("delete from t1 where a = 1")
-	require.NoError(t, h.DumpStatsDeltaToKV(false))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	ver2 := checkStatsMeta(tbl1ID, "3", "1")
 	require.Greater(t, ver2, ver1)
 
 	tk.MustExec("insert into t2 values (1, 2), (3, 4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(false))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	checkStatsMeta(p0ID, "2", "2")
 	globalVer1 := checkStatsMeta(tbl2ID, "2", "2")
 	tk.MustExec("insert into t2 values (11, 12)")
-	require.NoError(t, h.DumpStatsDeltaToKV(false))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	checkStatsMeta(p1ID, "1", "1")
 	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
@@ -1247,7 +1245,7 @@ func TestNotDumpSysTable(t *testing.T) {
 	tk.MustQuery("select count(1) from mysql.stats_meta").Check(testkit.Rows("1"))
 	// After executing `delete from mysql.stats_meta`, a delta for mysql.stats_meta is created but it would not be dumped.
 	tk.MustExec("delete from mysql.stats_meta")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("stats_meta"))
 	require.NoError(t, err)

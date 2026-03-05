@@ -152,6 +152,26 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	switch p.JoinType {
+	case base.AntiLeftOuterSemiJoin, base.LeftOuterSemiJoin, base.AntiSemiJoin:
+		// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
+		// `col is not null` according to expressions in `OtherConditions` now, but we
+		// are putting column equal condition converted from `in (subq)` into
+		// `OtherConditions`(@sa https://github.com/pingcap/tidb/pull/9051), then it would
+		// cause wrong results, so we disable this optimization for outer semi joins now.
+	case base.SemiJoin, base.InnerJoin:
+		// It will be better to simplify OtherConditions through predicate pushdown for SemiJoin and InnerJoin,
+	default:
+		// Join ON conditions are not simplified through predicate pushdown.
+		// However, we still need to eliminate obvious logical constants in OtherConditions
+		// (e.g. "a = b OR 0") to avoid losing join keys.
+		p.OtherConditions = ruleutil.ApplyPredicateSimplification(
+			p.SCtx(),
+			p.OtherConditions,
+			false,
+			nil,
+		)
+	}
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression

@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/partidx"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -38,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -500,6 +504,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	is.SetNoncacheableReason(path.NoncacheableReason)
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -511,6 +516,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IsIndexGather: true,
 		Index:         path.Index,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	sg.SetNoncacheableReason(path.NoncacheableReason)
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
@@ -569,14 +575,49 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+// NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
+func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	return &expression.Column{
+		RetType:  tp,
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraCommitTSID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
+	}
+}
+
 func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
 	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
-	if dataSource.Table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first column.
-		resultColumnInfo = originSchemaColumns[0]
-		resultColumn = originColumns[0]
+	if dataSource.Table.Type().IsClusterTable() {
+		// For cluster tables, ExtraHandleID is not valid as they are memory tables.
+		// Use the first column from originColumns if available, otherwise fall back
+		// to the first column from table metadata.
+		if len(originColumns) > 0 {
+			resultColumnInfo = originSchemaColumns[0]
+			resultColumn = originColumns[0]
+		} else {
+			cols := dataSource.Table.Meta().Columns
+			if len(cols) > 0 {
+				col := cols[0]
+				resultColumnInfo = col
+				resultColumn = &expression.Column{
+					RetType:  col.FieldType.Clone(),
+					UniqueID: dataSource.SCtx().GetSessionVars().AllocPlanColumnID(),
+					ID:       col.ID,
+					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
+				}
+			} else {
+				// All cluster tables must have at least one column in their metadata.
+				// If this is ever reached, it indicates a bug in table registration.
+				logutil.BgLogger().Error("cluster table has no metadata columns",
+					zap.String("db", dataSource.DBName.L),
+					zap.String("table", dataSource.TableInfo.Name.L))
+				resultColumn = dataSource.NewExtraHandleSchemaCol()
+				resultColumnInfo = model.NewExtraHandleColInfo()
+			}
+		}
 	} else {
 		if dataSource.HandleCols != nil {
 			resultColumn = dataSource.HandleCols.GetCol(0)
@@ -705,4 +746,80 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblCols = append(ds.TblCols, col)
 	ds.TblColsByID[col.ID] = col
+}
+
+// CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
+// It will go through each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
+// Detailed checking can be found in the comment of `CheckConstraints`.
+// And we specially implement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
+// It's a special handler now, and it's not easy to extend to other constraints.
+func (ds *DataSource) CheckPartialIndexes() {
+	var columnNames types.NameSlice
+	var removedPaths map[int64]struct{}
+	partialIndexUsedHint, hasPartialIndex := false, false
+	for _, path := range ds.PossibleAccessPaths {
+		// If there is no condition expression, it is not a partial index.
+		// So we skip it directly.
+		if path.Index == nil || path.Index.ConditionExprString == "" {
+			continue
+		}
+		hasPartialIndex = true
+		if columnNames == nil {
+			columnNames = make(types.NameSlice, 0, ds.schema.Len())
+			for i := range ds.Schema().Columns {
+				columnNames = append(columnNames, &types.FieldName{
+					TblName: ds.TableInfo.Name,
+					ColName: ds.Columns[i].Name,
+				})
+			}
+		}
+		// Convert the raw string expression to Expression.
+		expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), path.Index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
+		cnfExprs := expression.SplitCNFItems(expr)
+		if err != nil || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+			if removedPaths == nil {
+				removedPaths = make(map[int64]struct{})
+			}
+			removedPaths[path.Index.ID] = struct{}{}
+			continue
+		}
+		if path.Forced {
+			partialIndexUsedHint = true
+		}
+		// A special handler for plan cache.
+		// We only do it for single IS NOT NULL constraint now.
+		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
+			if !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+				path.NoncacheableReason = "IndexScan of partial index is uncacheable"
+			}
+		}
+	}
+	// 1. No partial index,
+	// 2. Or no partial index is removed and no partial index is used by hint.
+	// In these cases, we don't need to do anything.
+	if !hasPartialIndex || (len(removedPaths) == 0 && !partialIndexUsedHint) {
+		return
+	}
+	checkIndex := func(path *util.AccessPath, checkForced bool) bool {
+		isRemoved := false
+		if path.Index != nil {
+			_, isRemoved = removedPaths[path.Index.ID]
+		}
+		return isRemoved || (checkForced && !path.Forced)
+	}
+	if partialIndexUsedHint {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+	} else {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+	}
 }

@@ -440,6 +440,7 @@ connection default;
 # TestImportIntoPrivilegeNegativeCase
 CREATE USER 'test_import_into'@'localhost';
 GRANT SELECT ON privilege__privileges.* TO 'test_import_into'@'localhost';
+flush privileges;
 CREATE TABLE IF NOT EXISTS t(a int);
 connect (test_import_into,localhost,test_import_into,,privilege__privileges);
 connection test_import_into;
@@ -448,30 +449,35 @@ IMPORT INTO t FROM '/file.csv';
 
 connection default;
 GRANT SELECT on *.* to 'test_import_into'@'localhost';
+flush privileges;
 connection test_import_into;
 --error ErrTableaccessDenied
 IMPORT INTO t FROM '/file.csv';
 
 connection default;
 GRANT UPDATE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 connection test_import_into;
 --error ErrTableaccessDenied
 IMPORT INTO t FROM '/file.csv';
 
 connection default;
 GRANT INSERT on *.* to 'test_import_into'@'localhost';
+flush privileges;
 connection test_import_into;
 --error ErrTableaccessDenied
 IMPORT INTO t FROM '/file.csv';
 
 connection default;
 GRANT DELETE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 connection test_import_into;
 --error ErrTableaccessDenied
 IMPORT INTO t FROM '/file.csv';
 
 connection default;
 GRANT ALTER on *.* to 'test_import_into'@'localhost';
+flush privileges;
 connection test_import_into;
 --error ErrSpecificAccessDenied
 IMPORT INTO t FROM '/file.csv';
@@ -480,6 +486,7 @@ connection default;
 DROP USER 'test_import_into'@'localhost';
 CREATE USER 'test_import_into'@'localhost';
 GRANT FILE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 connection test_import_into;
 --error ErrTableaccessDenied
 IMPORT INTO t FROM '/file.csv';

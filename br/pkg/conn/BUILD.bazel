@@ -9,6 +9,7 @@ go_library(
         "//br/pkg/config",
         "//br/pkg/conn/util",
         "//br/pkg/errors",
+        "//br/pkg/gc",
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/pdutil",
