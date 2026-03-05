@@ -51,6 +51,14 @@ PD_TIMEOUT="${PD_TIMEOUT:-120}"                          # Max seconds to wait f
 TIKV_STATUS="${TIKV_STATUS:-127.0.0.1:20180}"            # TiKV status port (metrics)
 COOLDOWN="${COOLDOWN:-15}"                               # Seconds to wait between runs
 
+# ANALYZE concurrency tuning (i7-13700: 16c/24t, 64GB)
+# These are set as GLOBAL variables before each run.
+ANALYZE_PARTITION_CONCURRENCY="${ANALYZE_PARTITION_CONCURRENCY:-16}"
+BUILD_STATS_CONCURRENCY="${BUILD_STATS_CONCURRENCY:-8}"
+BUILD_SAMPLING_STATS_CONCURRENCY="${BUILD_SAMPLING_STATS_CONCURRENCY:-8}"
+MERGE_PARTITION_STATS_CONCURRENCY="${MERGE_PARTITION_STATS_CONCURRENCY:-16}"
+ANALYZE_DISTSQL_SCAN_CONCURRENCY="${ANALYZE_DISTSQL_SCAN_CONCURRENCY:-15}"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Derived / internal
 # ──────────────────────────────────────────────────────────────────────────────
@@ -200,13 +208,41 @@ clean_playground() {
     fi
 }
 
+# Write TiKV config for playground. Tuned for i7-13700 (16c/24t, 64GB).
+write_tikv_config() {
+    local path="$1"
+    cat > "$path" << 'TOML'
+[readpool.coprocessor]
+# Thread pool serving ANALYZE scans. Default 8 is too low for high-concurrency ANALYZE.
+max-concurrency = 16
+
+[server]
+grpc-concurrency = 8
+
+[rocksdb]
+# Background compaction/flush threads. Helps after BR restore and during ANALYZE writes.
+max-background-jobs = 8
+
+[storage]
+scheduler-worker-pool-size = 8
+TOML
+    log "Wrote TiKV config: ${path}"
+}
+
 # Start playground in background and wait for it to be ready.
 start_playground() {
     local log_file="$1"
-    log "Starting playground (tag=${PLAYGROUND_TAG})..."
+
+    # Generate TiKV config
+    local tikv_config="${OUTPUT_BASE}/tikv.toml"
+    write_tikv_config "${tikv_config}"
+
+    log "Starting playground (tag=${PLAYGROUND_TAG}, 1 TiDB + 1 TiKV + 1 PD)..."
     tiup playground nightly \
         --tag "${PLAYGROUND_TAG}" \
+        --db 1 --kv 1 --pd 1 \
         --without tiflash \
+        --kv.config "${tikv_config}" \
         >"${log_file}" 2>&1 &
     PLAYGROUND_PID=$!
     log "Playground PID: ${PLAYGROUND_PID}"
@@ -471,10 +507,17 @@ main() {
         start_playground "${run_dir}/logs/playground.log"
 
         # ── 2. Configure ──────────────────────────────────────────────
-        log "Configuring TiDB session..."
+        log "Configuring TiDB..."
         ${MYSQL_CMD} -e "SET GLOBAL tidb_enable_auto_analyze = OFF"
         ${MYSQL_CMD} -e "SET GLOBAL tidb_gc_run_interval = '999h'"
-        log "Auto-analyze: OFF, GC interval: 999h"
+
+        # ANALYZE concurrency tuning
+        ${MYSQL_CMD} -e "SET GLOBAL tidb_analyze_partition_concurrency = ${ANALYZE_PARTITION_CONCURRENCY}"
+        ${MYSQL_CMD} -e "SET GLOBAL tidb_build_stats_concurrency = ${BUILD_STATS_CONCURRENCY}"
+        ${MYSQL_CMD} -e "SET GLOBAL tidb_build_sampling_stats_concurrency = ${BUILD_SAMPLING_STATS_CONCURRENCY}"
+        ${MYSQL_CMD} -e "SET GLOBAL tidb_merge_partition_stats_concurrency = ${MERGE_PARTITION_STATS_CONCURRENCY}"
+        ${MYSQL_CMD} -e "SET GLOBAL tidb_analyze_distsql_scan_concurrency = ${ANALYZE_DISTSQL_SCAN_CONCURRENCY}"
+        log "Auto-analyze: OFF, GC: 999h, partition_concurrency=${ANALYZE_PARTITION_CONCURRENCY}, build_stats=${BUILD_STATS_CONCURRENCY}, sampling=${BUILD_SAMPLING_STATS_CONCURRENCY}, merge=${MERGE_PARTITION_STATS_CONCURRENCY}, distsql_scan=${ANALYZE_DISTSQL_SCAN_CONCURRENCY}"
 
         # ── 3. Restore all tables ─────────────────────────────────────
         log "Restoring full backup (including stats)..."
