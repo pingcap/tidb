@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package drr_test
+package crr_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/stream/drr/internal/testutil"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 

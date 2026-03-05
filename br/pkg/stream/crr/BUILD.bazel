@@ -10,3 +10,12 @@ go_test(
         "@com_github_stretchr_testify//require",
     ],
 )
+
+go_test(
+    name = "crr_test",
+    srcs = ["integration_test.go"],
+    deps = [
+        "//br/pkg/stream/crr/internal/testutil",
+        "@com_github_stretchr_testify//require",
+    ],
+)
