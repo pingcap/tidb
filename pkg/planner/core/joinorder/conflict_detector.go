@@ -116,14 +116,10 @@ type edge struct {
 	idx      uint64
 	joinType base.JoinType
 	eqConds  []*expression.ScalarFunction
-	// nonEQConds holds otherCond, leftCond, or rightCond — anything that is not
-	// an equi-join predicate.
+	// nonEQConds are used in two situations:
+	// 1. store all non-eq conds for LogicalJoin, like otherCond, leftCond, or rightCond.
+	// 2. store selection conditions for LogicalSelection-derived edge, which are looked through during buildRecursive.
 	nonEQConds expression.CNFExprs
-	// selConds holds original Selection conditions collected during extractJoinGroup.
-	// They are stored separately from eqConds/nonEQConds to avoid classifying them
-	// as join conditions. These conditions are applied as a LogicalSelection on top
-	// of the join during MakeJoin.
-	selConds []expression.Expression
 
 	// TES is the Total Eligibility Set: the set of base relations that must be
 	// present in the candidate subgraph for this edge to be applicable.
@@ -284,7 +280,7 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 		// Create a Selection edge for filter conditions collected from Selection
 		// operators that were looked through during extractJoinGroup.
 		selEdge := d.makeEdgeInternal(base.InnerJoin, childVertexes, intset.FastIntSet{}, nil, nil, childVertexes)
-		selEdge.selConds = conds
+		selEdge.nonEQConds = conds
 		return append(childEdges, selEdge), childVertexes, nil
 	}
 
@@ -759,7 +755,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		// the second edge is a INNER JOIN edge, and we will append it as selection to the first LEFT JOIN edge.
 		condCap := 0
 		for _, e := range checkResult.appliedInnerEdges {
-			condCap += len(e.eqConds) + len(e.nonEQConds) + len(e.selConds)
+			condCap += len(e.eqConds) + len(e.nonEQConds)
 		}
 		selection := logicalop.LogicalSelection{
 			Conditions: make([]expression.Expression, 0, condCap),
@@ -768,7 +764,6 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 			eqExprs := expression.ScalarFuncs2Exprs(e.eqConds)
 			selection.Conditions = append(selection.Conditions, eqExprs...)
 			selection.Conditions = append(selection.Conditions, e.nonEQConds...)
-			selection.Conditions = append(selection.Conditions, e.selConds...)
 		}
 		resSelection := selection.Init(ctx, existingJoin.QueryBlockOffset())
 		resSelection.SetChildren(existingJoin)
@@ -786,7 +781,6 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		}
 		newEqConds = append(newEqConds, alignedEQConds...)
 		newOtherConds = append(newOtherConds, e.nonEQConds...)
-		newOtherConds = append(newOtherConds, e.selConds...)
 	}
 	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
 	if err != nil {
@@ -817,7 +811,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 // HasRemainingEdges checks if there are remaining edges not in usedEdges.
 func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (remaining bool) {
 	d.iterateEdges(func(e *edge) bool {
-		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 || len(e.selConds) > 0 {
+		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
 			if _, ok := usedEdges[e.idx]; !ok {
 				remaining = true
 				return false
