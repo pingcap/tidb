@@ -41,9 +41,15 @@ def	mysql
 def	PERFORMANCE_SCHEMA	
 def	sys	
 def	test	
-alter schema test read only 1;
+create schema aa;
+create schema bb;
+create schema cc;
+alter schema bb read only 1;
 select * from information_schema.schemata_extensions;
 CATALOG_NAME	SCHEMA_NAME	OPTIONS
+def	aa	
+def	bb	READ ONLY=1
+def	cc	
 def	db_read_only	
 def	db_read_only_1	
 def	ddl__db_read_only	
@@ -52,10 +58,13 @@ def	METRICS_SCHEMA
 def	mysql	
 def	PERFORMANCE_SCHEMA	
 def	sys	
-def	test	READ ONLY=1
-alter schema test read only 0;
+def	test	
+alter schema bb read only 0;
 select * from information_schema.schemata_extensions;
 CATALOG_NAME	SCHEMA_NAME	OPTIONS
+def	aa	
+def	bb	
+def	cc	
 def	db_read_only	
 def	db_read_only_1	
 def	ddl__db_read_only	

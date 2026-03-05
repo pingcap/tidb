@@ -3979,6 +3979,8 @@ func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context
 		)
 		if schema.ReadOnly {
 			record = append(record, types.NewStringDatum(readOnly))
+		} else {
+			record = append(record, types.NewStringDatum(""))
 		}
 		rows = append(rows, record)
 	}
