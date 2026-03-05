@@ -43,6 +43,13 @@ const (
 	mvRowIDName      = "__mvmerge_mv_rowid"
 )
 
+// SQL construction overview:
+//   1) BuildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
+//   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
+//   3) buildMergeSourceSelect LEFT JOINs stage-1 deltas with current MV rows to produce a fixed output schema:
+//      [all delta payload columns][all MV columns][optional rowid handle].
+// The executor consumes this one merged source stream and applies aggregate-specific update rules by offset.
+
 // BuildOptions defines the commit-ts window (FromTS, ToTS] used to read incremental mv-log rows.
 type BuildOptions struct {
 	FromTS uint64
@@ -305,7 +312,20 @@ func BuildLocal(
 	}, nil
 }
 
-// BuildFromLocal constructs the merge-source SQL and dependency metadata from BuildLocalResult.
+// BuildFromLocal constructs merge-source SQL and dependency metadata from BuildLocalResult.
+//
+// Final SQL shape:
+//
+//	SELECT <delta payload cols>, <mv cols>, [mv._tidb_rowid AS __mvmerge_mv_rowid]
+//	FROM (
+//	  <stage-1 delta aggregation on mlog>
+//	) AS delta
+//	LEFT JOIN <mv table> AS mv
+//	  ON delta.<group_key_1> <=> mv.<group_key_1>
+//	 AND ...
+//
+// Stage-1 delta columns are always contiguous at the beginning of output schema, so aggregate
+// dependency offsets remain stable and can be consumed directly by executor logic.
 func BuildFromLocal(
 	local *BuildLocalResult,
 	opt BuildOptions,
@@ -516,6 +536,8 @@ func buildMVTablePKHandleCols(
 	}
 }
 
+// inferSumArgNotNullByOffset infers SUM argument nullability from base-table column flags.
+// If SUM(arg) is known NOT NULL, executor does not need a matching COUNT(arg) dependency.
 func inferSumArgNotNullByOffset(local *BuildLocalResult) map[int]bool {
 	if local == nil || local.baseTable == nil {
 		return nil
@@ -562,6 +584,8 @@ func parseSelectFromSQL(sctx planctx.PlanContext, sql string) (*ast.SelectStmt, 
 	return sel, nil
 }
 
+// extractGroupKeyOffsetsFromMVSelect maps GROUP BY columns back to their offsets in SELECT output.
+// Those offsets define join keys between stage-1 deltas and MV snapshot rows.
 func extractGroupKeyOffsetsFromMVSelect(sel *ast.SelectStmt) ([]int, error) {
 	if sel.GroupBy == nil || len(sel.GroupBy.Items) == 0 {
 		return nil, errors.New("materialized view definition must have GROUP BY")
@@ -589,6 +613,8 @@ func extractGroupKeyOffsetsFromMVSelect(sel *ast.SelectStmt) ([]int, error) {
 	return groupOffsets, nil
 }
 
+// extractAggInfosFromMVSelect parses supported aggregate expressions in MV SELECT list and
+// prepares per-aggregate stage-1 delta column metadata.
 func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, hasMinMax bool, _ error) {
 	for i, f := range sel.Fields.Fields {
 		agg, ok := f.Expr.(*ast.AggregateFuncExpr)
@@ -681,6 +707,9 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 	return aggCols, hasMinMax, nil
 }
 
+// mapSumToCountExprDependencies finds, for every nullable SUM(expr), the unique matching
+// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve
+// SUM(NULL) semantics when applying incremental updates.
 func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	sumToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
@@ -720,6 +749,8 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 	return sumToCountIdx, nil
 }
 
+// validateAggDependencies checks that each aggregate exposes the expected dependency layout and
+// that every dependency offset points to a valid position in the final merge-source schema.
 func validateAggDependencies(
 	aggInfos []AggInfo,
 	mvColumnOffsetBase int,
@@ -938,6 +969,26 @@ func stripAllParentheses(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
+// buildMLogDeltaSelect builds the stage-1 delta aggregation SELECT on mlog rows.
+//
+// SQL shape (simplified):
+//
+//	SELECT
+//	  <group keys from MV SELECT list>,
+//	  SUM(old_new) AS __mvmerge_delta_cnt_star,
+//	  SUM(IF(<count arg> IS NOT NULL, old_new, 0)) AS __mvmerge_delta_cnt_<i>,
+//	  SUM(IF(old_new = 1, <sum arg>, -<sum arg>)) AS __mvmerge_delta_sum_<i>,
+//	  MAX(IF(old_new = 1, <arg>, NULL)) AS __mvmerge_max_in_added_<i>,
+//	  MIN(IF(old_new = 1, <arg>, NULL)) AS __mvmerge_min_in_added_<i>,
+//	  SUM(IF(old_new = -1, 1, 0)) AS __mvmerge_removed_rows   -- only when MIN/MAX exists
+//	FROM <db>.<mlog>
+//	WHERE _tidb_commit_ts > FromTS
+//	  AND _tidb_commit_ts <= ToTS
+//	  AND <MV WHERE predicate>
+//	GROUP BY <group keys from MV definition>
+//
+// old_new uses +1 for inserted/new rows and -1 for deleted/old rows.
+// For COUNT/SUM, this sign directly encodes add/remove contribution.
 func buildMLogDeltaSelect(
 	dbName pmodel.CIStr,
 	mlogTable *model.TableInfo,
@@ -1067,6 +1118,22 @@ func buildMLogDeltaSelect(
 	}, nil
 }
 
+// buildMergeSourceSelect builds stage-2 SQL by joining stage-1 deltas with current MV rows.
+//
+// SQL shape (simplified):
+//
+//	SELECT
+//	  delta.<all delta payload cols>,
+//	  delta.<group-key mv columns>,   -- projected from delta side to keep changed groups
+//	  mv.<non-group-key mv columns>,
+//	  mv._tidb_rowid AS __mvmerge_mv_rowid  -- only for extra row-id handle tables
+//	FROM (<stage-1 delta select>) AS delta
+//	LEFT JOIN <db>.<mv> AS mv
+//	  ON delta.<group_key_1> <=> mv.<group_key_1>
+//	 AND ...
+//
+// Null-safe equality (<=>) keeps SQL NULL-group semantics consistent with GROUP BY keys.
+// Delta is placed on the left side so every changed group survives even when MV row does not exist yet.
 func buildMergeSourceSelect(
 	dbName pmodel.CIStr,
 	mv *model.TableInfo,
@@ -1178,6 +1245,8 @@ func buildMergeSourceSelect(
 	}, deltaColumns, removedDelta, rowIDHandleOffset, nil
 }
 
+// groupKeyBaseColExprAtOffset returns the underlying base-table column expression for one MV
+// output offset. buildMLogDeltaSelect uses it to keep stage-1 GROUP BY aligned with MV layout.
 func groupKeyBaseColExprAtOffset(mvSel *ast.SelectStmt, mvOffset int) (*ast.ColumnNameExpr, error) {
 	if mvOffset < 0 || mvOffset >= len(mvSel.Fields.Fields) {
 		return nil, errors.Errorf("invalid mv offset %d", mvOffset)
