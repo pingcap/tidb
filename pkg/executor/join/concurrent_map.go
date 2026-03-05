@@ -20,7 +20,7 @@ import (
 )
 
 // ShardCount controls the shard maps within the concurrent map
-var ShardCount = 320
+const ShardCount = 320
 
 // A "thread" safe map of type string:Anything.
 // To avoid lock bottlenecks this map is dived to several (ShardCount) map shards.
@@ -28,16 +28,16 @@ type concurrentMap []*concurrentMapShared
 
 // A "thread" safe string to anything map.
 type concurrentMapShared struct {
-	items            map[uint64]*entry
-	syncutil.RWMutex       // Read Write mutex, guards access to internal map.
-	bInMap           int64 // indicate there are 2^bInMap buckets in items
+	items            hack.MemAwareMap[uint64, *entry]
+	syncutil.RWMutex // Read Write mutex, guards access to internal map.
 }
 
 // newConcurrentMap creates a new concurrent map.
 func newConcurrentMap() concurrentMap {
 	m := make(concurrentMap, ShardCount)
 	for i := range ShardCount {
-		m[i] = &concurrentMapShared{items: make(map[uint64]*entry), bInMap: 0}
+		m[i] = &concurrentMapShared{}
+		m[i].items.Init(make(map[uint64]*entry))
 	}
 	return m
 }
@@ -51,32 +51,11 @@ func (m concurrentMap) getShard(hashKey uint64) *concurrentMapShared {
 func (m concurrentMap) Insert(key uint64, value *entry) (memDelta int64) {
 	shard := m.getShard(key)
 	shard.Lock()
-	oldValue := shard.items[key]
+	oldValue := shard.items.M[key]
 	value.Next = oldValue
-	shard.items[key] = value
-	if len(shard.items) > (1<<shard.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-		memDelta = hack.DefBucketMemoryUsageForMapIntToPtr * (1 << shard.bInMap)
-		shard.bInMap++
-	}
+	memDelta += shard.items.Set(key, value)
 	shard.Unlock()
 	return memDelta
-}
-
-// UpsertCb : Callback to return new element to be inserted into the map
-// It is called while lock is held, therefore it MUST NOT
-// try to access other keys in same map, as it can lead to deadlock since
-// Go sync.RWLock is not reentrant
-type UpsertCb func(exist bool, valueInMap, newValue *entry) *entry
-
-// Upsert: Insert or Update - updates existing element or inserts a new one using UpsertCb
-func (m concurrentMap) Upsert(key uint64, value *entry, cb UpsertCb) (res *entry) {
-	shard := m.getShard(key)
-	shard.Lock()
-	v, ok := shard.items[key]
-	res = cb(ok, v, value)
-	shard.items[key] = res
-	shard.Unlock()
-	return res
 }
 
 // Get retrieves an element from map under given key.
@@ -87,7 +66,7 @@ func (m concurrentMap) Get(key uint64) (*entry, bool) {
 	shard := m.getShard(key)
 	// shard.RLock()
 	// Get item from shard.
-	val, ok := shard.items[key]
+	val, ok := shard.items.M[key]
 	// shard.RUnlock()
 	return val, ok
 }
@@ -104,7 +83,7 @@ func (m concurrentMap) IterCb(fn IterCb) {
 	for idx := range m {
 		shard := (m)[idx]
 		shard.RLock()
-		for key, value := range shard.items {
+		for key, value := range shard.items.M {
 			fn(key, value)
 		}
 		shard.RUnlock()

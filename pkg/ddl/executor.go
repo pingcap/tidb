@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -72,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -82,9 +84,6 @@ import (
 
 const (
 	expressionIndexPrefix = "_V$"
-	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tombstone$_"
-	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
@@ -765,6 +764,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 			return nil
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
+	}
+	if isReservedSchemaObjInNextGen(old.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	err = checkDatabaseHasForeignKeyReferred(e.ctx, is, old.Name, fkCheck)
@@ -1882,6 +1884,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
 					ttlOptionsHandled = true
+				case ast.TableOptionAffinity:
+					err = e.AlterTableAffinity(sctx, ident, opt.StrValue)
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -1907,19 +1911,15 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.AlterCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
-			if !vardef.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
-			} else {
-				err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
-			}
+			err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithoutValidation)
 		case ast.AlterTableAddStatistics:
-			err = e.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
+			err = e.AlterTableAddStatistics()
 		case ast.AlterTableDropStatistics:
-			err = e.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
+			err = e.AlterTableDropStatistics()
 		case ast.AlterTableAttributes:
 			err = e.AlterTableAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionAttributes:
@@ -2011,7 +2011,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -2216,6 +2215,11 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+
+	if meta.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
+	}
+
 	if pi.Type == ast.PartitionTypeHash || pi.Type == ast.PartitionTypeKey {
 		// Add partition for hash/key is actually a reorganize partition
 		// operation and not a metadata only change!
@@ -2393,6 +2397,13 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
+	if isReservedSchemaObjInNextGen(meta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
+	}
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE PARTITIONING of a table with AFFINITY option")
+	}
+
 	piOld := meta.GetPartitionInfo()
 	var partNames []string
 	if piOld != nil {
@@ -2463,6 +2474,11 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
+	}
+
 	switch pi.Type {
 	case ast.PartitionTypeRange, ast.PartitionTypeList:
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
@@ -2533,6 +2549,11 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REMOVE PARTITIONING of a table with AFFINITY option")
+	}
+
 	// TODO: Optimize for remove partitioning with a single partition
 	// TODO: Add the support for this in onReorganizePartition
 	// skip if only one partition
@@ -2670,6 +2691,10 @@ func (e *executor) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, 
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("COALESCE PARTITION of a table with AFFINITY option")
 	}
 
 	switch pi.Type {
@@ -3043,6 +3068,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
 	}
 
+	if nt.Affinity != nil || pt.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("EXCHANGE PARTITION of a table with AFFINITY option")
+	}
+
 	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
@@ -3072,7 +3101,9 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-
+	if isReservedSchemaObjInNextGen(ntMeta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
+	}
 	err = checkExchangePartition(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -3788,6 +3819,43 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 	return nil
 }
 
+func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, affinityLevel string) error {
+	is := e.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	affinity, err := model.NewTableAffinityInfoWithLevel(affinityLevel)
+	if err != nil {
+		return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", affinityLevel)))
+	}
+
+	tblInfo := tb.Meta()
+	if err = validateTableAffinity(tblInfo, affinity); err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAlterTableAffinity,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = e.doDDLJob2(ctx, job, &model.AlterTableAffinityArgs{Affinity: affinity})
+	return errors.Trace(err)
+}
+
 func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 	// Memory tables and system tables are not supported by TiFlash
 	if metadef.IsMemOrSysDB(dbName.L) {
@@ -3821,67 +3889,16 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 	return nil
 }
 
-// AlterTableAddStatistics registers extended statistics for a table.
-func (e *executor) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
-	if !ctx.GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	// Not support Cardinality and Dependency statistics type for now.
-	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
-		return errors.New("Cardinality and Dependency statistics types are not supported now")
-	}
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
-	if err != nil {
-		return err
-	}
-	tblInfo := tbl.Meta()
-	if tblInfo.GetPartitionInfo() != nil {
-		return errors.New("Extended statistics on partitioned tables are not supported now")
-	}
-	colIDs := make([]int64, 0, 2)
-	colIDSet := make(map[int64]struct{}, 2)
-	// Check whether columns exist.
-	for _, colName := range stats.Columns {
-		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
-		if col == nil {
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(colName.Name, ident.Name)
-		}
-		if stats.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("No need to create correlation statistics on the integer primary key column"))
-			return nil
-		}
-		if _, exist := colIDSet[col.ID]; exist {
-			return errors.Errorf("Cannot create extended statistics on duplicate column names '%s'", colName.Name.L)
-		}
-		colIDSet[col.ID] = struct{}{}
-		colIDs = append(colIDs, col.ID)
-	}
-	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {
-		return errors.New("Only support Correlation and Dependency statistics types on 2 columns")
-	}
-	if len(colIDs) < 1 && stats.StatsType == ast.StatsTypeCardinality {
-		return errors.New("Only support Cardinality statistics type on at least 2 columns")
-	}
-	// TODO: check whether covering index exists for cardinality / dependency types.
-
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return e.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
+// AlterTableAddStatistics would register extended statistics for a table.
+// The extended statistics feature has been removed; this always returns an error.
+func (*executor) AlterTableAddStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
-// AlterTableDropStatistics logically deletes extended statistics for a table.
-func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
-	if !ctx.GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
-	if err != nil {
-		return err
-	}
-	tblInfo := tbl.Meta()
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return e.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
+// AlterTableDropStatistics would logically delete extended statistics for a table.
+// The extended statistics feature has been removed; this always returns an error.
+func (*executor) AlterTableDropStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
@@ -4074,7 +4091,10 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string) bool {
+func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
+	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+		return true
+	}
 	if schema == mysql.WorkloadSchema {
 		return true
 	}
@@ -4159,8 +4179,8 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
-			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
 		case tableObject:
@@ -4299,6 +4319,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
+	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	referredFK := checkTableHasForeignKeyReferred(e.infoCache.GetLatest(), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
 	if referredFK != nil {
@@ -4378,6 +4401,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
+		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
+		}
 	}
 
 	job := &model.Job{
@@ -4427,6 +4453,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			}
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
+			}
+			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
 
@@ -5472,6 +5501,42 @@ func validateGlobalIndexWithGeneratedColumns(ec errctx.Context, tblInfo *model.T
 	}
 }
 
+func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffinityInfo) error {
+	if affinity == nil {
+		return nil
+	}
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs("AFFINITY", "temporary table")
+	}
+
+	level := affinity.Level
+	isPartitionTable := tblInfo.Partition != nil
+
+	switch affinity.Level {
+	case ast.TableAffinityLevelTable:
+		if isPartitionTable {
+			return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs(
+				fmt.Sprintf("AFFINITY='%s'", level),
+				"partition table",
+			)
+		}
+	case ast.TableAffinityLevelPartition:
+		if !isPartitionTable {
+			return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs(
+				fmt.Sprintf("AFFINITY='%s'", level),
+				"non-partition table",
+			)
+		}
+	default:
+		// this should not happen, the affinity level should have been normalized and checked in the parser stage.
+		intest.Assert(false)
+		return errors.Errorf("invalid affinity level: %s for table %s (ID: %d)", level, tblInfo.Name.O, tblInfo.ID)
+	}
+
+	return nil
+}
+
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
@@ -5679,7 +5744,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 
 	table, ok := is.TableByID(e.ctx, args.TableID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(
+			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
 	ok = validateTableMode(table.Meta().Mode, args.TableMode)
@@ -6709,7 +6775,9 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
-	e.checkInvolvingSchemaInfoInTest(job)
+	if err := job.CheckInvolvingSchemaInfo(); err != nil {
+		return err
+	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 
@@ -7072,4 +7140,11 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	}
 
 	return nil
+}
+
+func isReservedSchemaObjInNextGen(id int64) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
+	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
 }

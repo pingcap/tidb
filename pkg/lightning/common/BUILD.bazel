@@ -21,7 +21,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
-        "//br/pkg/httputil",
         "//br/pkg/logutil",
         "//pkg/errno",
         "//pkg/ingestor/errdef",
@@ -38,6 +37,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/dbutil",
         "//pkg/util/format",
+        "//pkg/util/httputil",
         "//pkg/util/logutil",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_go_sql_driver_mysql//:mysql",
@@ -118,7 +118,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 29,
     deps = [
         "//br/pkg/errors",
         "//pkg/autoid_service",

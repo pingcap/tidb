@@ -43,6 +43,11 @@ type Engine interface {
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
 	ImportedStatistics() (importedKVSize int64, importedKVCount int64)
+	// ConflictInfo returns the conflict information of the engine.
+	// TODO only external engine have this method, we should't make part of the
+	// 	Engine interface, but right now we have to consider backend pkg which need
+	// to consider the lightning tidb backend.
+	ConflictInfo() ConflictInfo
 	// GetKeyRange returns the key range [startKey, endKey) of the engine. If the
 	// duplicate detection is enabled, the keys in engine are encoded by duplicate
 	// detection but the returned keys should not be encoded.

@@ -21,14 +21,15 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSeekPropsOffsets(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 
 	rc1 := &rangePropertiesCollector{
 		props: []*rangeProperty{
@@ -134,7 +135,7 @@ func TestSeekPropsOffsets(t *testing.T) {
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	w := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+2)).
 		SetBlockSize(10*(lengthBytes*2+2)).
@@ -198,7 +199,7 @@ func TestGetAllFileNames(t *testing.T) {
 
 func TestCleanUpFiles(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	w := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+2)).
 		SetBlockSize(10*(lengthBytes*2+2)).
@@ -278,6 +279,7 @@ func TestSortedKVMeta(t *testing.T) {
 					},
 				},
 			},
+			ConflictInfo: engineapi.ConflictInfo{Count: 1, Files: []string{"a.txt"}},
 		},
 		{
 			Min:       []byte("x"),
@@ -298,11 +300,13 @@ func TestSortedKVMeta(t *testing.T) {
 	require.Equal(t, []byte{'b', 0}, meta0.EndKey)
 	require.Equal(t, uint64(123), meta0.TotalKVSize)
 	require.Equal(t, summary[0].MultipleFilesStats, meta0.MultipleFilesStats)
+	require.EqualValues(t, engineapi.ConflictInfo{Count: 1, Files: []string{"a.txt"}}, meta0.ConflictInfo)
 	meta1 := NewSortedKVMeta(summary[1])
 	require.Equal(t, []byte("x"), meta1.StartKey)
 	require.Equal(t, []byte{'y', 0}, meta1.EndKey)
 	require.Equal(t, uint64(177), meta1.TotalKVSize)
 	require.Equal(t, summary[1].MultipleFilesStats, meta1.MultipleFilesStats)
+	require.EqualValues(t, engineapi.ConflictInfo{}, meta1.ConflictInfo)
 
 	meta0.MergeSummary(summary[1])
 	require.Equal(t, []byte("a"), meta0.StartKey)
@@ -311,10 +315,14 @@ func TestSortedKVMeta(t *testing.T) {
 	mergedStats := slices.Clone(summary[0].MultipleFilesStats)
 	mergedStats = append(mergedStats, summary[1].MultipleFilesStats...)
 	require.Equal(t, mergedStats, meta0.MultipleFilesStats)
+	require.EqualValues(t, engineapi.ConflictInfo{Count: 1, Files: []string{"a.txt"}}, meta0.ConflictInfo)
 
 	meta00 := NewSortedKVMeta(summary[0])
 	meta00.Merge(meta1)
 	require.Equal(t, meta0, meta00)
+
+	meta0.MergeSummary(&WriterSummary{Min: []byte("xx"), Max: []byte("yy"), ConflictInfo: engineapi.ConflictInfo{Count: 2, Files: []string{"b.txt"}}})
+	require.EqualValues(t, engineapi.ConflictInfo{Count: 3, Files: []string{"a.txt", "b.txt"}}, meta0.ConflictInfo)
 }
 
 func TestKeyMinMax(t *testing.T) {
@@ -462,7 +470,7 @@ func TestMarshalFields(t *testing.T) {
 
 func TestReadWriteJSON(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 
 	type testStruct struct {
 		BaseExternalMeta

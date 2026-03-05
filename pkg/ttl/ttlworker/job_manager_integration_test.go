@@ -359,7 +359,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
 }

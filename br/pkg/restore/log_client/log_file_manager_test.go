@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -131,12 +131,12 @@ func (b *mockMetaBuilder) createTempDir() (string, error) {
 	return temp, nil
 }
 
-func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
+func (b *mockMetaBuilder) build(temp string) (*objstore.LocalStorage, error) {
 	err := os.MkdirAll(path.Join(temp, stream.GetStreamBackupMetaPrefix()), 0o755)
 	if err != nil {
 		return nil, err
 	}
-	local, err := storage.NewLocalStorage(temp)
+	local, err := objstore.NewLocalStorage(temp)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
 	return local, err
 }
 
-func (b *mockMetaBuilder) b(_ bool) (*storage.LocalStorage, string) {
+func (b *mockMetaBuilder) b(_ bool) (*objstore.LocalStorage, string) {
 	path, err := b.createTempDir()
 	if err != nil {
 		panic(err)

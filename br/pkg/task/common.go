@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -26,8 +27,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
@@ -217,7 +219,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 
 // Config is the common configuration for all BRIE tasks.
 type Config struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 
 	Storage             string    `json:"storage" toml:"storage"`
 	PD                  []string  `json:"pd" toml:"pd"`
@@ -358,7 +360,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 		"gcp-kms:///projects/{project-id}/locations/{location}/keyRings/{keyring}/cryptoKeys/{key-name}?AUTH=specified&CREDENTIALS={credentials}\"")
 	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 }
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
@@ -379,7 +381,7 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagMasterKeyConfig)
 	_ = flags.MarkHidden(flagMasterKeyCipherType)
 
-	storage.HiddenFlagsForStream(flags)
+	objstore.HiddenFlagsForStream(flags)
 }
 
 func DefaultConfig() Config {
@@ -631,6 +633,13 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if rateLimitUnit, err = flags.GetUint64(flagRateLimitUnit); err != nil {
 		return errors.Trace(err)
 	}
+	// Check for multiplication overflow when both values are non-zero
+	// This prevents silent wraparound that would cause incorrect rate limiting
+	if rateLimit > 0 && rateLimitUnit > 0 && rateLimit > math.MaxUint64/rateLimitUnit {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"rate limit calculation overflow: %d * %d exceeds uint64 max (consider max ~17PB/s)",
+			rateLimit, rateLimitUnit)
+	}
 	cfg.RateLimit = rateLimit * rateLimitUnit
 
 	cfg.Schemas = make(map[string]struct{})
@@ -833,20 +842,20 @@ func GetStorage(
 	ctx context.Context,
 	storageName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
+) (*backuppb.StorageBackend, storeapi.Storage, error) {
+	u, err := objstore.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	s, err := storage.New(ctx, u, storageOpts(cfg))
+	s, err := objstore.New(ctx, u, storageOpts(cfg))
 	if err != nil {
 		return nil, nil, errors.Annotate(err, "create storage failed")
 	}
 	return u, s, nil
 }
 
-func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
-	return &storage.ExternalStorageOptions{
+func storageOpts(cfg *Config) *storeapi.Options {
+	return &storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -857,7 +866,7 @@ func ReadBackupMeta(
 	ctx context.Context,
 	fileName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, *backuppb.BackupMeta, error) {
+) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
 	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -872,7 +881,7 @@ func ReadBackupMeta(
 		newPrefix, file := path.Split(oldPrefix)
 		newFileName := file + fileName
 		u.GetGcs().Prefix = newPrefix
-		s, err = storage.New(ctx, u, storageOpts(cfg))
+		s, err = objstore.New(ctx, u, storageOpts(cfg))
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}

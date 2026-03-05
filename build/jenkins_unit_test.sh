@@ -24,6 +24,7 @@ make bazel_coverage_test
 EXIT_STATUS=$?
 # collect the junit and coverage report
 bazel_collect
+cp ./bazel-out/_coverage/_coverage_report.dat ./coverage.dat
 mkdir -p test_coverage
 mv bazel.xml test_coverage/bazel.xml
 exit ${EXIT_STATUS}

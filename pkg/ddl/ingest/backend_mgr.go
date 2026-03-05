@@ -214,7 +214,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
 	if adjustedWorkerConcurrency > 0 {
-		cfg.WorkerConcurrency = adjustedWorkerConcurrency
+		cfg.WorkerConcurrency.Store(int32(adjustedWorkerConcurrency))
 	}
 
 	tidbCfg := config.GetGlobalConfig()

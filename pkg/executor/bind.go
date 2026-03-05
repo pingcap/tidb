@@ -30,13 +30,14 @@ import (
 type SQLBindExec struct {
 	exec.BaseExecutor
 
-	isGlobal  bool
-	sqlBindOp plannercore.SQLBindOpType
-	details   []*plannercore.SQLBindOpDetail
+	isGlobal     bool
+	sqlBindOp    plannercore.SQLBindOpType
+	details      []*plannercore.SQLBindOpDetail
+	isFromRemote bool
 }
 
 // Next implements the Executor Next interface.
-func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
+func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	switch e.sqlBindOp {
 	case plannercore.OpSQLBindCreate:
@@ -49,6 +50,8 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 		return e.flushBindings()
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
+	case plannercore.OpReloadClusterBindings:
+		return e.reloadClusterBindings(ctx)
 	case plannercore.OpSetBindingStatus:
 		return e.setBindingStatus()
 	case plannercore.OpSetBindingStatusByDigest:
@@ -154,9 +157,14 @@ func (e *SQLBindExec) createSQLBind() error {
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(false)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(false, false)
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true, e.isFromRemote)
+}
+
+func (e *SQLBindExec) reloadClusterBindings(ctx context.Context) error {
+	// broadcast the reload bindings command to the entire cluster, including the current node itself.
+	return broadcast(ctx, e.Ctx(), "ADMIN RELOAD BINDINGS")
 }

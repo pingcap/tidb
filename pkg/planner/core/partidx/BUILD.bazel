@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "partidx",
+    srcs = ["check_constraint.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/partidx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/planner/planctx",
+        "//pkg/util/intest",
+        "//pkg/util/ranger",
+        "//pkg/util/ranger/context",
+    ],
+)

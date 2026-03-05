@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -523,7 +524,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.String("key", redact.Key(key)), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return

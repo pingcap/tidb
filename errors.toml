@@ -201,6 +201,11 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
 failed to wait region split
@@ -1611,6 +1616,16 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s
@@ -2294,6 +2309,16 @@ Resource group '%-.192s' already exists
 ["meta:8249"]
 error = '''
 Unknown resource group '%-.192s'
+'''
+
+["meta:8268"]
+error = '''
+masking policy already exists
+'''
+
+["meta:8269"]
+error = '''
+masking policy doesn't exist
 '''
 
 ["planner:1044"]

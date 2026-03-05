@@ -145,6 +145,7 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
+	fullHandle := h
 	if c.idxInfo.Global {
 		idxTblID = c.tblInfo.ID
 		pi := c.tblInfo.GetPartitionInfo()
@@ -154,13 +155,18 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
+
+		if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
+			c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+		}
 	}
 
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return
 	}
 
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, fullHandle, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -235,15 +241,6 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			err = errors.Errorf("panic in MeetPartialCondition: %v", r)
-			intest.Assert(false, "should never panic in MeetPartialCondition")
-			logutil.BgLogger().Warn("panic in MeetPartialCondition", zap.Error(err), zap.Any("recover message", r))
-		}
-	}()
-
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -252,7 +249,20 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 	defer c.conditionEvalBufferPool.Put(evalBuffer)
 	evalBuffer.SetDatums(row...)
 
-	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), evalBuffer.ToRow())
+	return c.MeetPartialConditionWithChunk(evalBuffer.ToRow())
+}
+
+func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			err = errors.Errorf("panic in MeetPartialConditionWithChunk: %v", r)
+			intest.Assert(false, "should never panic in MeetPartialConditionWithChunk")
+			logutil.BgLogger().Warn("panic in MeetPartialConditionWithChunk", zap.Error(err), zap.Any("recover message", r))
+		}
+	}()
+
+	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), row)
 	if err != nil {
 		return false, err
 	}
@@ -326,7 +336,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 			// should not overwrite the key with un-commit flag.
 			// So if the key exists, just do nothing and return.
-			v, err := txn.GetMemBuffer().Get(ctx, key)
+			v, err := kv.GetValue(ctx, txn.GetMemBuffer(), key)
 			if err == nil {
 				if len(v) != 0 {
 					continue
@@ -393,9 +403,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
+					err = setAssertion(txn, key, kv.AssertUnknown)
 				} else {
-					err = txn.SetAssertion(key, kv.SetAssertNotExist)
+					err = setAssertion(txn, key, kv.AssertNotExist)
 				}
 			}
 			if err != nil {
@@ -420,7 +430,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			if kv.IsErrNotFound(err) {
 				// Not in mem buffer, must do non-lazy read, since we must check
 				// if exists now, to be able to overwrite.
-				value, err = txn.GetSnapshot().Get(ctx, key)
+				value, err = kv.GetValue(ctx, txn.GetSnapshot(), key)
 				if err == nil && len(value) == 0 {
 					err = kv.ErrNotExist
 				}
@@ -434,7 +444,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
 						if id == partHandle.PartitionID {
 							// Simply overwrite it
-							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							err = setAssertion(txn, key, kv.AssertUnknown)
 							if err != nil {
 								return nil, err
 							}
@@ -446,7 +456,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			value, err = txn.Get(ctx, key)
+			value, err = kv.GetValue(ctx, txn, key)
 		} else if hasTempKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
@@ -471,7 +481,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy {
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
 		} else {
-			value, err = txn.Get(ctx, key)
+			value, err = kv.GetValue(ctx, txn, key)
 		}
 		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
@@ -519,9 +529,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
-				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+				err = setAssertion(txn, key, kv.AssertUnknown)
 			} else {
-				err = txn.SetAssertion(key, kv.SetAssertNotExist)
+				err = setAssertion(txn, key, kv.AssertNotExist)
 			}
 			if err != nil {
 				return nil, err
@@ -630,7 +640,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
-			err = txn.SetAssertion(key, kv.SetAssertExist)
+			err = setAssertion(txn, key, kv.AssertExist)
 		}
 		if err != nil {
 			return err
@@ -809,7 +819,7 @@ func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key,
 
 // getKeyInTxn gets the value of the key in the transaction, and ignore the ErrNotExist error.
 func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
-	val, err := txn.Get(ctx, key)
+	val, err := kv.GetValue(ctx, txn, key)
 	if err != nil {
 		if kv.IsErrNotFound(err) {
 			return nil, nil

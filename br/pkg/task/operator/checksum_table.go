@@ -14,10 +14,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -63,6 +67,31 @@ func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithRewriteR
 		return errors.Trace(err)
 	}
 
+	for _, result := range results {
+		log.Info("Checksum result", zap.String("db", result.DBName), zap.String("table", result.TableName), zap.Uint64("checksum", result.Checksum),
+			zap.Uint64("total_bytes", result.TotalBytes), zap.Uint64("total_kvs", result.TotalKVs))
+	}
+
+	return json.NewEncoder(os.Stdout).Encode(results)
+}
+
+func RunUpstreamChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumUpstreamConfig) error {
+	c := &checksumTableCtx{cfg: ChecksumWithRewriteRulesConfig{Config: cfg.Config}}
+	if err := c.init(ctx, g); err != nil {
+		return errors.Trace(err)
+	}
+	curr, err := c.getTables(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	reqs, err := c.genUpstreamRequests(curr, cfg.RestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	results, err := c.runChecksum(ctx, reqs)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, result := range results {
 		log.Info("Checksum result", zap.String("db", result.DBName), zap.String("table", result.TableName), zap.Uint64("checksum", result.Checksum),
 			zap.Uint64("total_bytes", result.TotalBytes), zap.Uint64("total_kvs", result.TotalKVs))
@@ -160,6 +189,103 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 	}
 }
 
+func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, clusterID uint64) ([]*backup.PitrDBMap, error) {
+	if len(c.cfg.Storage) > 0 {
+		_, stg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to create storage")
+		}
+		metaFileName := logclient.PitrIDMapsFilename(clusterID, restoredTS)
+		log.Info("get pitr id map from the external storage", zap.String("file name", metaFileName))
+		metaData, err := stg.ReadFile(ctx, metaFileName)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to load pitr id map file")
+		}
+		backupMeta := &backup.BackupMeta{}
+		if err := backupMeta.Unmarshal(metaData); err != nil {
+			return nil, errors.Annotate(err, "failed to unmarshal pitr id map file")
+		}
+		return backupMeta.GetDbMaps(), nil
+	}
+	log.Info("get pitr id map from table", zap.Uint64("restored-ts", restoredTS))
+	table, err := c.dom.InfoSchema().TableByName(ctx, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to get the table")
+	}
+	hasRestoreIDColumn := false
+	for _, col := range table.Meta().Columns {
+		if col.Name.L == "restore_id" {
+			hasRestoreIDColumn = true
+			break
+		}
+	}
+	var getPitrIDMapSQL string
+	var getRowColumns func(row chunk.Row) (uint64, uint64, []byte)
+	if hasRestoreIDColumn {
+		// new version with restore_id column
+		getPitrIDMapSQL = "SELECT restore_id, segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY restore_id, segment_id;"
+		getRowColumns = func(row chunk.Row) (uint64, uint64, []byte) {
+			return row.GetUint64(0), row.GetUint64(1), row.GetBytes(2)
+		}
+	} else {
+		// old version without restore_id column
+		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
+		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
+		getRowColumns = func(row chunk.Row) (uint64, uint64, []byte) {
+			return 0, row.GetUint64(0), row.GetBytes(1)
+		}
+	}
+	se, err := g.CreateSession(c.mgr.GetStorage())
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to create session")
+	}
+	defer se.Close()
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, errSQL := execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		getPitrIDMapSQL,
+		restoredTS, clusterID,
+	)
+	if errSQL != nil {
+		return nil, errors.Annotate(err, "failed to get pitr id map from mysql.tidb_pitr_id_map")
+	}
+
+	pitrDBMap := make([]*backup.PitrDBMap, 0)
+	metaData := make([]byte, 0)
+	lastRestoreID := uint64(0)
+	nextSegmentID := uint64(0)
+	for _, row := range rows {
+		restoreID, elementID, data := getRowColumns(row)
+		if lastRestoreID != restoreID {
+			backupMeta := &backup.BackupMeta{}
+			if err := backupMeta.Unmarshal(metaData); err != nil {
+				return nil, errors.Trace(err)
+			}
+			pitrDBMap = append(pitrDBMap, backupMeta.DbMaps...)
+			metaData = make([]byte, 0)
+			lastRestoreID = restoreID
+			nextSegmentID = uint64(0)
+		}
+		if nextSegmentID != elementID {
+			return nil, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", nextSegmentID)
+		}
+		if len(data) == 0 {
+			return nil, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", nextSegmentID)
+		}
+		metaData = append(metaData, data...)
+		nextSegmentID += 1
+	}
+	if len(metaData) > 0 {
+		backupMeta := &backup.BackupMeta{}
+		if err := backupMeta.Unmarshal(metaData); err != nil {
+			return nil, errors.Trace(err)
+		}
+		pitrDBMap = append(pitrDBMap, backupMeta.DbMaps...)
+	}
+	return pitrDBMap, nil
+}
+
 type request struct {
 	copReq    *checksum.Executor
 	tableName string
@@ -199,6 +325,83 @@ func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Tab
 		}
 
 		rb.SetOldTable(oldTable)
+		rb.SetExplicitRequestSourceType(kvutil.ExplicitTypeBR)
+		req, err := rb.Build()
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to build checksum builder for table %s.%s", t.dbName, t.info.Name.L)
+		}
+		reqs = append(reqs, request{
+			copReq:    req,
+			dbName:    t.dbName,
+			tableName: t.info.Name.L,
+		})
+	}
+
+	return
+}
+
+func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*backup.PitrDBMap, restoreTS uint64) (reqs []request, err error) {
+	router := make(map[string]map[string]map[int64]int64)
+	for _, dbidmap := range idmaps {
+		tableRouter, exists := router[dbidmap.Name]
+		if !exists {
+			tableRouter = make(map[string]map[int64]int64)
+			router[dbidmap.Name] = tableRouter
+		}
+		for _, tableidmap := range dbidmap.Tables {
+			down2upmap, exists := tableRouter[tableidmap.Name]
+			if !exists {
+				down2upmap = make(map[int64]int64)
+				tableRouter[tableidmap.Name] = down2upmap
+			}
+			down2upmap[tableidmap.IdMap.DownstreamId] = tableidmap.IdMap.UpstreamId
+			for _, phyidmap := range tableidmap.Partitions {
+				down2upmap[phyidmap.DownstreamId] = phyidmap.UpstreamId
+			}
+		}
+	}
+
+	for _, t := range curr {
+		rb := checksum.NewExecutorBuilder(t.info, restoreTS)
+		rb.SetConcurrency(c.cfg.ChecksumConcurrency)
+		fakeOldTable := t.info.Clone()
+		tableRouter, exists := router[t.dbName]
+		if !exists {
+			return nil, errors.Errorf("no db map found by db name: %s", t.dbName)
+		}
+		idRouter, exists := tableRouter[t.info.Name.O]
+		if !exists {
+			return nil, errors.Errorf("no table map found by table name: %s", t.info.Name.O)
+		}
+		upstreamID, exists := idRouter[t.info.ID]
+		if !exists {
+			return nil, errors.Errorf("no id map found by id: %d", t.info.ID)
+		}
+		if t.info.Partition != nil {
+			for i, part := range t.info.Partition.Definitions {
+				upstreamPartID, exists := idRouter[part.ID]
+				if !exists {
+					return nil, errors.Errorf("no part id map found by id: %d", part.ID)
+				}
+				fakeOldTable.Partition.Definitions[i].ID = upstreamPartID
+			}
+		}
+		fakeOldTable.ID = upstreamID
+		rb.SetOldTable(&metautil.Table{Info: fakeOldTable})
+		rb.SetExplicitRequestSourceType(kvutil.ExplicitTypeBR)
+		req, err := rb.Build()
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to build checksum executor for table %s.%s", t.dbName, t.info.Name.O)
+		}
+		reqs = append(reqs, request{copReq: req, dbName: t.dbName, tableName: t.info.Name.L})
+	}
+	return
+}
+
+func (c *checksumTableCtx) genUpstreamRequests(curr []tableInDB, checksumTS uint64) (reqs []request, err error) {
+	for _, t := range curr {
+		rb := checksum.NewExecutorBuilder(t.info, checksumTS)
+		rb.SetConcurrency(c.cfg.ChecksumConcurrency)
 		rb.SetExplicitRequestSourceType(kvutil.ExplicitTypeBR)
 		req, err := rb.Build()
 		if err != nil {
@@ -266,4 +469,32 @@ func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]C
 	}
 
 	return results, nil
+}
+
+func RunPitrChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitrIdMapConfig) error {
+	c := &checksumTableCtx{cfg: ChecksumWithRewriteRulesConfig{Config: cfg.Config}}
+	if err := c.init(ctx, g); err != nil {
+		return errors.Trace(err)
+	}
+	curr, err := c.getTables(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	pitrIdMap, err := c.loadPitrIdMap(ctx, g, cfg.RestoreTS, cfg.UpstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	reqs, err := c.genRequestsWithIDMap(curr, pitrIdMap, cfg.RestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	results, err := c.runChecksum(ctx, reqs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, result := range results {
+		log.Info("Checksum result", zap.String("db", result.DBName), zap.String("table", result.TableName), zap.Uint64("checksum", result.Checksum),
+			zap.Uint64("total_bytes", result.TotalBytes), zap.Uint64("total_kvs", result.TotalKVs))
+	}
+	return json.NewEncoder(os.Stdout).Encode(results)
 }

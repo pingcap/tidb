@@ -554,15 +554,6 @@ func TestSetVar(t *testing.T) {
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
 	}
 
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = 'tiflash'")
 	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = ''")
@@ -680,7 +671,7 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
@@ -1384,6 +1375,9 @@ func TestValidateSetVar(t *testing.T) {
 
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741824")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))

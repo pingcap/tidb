@@ -361,7 +361,7 @@ create table if not exists drop_test (a int);
 drop table if exists drop_test;
 create table drop_test (a int);
 drop table drop_test;
--- error 1105
+-- error 8267
 drop table mysql.gc_delete_range;
 
 # TestCreateDropView
@@ -371,7 +371,7 @@ create or replace view drop_test as select 1,2;
 -- error 1051
 drop table drop_test;
 drop view if exists drop_test;
--- error 1105
+-- error 8267
 drop view mysql.gc_delete_range;
 -- error 1051
 drop view drop_test;
@@ -534,3 +534,13 @@ select c_int from t where c_str is not null for update;
 alter table t add index idx_4 (c_str);
 rollback;
 
+# TestIssue64948
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;
+CREATE TABLE ttl_src (created_at TIMESTAMP) TTL = `created_at` + INTERVAL 1 HOUR;
+CREATE TEMPORARY TABLE temp_local LIKE ttl_src;
+SHOW CREATE TABLE temp_local;
+CREATE GLOBAL TEMPORARY TABLE temp_global LIKE ttl_src ON COMMIT DELETE ROWS;
+SHOW CREATE TABLE temp_global;
+CREATE TABLE normal_copy LIKE ttl_src;
+SHOW CREATE TABLE normal_copy;
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;

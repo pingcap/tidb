@@ -17,9 +17,7 @@ package runaway
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,14 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// watchTableName is the name of system table which save runaway watch items.
-	watchTableName = "mysql.tidb_runaway_watch"
-	// watchDoneTableName is the name of system table which save done runaway watch items.
-	watchDoneTableName = "mysql.tidb_runaway_watch_done"
-
-	maxIDRetries = 3
-)
+const maxIDRetries = 3
 
 // NullTime is a zero time.Time.
 var NullTime time.Time
@@ -75,18 +66,6 @@ type recordKey struct {
 	SQLDigest         string
 	PlanDigest        string
 	Match             string
-}
-
-// Hash generates a hash for the recordKey.
-// Because `tidb_runaway_queries` is informational and not performance-critical,
-// we can lose some accuracy for other component's performance.
-func (k recordKey) Hash() uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(k.ResourceGroupName))
-	h.Write([]byte(k.SQLDigest))
-	h.Write([]byte(k.PlanDigest))
-	h.Write([]byte(k.Match))
-	return h.Sum64()
 }
 
 // genRunawayQueriesStmt generates statement with given RunawayRecords.
@@ -161,7 +140,7 @@ func writeInsert(builder *strings.Builder, tableName string) {
 func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
-	writeInsert(&builder, watchTableName)
+	writeInsert(&builder, getRunawayWatchTableName())
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -183,7 +162,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 11)
-	writeInsert(&builder, watchDoneTableName)
+	writeInsert(&builder, getRunawayWatchDoneTableName())
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
@@ -208,14 +187,59 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
-	builder.WriteString(watchTableName)
+	builder.WriteString(getRunawayWatchTableName())
 	builder.WriteString(" where id = %?")
 	params = append(params, r.ID)
 	return builder.String(), params
 }
 
-// hasDeletedExpiredRows just test mark for delete expired rows once.
-var hasDeletedExpiredRows = atomic.Bool{}
+// genBatchInsertWatchStmt generates batch INSERT statement for multiple watch records.
+func genBatchInsertWatchStmt(records map[string]*QuarantineRecord) (string, []any) {
+	var builder strings.Builder
+	params := make([]any, 0, len(records)*9)
+	writeInsert(&builder, getRunawayWatchTableName())
+	firstRecord := true
+	for _, r := range records {
+		if !firstRecord {
+			builder.WriteByte(',')
+		}
+		firstRecord = false
+		builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.StartTime)
+		if r.EndTime.Equal(NullTime) {
+			params = append(params, nil)
+		} else {
+			params = append(params, r.EndTime)
+		}
+		params = append(params, r.Watch)
+		params = append(params, r.WatchText)
+		params = append(params, r.Source)
+		params = append(params, r.Action)
+		params = append(params, r.getSwitchGroupName())
+		params = append(params, r.ExceedCause)
+	}
+	return builder.String(), params
+}
+
+func genBatchDeleteWatchByIDStmt(records map[int64]*QuarantineRecord) (string, []any) {
+	var builder strings.Builder
+	params := make([]any, 0, len(records))
+	builder.WriteString("delete from ")
+	builder.WriteString(getRunawayWatchTableName())
+	builder.WriteString(" where id in (")
+	first := true
+	for id := range records {
+		if !first {
+			builder.WriteByte(',')
+		}
+		first = false
+		builder.WriteString("%?")
+		params = append(params, id)
+	}
+	builder.WriteByte(')')
+	return builder.String(), params
+}
 
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
@@ -229,20 +253,15 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	}
 	batchSize := runawayRecordGCSelectBatchSize
 	deleteSize := runawayRecordGCBatchSize
-	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Millisecond * 1
+	failpoint.Inject("FastRunawayGC", func(val failpoint.Value) {
+		expiredDurationMs := val.(int)
+		if expiredDurationMs == 0 {
+			expiredDurationMs = 1
+		}
+		expiredDuration = time.Millisecond * time.Duration(expiredDurationMs)
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
-
-	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return()
-		}
-	})
-	if hasDeletedExpiredRows.Load() {
-		return
-	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -282,13 +301,18 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
+		if len(rows) == 0 {
+			return
+		}
+		logutil.BgLogger().Info("start to delete the expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 		leftRows = make([][]types.Datum, len(rows))
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-		failpoint.Inject("deleteExpiredRows", func() {
-			hasDeletedExpiredRows.Store(true)
-		})
 		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
 			endIndex := startIndex + deleteSize
 			if endIndex > len(leftRows) {
@@ -312,38 +336,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				)
 			}
 		}
+		logutil.BgLogger().Info("deleted expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 	}
-}
-
-func handleRemoveStaleRunawayWatch(sysSessionPool util.SessionPool, record *QuarantineRecord) error {
-	se, err := sysSessionPool.Get()
-	defer func() {
-		sysSessionPool.Put(se)
-	}()
-	if err != nil {
-		return errors.Annotate(err, "get session failed")
-	}
-	sctx := se.(sessionctx.Context)
-	exec := sctx.GetSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
-		if err != nil {
-			return
-		}
-	}()
-	sql, params := record.genDeletionStmt()
-	_, err = exec.ExecuteInternal(ctx, sql, params...)
-	return err
 }
 
 func handleRunawayWatchDone(sysSessionPool util.SessionPool, record *QuarantineRecord) error {

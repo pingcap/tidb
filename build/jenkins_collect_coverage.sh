@@ -22,4 +22,5 @@ set -o pipefail
 
 bazel_collect
 mkdir -p test_coverage
+cp ./bazel-out/_coverage/_coverage_report.dat ./coverage.dat
 mv bazel.xml test_coverage/bazel.xml

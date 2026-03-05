@@ -329,6 +329,11 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
+	// MatchSQLBindingCacheKey is the AST node used to match the sql binding. It is the key of the MatchSQLBindingCache.
+	MatchSQLBindingCacheKey ast.StmtNode
+	// MatchSQLBindingCache is to cache the bindinfo to avoid getting bindinfo from bind cache again.
+	MatchSQLBindingCache any
+
 	// ExecRetryCount records the number of retries for executing the statement.
 	// It is set after ExecStmt execution and currently only used in the Slow Log phase
 	// after LogSlowQuery is called.
@@ -479,8 +484,8 @@ type StatementContext struct {
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
 	StaleTSOProvider *staleTSOProvider
 
-	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	// RelatedTableIDs stores the IDs of tables used in statement.
+	RelatedTableIDs map[int64]struct{}
 
 	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
@@ -506,10 +511,11 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID:            contextutil.GenContextID(),
-		mu:               &stmtCtxMu{},
-		stmtCache:        &stmtCache{},
-		StaleTSOProvider: &staleTSOProvider{},
+		ctxID:                contextutil.GenContextID(),
+		mu:                   &stmtCtxMu{},
+		stmtCache:            &stmtCache{},
+		StaleTSOProvider:     &staleTSOProvider{},
+		MatchSQLBindingCache: nil,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -517,6 +523,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
@@ -546,7 +553,7 @@ func (sc *StatementContext) Reset() bool {
 		CTEStorageMap:       sc.CTEStorageMap,
 		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
-		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		RelatedTableIDs:     sc.RelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
@@ -1190,10 +1197,13 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	}
 }
 
-// SetStaleTSOProvider sets the stale TSO provider.
-func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+// SetStaleTSOProviderIfNotExist sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProviderIfNotExist(eval func() (uint64, error)) {
 	sc.StaleTSOProvider.Lock()
 	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.eval != nil {
+		return
+	}
 	sc.StaleTSOProvider.value = nil
 	sc.StaleTSOProvider.eval = eval
 }
@@ -1364,14 +1374,14 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 }
 
 // WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
-// The format is table name partition name:version[realtime row count;modify count][index load status][column load status].
+// The format is table name partition name:stats_meta_version=<ver>[realtime_count=<n>;modify_count=<m>][index load status][column load status].
 func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	ver := "pseudo"
 	// statistics.PseudoVersion == 0
 	if s.Version != 0 {
 		ver = strconv.FormatUint(s.Version, 10)
 	}
-	fmt.Fprintf(w, "%s:%s[%d;%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	fmt.Fprintf(w, "%s:stats_meta_version=%s[realtime_count=%d;modify_count=%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
 	if ver == "pseudo" {
 		return
 	}

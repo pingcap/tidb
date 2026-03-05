@@ -953,7 +953,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 			return iter.datumRow, nil
 		}
 
-		err = iter.cd.DecodeToChunk(value, handle, iter.chk)
+		err = iter.cd.DecodeToChunk(value, 0, handle, iter.chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

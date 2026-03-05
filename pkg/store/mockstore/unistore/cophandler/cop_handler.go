@@ -111,6 +111,7 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 
 type dagContext struct {
 	*evalContext
+	keyspaceID    uint32
 	dbReader      *dbreader.DBReader
 	lockStore     *lockstore.MemStore
 	resolvedLocks []uint64
@@ -433,6 +434,9 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		keyRanges:     req.Ranges,
 		startTS:       req.StartTs,
 		resolvedLocks: req.Context.ResolvedLocks,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		ctx.keyspaceID = reqCtx.KeyspaceId
 	}
 	return ctx, dagReq, err
 }

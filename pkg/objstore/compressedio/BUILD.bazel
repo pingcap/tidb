@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "compressedio",
+    srcs = [
+        "buffer.go",
+        "def.go",
+        "reader.go",
+        "writer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/compressedio",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_klauspost_compress//gzip",
+        "@com_github_klauspost_compress//snappy",
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

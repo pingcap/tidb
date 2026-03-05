@@ -60,6 +60,11 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
+// MaxKeyLen implements Collator interface.
+func (*generalCICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 2
+}
+
 // Pattern implements Collator interface.
 func (*generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}

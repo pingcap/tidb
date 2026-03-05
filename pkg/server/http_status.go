@@ -248,10 +248,16 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
-	if kerneltype.IsNextGen() {
-		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Status")
-		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule")
+	if kv.IsSystemKS(tikvHandlerTool.Store) {
+		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")
+		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
+		router.Handle("/dxf/task/active", tikvhandler.NewDXFActiveTaskHandler()).Name("DXF_Task_Active")
+		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
+	}
+
+	if kerneltype.IsNextGen() {
+		router.Handle("/ddl/check/{db}/{table}/{index}", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("DDL_Check")
 	}
 
 	// HTTP path for transaction GC states.
@@ -520,6 +526,10 @@ func (s *Server) startHTTPServer() {
 		})
 
 		router.Handle("/test/{mod}/{op}", tikvhandler.NewTestHandler(tikvHandlerTool, 0))
+		// used to delete so specific row or index KEY directly to mock the
+		// dangling index or dangling record for test.
+		router.Handle("/test/delete/rowkey/{db}/{table}", tikvhandler.NewDeleteKeyHandler(tikvHandlerTool)).Name("DeleteRowKey")
+		router.Handle("/test/delete/indexkey/{db}/{table}/{index}", tikvhandler.NewDeleteKeyHandler(tikvHandlerTool)).Name("DeleteIndexKey")
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.

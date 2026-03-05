@@ -7,8 +7,8 @@ import (
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore"
 )
 
 func (cfg *MigrateToConfig) getTargetVersion(migs stream.Migrations) (int, bool) {
@@ -53,7 +53,7 @@ func (cx migrateToCtx) dryRun(ctx context.Context, f func(stream.MigrationExt) s
 		est     = cx.est
 		console = cx.console
 		estBase stream.MergeAndMigratedTo
-		effects []storage.Effect
+		effects []objstore.Effect
 	)
 	effects = est.DryRun(func(me stream.MigrationExt) {
 		estBase = f(me)
@@ -63,7 +63,7 @@ func (cx migrateToCtx) dryRun(ctx context.Context, f func(stream.MigrationExt) s
 	cx.est.AddMigrationToTable(ctx, estBase.NewBase, tbl)
 	console.Println("The new BASE migration will be like: ")
 	tbl.Print()
-	file, err := storage.SaveJSONEffectsToTmp(effects)
+	file, err := objstore.SaveJSONEffectsToTmp(effects)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -79,11 +79,11 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return err
 	}
 
-	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
+	backend, err := objstore.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
 	if err != nil {
 		return err
 	}
-	st, err := storage.Create(context.Background(), backend, false)
+	st, err := objstore.Create(context.Background(), backend, false)
 	if err != nil {
 		return err
 	}

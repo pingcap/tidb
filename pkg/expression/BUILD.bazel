@@ -83,6 +83,7 @@ go_library(
         "//pkg/errno",
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",
+        "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/infoschema/context",
         "//pkg/kv",

@@ -880,7 +880,7 @@ func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limi
 	return result, nil
 }
 
-func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (p *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),

@@ -212,12 +212,13 @@ func NewRuntimeFilter(rfIDGenerator *util.IDGenerator, eqPredicate *expression.S
 	rightSideIsBuild := buildNode.RightIsBuildSide()
 	var srcExprList []*expression.Column
 	var targetExprUniqueID int64
+	l, r := expression.ExtractColumnsFromColOpCol(eqPredicate)
 	if rightSideIsBuild {
-		srcExprList = append(srcExprList, eqPredicate.GetArgs()[1].(*expression.Column))
-		targetExprUniqueID = eqPredicate.GetArgs()[0].(*expression.Column).UniqueID
+		srcExprList = append(srcExprList, r)
+		targetExprUniqueID = l.UniqueID
 	} else {
-		srcExprList = append(srcExprList, eqPredicate.GetArgs()[0].(*expression.Column))
-		targetExprUniqueID = eqPredicate.GetArgs()[1].(*expression.Column).UniqueID
+		srcExprList = append(srcExprList, l)
+		targetExprUniqueID = r.UniqueID
 	}
 
 	rfTypes := buildNode.SCtx().GetSessionVars().GetRuntimeFilterTypes()

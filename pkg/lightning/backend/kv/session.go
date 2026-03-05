@@ -171,9 +171,20 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
+// GetFlags returns the latest flags associated with key.
+func (*MemBuf) GetFlags(_ kv.Key) (kv.KeyFlags, error) {
+	return 0, kv.ErrNotExist
+}
+
+// UpdateFlags updates the flags associated with key.
+func (*MemBuf) UpdateFlags(_ kv.Key, _ ...kv.FlagsOp) {}
+
+// UpdateAssertionFlags updates the assertion flags associated with key.
+func (*MemBuf) UpdateAssertionFlags(_ kv.Key, _ kv.AssertionOp) {}
+
 // GetLocal implements the kv.MemBuffer interface.
 func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
-	return mb.Get(ctx, key)
+	return kv.GetValue(ctx, mb, key)
 }
 
 // Size returns sum of keys and values length.
@@ -235,8 +246,8 @@ func (*transaction) Flush() (int, error) {
 func (*transaction) Reset() {}
 
 // Get implements the kv.Retriever interface
-func (*transaction) Get(_ context.Context, _ kv.Key) ([]byte, error) {
-	return nil, kv.ErrNotExist
+func (*transaction) Get(_ context.Context, _ kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
+	return kv.ValueEntry{}, kv.ErrNotExist
 }
 
 // Iter implements the kv.Retriever interface
@@ -256,11 +267,6 @@ func (*transaction) GetTableInfo(_ int64) *model.TableInfo {
 
 // CacheTableInfo implements the kv.Transaction interface.
 func (*transaction) CacheTableInfo(_ int64, _ *model.TableInfo) {
-}
-
-// SetAssertion implements the kv.Transaction interface.
-func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
-	return nil
 }
 
 // IsPipelined implements the kv.Transaction interface.

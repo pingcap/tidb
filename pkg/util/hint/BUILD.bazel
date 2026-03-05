@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/hint",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config/kerneltype",
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser",

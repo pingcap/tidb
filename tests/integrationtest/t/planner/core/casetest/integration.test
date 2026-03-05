@@ -243,7 +243,7 @@ set @@session.tidb_regard_null_as_point=false;
 explain format='plan_tree' select * from tik where a<=>null and b=1;
 select * from tik where a<=>null and b=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a<=>null and b>0 and b<2;
+explain format='plan_tree' select * from tuk where a<=>null and b>0 and b<2;
 select * from tuk where a<=>null and b>0 and b<2;
 set @@session.tidb_regard_null_as_point=false;
 explain format='plan_tree' select * from tuk where a<=>null and b>0 and b<2;
@@ -261,7 +261,7 @@ set @@session.tidb_regard_null_as_point=false;
 explain format='plan_tree' select * from tuk where a<=>null and b>=1 and b<2;
 select * from tuk where a<=>null and b>=1 and b<2;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a<=>null and b>=1 and b<2;
+explain format='plan_tree' select * from tik where a<=>null and b>=1 and b<2;
 select * from tik where a<=>null and b>=1 and b<2;
 set @@session.tidb_regard_null_as_point=false;
 explain format='plan_tree' select * from tik where a<=>null and b>=1 and b<2;
@@ -370,12 +370,12 @@ drop table if exists t;
 create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g));
 set @@tidb_enable_chunk_rpc = on;
 --enable_warnings
-explain format = 'verbose' select * from t where a > 1 order by f;
-explain format = 'verbose' select * from t where f > 1;
-explain format = 'verbose' select f from t where f > 1;
-explain format = 'verbose' select * from t where f > 3 and g = 5;
-explain format = 'verbose' select * from t where g = 5 order by f;
-explain format = 'verbose' select * from t where d = 3 order by c, e;
+explain format = 'brief' select * from t where a > 1 order by f;
+explain format = 'brief' select * from t where f > 1;
+explain format = 'brief' select f from t where f > 1;
+explain format = 'brief' select * from t where f > 3 and g = 5;
+explain format = 'brief' select * from t where g = 5 order by f;
+explain format = 'brief' select * from t where d = 3 order by c, e;
 --disable_warnings
 set @@tidb_enable_chunk_rpc = default;
 
@@ -388,13 +388,13 @@ analyze table t;
 set @@tidb_enable_chunk_rpc = on;
 set tidb_opt_prefer_range_scan = 0;
 --enable_warnings
-explain format = 'verbose' select * from t where b > 5;
-explain format = 'verbose' select * from t where b = 6 order by a limit 1;
-explain format = 'verbose' select * from t where b = 6 limit 1;
+explain format = 'brief' select * from t where b > 5;
+explain format = 'brief' select * from t where b = 6 order by a limit 1;
+explain format = 'brief' select * from t where b = 6 limit 1;
 set tidb_opt_prefer_range_scan = 1;
-explain format = 'verbose' select * from t where b > 5;
-explain format = 'verbose' select * from t where b = 6 order by a limit 1;
-explain format = 'verbose' select * from t where b = 6 limit 1;
+explain format = 'brief' select * from t where b > 5;
+explain format = 'brief' select * from t where b = 6 order by a limit 1;
+explain format = 'brief' select * from t where b = 6 limit 1;
 --disable_warnings
 set @@tidb_enable_chunk_rpc = default;
 set tidb_opt_prefer_range_scan = default;
@@ -740,3 +740,16 @@ SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN 
 SET @b = NULL;
 PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
 EXECUTE prepare_query USING @b;
+
+# Test temporary handling of _tidb_commit_ts
+CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT);
+-- error 1815
+select _tidb_commit_ts from t_commit_ts where a = 1;
+-- error 1815
+select _tidb_commit_ts from t_commit_ts where _tidb_commit_ts = 1;
+-- error 1815
+delete from t_commit_ts where _tidb_commit_ts = 1;
+-- error 1815
+update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1;
+-- error 1054
+insert into t_commit_ts (a, b) values (1, _tidb_commit_ts);

@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = [
+        "plan_mock.go",
+        "scheduler_mock.go",
+        "storage_manager_mock.go",
+        "task_executor_mock.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/planner",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/sessionctx",
+        "@org_uber_go_mock//gomock",
+    ],
+)

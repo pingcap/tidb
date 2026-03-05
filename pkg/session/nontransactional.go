@@ -455,6 +455,9 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
+	// save original max execution time, note it uses MaxExecutionTime instead of GetMaxExecutionTime on purpose
+	// because GetMaxExecutionTime may return 0 when current StmtCtx is not in select query, while we need to
+	// restore the exact value of MaxExecutionTime.
 	originalMaxExecutionTime := se.GetSessionVars().MaxExecutionTime
 	// A NT-DML is not read-only, so we disable max execution time for it.
 	se.GetSessionVars().MaxExecutionTime = 0

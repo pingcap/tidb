@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
@@ -105,54 +104,6 @@ func TestGCPartition(t *testing.T) {
 	})
 }
 
-func TestGCExtendedStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set session tidb_enable_extended_stats = on")
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(a int, b int, c int)")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
-	h := dom.StatsHandle()
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	testKit.MustExec("analyze table t")
-
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 2 [1,2] 1.000000 1",
-		"s2 2 [2,3] 1.000000 1",
-	))
-	testKit.MustExec("alter table t drop column a")
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 2 [1,2] 1.000000 1",
-		"s2 2 [2,3] 1.000000 1",
-	))
-	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 2 [1,2] 1.000000 2",
-		"s2 2 [2,3] 1.000000 1",
-	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s2 2 [2,3] 1.000000 1",
-	))
-
-	testKit.MustExec("drop table t")
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s2 2 [2,3] 1.000000 1",
-	))
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s2 2 [2,3] 1.000000 2",
-	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
-}
-
 func TestGCColumnStatsUsage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -203,7 +154,7 @@ func TestExtremCaseOfGC(t *testing.T) {
 	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
 	require.Len(t, rs.Rows(), 1)
 	rs = testKit.MustQuery("select * from mysql.stats_histograms where table_id = ?", tid)
-	require.Len(t, rs.Rows(), 0)
+	require.Len(t, rs.Rows(), 2)
 	h := dom.StatsHandle()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`)
 	h.GCStats(dom.InfoSchema(), time.Second*3)

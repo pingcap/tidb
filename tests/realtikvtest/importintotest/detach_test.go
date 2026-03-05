@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )

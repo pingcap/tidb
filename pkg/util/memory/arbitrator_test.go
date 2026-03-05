@@ -50,7 +50,7 @@ func (m *MemArbitrator) waitNotiferForTest() {
 }
 
 func (m *MemArbitrator) restartEntryForTest(entry *rootPoolEntry, ctx *ArbitrationContext) {
-	require.True(testState, m.restartEntryByContext(entry, ctx))
+	require.True(testState, m.RestartEntryByContext(rootPoolWrap{entry}, ctx))
 }
 
 func (m *MemArbitrator) checkAwaitFree() {
@@ -83,7 +83,7 @@ func (m *MemArbitrator) addRootPoolForTest(
 		panic(err)
 	}
 	require.True(testState, entry != nil)
-	require.True(testState, m.restartEntryByContext(entry, ctx))
+	require.True(testState, m.RestartEntryByContext(rootPoolWrap{entry}, ctx))
 	return entry
 }
 
@@ -355,7 +355,7 @@ func (m *MemArbitrator) tasksCountForTest() (sz int64) {
 }
 
 func newCtxForTest(ch <-chan struct{}, h ArbitrateHelper, memPriority ArbitrationPriority, waitAverse bool, preferPrivilege bool) *ArbitrationContext {
-	return NewArbitrationContext(ch, 0, 0, h, memPriority, waitAverse, preferPrivilege)
+	return NewArbitrationContext(ch, h, memPriority, waitAverse, preferPrivilege)
 }
 
 func newDefCtxForTest(memPriority ArbitrationPriority) *ArbitrationContext {
@@ -441,7 +441,7 @@ func (m *MemArbitrator) checkTaskExec(task pairSuccessFail, cancelByStandardMode
 
 func (m *MemArbitrator) setMemStatsForTest(alloc, heapInuse, totalAlloc, memOffHeap int64) {
 	lastGC := now().UnixNano()
-	m.SetRuntimeMemStats(RuntimeMemStats{alloc, heapInuse, totalAlloc - alloc, memOffHeap, lastGC})
+	m.setRuntimeMemStats(memStats{alloc, heapInuse, totalAlloc - alloc, memOffHeap, lastGC})
 }
 
 type memStateRecorderForTest struct {
@@ -1088,6 +1088,10 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 }
 
 func TestMemArbitrator(t *testing.T) {
+	defer func() {
+		mockNow = nil
+	}()
+
 	testState = t
 
 	type MockHeap [4]int64 // alloc, heapInuse, totalAlloc, others
@@ -1103,7 +1107,7 @@ func TestMemArbitrator(t *testing.T) {
 	require.Equal(t, m.WorkMode(), ArbitratorModeStandard)
 	debugTime := time.Time{}
 
-	m.debug.now = func() time.Time {
+	mockNow = func() time.Time {
 		return debugTime
 	}
 
@@ -1605,36 +1609,28 @@ func TestMemArbitrator(t *testing.T) {
 
 	{ // test calc buffer
 		m.resetExecMetricsForTest()
-		m.tryToUpdateBuffer(2, 3, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(2, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(2))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(3))
 
-		m.tryToUpdateBuffer(1, 1, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(2))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(3))
 
-		m.tryToUpdateBuffer(4, 1, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(4, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(4))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(3))
 
-		m.tryToUpdateBuffer(1, 6, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(4))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(6))
 
-		m.tryToUpdateBuffer(1, 1, defUpdateBufferTimeAlignSec*(defRedundancy))
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec*(defRedundancy))
 		require.Equal(t, m.buffer.size.Load(), int64(4))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(6))
 
-		m.tryToUpdateBuffer(3, 4, defUpdateBufferTimeAlignSec*(defRedundancy+1))
+		m.tryToUpdateBuffer(3, defUpdateBufferTimeAlignSec*(defRedundancy+1))
 		require.Equal(t, m.buffer.size.Load(), int64(3))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(4))
 
-		m.tryToUpdateBuffer(1, 1, defUpdateBufferTimeAlignSec*(defRedundancy+1))
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec*(defRedundancy+1))
 		require.Equal(t, m.buffer.size.Load(), int64(3))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(4))
 
 		m.setBufferSize(0)
-		m.buffer.quotaLimit.Store(0)
 
 		m.SetLimit(10000)
 		require.Equal(t, PoolAllocProfile{10, 20, 100}, m.poolAllocStats.PoolAllocProfile)
@@ -1754,7 +1750,7 @@ func TestMemArbitrator(t *testing.T) {
 		}
 		gcUT := now().UnixNano()
 		m.actions.UpdateRuntimeMemStats = func() {
-			m.SetRuntimeMemStats(RuntimeMemStats{
+			m.setRuntimeMemStats(memStats{
 				HeapAlloc:  heap,
 				HeapInuse:  heap + 100,
 				MemOffHeap: 3,
@@ -2203,23 +2199,18 @@ func TestMemArbitrator(t *testing.T) {
 		debugTime = time.Unix(defUpdateMemMagnifUtimeAlign, 0)
 		m.setUnixTimeSec(debugTime.Unix())
 
+		m.tryToUpdateBuffer(23, m.approxUnixTimeSec())
+		require.True(t, m.buffer.size.Load() == 23)
 		e1ctx := m.newCtxWithHelperForTest(ArbitrationPriorityMedium, NoWaitAverse, RequirePrivilege)
-		e1ctx.PrevMaxMem = 23
-		e1ctx.memQuotaLimit = 29
 		e1ctx.arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 			return 31
 		}
 		e1 := m.addEntryForTest(e1ctx)
-
-		require.True(t, m.buffer.size.Load() == 23)
-		require.True(t, m.buffer.quotaLimit.Load() == 0)
 		m.updateTrackedHeapStats()
 		require.True(t, m.buffer.size.Load() == 31)
-		require.True(t, m.buffer.quotaLimit.Load() == 0)
 
 		m.ResetRootPoolByID(e1.pool.uid, 19, true) // tune
 		require.True(t, m.buffer.size.Load() == 31)
-		require.True(t, m.buffer.quotaLimit.Load() == 29)
 
 		m.ResetRootPoolByID(e1.pool.uid, 389, true) // tune
 		require.True(t, m.buffer.size.Load() == 389)
@@ -2237,9 +2228,9 @@ func TestMemArbitrator(t *testing.T) {
 		}
 
 		{ // mock set oom check start
-			m.heapController.memRisk.startTime.nano.Store(time.Now().UnixNano())
+			m.heapController.memRisk.startTime.unixMilli.Store(time.Now().UnixMilli())
 			require.False(t, m.executeTick(defMax))
-			m.heapController.memRisk.startTime.nano.Store(0)
+			m.heapController.memRisk.startTime.unixMilli.Store(0)
 		}
 
 		type mockTimeline struct {
@@ -2542,8 +2533,8 @@ func TestMemArbitrator(t *testing.T) {
 			kill2++
 		}
 		m.refreshRuntimeMemStats()
-		debugNow := time.Unix(0, 1024)
-		m.debug.now = func() time.Time {
+		debugNow := now()
+		mockNow = func() time.Time {
 			return debugNow
 		}
 		require.True(t, m.runOneRound() == -2)
@@ -2565,6 +2556,10 @@ func TestMemArbitrator(t *testing.T) {
 }
 
 func TestBasicUtils(t *testing.T) {
+	defer func() {
+		mockNow = nil
+	}()
+
 	testState = t
 
 	{
@@ -2668,9 +2663,9 @@ func TestBasicUtils(t *testing.T) {
 
 		m := MemArbitrator{}
 		tm := time.Now()
-		require.True(t, m.debug.now == nil)
+		require.True(t, mockNow == nil)
 		require.True(t, !m.innerTime().IsZero())
-		m.debug.now = func() time.Time {
+		mockNow = func() time.Time {
 			return tm
 		}
 		require.True(t, m.innerTime().Equal(tm))
@@ -2712,8 +2707,7 @@ func TestBench(t *testing.T) {
 		ch1 := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < N; i += 1 {
-			wg.Add(1)
-			go func() {
+			wg.Go(func() {
 				<-ch1
 
 				root, err := m.EmplaceRootPool(uint64(i))
@@ -2723,8 +2717,6 @@ func TestBench(t *testing.T) {
 				killed := false
 				ctx := NewArbitrationContext(
 					cancelCh,
-					0,
-					0,
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
@@ -2742,7 +2734,7 @@ func TestBench(t *testing.T) {
 					false,
 					true,
 				)
-				if !root.Restart(ctx) {
+				if !m.RestartEntryByContext(root, ctx) {
 					panic(fmt.Errorf("failed to init root pool with session-id %d", root.entry.pool.uid))
 				}
 
@@ -2762,8 +2754,7 @@ func TestBench(t *testing.T) {
 					}
 				}
 				m.ResetRootPoolByID(uint64(i), b.Used.Load(), true)
-				wg.Done()
-			}()
+			})
 		}
 		close(ch1)
 		wg.Wait()
@@ -2789,8 +2780,7 @@ func TestBench(t *testing.T) {
 		ch1 := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < N; i += 1 {
-			wg.Add(1)
-			go func() {
+			wg.Go(func() {
 				<-ch1
 
 				root, err := m.EmplaceRootPool(uint64(i))
@@ -2813,8 +2803,6 @@ func TestBench(t *testing.T) {
 
 				ctx := NewArbitrationContext(
 					cancelCh,
-					0,
-					0,
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
@@ -2833,7 +2821,7 @@ func TestBench(t *testing.T) {
 					true,
 				)
 
-				if !root.Restart(ctx) {
+				if !m.RestartEntryByContext(root, ctx) {
 					panic(fmt.Errorf("failed to init root pool with session-id %d", root.entry.pool.uid))
 				}
 
@@ -2853,8 +2841,7 @@ func TestBench(t *testing.T) {
 					}
 				}
 				m.ResetRootPoolByID(uint64(i), b.Used.Load(), true)
-				wg.Done()
-			}()
+			})
 		}
 		close(ch1)
 		wg.Wait()

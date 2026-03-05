@@ -1082,6 +1082,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
 	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
 	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
+	ErrForbiddenDDL:                     mysql.Message("%s is forbidden", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
@@ -1145,6 +1146,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyNotExists:        mysql.Message("Unknown placement policy '%-.192s'", nil),
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
+	ErrMaskingPolicyExists:             mysql.Message("masking policy already exists", nil),
+	ErrMaskingPolicyNotExists:          mysql.Message("masking policy doesn't exist", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
@@ -1193,4 +1196,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
+	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
 }

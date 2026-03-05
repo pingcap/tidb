@@ -35,7 +35,6 @@ go_test(
     shard_count = 24,
     deps = [
         ":ddl",
-        "//pkg/ddl/notifier",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/planner/cardinality",
@@ -43,9 +42,7 @@ go_test(
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
-        "//pkg/types",
         "//pkg/util",
-        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )

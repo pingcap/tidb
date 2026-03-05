@@ -55,6 +55,7 @@ func NewDDLHandler(
 func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
 	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
 	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
+	// See more at: https://github.com/pingcap/tidb/issues/59474
 	if err := h.sub.handle(ctx, sctx, s); err != nil {
 		intest.Assert(
 			errors.ErrorEqual(err, context.Canceled) ||

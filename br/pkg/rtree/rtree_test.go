@@ -12,8 +12,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -514,7 +514,7 @@ func getFiles(startKey, endKey []byte, checksums [][3]uint64) []*backuppb.File {
 func TestProgreeRangeTreeCallBack2(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	metawriter := metautil.NewMetaWriter(stg, metautil.MetaFileSize, false, "temp.meta", nil)
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)

@@ -27,8 +27,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// LoadConfig loads system variables from a toml reader. it is only for plan replayer and test.
-func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, err error) {
+var ignoredSystemVariablesForPlanReplayerLoad = map[string]struct{}{
+	vardef.InnodbLockWaitTimeout: {}, // It is unnecessary to load this variable for plan replayer.
+}
+
+// LoadConfigForPlanReplayerLoad loads system variables from a toml reader. it is only for plan replayer and test.
+func LoadConfigForPlanReplayerLoad(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, err error) {
 	varMap := make(map[string]string)
 
 	_, err = toml.NewDecoder(v).Decode(&varMap)
@@ -38,6 +42,10 @@ func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, e
 	unLoadVars = make([]string, 0)
 	vars := ctx.GetSessionVars()
 	for name, value := range varMap {
+		if _, ok := ignoredSystemVariablesForPlanReplayerLoad[name]; ok {
+			logutil.BgLogger().Warn(fmt.Sprintf("ignore set variable %s:%s", name, value), zap.Error(err))
+			continue
+		}
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
 			unLoadVars = append(unLoadVars, name)

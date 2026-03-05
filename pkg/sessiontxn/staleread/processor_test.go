@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -158,10 +159,12 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err := domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	evaluator := processor.GetStalenessTSEvaluatorForPrepare()
 	evaluatorTS, err := evaluator(ctx, tk.Session())
 	require.NoError(t, err)
@@ -217,10 +220,12 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err = domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	evaluator = processor.GetStalenessTSEvaluatorForPrepare()
 	evaluatorTS, err = evaluator(ctx, tk.Session())
 	require.NoError(t, err)
@@ -287,10 +292,12 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err := domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
@@ -338,10 +345,12 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err = domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
@@ -427,4 +436,36 @@ func createProcessor(t *testing.T, se sessionctx.Context) staleread.Processor {
 	require.Nil(t, processor.GetStalenessTSEvaluatorForPrepare())
 	require.Nil(t, processor.GetStalenessInfoSchema())
 	return processor
+}
+
+func TestConsistentCalculateAsOfTsExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.Session().GetSessionVars().TimeZone = time.UTC
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`select now(3) - interval 1 second`, "", "")
+	require.NoError(t, err)
+	secondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+	stmt, err = p.ParseOneStmt(`select now(3) - interval 3 second`, "", "")
+	require.NoError(t, err)
+	threeSecondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+	se := tk.Session()
+	se.GetSessionVars().StmtCtx = stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	ts1, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+
+	time.Sleep(10 * time.Millisecond)
+
+	ts2, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+	require.Equal(t, ts1, ts2)
+
+	ts3, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), threeSecondTsExpr)
+	require.NoError(t, err)
+	require.True(t, ts3 < ts1)
+	require.Equal(t, ts1-ts3, uint64(2000<<18))
 }

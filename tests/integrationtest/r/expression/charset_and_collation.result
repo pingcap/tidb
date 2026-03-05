@@ -1739,10 +1739,10 @@ b
 c
 explain format="plan_tree" select v, count(*) from t_bin group by v;
 id	task	access object	operator info
-Projection	root		expression__charset_and_collation.t_bin.v, Column#4
-└─HashAgg	root		group by:expression__charset_and_collation.t_bin.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
+Projection	root		expression__charset_and_collation.t_bin.v, Column
+└─HashAgg	root		group by:expression__charset_and_collation.t_bin.v, funcs:count(Column)->Column, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
   └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, funcs:count(1)->Column#5
+    └─HashAgg	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, funcs:count(1)->Column
       └─TableFullScan	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
 select v, count(*) from t_bin group by v;
 v	count(*)
@@ -1755,10 +1755,10 @@ c	1
 á	1
 explain format="plan_tree" select v, count(*) from t group by v;
 id	task	access object	operator info
-Projection	root		expression__charset_and_collation.t.v, Column#4
-└─HashAgg	root		group by:expression__charset_and_collation.t.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
+Projection	root		expression__charset_and_collation.t.v, Column
+└─HashAgg	root		group by:expression__charset_and_collation.t.v, funcs:count(Column)->Column, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
   └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:expression__charset_and_collation.t.v, funcs:count(1)->Column#5
+    └─HashAgg	cop[tikv]		group by:expression__charset_and_collation.t.v, funcs:count(1)->Column
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select v, count(*) from t group by v;
 v	count(*)
@@ -1865,10 +1865,10 @@ b
 c
 explain format="plan_tree" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
 id	task	access object	operator info
-Projection	root		expression__charset_and_collation.t_bin.v, Column#4
-└─StreamAgg	root		group by:expression__charset_and_collation.t_bin.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
+Projection	root		expression__charset_and_collation.t_bin.v, Column
+└─StreamAgg	root		group by:expression__charset_and_collation.t_bin.v, funcs:count(Column)->Column, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
   └─IndexReader	root		index:StreamAgg
-    └─StreamAgg	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, funcs:count(1)->Column#5
+    └─StreamAgg	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, funcs:count(1)->Column
       └─IndexFullScan	cop[tikv]	table:t_bin, index:v(v)	keep order:true, stats:pseudo
 select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
 v	count(*)
@@ -1881,10 +1881,10 @@ c	1
 á	1
 explain format="plan_tree" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
 id	task	access object	operator info
-Projection	root		expression__charset_and_collation.t.v, Column#4
-└─StreamAgg	root		group by:expression__charset_and_collation.t.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
+Projection	root		expression__charset_and_collation.t.v, Column
+└─StreamAgg	root		group by:expression__charset_and_collation.t.v, funcs:count(Column)->Column, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
   └─IndexReader	root		index:StreamAgg
-    └─StreamAgg	cop[tikv]		group by:expression__charset_and_collation.t.v, funcs:count(1)->Column#5
+    └─StreamAgg	cop[tikv]		group by:expression__charset_and_collation.t.v, funcs:count(1)->Column
       └─IndexFullScan	cop[tikv]	table:t, index:v(v)	keep order:true, stats:pseudo
 select /*+ STREAM_AGG() */ v, count(*) from t group by v;
 v	count(*)

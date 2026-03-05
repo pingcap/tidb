@@ -10,11 +10,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
-        "//br/pkg/httputil",
         "//pkg/kv",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/util/codec",
+        "//pkg/util/httputil",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",

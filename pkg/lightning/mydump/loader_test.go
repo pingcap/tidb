@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -30,11 +31,13 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -189,7 +192,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -214,7 +217,7 @@ func TestTableUnexpectedError(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -236,7 +239,7 @@ func TestMissingTableSchema(t *testing.T) {
 	s.touch(t, "db.tbl.csv")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -967,7 +970,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1.tbl1-schema.sql",
 		[]byte("CREATE TABLE db1.tbl1 ( id INTEGER, val VARCHAR(255) );"),
 	))
@@ -1086,7 +1089,7 @@ func TestExternalDataRoutes(t *testing.T) {
 
 func TestSampleFileCompressRatio(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1130,9 +1133,92 @@ func TestEstimateFileSize(t *testing.T) {
 	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
 }
 
+type openCounterStorage struct {
+	storeapi.Storage
+	openCount atomic.Int64
+}
+
+func (s *openCounterStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
+	s.openCount.Add(1)
+	return s.Storage.Open(ctx, path, option)
+}
+
+type openErrorStorage struct {
+	storeapi.Storage
+}
+
+func (s openErrorStorage) Open(context.Context, string, *storeapi.ReaderOption) (objectio.Reader, error) {
+	return nil, errors.New("open disabled")
+}
+
+func TestMDLoaderSkipRealSizeEstimation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("compressed", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		for range 1000 {
+			_, err = gz.Write([]byte("aaaa\n"))
+			require.NoError(t, err)
+		}
+		require.NoError(t, gz.Close())
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.csv.gz", buf.Bytes()))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		store1 := &openCounterStorage{Storage: baseStore}
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, store1)
+		require.NoError(t, err)
+		require.Greater(t, store1.openCount.Load(), int64(0))
+
+		store2 := &openCounterStorage{Storage: baseStore}
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, store2, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+		require.Equal(t, int64(0), store2.openCount.Load())
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.csv.gz"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+	})
+
+	t.Run("parquet", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.parquet", []byte("not a parquet file")))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore})
+		require.Error(t, err)
+
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore}, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.parquet"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+		require.Zero(t, fi.FileMeta.Rows)
+	})
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

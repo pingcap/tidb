@@ -415,6 +415,13 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 			return errors.Trace(err)
 		}
 
+		respSize := int64(r.selectResp.Size())
+		atomic.StoreInt64(&r.selectRespSize, respSize)
+		r.memConsume(respSize)
+		if err := r.selectResp.Error; err != nil {
+			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
+		}
+
 		if len(r.selectResp.IntermediateOutputs) != len(intermediateOutputTypes) {
 			return errors.Errorf(
 				"The length of intermediate output types %d mismatches the length of got intermediate outputs %d."+
@@ -422,14 +429,8 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 				len(intermediateOutputTypes), len(r.selectResp.IntermediateOutputs),
 			)
 		}
-
 		r.intermediateOutputTypes = intermediateOutputTypes
-		respSize := int64(r.selectResp.Size())
-		atomic.StoreInt64(&r.selectRespSize, respSize)
-		r.memConsume(respSize)
-		if err := r.selectResp.Error; err != nil {
-			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
-		}
+
 		if err = r.ctx.SQLKiller.HandleSignal(); err != nil {
 			return err
 		}

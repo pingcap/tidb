@@ -114,7 +114,7 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	dataKey := t.encodeListDataKey(key, index)
 
 	var data []byte
-	data, err = t.reader.Get(context.TODO(), dataKey)
+	data, err = kv.GetValue(context.TODO(), t.reader, dataKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -150,7 +150,7 @@ func (t *TxStructure) LGetAll(key []byte) ([][]byte, error) {
 	length := int(meta.RIndex - meta.LIndex)
 	elements := make([][]byte, 0, length)
 	for index := meta.RIndex - 1; index >= meta.LIndex; index-- {
-		e, err := t.reader.Get(context.TODO(), t.encodeListDataKey(key, index))
+		e, err := kv.GetValue(context.TODO(), t.reader, t.encodeListDataKey(key, index))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -170,7 +170,7 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	index = adjustIndex(index, meta.LIndex, meta.RIndex)
 
 	if index >= meta.LIndex && index < meta.RIndex {
-		return t.reader.Get(context.TODO(), t.encodeListDataKey(key, index))
+		return kv.GetValue(context.TODO(), t.reader, t.encodeListDataKey(key, index))
 	}
 	return nil, nil
 }
@@ -216,7 +216,7 @@ func (t *TxStructure) LClear(key []byte) error {
 }
 
 func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
-	v, err := t.reader.Get(context.TODO(), metaKey)
+	v, err := kv.GetValue(context.TODO(), t.reader, metaKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
