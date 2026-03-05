@@ -1548,7 +1548,7 @@ func TestParallelApply(t *testing.T) {
 		`    └─IndexReader 10000.00 root partition:all index:HashAgg`, // IndexReader is a inner child of Apply
 		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#10`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
-		`          └─IndexFullScan 100000000.00 cop[tikv] table:thash, index:a(a) keep order:false, stats:pseudo`))
+		`          └─IndexRangeScan 100000000.00 cop[tikv] table:thash, index:a(a) range: decided by [gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.a) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -1575,7 +1575,7 @@ func TestParallelApply(t *testing.T) {
 		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#11)->Column#9`,
 		`    └─IndexLookUp 10000.00 root  `, // IndexLookUp is a inner child of Apply
 		`      ├─Selection(Build) 80000000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
-		`      │ └─IndexFullScan 100000000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
+		`      │ └─IndexRangeScan 100000000.00 cop[tikv] table:tinner, index:a(a) range: decided by [gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)], keep order:false, stats:pseudo`,
 		`      └─HashAgg(Probe) 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#11`,
 		`        └─TableRowIDScan 80000000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
@@ -1591,7 +1591,7 @@ func TestParallelApply(t *testing.T) {
 		`    └─IndexReader 10000.00 root partition:all index:HashAgg`, // IndexReader is a inner child of Apply
 		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#10`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
-		`          └─IndexFullScan 100000000.00 cop[tikv] table:trange, index:a(a) keep order:false, stats:pseudo`))
+		`          └─IndexRangeScan 100000000.00 cop[tikv] table:trange, index:a(a) range: decided by [gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.a) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -1618,7 +1618,7 @@ func TestParallelApply(t *testing.T) {
 		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#11)->Column#9`,
 		`    └─IndexLookUp 10000.00 root  `, // IndexLookUp is a inner child of Apply
 		`      ├─Selection(Build) 80000000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
-		`      │ └─IndexFullScan 100000000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
+		`      │ └─IndexRangeScan 100000000.00 cop[tikv] table:tinner, index:a(a) range: decided by [gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)], keep order:false, stats:pseudo`,
 		`      └─HashAgg(Probe) 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#11`,
 		`        └─TableRowIDScan 80000000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
