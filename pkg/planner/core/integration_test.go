@@ -1699,6 +1699,37 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 		tk.MustQuery("select * from t1 t1a where exists " +
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a) order by t1a.a").
 			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
+
+		// NULL outer correlated value: col > NULL is NULL (not true), so
+		// the correlated range must not produce false-positive matches.
+		// Use a separate table since t1.a is PK and cannot be NULL.
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("create table t2 (a int, b int, index ib(b))")
+		tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(NULL,1)")
+		// Outer row (NULL,1): inner needs b=1 and a < NULL -> no match.
+		// Only (2,2) and (3,3) have inner rows with same b and smaller a... no,
+		// only rows with duplicate b values can match. b=1 has (1,1) and (NULL,1).
+		// (1,1) -> inner (NULL,1) has b=1, a=NULL < 1? -> NULL, no match. -> excluded
+		// (NULL,1) -> inner needs b=1 and a < NULL -> NULL, no match. -> excluded
+		// (2,2) -> only b=2 row is (2,2) itself, a=2 < 2 is false -> excluded
+		// (3,3) -> only b=3 row is (3,3) itself, a=3 < 3 is false -> excluded
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a < t2a.a) order by t2a.a").
+			Check(testkit.Rows())
+		// GT: (NULL,1) -> inner needs b=1 and a > NULL -> no match.
+		// (1,1) -> inner (NULL,1) b=1, a=NULL > 1? -> NULL, no match. -> excluded
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a > t2a.a) order by t2a.a").
+			Check(testkit.Rows())
+		// LE: (1,1) -> inner (1,1) b=1, a=1 <= 1 -> true (self). (NULL,1) -> a <= NULL -> no match.
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a <= t2a.a) order by t2a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3"))
+		// GE: same as LE with self-match.
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a >= t2a.a) order by t2a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3"))
+		tk.MustExec("drop table t2")
 	})
 }
 
