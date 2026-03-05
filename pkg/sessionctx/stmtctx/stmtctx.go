@@ -81,7 +81,12 @@ type LogicalPlanBuildState struct {
 	useDynamicPruneMode  bool
 	viewDepth            int32
 	colRefFromUpdatePlan intset.FastIntSet
-	planCacheTracker     contextutil.PlanCacheTrackerState
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
 }
 
 // ReferenceCount indicates the reference count of StmtCtx.
@@ -601,6 +606,7 @@ func (sc *StatementContext) Reset() bool {
 // SaveLogicalPlanBuildState captures the statement-scoped planner state before building
 // another logical plan candidate from the same AST.
 func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
+	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
 	return LogicalPlanBuildState{
 		warnings:             slices.Clone(sc.GetWarnings()),
 		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
@@ -611,7 +617,11 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
 		viewDepth:            sc.ViewDepth,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
-		planCacheTracker:     sc.PlanCacheTracker.Save(),
+		planCacheUseCache:    planCacheUseCache,
+		planCacheType:        planCacheType,
+		planCacheUnqualified: planCacheUnqualified,
+		planCacheForce:       planCacheForce,
+		planCacheAlwaysWarn:  planCacheAlwaysWarn,
 	}
 }
 
@@ -627,7 +637,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
 	sc.ViewDepth = state.viewDepth
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
-	sc.PlanCacheTracker.Restore(state.planCacheTracker)
+	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 

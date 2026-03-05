@@ -45,15 +45,6 @@ type PlanCacheTracker struct {
 	warnHandler WarnAppender
 }
 
-// PlanCacheTrackerState stores the mutable planning-time state of a PlanCacheTracker.
-type PlanCacheTrackerState struct {
-	UseCache             bool
-	CacheType            PlanCacheType
-	PlanCacheUnqualified string
-	ForcePlanCache       bool
-	AlwaysWarnSkipCache  bool
-}
-
 // WarnSkipPlanCache output the reason why this query can't hit the plan cache.
 func (h *PlanCacheTracker) WarnSkipPlanCache(reason string) {
 	h.mu.Lock()
@@ -132,29 +123,23 @@ func (h *PlanCacheTracker) EnablePlanCache() {
 }
 
 // Save captures the mutable planning-time state of the tracker.
-func (h *PlanCacheTracker) Save() PlanCacheTrackerState {
+func (h *PlanCacheTracker) Save() (useCache bool, cacheType PlanCacheType, planCacheUnqualified string, forcePlanCache bool, alwaysWarnSkipCache bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	return PlanCacheTrackerState{
-		UseCache:             h.useCache,
-		CacheType:            h.cacheType,
-		PlanCacheUnqualified: h.planCacheUnqualified,
-		ForcePlanCache:       h.forcePlanCache,
-		AlwaysWarnSkipCache:  h.alwaysWarnSkipCache,
-	}
+	return h.useCache, h.cacheType, h.planCacheUnqualified, h.forcePlanCache, h.alwaysWarnSkipCache
 }
 
 // Restore restores the mutable planning-time state of the tracker.
-func (h *PlanCacheTracker) Restore(state PlanCacheTrackerState) {
+func (h *PlanCacheTracker) Restore(useCache bool, cacheType PlanCacheType, planCacheUnqualified string, forcePlanCache bool, alwaysWarnSkipCache bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.useCache = state.UseCache
-	h.cacheType = state.CacheType
-	h.planCacheUnqualified = state.PlanCacheUnqualified
-	h.forcePlanCache = state.ForcePlanCache
-	h.alwaysWarnSkipCache = state.AlwaysWarnSkipCache
+	h.useCache = useCache
+	h.cacheType = cacheType
+	h.planCacheUnqualified = planCacheUnqualified
+	h.forcePlanCache = forcePlanCache
+	h.alwaysWarnSkipCache = alwaysWarnSkipCache
 }
 
 // UseCache returns whether to use plan cache.
