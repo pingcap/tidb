@@ -93,6 +93,17 @@ func TestJoinReorderPushSelection(tt *testing.T) {
 		tk.MustExec("create table t5(id int not null primary key, name varchar(100))")
 		tk.MustExec("set @@tidb_opt_join_reorder_through_sel = 1")
 
+		tk.MustExec("insert into t1 values (1,'a'),(2,'b'),(3,'c')")
+		tk.MustExec("insert into t2 values (1,'a'),(2,'b'),(4,'d')")
+		tk.MustExec("insert into t3 values (1,'a'),(3,'c'),(5,'e')")
+		tk.MustExec("insert into t4 values (1,'a'),(4,'d'),(6,'f')")
+		tk.MustExec("insert into t5 values (2,'b'),(5,'e'),(7,'g')")
+		tk.MustExec("analyze table t1 all columns")
+		tk.MustExec("analyze table t2 all columns")
+		tk.MustExec("analyze table t3 all columns")
+		tk.MustExec("analyze table t4 all columns")
+		tk.MustExec("analyze table t5 all columns")
+
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
 
 		var input []string
