@@ -65,8 +65,8 @@ func NewHandParser() *HandParser {
 
 // Reset prepares the parser for reuse. Must be called before each parse.
 func (p *HandParser) Reset() {
-	// Reset the arena so typed slabs can reuse their backing arrays.
-	// The old slab batches remain alive (GC-tracked) as long as any AST node
+	// Reset the arena so typed slabs release their backing arrays.
+	// Old slab batches remain alive (GC-tracked) as long as any AST node
 	// from a previous parse still references them.
 	p.arena.Reset()
 

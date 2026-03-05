@@ -204,14 +204,14 @@ func TestSlabAllocDistinctPointers(t *testing.T) {
 	a := NewArena()
 
 	ptrs := make(map[unsafe.Pointer]bool)
-	for range slabSize + 10 {
+	for range maxSlabSize + 10 {
 		col := a.AllocColumnName()
 		p := unsafe.Pointer(col)
 		trequire.False(t, ptrs[p], "duplicate pointer from slab allocator")
 		ptrs[p] = true
 	}
 	// Should have allocated across at least 2 slab batches.
-	trequire.Greater(t, len(ptrs), slabSize)
+	trequire.Greater(t, len(ptrs), maxSlabSize)
 }
 
 func BenchmarkSlabAlloc(b *testing.B) {
@@ -223,5 +223,32 @@ func BenchmarkSlabAlloc(b *testing.B) {
 		}
 		col := a.AllocColumnName()
 		col.Name = ast.NewCIStr("x")
+	}
+}
+
+func TestSlabMixedAllocationScale(t *testing.T) {
+	a := NewArena()
+	ptrs := make(map[unsafe.Pointer]bool)
+
+	// Allocate 100 structs to trigger minSlabSize, doubling, and maxSlabSize bounds
+	for i := 0; i < 100; i++ {
+		col := a.AllocColumnName()
+		p := unsafe.Pointer(col)
+		trequire.False(t, ptrs[p], "duplicate pointer from slab allocator")
+		ptrs[p] = true
+	}
+
+	trequire.Len(t, ptrs, 100)
+
+	// Test reset behavior: same slab type must restart dynamic sizing from minSlabSize
+	for j := 0; j < 3; j++ {
+		a.Reset()
+		resetPtrs := make(map[unsafe.Pointer]bool)
+		for i := 0; i < 100; i++ {
+			p := unsafe.Pointer(a.AllocColumnName())
+			trequire.False(t, resetPtrs[p], "duplicate pointer after reset")
+			resetPtrs[p] = true
+		}
+		trequire.Len(t, resetPtrs, 100)
 	}
 }

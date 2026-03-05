@@ -23,10 +23,12 @@ const (
 	// Grows by doubling for larger queries.
 	defaultBlockSize = 8 * 1024
 
-	// slabSize is the number of elements pre-allocated per typed slab batch.
-	// 64 gives a good balance: large enough to amortize allocation overhead,
-	// small enough to avoid excessive waste for small queries.
-	slabSize = 64
+	// maxSlabSize caps the batch size for typed slab allocation.
+	maxSlabSize = 64
+
+	// minSlabSize is the initial batch size for typed slab allocation.
+	// Small enough to avoid excessive waste for trivial queries.
+	minSlabSize = 4
 )
 
 // ---------------------------------------------------------------------------
@@ -39,22 +41,34 @@ const (
 // causing dangling pointers and SIGBUS.
 //
 // Typed slabs solve this: []ast.ColumnName is a typed slice — the GC knows
-// every field's layout and traces all interior pointers. Instead of N
-// individual new(T) calls (each creating a small heap object), we make
-// N/slabSize calls to make([]T, slabSize). This reduces heap object count,
-// GC marking work, and allocation overhead.
+// every field's layout and traces all interior pointers. Batch allocation
+// via make([]T, N) reduces heap object count, GC marking work, and
+// allocation overhead compared to individual new(T) calls.
+//
+// The batch size grows dynamically: starting at minSlabSize and doubling
+// on each exhaustion up to maxSlabSize. This avoids massive waste for
+// simple queries (e.g. a SELECT needing 1 SelectStmt won't allocate 64)
+// while still amortizing allocation overhead for heavy queries.
 
-// slab is a pre-allocated batch of typed objects.
+// slab is a dynamically-sized batch allocator for typed objects.
 type slab[T interface{}] struct {
 	items []T
 	idx   int
 }
 
 // alloc returns a pointer to a zero-initialized element from the slab.
-// Allocates a new batch when the current one is exhausted.
+// When the current batch is exhausted, a new batch is allocated at double
+// the previous size (starting at minSlabSize, capped at maxSlabSize).
 func (s *slab[T]) alloc() *T {
 	if s.idx >= len(s.items) {
-		s.items = make([]T, slabSize)
+		sz := len(s.items) * 2
+		if sz < minSlabSize {
+			sz = minSlabSize
+		}
+		if sz > maxSlabSize {
+			sz = maxSlabSize
+		}
+		s.items = make([]T, sz)
 		s.idx = 0
 	}
 	p := &s.items[s.idx]
@@ -62,8 +76,9 @@ func (s *slab[T]) alloc() *T {
 	return p
 }
 
-// reset resets the slab index for reuse. The backing slice is retained by the
-// GC for as long as any element pointer is alive — no dangling references.
+// reset releases the current batch for GC. Any pointers previously returned
+// by alloc remain valid — the GC keeps the backing array alive as long as
+// any element pointer is reachable.
 func (s *slab[T]) reset() {
 	s.items = nil
 	s.idx = 0
