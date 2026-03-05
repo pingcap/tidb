@@ -79,11 +79,11 @@ a	b	c	d
 5	5	12	332
 explain format = 'brief' select a,c from t where a = 3 and b in (1, 3, 5) and d > 100 order by c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.t.c
-└─TableReader	1.00	root		data:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.t.a, planner__core__grouped_ranges_order_by.t.c
-    └─Selection	1.00	cop[tikv]		gt(planner__core__grouped_ranges_order_by.t.d, 100)
-      └─TableRangeScan	1.25	cop[tikv]	table:t	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo
+Sort	0.01	root		planner__core__grouped_ranges_order_by.t.c
+└─TableReader	0.01	root		data:Projection
+  └─Projection	0.01	cop[tikv]		planner__core__grouped_ranges_order_by.t.a, planner__core__grouped_ranges_order_by.t.c
+    └─Selection	0.01	cop[tikv]		gt(planner__core__grouped_ranges_order_by.t.d, 100)
+      └─TableRangeScan	0.30	cop[tikv]	table:t	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo
 select a,c from t where a = 3 and b in (1, 3, 5) and d > 100 order by c;
 a	c
 3	1
@@ -100,11 +100,11 @@ a	c
 3	10
 explain format = 'brief' select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.t.c
-└─TableReader	1.00	root		data:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.t.c
-    └─Selection	1.00	cop[tikv]		lt(planner__core__grouped_ranges_order_by.t.d, 200)
-      └─TableRangeScan	1.25	cop[tikv]	table:t	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], keep order:false, stats:pseudo
+Sort	0.01	root		planner__core__grouped_ranges_order_by.t.c
+└─TableReader	0.01	root		data:Projection
+  └─Projection	0.01	cop[tikv]		planner__core__grouped_ranges_order_by.t.c
+    └─Selection	0.01	cop[tikv]		lt(planner__core__grouped_ranges_order_by.t.d, 200)
+      └─TableRangeScan	0.30	cop[tikv]	table:t	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], keep order:false, stats:pseudo
 select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 c
 1
@@ -138,12 +138,12 @@ insert into t2 values
 (4, 3, 1, 260), (4, 3, 5, 275), (4, 3, 11, 285);
 explain format = 'brief' select c from t2 where a in (1, 3) and b in (1, 3) and d < 150 order by c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.t2.c
-└─Projection	1.00	root		planner__core__grouped_ranges_order_by.t2.c
-  └─IndexLookUp	1.00	root		
-    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[1 1,1 1], [1 3,1 3], [3 1,3 1], [3 3,3 3], keep order:false, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		lt(planner__core__grouped_ranges_order_by.t2.d, 150)
-      └─TableRowIDScan	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Sort	0.13	root		planner__core__grouped_ranges_order_by.t2.c
+└─Projection	0.13	root		planner__core__grouped_ranges_order_by.t2.c
+  └─IndexLookUp	0.13	root		
+    ├─IndexRangeScan(Build)	0.40	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[1 1,1 1], [1 3,1 3], [3 1,3 1], [3 3,3 3], keep order:false, stats:pseudo
+    └─Selection(Probe)	0.13	cop[tikv]		lt(planner__core__grouped_ranges_order_by.t2.d, 150)
+      └─TableRowIDScan	0.40	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select c from t2 where a in (1, 3) and b in (1, 3) and d < 150 order by c;
 c
 1
@@ -156,10 +156,10 @@ c
 6
 explain format = 'brief' select a,c from t2 where a = 3 and b in (1, 3, 5) order by a desc, c desc;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.t2.a:desc, planner__core__grouped_ranges_order_by.t2.c:desc
-└─IndexReader	1.00	root		index:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
-    └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo
+Sort	0.30	root		planner__core__grouped_ranges_order_by.t2.a:desc, planner__core__grouped_ranges_order_by.t2.c:desc
+└─IndexReader	0.30	root		index:Projection
+  └─Projection	0.30	cop[tikv]		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
+    └─IndexRangeScan	0.30	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo
 select a,c from t where a = 3 and b in (1, 3, 5) order by a desc, c desc;
 a	c
 3	10
@@ -176,12 +176,12 @@ a	c
 3	1
 explain format = 'brief' select a,c from t2 where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.t2.a:desc, planner__core__grouped_ranges_order_by.t2.c:desc
-└─Projection	1.00	root		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
-  └─IndexLookUp	1.00	root		
-    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[2 1,2 1], [2 3,2 3], [2 5,2 5], keep order:false, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		gt(planner__core__grouped_ranges_order_by.t2.d, 60)
-      └─TableRowIDScan	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Sort	0.10	root		planner__core__grouped_ranges_order_by.t2.a:desc, planner__core__grouped_ranges_order_by.t2.c:desc
+└─Projection	0.10	root		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
+  └─IndexLookUp	0.10	root		
+    ├─IndexRangeScan(Build)	0.30	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[2 1,2 1], [2 3,2 3], [2 5,2 5], keep order:false, stats:pseudo
+    └─Selection(Probe)	0.10	cop[tikv]		gt(planner__core__grouped_ranges_order_by.t2.d, 60)
+      └─TableRowIDScan	0.30	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select a,c from t where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
 a	c
 2	9
@@ -270,10 +270,10 @@ insert into tp values
 (5, 5, 1, 227), (5, 5, 6, 247), (5, 5, 15, 277);
 explain format = 'brief' select a,d from tp where a in (1,4) and b in (1, 3, 5) order by a, d;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
-└─TableReader	1.00	root	partition:all	data:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
-    └─TableRangeScan	1.25	cop[tikv]	table:tp	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], [4 1,4 1], [4 3,4 3], [4 5,4 5], keep order:false, stats:pseudo
+Sort	0.06	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
+└─TableReader	0.06	root	partition:all	data:Projection
+  └─Projection	0.06	cop[tikv]		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
+    └─TableRangeScan	0.60	cop[tikv]	table:tp	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], [4 1,4 1], [4 3,4 3], [4 5,4 5], keep order:false, stats:pseudo
 select a,d from tp where a in (1,4) and b in (1, 3, 5) order by a, d;
 a	d
 1	10
@@ -308,10 +308,10 @@ a	d
 4	295
 explain format = 'brief' select d from tp where a = 1 and b in (1, 3, 5) order by d;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.tp.d
-└─TableReader	1.00	root	partition:all	data:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.tp.d
-    └─TableRangeScan	1.25	cop[tikv]	table:tp	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], keep order:false, stats:pseudo
+Sort	0.03	root		planner__core__grouped_ranges_order_by.tp.d
+└─TableReader	0.03	root	partition:all	data:Projection
+  └─Projection	0.03	cop[tikv]		planner__core__grouped_ranges_order_by.tp.d
+    └─TableRangeScan	0.30	cop[tikv]	table:tp	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], keep order:false, stats:pseudo
 select d from tp where a = 1 and b in (1, 3, 5) order by d;
 d
 10
@@ -328,10 +328,10 @@ d
 95
 explain format = 'brief' select a,d from tp where a = 3 and b in (1, 3, 5) and d < 200 order by a, d;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
-└─TableReader	1.00	root	partition:p0,p1	data:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
-    └─TableRangeScan	1.25	cop[tikv]	table:tp	range:[3 1 -inf,3 1 200), [3 3 -inf,3 3 200), [3 5 -inf,3 5 200), keep order:false, stats:pseudo
+Sort	0.01	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
+└─TableReader	0.01	root	partition:p0,p1	data:Projection
+  └─Projection	0.01	cop[tikv]		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.d
+    └─TableRangeScan	1.00	cop[tikv]	table:tp	range:[3 1 -inf,3 1 200), [3 3 -inf,3 3 200), [3 5 -inf,3 5 200), keep order:false, stats:pseudo
 select a,d from tp where a = 3 and b in (1, 3, 5) and d < 200 order by a, d;
 a	d
 3	17
@@ -409,10 +409,10 @@ insert into tp values
 (5, 5, 1, 227), (5, 5, 6, 247), (5, 5, 15, 277);
 explain format = 'brief' select a,c from tp where a in (3,5) and b in (1, 3, 5) order by a, c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
-└─IndexReader	1.00	root	partition:all	index:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
-    └─IndexRangeScan	1.25	cop[tikv]	table:tp, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], [5 1,5 1], [5 3,5 3], [5 5,5 5], keep order:false, stats:pseudo
+Sort	0.60	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
+└─IndexReader	0.60	root	partition:all	index:Projection
+  └─Projection	0.60	cop[tikv]		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
+    └─IndexRangeScan	0.60	cop[tikv]	table:tp, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [3 5,3 5], [5 1,5 1], [5 3,5 3], [5 5,5 5], keep order:false, stats:pseudo
 select a,c from tp where a in (3,5) and b in (1, 3, 5) order by a, c;
 a	c
 3	1
@@ -455,12 +455,12 @@ a	c
 5	15
 explain format = 'brief' select c from tp where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.tp.c
-└─Projection	1.00	root		planner__core__grouped_ranges_order_by.tp.c
-  └─IndexLookUp	1.00	root	partition:p0,p1	
-    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:tp, index:iabc(a, b, c)	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], keep order:false, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		lt(planner__core__grouped_ranges_order_by.tp.d, 200)
-      └─TableRowIDScan	1.25	cop[tikv]	table:tp	keep order:false, stats:pseudo
+Sort	0.10	root		planner__core__grouped_ranges_order_by.tp.c
+└─Projection	0.10	root		planner__core__grouped_ranges_order_by.tp.c
+  └─IndexLookUp	0.10	root	partition:p0,p1	
+    ├─IndexRangeScan(Build)	0.30	cop[tikv]	table:tp, index:iabc(a, b, c)	range:[1 1,1 1], [1 3,1 3], [1 5,1 5], keep order:false, stats:pseudo
+    └─Selection(Probe)	0.10	cop[tikv]		lt(planner__core__grouped_ranges_order_by.tp.d, 200)
+      └─TableRowIDScan	0.30	cop[tikv]	table:tp	keep order:false, stats:pseudo
 select c from tp where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 c
 1
@@ -477,12 +477,12 @@ c
 9
 explain format = 'brief' select a,c from tp where a = 2 and b in (1, 3, 5) and d < 200 order by a, c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
-└─Projection	1.00	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
-  └─IndexLookUp	1.00	root	partition:p0,p1	
-    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:tp, index:iabc(a, b, c)	range:[2 1,2 1], [2 3,2 3], [2 5,2 5], keep order:false, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		lt(planner__core__grouped_ranges_order_by.tp.d, 200)
-      └─TableRowIDScan	1.25	cop[tikv]	table:tp	keep order:false, stats:pseudo
+Sort	0.10	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
+└─Projection	0.10	root		planner__core__grouped_ranges_order_by.tp.a, planner__core__grouped_ranges_order_by.tp.c
+  └─IndexLookUp	0.10	root	partition:p0,p1	
+    ├─IndexRangeScan(Build)	0.30	cop[tikv]	table:tp, index:iabc(a, b, c)	range:[2 1,2 1], [2 3,2 3], [2 5,2 5], keep order:false, stats:pseudo
+    └─Selection(Probe)	0.10	cop[tikv]		lt(planner__core__grouped_ranges_order_by.tp.d, 200)
+      └─TableRowIDScan	0.30	cop[tikv]	table:tp	keep order:false, stats:pseudo
 select a,c from tp where a = 2 and b in (1, 3, 5) and d < 200 order by a, c;
 a	c
 2	1
@@ -937,13 +937,13 @@ where i.x = o.a and i.y in (1, 2, 3)
 order by i.x, i.z limit 1
 );
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN semi join, left side:TableReader
+Apply	10000.00	root		CARTESIAN semi join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
-└─TopN(Probe)	10000.00	root		planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
-  └─IndexReader	10000.00	root		index:TopN
-    └─TopN	10000.00	cop[tikv]		planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
-      └─Selection	10000.00	cop[tikv]		in(planner__core__grouped_ranges_order_by.t_inner.y, 1, 2, 3)
+└─TopN(Probe)	300.00	root		planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
+  └─IndexReader	300.00	root		index:TopN
+    └─TopN	300.00	cop[tikv]		planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
+      └─Selection	300.00	cop[tikv]		in(planner__core__grouped_ranges_order_by.t_inner.y, 1, 2, 3)
         └─IndexRangeScan	100000.00	cop[tikv]	table:i, index:ixy(x, y, z)	range: decided by [eq(planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_outer.a)], keep order:false, stats:pseudo
 select * from t_outer o
 where exists (
@@ -965,14 +965,15 @@ limit 1
 ) as max_z
 from t_outer o;
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN left outer join, left side:TableReader
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
-└─TopN(Probe)	10000.00	root		planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
-  └─IndexReader	10000.00	root		index:TopN
-    └─TopN	10000.00	cop[tikv]		planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
-      └─Selection	10000.00	cop[tikv]		in(planner__core__grouped_ranges_order_by.t_inner.y, 1, 2)
-        └─IndexRangeScan	100000.00	cop[tikv]	table:i, index:ixy(x, y, z)	range: decided by [eq(planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_outer.a)], keep order:false, stats:pseudo
+Projection	10000.00	root		planner__core__grouped_ranges_order_by.t_outer.a, planner__core__grouped_ranges_order_by.t_outer.b, planner__core__grouped_ranges_order_by.t_inner.z
+└─Apply	10000.00	root		CARTESIAN left outer join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+  └─TopN(Probe)	200.00	root		planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
+    └─IndexReader	200.00	root		index:TopN
+      └─TopN	200.00	cop[tikv]		planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1
+        └─Selection	200.00	cop[tikv]		in(planner__core__grouped_ranges_order_by.t_inner.y, 1, 2)
+          └─IndexRangeScan	100000.00	cop[tikv]	table:i, index:ixy(x, y, z)	range: decided by [eq(planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_outer.a)], keep order:false, stats:pseudo
 select *, (
 select z from t_inner i
 where i.x = o.a and i.y in (1, 2)
@@ -987,8 +988,8 @@ a	b	max_z
 4	40	1200
 explain format = 'brief' select a,b,c from t where a in (2) and b in (1) order by a, b, c;
 id	estRows	task	access object	operator info
-TableReader	1.25	root		data:TableRangeScan
-└─TableRangeScan	1.25	cop[tikv]	table:t	range:[2 1,2 1], keep order:true, stats:pseudo
+TableReader	0.10	root		data:TableRangeScan
+└─TableRangeScan	0.10	cop[tikv]	table:t	range:[2 1,2 1], keep order:true, stats:pseudo
 select a,b,c from t where a in (2) and b in (1) order by a, b, c;
 a	b	c
 2	1	1
@@ -1056,10 +1057,10 @@ a	b	c
 insert into t2 values (4, null, 1, 400), (4, null, 2, 410), (4, 2, null, 420), (4, 4, 1, 430), (4, 6, 3, 440);
 explain format = 'brief' select a,c from t2 where a in (3, null, 4) and b in (1, 3, null) order by a, c;
 id	estRows	task	access object	operator info
-Sort	1.00	root		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
-└─IndexReader	1.00	root		index:Projection
-  └─Projection	1.00	cop[tikv]		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
-    └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [4 1,4 1], [4 3,4 3], keep order:false, stats:pseudo
+Sort	0.40	root		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
+└─IndexReader	0.40	root		index:Projection
+  └─Projection	0.40	cop[tikv]		planner__core__grouped_ranges_order_by.t2.a, planner__core__grouped_ranges_order_by.t2.c
+    └─IndexRangeScan	0.40	cop[tikv]	table:t2, index:iabc(a, b, c)	range:[3 1,3 1], [3 3,3 3], [4 1,4 1], [4 3,4 3], keep order:false, stats:pseudo
 select a,c from t2 where a in (3, null, 4) and b in (1, 3, null) order by a, c;
 a	c
 3	1
