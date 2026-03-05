@@ -20,6 +20,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -113,7 +114,8 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job *regionJob,
 		preRunFn func(ctx context.Context, job *regionJob) error,
 		writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
-		ingestFn func(ctx context.Context, job *regionJob) error) (<-chan *regionJob, error,
+		ingestFn func(ctx context.Context, job *regionJob) error,
+		afterSendFn func()) (<-chan *regionJob, error,
 	) {
 		// mock jobWg.Done() called in the worker
 		testfailpoint.Enable(t,
@@ -131,8 +133,11 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		})
 
 		workGroup.Go(func() error {
-			jobInCh <- job
 			jobWg.Add(1)
+			jobInCh <- job
+			if afterSendFn != nil {
+				afterSendFn()
+			}
 			close(jobInCh)
 			jobWg.Wait()
 
@@ -149,11 +154,24 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
 			t, 1,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			nil, nil, nil)
+			nil, nil, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
 		require.Equal(t, ingested, outJob.stage)
+	})
+
+	t.Run("track waitgroup before enqueue to avoid negative counter", func(t *testing.T) {
+		jobOutCh, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, nil, nil,
+			func() {
+				time.Sleep(50 * time.Millisecond)
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
 	})
 
 	t.Run("if the region has no leader, rescan the region", func(t *testing.T) {
@@ -163,7 +181,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 
 		jobOutCh, err := prepareAndExecute(
 			t, 3, job,
-			nil, nil, nil)
+			nil, nil, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(jobOutCh))
 		for range 3 {
@@ -179,7 +197,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
 			t, 1,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			nil, writeFn, nil)
+			nil, writeFn, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -193,7 +211,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
 			t, 1,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			nil, nil, ingestFn)
+			nil, nil, ingestFn, nil)
 		require.ErrorIs(t, err, errdef.ErrKVDiskFull)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -209,7 +227,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
 			t, 1,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			nil, nil, ingestFn)
+			nil, nil, ingestFn, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -224,7 +242,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
 			t, 1,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			nil, nil, ingestFn)
+			nil, nil, ingestFn, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -241,7 +259,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
 			t, 3,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			nil, nil, ingestFn)
+			nil, nil, ingestFn, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(jobOutCh))
 	})
@@ -253,7 +271,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		_, err := prepareAndExecute(
 			t, 1,
 			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
-			preRunFn, nil, nil)
+			preRunFn, nil, nil, nil)
 		require.Error(t, err)
 		require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	})
