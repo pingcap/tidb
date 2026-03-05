@@ -76,6 +76,7 @@ func NewLocalTestHarness(ctx context.Context, baseDir string, boundaries []Regio
 
 	advancer := streamhelper.NewCommandCheckpointAdvancer(pd)
 	advancer.StartTaskListener(ctx)
+	advancer.SpawnSubscriptionHandler(ctx)
 
 	return &TestHarness{
 		upstreamStorage:   upstreamStorage,

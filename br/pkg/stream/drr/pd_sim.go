@@ -18,11 +18,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"sort"
 	"sync"
+	"time"
 
+	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -58,6 +62,8 @@ type PDSim struct {
 	taskCh             chan<- streamhelper.TaskEvent
 	globalCheckpoint   uint64
 	serviceGCSafePoint uint64
+	// keyed by store id.
+	subscribers map[uint64]map[chan *logbackup.SubscribeFlushEventResponse]struct{}
 }
 
 var _ streamhelper.Env = (*PDSim)(nil)
@@ -75,10 +81,11 @@ func NewPDSim(boundaries []RegionBoundary, taskName string) (*PDSim, error) {
 	}
 
 	p := &PDSim{
-		taskName: taskName,
-		stores:   make(map[uint64]*storeSim),
+		taskName:    taskName,
+		stores:      make(map[uint64]*storeSim),
+		subscribers: make(map[uint64]map[chan *logbackup.SubscribeFlushEventResponse]struct{}),
 	}
-	p.taskStart = oracle.ComposeTS(1, 0)
+	p.taskStart = oracle.ComposeTS(time.Now().UnixMilli(), 0)
 	p.currentTS = p.taskStart
 
 	for _, b := range boundaries {
@@ -171,6 +178,23 @@ func (p *PDSim) RegionSnapshot(regionID uint64) (RegionState, bool) {
 	return toRegionState(r), true
 }
 
+// RegionSnapshotsOnStore returns region snapshots hosted on the store.
+func (p *PDSim) RegionSnapshotsOnStore(storeID uint64) ([]RegionState, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	store, ok := p.stores[storeID]
+	if !ok {
+		return nil, fmt.Errorf("store %d not found", storeID)
+	}
+	result := make([]RegionState, 0, len(store.regionByID))
+	for _, r := range store.regionByID {
+		result = append(result, toRegionState(r))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+
 // GlobalCheckpoint returns the latest checkpoint uploaded by advancer.
 func (p *PDSim) GlobalCheckpoint() uint64 {
 	p.mu.Lock()
@@ -198,22 +222,104 @@ func toRegionState(r *regionSim) RegionState {
 	}
 }
 
-func (p *PDSim) setRegionCheckpoint(regionID, checkpoint uint64) (RegionState, error) {
+func (p *PDSim) flushRegionByStore(ctx context.Context, storeID, regionID, checkpoint uint64) (RegionState, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	r := p.findRegionByID(regionID)
 	if r == nil {
+		p.mu.Unlock()
 		return RegionState{}, fmt.Errorf("region %d not found", regionID)
 	}
-	if checkpoint < r.checkpoint {
-		return RegionState{}, fmt.Errorf("region %d checkpoint rollback: %d -> %d", regionID, r.checkpoint, checkpoint)
+	if r.storeID != storeID {
+		p.mu.Unlock()
+		return RegionState{}, fmt.Errorf(
+			"region %d belongs to store %d, but flush comes from store %d",
+			regionID,
+			r.storeID,
+			storeID,
+		)
+	}
+	if checkpoint <= r.checkpoint {
+		p.mu.Unlock()
+		return RegionState{}, fmt.Errorf(
+			"region %d checkpoint %d must be greater than current %d",
+			regionID,
+			checkpoint,
+			r.checkpoint,
+		)
 	}
 	r.checkpoint = checkpoint
 	if checkpoint > p.currentTS {
 		p.currentTS = checkpoint
 	}
-	return toRegionState(r), nil
+	state := toRegionState(r)
+	receivers := p.subscriberChannelsLocked(storeID)
+	p.mu.Unlock()
+
+	flushEvent := &logbackup.FlushEvent{
+		StartKey:   codec.EncodeBytes(nil, state.StartKey),
+		EndKey:     codec.EncodeBytes(nil, state.EndKey),
+		Checkpoint: checkpoint,
+	}
+	resp := &logbackup.SubscribeFlushEventResponse{Events: []*logbackup.FlushEvent{flushEvent}}
+	for _, ch := range receivers {
+		select {
+		case ch <- resp:
+		case <-ctx.Done():
+			return RegionState{}, fmt.Errorf(
+				"send flush event for region %d to subscribers: %w",
+				regionID, ctx.Err(),
+			)
+		}
+	}
+	return state, nil
+}
+
+func (p *PDSim) subscriberChannelsLocked(storeID uint64) []chan *logbackup.SubscribeFlushEventResponse {
+	set, ok := p.subscribers[storeID]
+	if !ok || len(set) == 0 {
+		return nil
+	}
+	out := make([]chan *logbackup.SubscribeFlushEventResponse, 0, len(set))
+	for ch := range set {
+		out = append(out, ch)
+	}
+	return out
+}
+
+// Scatter reassigns regions to random stores. Regions moved to another store
+// will have checkpoint reset to current global checkpoint.
+func (p *PDSim) Scatter() []uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(p.stores) <= 1 {
+		return nil
+	}
+	storeIDs := make([]uint64, 0, len(p.stores))
+	for id := range p.stores {
+		storeIDs = append(storeIDs, id)
+	}
+	sort.Slice(storeIDs, func(i, j int) bool { return storeIDs[i] < storeIDs[j] })
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	affected := make([]uint64, 0, len(p.regions))
+	for _, r := range p.regions {
+		nextStoreID := storeIDs[rng.Intn(len(storeIDs))]
+		if nextStoreID == r.storeID {
+			continue
+		}
+		oldStore := p.stores[r.storeID]
+		newStore := p.stores[nextStoreID]
+		delete(oldStore.regionByID, r.id)
+		newStore.regionByID[r.id] = r
+
+		r.storeID = nextStoreID
+		r.epoch++
+		r.checkpoint = p.globalCheckpoint
+		affected = append(affected, r.id)
+	}
+	sort.Slice(affected, func(i, j int) bool { return affected[i] < affected[j] })
+	return affected
 }
 
 func overlapsRange(start, end, rgStart, rgEnd []byte) bool {

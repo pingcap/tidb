@@ -39,7 +39,7 @@ func NewFlushSim(pd *PDSim, storage storeapi.Storage) *FlushSim {
 	return &FlushSim{pd: pd, storage: storage}
 }
 
-func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, regionID uint64) string {
+func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, suffixToken uint64) string {
 	return fmt.Sprintf(
 		"%016x%016x-%c%016x%c%016x%c%016x%c%016x.meta",
 		flushTS,
@@ -51,60 +51,78 @@ func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, regionID
 		backupmetas.NameMaxTSTag,
 		maxTS,
 		regionIDTag,
-		regionID,
+		suffixToken,
 	)
 }
 
-// FlushRegion simulates a region flush and emits one metadata file and one log file.
-func (f *FlushSim) FlushRegion(ctx context.Context, regionID uint64, targetCheckpoint uint64) (FlushRecord, error) {
+// FlushStore simulates one store flush and emits one metadata file with all regions on that store.
+func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64, targetCheckpoint uint64) (FlushRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	state, ok := f.pd.RegionSnapshot(regionID)
-	if !ok {
-		return FlushRecord{}, fmt.Errorf("region %d not found", regionID)
+	states, err := f.pd.RegionSnapshotsOnStore(storeID)
+	if err != nil {
+		return FlushRecord{}, err
 	}
-	if targetCheckpoint <= state.Checkpoint {
-		return FlushRecord{}, fmt.Errorf(
-			"region %d target checkpoint %d must be greater than current %d",
-			regionID,
-			targetCheckpoint,
-			state.Checkpoint,
-		)
+	if len(states) == 0 {
+		return FlushRecord{}, fmt.Errorf("store %d has no regions to flush", storeID)
 	}
 
+	minTS := uint64(^uint64(0))
+	logPaths := make([]string, 0, len(states))
+	regionIDs := make([]uint64, 0, len(states))
+	groups := make([]*backuppb.DataFileGroup, 0, len(states))
+
 	f.seq++
-	minTS := state.Checkpoint + 1
-	logPath := path.Join(
-		"v1/log",
-		fmt.Sprintf("store-%d", state.StoreID),
-		fmt.Sprintf("region-%d-%08d.log", state.ID, f.seq),
-	)
-	if err := f.storage.WriteFile(ctx, logPath, nil); err != nil {
-		return FlushRecord{}, fmt.Errorf("write log file %s: %w", logPath, err)
+	flushSeq := f.seq
+	for _, state := range states {
+		if targetCheckpoint <= state.Checkpoint {
+			return FlushRecord{}, fmt.Errorf(
+				"store %d region %d target checkpoint %d must be greater than current %d",
+				storeID,
+				state.ID,
+				targetCheckpoint,
+				state.Checkpoint,
+			)
+		}
+		rMinTS := state.Checkpoint + 1
+		if rMinTS < minTS {
+			minTS = rMinTS
+		}
+
+		logPath := path.Join(
+			"v1/log",
+			fmt.Sprintf("store-%d", storeID),
+			fmt.Sprintf("flush-%08d-region-%d.log", flushSeq, state.ID),
+		)
+		if err := f.storage.WriteFile(ctx, logPath, nil); err != nil {
+			return FlushRecord{}, fmt.Errorf("write log file %s: %w", logPath, err)
+		}
+
+		logPaths = append(logPaths, logPath)
+		regionIDs = append(regionIDs, state.ID)
+		groups = append(groups, &backuppb.DataFileGroup{
+			MinTs: rMinTS,
+			MaxTs: targetCheckpoint,
+			DataFilesInfo: []*backuppb.DataFileInfo{
+				{
+					Path:  logPath,
+					MinTs: rMinTS,
+					MaxTs: targetCheckpoint,
+				},
+			},
+		})
 	}
 
 	metaPath := path.Join(
 		stream.GetStreamBackupMetaPrefix(),
-		formatTaggedMetaName(targetCheckpoint, state.StoreID, minTS, minTS, targetCheckpoint, state.ID),
+		formatTaggedMetaName(targetCheckpoint, storeID, minTS, minTS, targetCheckpoint, flushSeq),
 	)
 	metadata := &backuppb.Metadata{
-		StoreId: int64(state.StoreID),
-		MinTs:   minTS,
-		MaxTs:   targetCheckpoint,
-		FileGroups: []*backuppb.DataFileGroup{
-			{
-				MinTs: minTS,
-				MaxTs: targetCheckpoint,
-				DataFilesInfo: []*backuppb.DataFileInfo{
-					{
-						Path:  logPath,
-						MinTs: minTS,
-						MaxTs: targetCheckpoint,
-					},
-				},
-			},
-		},
+		StoreId:    int64(storeID),
+		MinTs:      minTS,
+		MaxTs:      targetCheckpoint,
+		FileGroups: groups,
 	}
 	payload, err := metadata.Marshal()
 	if err != nil {
@@ -114,19 +132,21 @@ func (f *FlushSim) FlushRegion(ctx context.Context, regionID uint64, targetCheck
 		return FlushRecord{}, fmt.Errorf("write backupmeta %s: %w", metaPath, err)
 	}
 
-	if _, err := f.pd.setRegionCheckpoint(regionID, targetCheckpoint); err != nil {
-		return FlushRecord{}, fmt.Errorf("set region %d checkpoint: %w", regionID, err)
+	for _, state := range states {
+		if _, err := f.pd.flushRegionByStore(ctx, storeID, state.ID, targetCheckpoint); err != nil {
+			return FlushRecord{}, fmt.Errorf("flush region %d by store %d: %w", state.ID, storeID, err)
+		}
 	}
 
 	record := FlushRecord{
-		Sequence:     f.seq,
-		RegionID:     state.ID,
-		StoreID:      state.StoreID,
+		Sequence:     flushSeq,
+		StoreID:      storeID,
+		RegionIDs:    regionIDs,
 		FlushTS:      targetCheckpoint,
 		MinTS:        minTS,
 		MaxTS:        targetCheckpoint,
 		MetadataPath: metaPath,
-		LogPaths:     []string{logPath},
+		LogPaths:     logPaths,
 	}
 	f.records = append(f.records, record)
 	return record.clone(), nil

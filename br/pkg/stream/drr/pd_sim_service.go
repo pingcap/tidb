@@ -17,9 +17,9 @@ package drr
 import (
 	"context"
 	"fmt"
+	"io"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -27,6 +27,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -166,45 +167,76 @@ func (c *logBackupClientSim) GetLastFlushTSOfRegion(
 	opts ...grpc.CallOption,
 ) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
 	_ = ctx
+	_ = in
 	_ = opts
+	return nil, status.Error(codes.Unimplemented, "GetLastFlushTSOfRegion is legacy and disabled in DRR harness")
+}
 
-	c.pd.mu.Lock()
-	defer c.pd.mu.Unlock()
+type flushEventStreamClient struct {
+	ctx context.Context
+	ch  <-chan *logbackup.SubscribeFlushEventResponse
+}
 
-	resp := &logbackup.GetLastFlushTSOfRegionResponse{
-		Checkpoints: make([]*logbackup.RegionCheckpoint, 0, len(in.Regions)),
-	}
-	for _, reqRegion := range in.Regions {
-		r := c.pd.findRegionByID(reqRegion.Id)
-		if r == nil || r.storeID != c.storeID {
-			resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
-				Err: &errorpb.Error{Message: "region not found on store"},
-				Region: &logbackup.RegionIdentity{
-					Id:           reqRegion.Id,
-					EpochVersion: reqRegion.EpochVersion,
-				},
-			})
-			continue
+func (f *flushEventStreamClient) Recv() (*logbackup.SubscribeFlushEventResponse, error) {
+	select {
+	case msg, ok := <-f.ch:
+		if !ok {
+			return nil, io.EOF
 		}
-		if r.epoch != reqRegion.EpochVersion {
-			resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
-				Err: &errorpb.Error{Message: "epoch not match"},
-				Region: &logbackup.RegionIdentity{
-					Id:           r.id,
-					EpochVersion: r.epoch,
-				},
-			})
-			continue
-		}
-		resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
-			Checkpoint: r.checkpoint,
-			Region: &logbackup.RegionIdentity{
-				Id:           r.id,
-				EpochVersion: r.epoch,
-			},
-		})
+		return msg, nil
+	case <-f.ctx.Done():
+		return nil, status.Error(codes.Canceled, f.ctx.Err().Error())
 	}
-	return resp, nil
+}
+
+func (f *flushEventStreamClient) Header() (metadata.MD, error) {
+	return metadata.MD{}, nil
+}
+
+func (f *flushEventStreamClient) Trailer() metadata.MD {
+	return metadata.MD{}
+}
+
+func (f *flushEventStreamClient) CloseSend() error {
+	return nil
+}
+
+func (f *flushEventStreamClient) Context() context.Context {
+	return f.ctx
+}
+
+func (f *flushEventStreamClient) SendMsg(any) error {
+	return nil
+}
+
+func (f *flushEventStreamClient) RecvMsg(any) error {
+	return nil
+}
+
+func (p *PDSim) addSubscriber(storeID uint64, ch chan *logbackup.SubscribeFlushEventResponse) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	set, ok := p.subscribers[storeID]
+	if !ok {
+		set = make(map[chan *logbackup.SubscribeFlushEventResponse]struct{})
+		p.subscribers[storeID] = set
+	}
+	set[ch] = struct{}{}
+}
+
+func (p *PDSim) removeSubscriber(storeID uint64, ch chan *logbackup.SubscribeFlushEventResponse) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	set, ok := p.subscribers[storeID]
+	if !ok {
+		return
+	}
+	delete(set, ch)
+	if len(set) == 0 {
+		delete(p.subscribers, storeID)
+	}
 }
 
 func (c *logBackupClientSim) SubscribeFlushEvent(
@@ -212,10 +244,16 @@ func (c *logBackupClientSim) SubscribeFlushEvent(
 	in *logbackup.SubscribeFlushEventRequest,
 	opts ...grpc.CallOption,
 ) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
-	_ = ctx
 	_ = in
 	_ = opts
-	return nil, status.Error(codes.Unimplemented, "flush subscription is disabled in drr test framework")
+
+	ch := make(chan *logbackup.SubscribeFlushEventResponse, 1024)
+	c.pd.addSubscriber(c.storeID, ch)
+	go func() {
+		<-ctx.Done()
+		c.pd.removeSubscriber(c.storeID, ch)
+	}()
+	return &flushEventStreamClient{ctx: ctx, ch: ch}, nil
 }
 
 func (c *logBackupClientSim) FlushNow(

@@ -36,11 +36,11 @@ type RegionState struct {
 	Checkpoint uint64
 }
 
-// FlushRecord tracks one simulated region flush and generated files.
+// FlushRecord tracks one simulated store flush and generated files.
 type FlushRecord struct {
 	Sequence     uint64
-	RegionID     uint64
 	StoreID      uint64
+	RegionIDs    []uint64
 	FlushTS      uint64
 	MinTS        uint64
 	MaxTS        uint64
@@ -50,6 +50,7 @@ type FlushRecord struct {
 
 func (r FlushRecord) clone() FlushRecord {
 	out := r
+	out.RegionIDs = append([]uint64(nil), r.RegionIDs...)
 	out.LogPaths = append([]string(nil), r.LogPaths...)
 	return out
 }
