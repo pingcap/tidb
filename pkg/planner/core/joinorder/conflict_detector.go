@@ -117,8 +117,9 @@ type edge struct {
 	idx      uint64
 	joinType base.JoinType
 	eqConds  []*expression.ScalarFunction
-	// nonEQConds holds otherCond, leftCond, or rightCond — anything that is not
-	// an equi-join predicate.
+	// nonEQConds are used in two situations:
+	// 1. store all non-eq conds for LogicalJoin, like otherCond, leftCond, or rightCond.
+	// 2. store selection conditions for LogicalSelection-derived edge, which are looked through during buildRecursive.
 	nonEQConds expression.CNFExprs
 	// selConds holds original Selection conditions collected during extractJoinGroup.
 	// They are stored separately from eqConds/nonEQConds to avoid classifying them
@@ -278,14 +279,17 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 			return nil, intset.FastIntSet{}, err
 		}
 		selID := sel.ID()
-		conds, ok := group.selConditions[selID]
+		conds, ok := group.selConds[selID]
 		if !ok {
 			return nil, intset.FastIntSet{}, errors.Errorf("unexpected Selection node (ID: %d) found in buildRecursive", selID)
 		}
 		// Create a Selection edge for filter conditions collected from Selection
 		// operators that were looked through during extractJoinGroup.
-		selEdge := d.makeEdgeInternal(base.InnerJoin, childVertexes, intset.FastIntSet{}, nil, nil, childVertexes)
-		selEdge.selConds = conds
+		// Selection-derived edge doesn't have child-edges and child-vertexes,
+		// because no need to generate ConflictRule for this edge.
+		// But its TES is its all children vertexes for correctness.
+		selEdge := d.makeEdgeInternal(base.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
+		selEdge.nonEQConds = conds
 		return append(childEdges, selEdge), childVertexes, nil
 	}
 

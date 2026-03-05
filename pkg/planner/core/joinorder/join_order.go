@@ -58,9 +58,9 @@ type joinGroup struct {
 	// This can speed up the join reorder process.
 	allInnerJoin bool
 
-	// selConditions holds filter conditions collected from Selection operators
+	// selConds holds filter conditions collected from Selection operators
 	// that were looked through during extractJoinGroup.
-	selConditions map[int][]expression.Expression
+	selConds map[int][]expression.Expression
 }
 
 func (g *joinGroup) merge(other *joinGroup) {
@@ -74,11 +74,11 @@ func (g *joinGroup) merge(other *joinGroup) {
 	}
 	g.allInnerJoin = g.allInnerJoin && other.allInnerJoin
 
-	if len(other.selConditions) > 0 {
-		if g.selConditions == nil {
-			g.selConditions = make(map[int][]expression.Expression, len(other.selConditions))
+	if len(other.selConds) > 0 {
+		if g.selConds == nil {
+			g.selConds = make(map[int][]expression.Expression, len(other.selConds))
 		}
-		maps.Copy(g.selConditions, other.selConditions)
+		maps.Copy(g.selConds, other.selConds)
 	}
 }
 
@@ -87,11 +87,16 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		if p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
 			!slices.ContainsFunc(sel.Conditions, expression.IsMutableEffectsExpr) {
 			childGroup := extractJoinGroup(sel.Children()[0])
+			// This check is necessary: the child JoinGroup must contain at least one join operator.
+			// If a table outside the Selection subtree needs to be reordered with tables inside it,
+			// the connectivity must be verified through CR. Since the CR of Selection-derived edge will not be generated,
+			// so we need rely on CRs of joins in Selection's subtree.
 			if len(childGroup.vertexes) > 1 {
-				if childGroup.selConditions == nil {
-					childGroup.selConditions = make(map[int][]expression.Expression)
+				if childGroup.selConds == nil {
+					childGroup.selConds = make(map[int][]expression.Expression)
 				}
-				childGroup.selConditions[sel.ID()] = sel.Conditions
+				childGroup.selConds[sel.ID()] = sel.Conditions
+				childGroup.root = sel
 				return childGroup
 			}
 		}
