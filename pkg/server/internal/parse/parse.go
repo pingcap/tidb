@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -168,9 +169,17 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 }
 
 // reservedConnAttrTruncated is injected by TiDB when connection attributes
-// are truncated. A client-provided key with the same name is ignored to avoid
-// collisions with server-generated metadata.
+// are truncated. A client-provided key with the same name may be overwritten
+// when truncation happens.
 const reservedConnAttrTruncated = "_truncated"
+
+var standardConnAttrs = map[string]struct{}{
+	"_client_name":    {},
+	"_client_version": {},
+	"_os":             {},
+	"_pid":            {},
+	"_platform":       {},
+}
 
 func parseAttrs(data []byte) (map[string]string, string, error) {
 	attrs := make(map[string]string)
@@ -178,6 +187,7 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 	var totalSize int64
 	var acceptedSize int64
 	truncated := false
+	hasDeprecatedUnderscoreAttr := false
 	limit := vardef.ConnectAttrsSize.Load()
 	if limit == 0 {
 		// Disabled: do not collect, truncate, or emit metadata.
@@ -196,10 +206,15 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 		}
 		pos += off
 
+		keyStr := string(key)
+
 		// Keep all client-provided keys (including underscore-prefixed MySQL
-		// connector attributes) except the server-reserved "_truncated" key.
-		if string(key) == reservedConnAttrTruncated {
-			continue
+		// connector attributes). If truncation happens, server may overwrite
+		// the reserved "_truncated" key for observability metadata.
+		if !hasDeprecatedUnderscoreAttr && strings.HasPrefix(keyStr, "_") {
+			if _, ok := standardConnAttrs[keyStr]; !ok {
+				hasDeprecatedUnderscoreAttr = true
+			}
 		}
 
 		kvSize := int64(len(key)) + int64(len(value))
@@ -221,7 +236,7 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 		}
 
 		if !truncated {
-			attrs[string(key)] = string(value)
+			attrs[keyStr] = string(value)
 			acceptedSize += kvSize
 		}
 	}
@@ -241,7 +256,11 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 		}
 	}
 
-	var warning string
+	warnings := make([]string, 0, 2)
+	if hasDeprecatedUnderscoreAttr {
+		warnings = append(warnings,
+			"custom connection attributes with leading underscore are deprecated and will be rejected in a future release")
+	}
 	if truncated {
 		// Calculate what limit was actually enforced
 		effectiveLimit := limit
@@ -251,10 +270,10 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 
 		truncatedBytes := totalSize - acceptedSize
 		attrs[reservedConnAttrTruncated] = strconv.FormatInt(truncatedBytes, 10)
-		warning = fmt.Sprintf(
+		warnings = append(warnings, fmt.Sprintf(
 			"session connection attributes truncated: total size %d bytes exceeds "+
 				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
-			totalSize, effectiveLimit, truncatedBytes)
+			totalSize, effectiveLimit, truncatedBytes))
 	}
-	return attrs, warning, nil
+	return attrs, strings.Join(warnings, "; "), nil
 }

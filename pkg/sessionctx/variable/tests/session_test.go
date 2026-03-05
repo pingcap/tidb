@@ -356,6 +356,10 @@ func TestSlowLogFormat(t *testing.T) {
 	// json.Encoder sorts map keys, so the output is deterministic.
 	expectedAttrsLine := `# Session_connect_attrs: {"_client_name":"libmysql","_os":"Linux","app_name":"test_svc"}`
 	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = vardef.On
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = vardef.Off
 	// Session_connect_attrs should appear after Storage_from_mpp, before Prev_stmt, and before the SQL.
 	attrsIdx := strings.Index(logString, "Session_connect_attrs")
 	mppIdx := strings.Index(logString, variable.SlowLogStorageFromMPP)

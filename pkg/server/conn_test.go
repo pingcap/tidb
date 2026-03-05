@@ -2580,10 +2580,10 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 			"LongestSeen should not be updated for payloads >= 64KB")
 	})
 
-	t.Run("underscore-prefixed attrs except reserved key", func(t *testing.T) {
+	t.Run("underscore-prefixed attrs include reserved key", func(t *testing.T) {
 		// Keep underscore-prefixed attributes from clients for MySQL parity and
-		// observability, but always drop client-provided "_truncated" because it
-		// is reserved for server-generated truncation metadata.
+		// observability. The client-provided "_truncated" is retained when no
+		// truncation occurs; if truncation happens, server may overwrite it.
 		vardef.ConnectAttrsSize.Store(-1) // Limit mapped to 65536 max internally
 		vardef.ConnectAttrsLongestSeen.Store(0)
 		vardef.ConnectAttrsLost.Store(0)
@@ -2604,7 +2604,7 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		//   "_os":"linux"                     → must be kept
 		//   "_program_name":"mysql"           → must be kept
 		//   "_custom":"val"                   → must be kept
-		//   "_truncated":"fake"               → server-reserved, must be dropped
+		//   "_truncated":"fake"               → kept (may be overwritten by server on truncation)
 		//   "app_name":"myapp"                → must be kept
 		attrsBuf := bytes.NewBuffer(nil)
 		for _, kv := range [][2]string{
@@ -2633,16 +2633,14 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
 		require.NoError(t, err)
 
-		// All keys are kept except the reserved _truncated key.
-		require.Len(t, p.Attrs, 5)
+		// All keys are kept.
+		require.Len(t, p.Attrs, 6)
 		require.Equal(t, "Go-MySQL-Driver", p.Attrs["_client_name"])
 		require.Equal(t, "linux", p.Attrs["_os"])
 		require.Equal(t, "mysql", p.Attrs["_program_name"])
 		require.Equal(t, "val", p.Attrs["_custom"])
+		require.Equal(t, "fake", p.Attrs["_truncated"])
 		require.Equal(t, "myapp", p.Attrs["app_name"])
-		// Reserved key must be absent.
-		_, hasTruncated := p.Attrs["_truncated"]
-		require.False(t, hasTruncated, "_truncated sent by client must be dropped")
 
 		require.Equal(t, int64(0), vardef.ConnectAttrsLost.Load())
 	})
