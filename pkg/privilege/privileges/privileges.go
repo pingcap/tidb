@@ -950,7 +950,7 @@ func (p *UserPrivileges) fetchPrivilege(user *auth.UserIdentity, accessAll bool,
 	u, h := "", ""
 	if user != nil {
 		u, h = user.Username, user.Hostname
-		if user.AuthUsername != "" {
+		if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
 			u, h = user.AuthUsername, user.AuthHostname
 		}
 	}
