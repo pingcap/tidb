@@ -570,6 +570,29 @@ func TestPurgeMaterializedViewLogFinalizeFailureAfterCommitIsWarning(t *testing.
 		Check(testkit.Rows("running 1"))
 }
 
+func TestPurgeMaterializedViewLogFinalizeRetrySucceeds(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_finalize_retry (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_finalize_retry (id, v) purge immediate")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_finalize_retry"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockUpdateMaterializedViewLogPurgeStateErr", "1*return(true)->return(false)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockUpdateMaterializedViewLogPurgeStateErr"))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_finalize_retry")
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ENDTIME is not null, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("success 1 0"))
+}
+
 func TestPurgeMaterializedViewLogFinalizeFailureUsesWithoutCancel(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

@@ -143,10 +143,11 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			return errors.Trace(purgeErr)
 		}
 		purgeErrMsg := purgeErr.Error()
-		if histErr := finalizeMLogPurgeHist(
+		if histErr := finalizeMLogPurgeHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
 			purgeJobID,
+			mlogID,
 			purgeHistStatusFailed,
 			totalPurgeRows,
 			&purgeErrMsg,
@@ -164,10 +165,11 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				failpoint.Return(errors.New("mock purge finalize success error"))
 			}
 		})
-		return finalizeMLogPurgeHist(
+		return finalizeMLogPurgeHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
 			purgeJobID,
+			mlogID,
 			purgeHistStatusSuccess,
 			totalPurgeRows,
 			nil,
@@ -704,6 +706,47 @@ func finalizeMLogPurgeHist(
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func finalizeMLogPurgeHistWithRetry(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	purgeJobID uint64,
+	mlogID int64,
+	purgeStatus string,
+	purgeRows int64,
+	purgeFailedReason *string,
+) error {
+	firstErr := finalizeMLogPurgeHist(
+		kctx,
+		sqlExec,
+		purgeJobID,
+		purgeStatus,
+		purgeRows,
+		purgeFailedReason,
+	)
+	if firstErr == nil {
+		return nil
+	}
+	retryErr := finalizeMLogPurgeHist(
+		kctx,
+		sqlExec,
+		purgeJobID,
+		purgeStatus,
+		purgeRows,
+		purgeFailedReason,
+	)
+	if retryErr == nil {
+		return nil
+	}
+	logutil.BgLogger().Warn("purge materialized view log: failed to finalize purge history after retry",
+		zap.Uint64("purgeJobID", purgeJobID),
+		zap.Int64("mlogID", mlogID),
+		zap.String("purgeStatus", purgeStatus),
+		zap.NamedError("firstAttemptErr", firstErr),
+		zap.NamedError("retryErr", retryErr),
+	)
+	return errors.Annotatef(retryErr, "first finalize attempt failed: %v", firstErr)
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
