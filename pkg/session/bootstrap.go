@@ -330,6 +330,11 @@ var (
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
 	}
+
+	// systemTablesOfNextGenVersion2 contains the system tables added in version 2.
+	systemTablesOfNextGenVersion2 = []TableBasicInfo{
+		{ID: metadef.StatsTableDataTableID, Name: "stats_table_data", SQL: metadef.CreateStatsTableDataTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -348,9 +353,7 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
 	}},
 	{ver: meta.NextGenBootTableVersion2, databases: []DatabaseBasicInfo{
-		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: []TableBasicInfo{
-			{ID: metadef.StatsTableDataTableID, Name: "stats_table_data", SQL: metadef.CreateStatsTableDataTable},
-		}},
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfNextGenVersion2},
 	}},
 }
 
