@@ -799,6 +799,22 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 	return nb
 }
 
+func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
+	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
+		return 0, nil
+	}
+
+	rgRange, err := rowGroupRangeFromMeta(fileMeta, 0)
+	if err != nil {
+		return 0, err
+	}
+	preloadBytes := rgRange.end - rgRange.start
+	if preloadBytes <= 0 || preloadBytes > int64(rowGroupInMemoryThreshold) {
+		return 0, nil
+	}
+	return preloadBytes, nil
+}
+
 // EstimateParquetReaderMemory estimates the peak memory usage for parsing a
 // single parquet file by reading through the first row group with a tracking
 // allocator. Returns the peak memory in bytes.
@@ -827,7 +843,15 @@ func EstimateParquetReaderMemory(
 		return 0, nil
 	}
 
+	preloadBufferBytes, err := estimateInMemoryRowGroupBufferBytes(meta)
+	if err != nil {
+		return 0, err
+	}
+
 	for range meta.RowGroups[0].NumRows {
+		if err = ctx.Err(); err != nil {
+			return 0, err
+		}
 		if err = parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {
 				break
@@ -837,9 +861,10 @@ func EstimateParquetReaderMemory(
 		parser.RecycleRow(parser.LastRow())
 	}
 
-	peak := allocator.peakAllocation.Load()
+	peak := allocator.peakAllocation.Load() + preloadBufferBytes
 	logutil.Logger(ctx).Info("estimated parquet reader memory",
 		zap.String("path", path),
+		zap.Int64("in-memory-preload-bytes", preloadBufferBytes),
 		zap.Int64("peak-memory-bytes", peak),
 	)
 	return peak, nil
