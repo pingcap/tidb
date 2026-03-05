@@ -1822,44 +1822,58 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	})
 }
 
+// lockRef records the FROM table and its alias (if any) for lock-clause name resolution.
+type lockRef struct {
+	table *ast.TableName
+	alias ast.CIStr
+}
+
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
-// It binds lock targets to the tables in FROM (including aliases) and errors on unresolved names.
+// It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
+// base-table names even when aliases exist, with a warning to guide users to explicit aliases.
 func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
 		return
 	}
 	var (
-		aliasMap     map[string]*ast.TableName
-		qualifiedMap map[string]*ast.TableName
-		orderedBare  []*ast.TableName
+		aliasMap     map[string]lockRef
+		qualifiedMap map[string]lockRef
+		orderedRefs  []lockRef
 	)
 	if stmt.From != nil {
-		aliasMap, qualifiedMap, orderedBare = collectLockTableRefs(stmt.From.TableRefs)
+		aliasMap, qualifiedMap, orderedRefs = collectLockTableRefs(stmt.From.TableRefs)
 	}
+	warnedCompatRefs := make(map[string]struct{})
 
 	for _, ref := range stmt.LockInfo.Tables {
 		name := ref.Name.L
-		var matchedTable *ast.TableName
+		var matched lockRef
+		var matchedByAlias bool
 
 		if ref.Schema.L != "" {
 			name = ref.Schema.L + "." + ref.Name.L
-			matchedTable = qualifiedMap[name]
+			matched = qualifiedMap[name]
+			matchedByAlias = matched.alias.L != "" && ref.Name.L == matched.alias.L
+			if matchedByAlias {
+				ref.IsAlias = true
+			}
 		} else if t, ok := aliasMap[name]; ok {
 			ref.IsAlias = true
-			matchedTable = t
+			matched = t
+			matchedByAlias = true
 		}
 
 		// If still not found and the lock clause is unqualified, try bare-name match (FROM order).
-		if matchedTable == nil && ref.Schema.L == "" {
-			for _, tbl := range orderedBare {
-				if tbl.Name.L == name {
-					matchedTable = tbl
+		if matched.table == nil && ref.Schema.L == "" {
+			for _, tblRef := range orderedRefs {
+				if tblRef.table.Name.L == name {
+					matched = tblRef
 					break
 				}
 			}
 		}
 
-		if matchedTable == nil {
+		if matched.table == nil {
 			if ref.Schema.L != "" {
 				name = ref.Schema.O + "." + ref.Name.O
 			} else {
@@ -1869,7 +1883,20 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 			break
 		}
 
-		tNameW := p.resolveCtx.GetTableName(matchedTable)
+		// Keep backward compatibility: if an aliased table is referenced by its base name
+		// in OF, accept it and emit a warning to guide users to the alias form.
+		if !matchedByAlias && matched.alias.L != "" {
+			warnKey := ref.Schema.L + "." + ref.Name.L + "->" + matched.alias.L
+			if _, seen := warnedCompatRefs[warnKey]; !seen {
+				p.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+					"FOR UPDATE OF references the base table name while the table is aliased. Use the alias '%s' in OF to make the lock target explicit.",
+					matched.alias.O,
+				))
+				warnedCompatRefs[warnKey] = struct{}{}
+			}
+		}
+
+		tNameW := p.resolveCtx.GetTableName(matched.table)
 		if tNameW == nil {
 			// CTE has no *model.HintedTable, we need to skip it.
 			continue
@@ -1884,13 +1911,13 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 }
 
 // collectLockTableRefs walks the FROM clause in order and collects:
-//   - aliasMap: alias name -> TableName
-//   - qualifiedMap: "schema.table" -> TableName (only when schema is present and no alias)
-//   - orderedBare: tables without alias, in FROM order (used when lock target is unqualified; first wins)
-func collectLockTableRefs(node ast.ResultSetNode) (aliasMap map[string]*ast.TableName, qualifiedMap map[string]*ast.TableName, orderedBare []*ast.TableName) {
-	aliasMap = make(map[string]*ast.TableName)
-	qualifiedMap = make(map[string]*ast.TableName)
-	orderedBare = make([]*ast.TableName, 0)
+//   - aliasMap: alias name -> lockRef
+//   - qualifiedMap: "schema.table" and "schema.alias" -> lockRef (when TableName is schema-qualified)
+//   - orderedRefs: table refs in FROM order for unqualified OF targets (first match wins)
+func collectLockTableRefs(node ast.ResultSetNode) (aliasMap map[string]lockRef, qualifiedMap map[string]lockRef, orderedRefs []lockRef) {
+	aliasMap = make(map[string]lockRef)
+	qualifiedMap = make(map[string]lockRef)
+	orderedRefs = make([]lockRef, 0)
 
 	var walk func(rs ast.ResultSetNode)
 	walk = func(rs ast.ResultSetNode) {
@@ -1901,15 +1928,21 @@ func collectLockTableRefs(node ast.ResultSetNode) (aliasMap map[string]*ast.Tabl
 		case *ast.TableSource:
 			switch src := x.Source.(type) {
 			case *ast.TableName:
-				if x.AsName.L != "" {
-					aliasMap[x.AsName.L] = src
-				} else {
-					if src.Schema.L != "" {
-						key := src.Schema.L + "." + src.Name.L
-						qualifiedMap[key] = src
-					}
-					orderedBare = append(orderedBare, src)
+				ref := lockRef{
+					table: src,
+					alias: x.AsName,
 				}
+				if x.AsName.L != "" {
+					aliasMap[x.AsName.L] = ref
+				}
+				if src.Schema.L != "" {
+					qualifiedMap[src.Schema.L+"."+src.Name.L] = ref
+					if x.AsName.L != "" {
+						// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
+						qualifiedMap[src.Schema.L+"."+x.AsName.L] = ref
+					}
+				}
+				orderedRefs = append(orderedRefs, ref)
 			case *ast.SelectStmt, *ast.SetOprStmt:
 				// Lock clause cannot reach inside; only alias could make sense, but MySQL does not lock derived tables by OF.
 				// Ignore to force unresolved if referenced.
@@ -1922,7 +1955,7 @@ func collectLockTableRefs(node ast.ResultSetNode) (aliasMap map[string]*ast.Tabl
 	if node != nil {
 		walk(node)
 	}
-	return
+	return aliasMap, qualifiedMap, orderedRefs
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
