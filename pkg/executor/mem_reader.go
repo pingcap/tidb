@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -52,20 +53,20 @@ var (
 )
 
 type memIndexReader struct {
-	ctx            sessionctx.Context
-	index          *model.IndexInfo
-	table          *model.TableInfo
-	kvRanges       []kv.KeyRange
-	conditions     []expression.Expression
-	addedRows      [][]types.Datum
-	addedRowsLen   int
-	retFieldTypes  []*types.FieldType
-	outputOffset   []int
-	cacheTable     kv.MemBuffer
+	ctx             sessionctx.Context
+	index           *model.IndexInfo
+	table           *model.TableInfo
+	kvRanges        []kv.KeyRange
+	conditions      []expression.Expression
+	addedRows       [][]types.Datum
+	addedRowsLen    int
+	retFieldTypes   []*types.FieldType
+	outputOffset    []int
+	cacheTable      kv.MemBuffer
 	indexDatumCache *tables.CachedIndexDatumData // pre-decoded index datum cache
-	keepOrder      bool
-	physTblIDIdx   int
-	partitionIDMap map[int64]struct{}
+	keepOrder       bool
+	physTblIDIdx    int
+	partitionIDMap  map[int64]struct{}
 	compareExec
 
 	buf         [16]byte
@@ -111,6 +112,19 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 }
 
 func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	if m.indexDatumCache != nil && m.cacheTable != nil {
+		// indexDatumCache only contains entries decoded from cacheTable.
+		// If the txn membuffer has any key in the scan range, it may override cacheTable
+		// values (including restored data), so we must not use the cache.
+		txn, err := m.ctx.Txn(true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if memBufferHasAnyEntryInRanges(txn.GetMemBuffer(), m.kvRanges) {
+			m.indexDatumCache = nil
+		}
+	}
+
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
 		data, err := m.getMemRows(ctx)
 		if err != nil {
@@ -222,8 +236,14 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 
 	// Fast path: use pre-decoded index cache.
 	if m.indexDatumCache != nil {
-		if cachedDatums, ok := m.indexDatumCache.Entries[string(key)]; ok {
-			return m.projectCachedIndexDatums(cachedDatums, key), nil
+		if cachedDatums, ok := m.indexDatumCache.Entries[string(hack.String(key))]; ok {
+			ds, ok, err := m.tryProjectCachedIndexDatums(cachedDatums, key)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				return ds, nil
+			}
 		}
 	}
 
@@ -269,9 +289,10 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	return ds, nil
 }
 
-// projectCachedIndexDatums applies outputOffset projection to cached datums,
+// tryProjectCachedIndexDatums applies outputOffset projection to cached datums,
 // handles physTblIDIdx, and converts TIMESTAMP columns from UTC to session timezone.
-func (m *memIndexReader) projectCachedIndexDatums(cachedDatums []types.Datum, key []byte) []types.Datum {
+// Returns (nil, false, nil) when cached datums are incompatible and the caller should fall back.
+func (m *memIndexReader) tryProjectCachedIndexDatums(cachedDatums []types.Datum, key []byte) ([]types.Datum, bool, error) {
 	physTblIDColumnIdx := math.MaxInt64
 	if m.physTblIDIdx >= 0 {
 		physTblIDColumnIdx = m.outputOffset[m.physTblIDIdx]
@@ -287,6 +308,9 @@ func (m *memIndexReader) projectCachedIndexDatums(cachedDatums []types.Datum, ke
 		if offset > physTblIDColumnIdx {
 			offset = offset - 1
 		}
+		if offset < 0 || offset >= len(cachedDatums) {
+			return nil, false, nil
+		}
 		d := cachedDatums[offset]
 		// Convert TIMESTAMP from UTC to session timezone.
 		if m.loc != time.UTC && len(m.indexDatumCache.TsColIndices) > 0 {
@@ -295,7 +319,9 @@ func (m *memIndexReader) projectCachedIndexDatums(cachedDatums []types.Datum, ke
 					t := d.GetMysqlTime()
 					if !t.IsZero() {
 						// ConvertTimeZone modifies t in place; safe because GetMysqlTime returns a copy.
-						_ = t.ConvertTimeZone(time.UTC, m.loc)
+						if err := t.ConvertTimeZone(time.UTC, m.loc); err != nil {
+							return nil, false, err
+						}
 						d.SetMysqlTime(t)
 					}
 					break
@@ -305,7 +331,7 @@ func (m *memIndexReader) projectCachedIndexDatums(cachedDatums []types.Datum, ke
 		ds = append(ds, d)
 	}
 	m.resultRows = ds
-	return ds
+	return ds, true, nil
 }
 
 type memTableReader struct {
@@ -500,9 +526,13 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	intHandle := !m.table.IsCommonHandle
 	if m.cacheTable != nil {
 		// Try pre-decoded datum cache fast path to skip KV decode.
-		if iter := m.buildDatumCacheIter(); iter != nil {
-			kvIter.Close()
-			return iter, nil
+		// The datum cache is built from cacheTable only; if txn membuffer has any key in the scan range,
+		// it may override cacheTable values so we must fall back to KV iteration.
+		if !memBufferHasAnyEntryInRanges(kvIter.txn.GetMemBuffer(), m.kvRanges) {
+			if iter := m.buildDatumCacheIter(); iter != nil {
+				kvIter.Close()
+				return iter, nil
+			}
 		}
 		batchChk := chunk.New(m.retFieldTypes, cachedTableBatchSize, cachedTableBatchSize)
 		return &memRowsBatchIterForTable{
@@ -542,10 +572,12 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			return err
 		}
 
-		mutableRow.SetDatums(resultRows...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
-		if err != nil || !matched {
-			return err
+		if len(m.conditions) > 0 {
+			mutableRow.SetDatums(resultRows...)
+			matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
+			if err != nil || !matched {
+				return err
+			}
 		}
 		m.addedRows = append(m.addedRows, resultRows)
 		resultRows = make([]types.Datum, len(m.columns))
@@ -766,7 +798,7 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 				return err
 			}
 		}
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if ph, ok := handle.(kv.PartitionHandle); ok {
 			if _, exist := m.partitionIDMap[ph.PartitionID]; !exist {
 				return nil
@@ -1014,6 +1046,8 @@ type memRowsIterForTable struct {
 func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 	curr := iter.kvIter
 	var ret []types.Datum
+	evalCtx := iter.ctx.GetExprCtx().GetEvalCtx()
+	hasConds := len(iter.conditions) > 0
 	for curr.Valid() {
 		key := curr.Key()
 		value := curr.Value()
@@ -1039,14 +1073,16 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 				return nil, errors.Trace(err)
 			}
 
-			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
-			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, mutableRow.ToRow())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !matched {
-				continue
+			if hasConds {
+				mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+				mutableRow.SetDatums(iter.datumRow...)
+				matched, _, err := expression.EvalBool(evalCtx, iter.conditions, mutableRow.ToRow())
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if !matched {
+					continue
+				}
 			}
 			return iter.datumRow, nil
 		}
@@ -1057,12 +1093,14 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		}
 
 		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !matched {
-			continue
+		if hasConds {
+			matched, _, err := expression.EvalBool(evalCtx, iter.conditions, row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
 		}
 		ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
 		break
@@ -1202,6 +1240,21 @@ func decodeHandleFromRowKey(key kv.Key, intHandle bool) (kv.Handle, error) {
 	}
 	u := binary.BigEndian.Uint64(key[len(key)-8:])
 	return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
+}
+
+func memBufferHasAnyEntryInRanges(mb kv.MemBuffer, kvRanges []kv.KeyRange) bool {
+	if mb == nil || len(kvRanges) == 0 {
+		return false
+	}
+	for _, rg := range kvRanges {
+		it := mb.SnapshotIter(rg.StartKey, rg.EndKey)
+		hasAny := it.Valid()
+		it.Close()
+		if hasAny {
+			return true
+		}
+	}
+	return false
 }
 
 func (iter *memRowsBatchIterForTable) Close() {
@@ -1410,7 +1463,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
 			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
 			if err != nil {

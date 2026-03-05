@@ -125,6 +125,12 @@ type executorBuilder struct {
 	// cachedTbl is set when a cached table's KV cache is hit during building.
 	// Used to attach a result set cache wrapper around the final executor.
 	cachedTbl table.CachedTable
+	// cachedTblID records the first cached table ID observed in the plan.
+	// Used to disable result cache when multiple cached tables are involved.
+	cachedTblID int64
+	// disableResultCache indicates the plan touches multiple cached tables.
+	// Result set cache entries are scoped to a single cached table instance.
+	disableResultCache bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1404,7 +1410,9 @@ func removeRedundantAccessConditions(
 			}
 		}
 		if allFullLen {
-			safeToRemove[string(ac.CanonicalHashCode())] = struct{}{}
+			// CanonicalHashCode caches inside expression objects and is not goroutine-safe.
+			// Clone before hashing to avoid data races when building executors concurrently.
+			safeToRemove[string(ac.Clone().CanonicalHashCode())] = struct{}{}
 		}
 	}
 	if len(safeToRemove) == 0 {
@@ -1414,7 +1422,7 @@ func removeRedundantAccessConditions(
 	// Filter out conditions whose canonical hash matches a safe-to-remove access condition.
 	result := make([]expression.Expression, 0, len(allConds))
 	for _, cond := range allConds {
-		if _, ok := safeToRemove[string(cond.CanonicalHashCode())]; !ok {
+		if _, ok := safeToRemove[string(cond.Clone().CanonicalHashCode())]; !ok {
 			result = append(result, cond)
 		}
 	}
@@ -1563,6 +1571,7 @@ type bypassDataSourceExecutor interface {
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
 	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		b.observeCachedTable(tbl.Meta().ID)
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
@@ -1588,10 +1597,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 					}
 				}
 			}
-			// Record the first cached table for result set caching.
-			if b.cachedTbl == nil {
-				b.cachedTbl = cachedTable
-			}
+			b.recordCachedTable(cachedTable)
 		} else if loading {
 			return
 		} else {
@@ -5837,16 +5843,14 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil
 	}
+	b.observeCachedTable(tblInfo.ID)
 	sessVars := b.ctx.GetSessionVars()
 	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
 	cachedTable := tbl.(table.CachedTable)
 	cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
 		sessVars.StmtCtx.ReadFromTableCache = true
-		// Record the first cached table for result set caching.
-		if b.cachedTbl == nil {
-			b.cachedTbl = cachedTable
-		}
+		b.recordCachedTable(cachedTable)
 		return cacheData
 	} else if loading {
 		return nil
@@ -5857,10 +5861,41 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	return nil
 }
 
+func (b *executorBuilder) observeCachedTable(tableID int64) {
+	if b.disableResultCache || tableID == 0 {
+		return
+	}
+	if b.cachedTblID == 0 {
+		b.cachedTblID = tableID
+		return
+	}
+	if b.cachedTblID != tableID {
+		b.disableResultCache = true
+		b.cachedTbl = nil
+	}
+}
+
+func (b *executorBuilder) recordCachedTable(cachedTable table.CachedTable) {
+	if cachedTable == nil {
+		return
+	}
+	meta := cachedTable.Meta()
+	if meta == nil {
+		b.disableResultCache = true
+		b.cachedTbl = nil
+		return
+	}
+	b.observeCachedTable(meta.ID)
+	if b.disableResultCache || b.cachedTbl != nil {
+		return
+	}
+	b.cachedTbl = cachedTable
+}
+
 // wrapWithResultCache wraps the top-level executor with CachedResultExec when
 // the query is eligible for result set caching on a cached table.
 func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.StmtNode, plan base.Plan) exec.Executor {
-	if b.cachedTbl == nil {
+	if b.cachedTbl == nil || b.disableResultCache {
 		return e
 	}
 	inDML := b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt
@@ -5876,7 +5911,7 @@ func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.Stmt
 		return e
 	}
 	return &CachedResultExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), 0, e),
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), e.ID(), e),
 		original:     e,
 		cachedTable:  b.cachedTbl,
 		cacheKey:     key,

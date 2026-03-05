@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -253,11 +254,11 @@ func TestMemCachedDatumIterProjection(t *testing.T) {
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftVal := types.NewFieldType(mysql.TypeLonglong)
 	iter := &memCachedDatumIter{
-		data:           data,
-		colProjection:  []int{0, 2}, // query col 0 -> cache col 0 (id), query col 1 -> cache col 2 (val)
+		data:            data,
+		colProjection:   []int{0, 2}, // query col 0 -> cache col 0 (id), query col 1 -> cache col 2 (val)
 		cacheFieldTypes: data.FieldTypes,
-		datumRow:       make([]types.Datum, 2),
-		retFieldTypes:  []*types.FieldType{ftInt, ftVal},
+		datumRow:        make([]types.Datum, 2),
+		retFieldTypes:   []*types.FieldType{ftInt, ftVal},
 	}
 
 	row, err := iter.Next()
@@ -290,11 +291,11 @@ func TestMemCachedDatumIterProjectionAllCols(t *testing.T) {
 
 	// SELECT * — all columns in same order.
 	iter := &memCachedDatumIter{
-		data:           data,
-		colProjection:  []int{0, 1, 2},
+		data:            data,
+		colProjection:   []int{0, 1, 2},
 		cacheFieldTypes: data.FieldTypes,
-		datumRow:       make([]types.Datum, 3),
-		retFieldTypes:  data.FieldTypes,
+		datumRow:        make([]types.Datum, 3),
+		retFieldTypes:   data.FieldTypes,
 	}
 
 	row, err := iter.Next()
@@ -323,14 +324,14 @@ func TestMemCachedDatumIterDesc(t *testing.T) {
 	})
 
 	iter := &memCachedDatumIter{
-		data:           data,
-		desc:           true,
-		chunkIdx:       len(data.Chunks) - 1,
-		rowIdx:         data.Chunks[len(data.Chunks)-1].NumRows() - 1,
-		colProjection:  []int{0, 1, 2},
+		data:            data,
+		desc:            true,
+		chunkIdx:        len(data.Chunks) - 1,
+		rowIdx:          data.Chunks[len(data.Chunks)-1].NumRows() - 1,
+		colProjection:   []int{0, 1, 2},
 		cacheFieldTypes: data.FieldTypes,
-		datumRow:       make([]types.Datum, 3),
-		retFieldTypes:  data.FieldTypes,
+		datumRow:        make([]types.Datum, 3),
+		retFieldTypes:   data.FieldTypes,
 	}
 
 	// Descending: should yield rows 3, 2, 1.
@@ -373,29 +374,29 @@ func TestMemCachedDatumIterDescWithFilter(t *testing.T) {
 
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	iter := &memCachedDatumIter{
-		data:           data,
-		desc:           true,
-		chunkIdx:       len(data.Chunks) - 1,
-		rowIdx:         data.Chunks[len(data.Chunks)-1].NumRows() - 1,
-		colProjection:  []int{0, 2}, // query col 0 -> id, query col 1 -> val
+		data:            data,
+		desc:            true,
+		chunkIdx:        len(data.Chunks) - 1,
+		rowIdx:          data.Chunks[len(data.Chunks)-1].NumRows() - 1,
+		colProjection:   []int{0, 2}, // query col 0 -> id, query col 1 -> val
 		cacheFieldTypes: data.FieldTypes,
-		datumRow:       make([]types.Datum, 2),
-		retFieldTypes:  []*types.FieldType{ftInt, ftVal},
-		conditions:     []expression.Expression{filter},
-		evalCtx:        sctx.GetExprCtx().GetEvalCtx(),
+		datumRow:        make([]types.Datum, 2),
+		retFieldTypes:   []*types.FieldType{ftInt, ftVal},
+		conditions:      []expression.Expression{filter},
+		evalCtx:         sctx.GetExprCtx().GetEvalCtx(),
 	}
 
 	// DESC + filter: row 4 (val=400) skipped, row 3 (val=300) skipped, row 2 (val=200) matched, row 1 (val=100) matched.
 	row, err := iter.Next()
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	require.Equal(t, int64(2), row[0].GetInt64())  // id=2
+	require.Equal(t, int64(2), row[0].GetInt64())   // id=2
 	require.Equal(t, int64(200), row[1].GetInt64()) // val=200
 
 	row, err = iter.Next()
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	require.Equal(t, int64(1), row[0].GetInt64())  // id=1
+	require.Equal(t, int64(1), row[0].GetInt64())   // id=1
 	require.Equal(t, int64(100), row[1].GetInt64()) // val=100
 
 	row, err = iter.Next()
@@ -495,14 +496,14 @@ func TestMemCachedDatumIterDescMultiChunk(t *testing.T) {
 	}
 
 	iter := &memCachedDatumIter{
-		data:           data,
-		desc:           true,
-		chunkIdx:       1,         // last chunk
-		rowIdx:         0,         // last chunk has 1 row, index 0
-		colProjection:  []int{0, 2}, // id and val only
+		data:            data,
+		desc:            true,
+		chunkIdx:        1,           // last chunk
+		rowIdx:          0,           // last chunk has 1 row, index 0
+		colProjection:   []int{0, 2}, // id and val only
 		cacheFieldTypes: fieldTypes,
-		datumRow:       make([]types.Datum, 2),
-		retFieldTypes:  []*types.FieldType{ftInt, ftVal},
+		datumRow:        make([]types.Datum, 2),
+		retFieldTypes:   []*types.FieldType{ftInt, ftVal},
 	}
 
 	// DESC across chunks: 3, 2, 1.
@@ -522,6 +523,97 @@ func TestMemCachedDatumIterDescMultiChunk(t *testing.T) {
 	require.Equal(t, int64(10), row[1].GetInt64())
 
 	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
+func TestMemTableReaderDatumCacheFallbackOnTxnOverride(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	sctx := mock.NewContext()
+	sctx.Store = store
+
+	const tableID int64 = 1
+
+	ftID := types.NewFieldType(mysql.TypeLonglong)
+	ftName := types.NewFieldType(mysql.TypeVarchar)
+	ftName.SetFlen(64)
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	retFieldTypes := []*types.FieldType{ftID, ftName, ftVal}
+
+	colIDExpr := &expression.Column{ID: 1, UniqueID: 1, Index: 0, RetType: ftID}
+	colNameExpr := &expression.Column{ID: 2, UniqueID: 2, Index: 1, RetType: ftName}
+	colValExpr := &expression.Column{ID: 3, UniqueID: 3, Index: 2, RetType: ftVal}
+	schema := expression.NewSchema(colIDExpr, colNameExpr, colValExpr)
+
+	col1Info := &model.ColumnInfo{ID: 1, Offset: 0, State: model.StatePublic, FieldType: *ftID}
+	col2Info := &model.ColumnInfo{ID: 2, Offset: 1, State: model.StatePublic, FieldType: *ftName}
+	col3Info := &model.ColumnInfo{ID: 3, Offset: 2, State: model.StatePublic, FieldType: *ftVal}
+	tblInfo := &model.TableInfo{ID: tableID, Columns: []*model.ColumnInfo{col1Info, col2Info, col3Info}}
+
+	cd := NewRowDecoder(sctx, schema, tblInfo)
+
+	buffTxn, err := store.Begin(tikv.WithStartTS(0))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = buffTxn.Rollback()
+	})
+	cacheTable := buffTxn.GetMemBuffer()
+
+	var encoder rowcodec.Encoder
+	colIDs := []int64{1, 2, 3}
+	loc := sctx.GetSessionVars().Location()
+
+	key := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))
+	datums := []types.Datum{types.NewIntDatum(1), types.NewStringDatum("alice"), types.NewIntDatum(100)}
+	valSnap, err := encoder.Encode(loc, colIDs, datums, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, cacheTable.Set(key, append([]byte(nil), valSnap...)))
+
+	txn, err := sctx.Txn(true)
+	require.NoError(t, err)
+	datums[2] = types.NewIntDatum(200)
+	valTxn, err := encoder.Encode(loc, colIDs, datums, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, txn.GetMemBuffer().Set(key, append([]byte(nil), valTxn...)))
+
+	recordPrefix := tablecodec.GenTableRecordPrefix(tableID)
+	kvRanges := []kv.KeyRange{{StartKey: recordPrefix, EndKey: recordPrefix.PrefixNext()}}
+
+	memTblReader := &memTableReader{
+		ctx:           sctx,
+		table:         tblInfo,
+		columns:       []*model.ColumnInfo{col1Info, col2Info, col3Info},
+		kvRanges:      kvRanges,
+		retFieldTypes: retFieldTypes,
+		colIDs:        map[int64]int{1: 0, 2: 1, 3: 2},
+		buffer: allocBuf{
+			handleBytes: make([]byte, 0, 16),
+			cd:          cd,
+		},
+		cacheTable: cacheTable,
+		datumCache: buildTestDatumCache([][]any{{int64(1), "alice", int64(100)}}),
+	}
+
+	it, err := memTblReader.getMemRowsIter(context.Background())
+	require.NoError(t, err)
+	defer it.Close()
+
+	_, isDatumIter := it.(*memCachedDatumIter)
+	require.False(t, isDatumIter)
+
+	row, err := it.Next()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, int64(1), row[0].GetInt64())
+	require.Equal(t, "alice", row[1].GetString())
+	require.Equal(t, int64(200), row[2].GetInt64())
+
+	row, err = it.Next()
 	require.NoError(t, err)
 	require.Nil(t, row)
 }
