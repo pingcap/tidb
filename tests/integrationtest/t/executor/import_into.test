@@ -124,15 +124,15 @@ import into t from '/file.csv' with checksum_table=false;
 -- error 8164
 import into t from '/file.csv' with checksum_table=null;
 -- error 8164
-import into t from '/file.csv' with conflict_handling;
+import into t from '/file.csv' with on_duplicate_key;
 -- error 8164
-import into t from '/file.csv' with conflict_handling=1;
+import into t from '/file.csv' with on_duplicate_key=1;
 -- error 8164
-import into t from '/file.csv' with conflict_handling=true;
+import into t from '/file.csv' with on_duplicate_key=true;
 -- error 8164
-import into t from '/file.csv' with conflict_handling='';
+import into t from '/file.csv' with on_duplicate_key='';
 -- error 8164
-import into t from '/file.csv' with conflict_handling='unknown';
+import into t from '/file.csv' with on_duplicate_key='unknown';
 -- error 8164
 import into t from '/file.csv' with record_errors='aa';
 -- error 8164

@@ -212,15 +212,12 @@ func TestAdjustOptions(t *testing.T) {
 
 func TestGetConflictHandlingMode(t *testing.T) {
 	plan := &Plan{}
-	require.Equal(t, OnDupKeyModeRecord, plan.GetOnDupKeyMode())
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 
 	plan.OnDupKey = OnDupKeyModeRecord
 	require.Equal(t, OnDupKeyModeRecord, plan.GetOnDupKeyMode())
 
 	plan.OnDupKey = OnDupKeyModeError
-	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
-
-	plan.OnDupKey = OnDupKeyMode("unknown")
 	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 }
 

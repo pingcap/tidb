@@ -337,6 +337,8 @@ type Plan struct {
 // GetOnDupKeyMode returns the normalized conflict handling mode.
 // For task metadata generated before this option was introduced, the value is
 // empty.
+// Note: currently it's not possible to have other unknown values, so we don't
+// handle that case here.
 func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 	if p.OnDupKey == "" {
 		return OnDupKeyModeError

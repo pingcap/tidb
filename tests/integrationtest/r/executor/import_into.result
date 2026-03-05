@@ -120,16 +120,16 @@ import into t from '/file.csv' with checksum_table=false;
 Error 8164 (HY000): Invalid option value for checksum_table
 import into t from '/file.csv' with checksum_table=null;
 Error 8164 (HY000): Invalid option value for checksum_table
-import into t from '/file.csv' with conflict_handling;
-Error 8164 (HY000): Invalid option value for conflict_handling
-import into t from '/file.csv' with conflict_handling=1;
-Error 8164 (HY000): Invalid option value for conflict_handling
-import into t from '/file.csv' with conflict_handling=true;
-Error 8164 (HY000): Invalid option value for conflict_handling
-import into t from '/file.csv' with conflict_handling='';
-Error 8164 (HY000): Invalid option value for conflict_handling
-import into t from '/file.csv' with conflict_handling='unknown';
-Error 8164 (HY000): Invalid option value for conflict_handling
+import into t from '/file.csv' with on_duplicate_key;
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key=1;
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key=true;
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key='';
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key='unknown';
+Error 8164 (HY000): Invalid option value for on_duplicate_key
 import into t from '/file.csv' with record_errors='aa';
 Error 8164 (HY000): Invalid option value for record_errors
 import into t from '/file.csv' with record_errors='111aa';
