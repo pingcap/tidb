@@ -298,6 +298,14 @@ func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []st
 		Logger: logger,
 		DB:     conn,
 	}
+
+	if job.stmtType == schemaCreateView {
+		stmt := common.SQLUseDB(job.dbName)
+		if err := sqlWithRetry.Exec(ctx, "run create schema job", stmt); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	for _, stmt := range stmts {
 		task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
 		err = sqlWithRetry.Exec(ctx, "run create schema job", stmt)
