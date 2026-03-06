@@ -1580,19 +1580,36 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
-			// Try to use pre-decoded datum cache to skip KV decode.
+			// Prefer caches pinned to the same cacheData generation as cacheTable.
 			if dcp, ok := cachedTable.(interface {
+				GetCachedDatumDataForMemBuffer(kv.MemBuffer) *tables.CachedDatumData
+			}); ok {
+				us.datumCache = dcp.GetCachedDatumDataForMemBuffer(cacheData)
+			} else if dcp, ok := cachedTable.(interface {
 				GetCachedDatumData() *tables.CachedDatumData
 			}); ok {
 				us.datumCache = dcp.GetCachedDatumData()
 			}
-			// Try to use pre-decoded index datum caches to skip index KV decode.
+			// Prefer index caches pinned to the same cacheData generation as cacheTable.
 			if icp, ok := cachedTable.(interface {
+				GetCachedIndexDatumDataForMemBuffer(kv.MemBuffer, int64) *tables.CachedIndexDatumData
+			}); ok {
+				for _, idx := range tbl.Meta().Indices {
+					if dc := icp.GetCachedIndexDatumDataForMemBuffer(cacheData, idx.ID); dc != nil {
+						if us.indexDatumCaches == nil {
+							us.indexDatumCaches = make(map[int64]*tables.CachedIndexDatumData)
+						}
+						us.indexDatumCaches[idx.ID] = dc
+					}
+				}
+			} else if icp, ok := cachedTable.(interface {
 				GetCachedIndexDatumData(int64) *tables.CachedIndexDatumData
 			}); ok {
-				us.indexDatumCaches = make(map[int64]*tables.CachedIndexDatumData)
 				for _, idx := range tbl.Meta().Indices {
 					if dc := icp.GetCachedIndexDatumData(idx.ID); dc != nil {
+						if us.indexDatumCaches == nil {
+							us.indexDatumCaches = make(map[int64]*tables.CachedIndexDatumData)
+						}
 						us.indexDatumCaches[idx.ID] = dc
 					}
 				}

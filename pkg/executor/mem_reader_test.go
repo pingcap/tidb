@@ -5,13 +5,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -19,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -616,4 +620,149 @@ func TestMemTableReaderDatumCacheFallbackOnTxnOverride(t *testing.T) {
 	row, err = it.Next()
 	require.NoError(t, err)
 	require.Nil(t, row)
+}
+
+type mockCachedTableWithPinnedDatumCache struct {
+	table.Table
+	cacheData kv.MemBuffer
+
+	pinnedDatumCache *tables.CachedDatumData
+	latestDatumCache *tables.CachedDatumData
+
+	pinnedIndexDatumCaches map[int64]*tables.CachedIndexDatumData
+	latestIndexDatumCaches map[int64]*tables.CachedIndexDatumData
+}
+
+func (*mockCachedTableWithPinnedDatumCache) Init(sqlexec.SQLExecutor) error {
+	return nil
+}
+
+func (t *mockCachedTableWithPinnedDatumCache) TryReadFromCache(uint64, time.Duration) (kv.MemBuffer, bool) {
+	return t.cacheData, false
+}
+
+func (*mockCachedTableWithPinnedDatumCache) UpdateLockForRead(context.Context, kv.Storage, uint64, time.Duration) {
+}
+
+func (*mockCachedTableWithPinnedDatumCache) WriteLockAndKeepAlive(context.Context, chan struct{}, *uint64, chan error) {
+}
+
+func (*mockCachedTableWithPinnedDatumCache) GetCachedResult(table.ResultCacheKey, []byte) ([]*chunk.Chunk, []*types.FieldType, bool) {
+	return nil, nil, false
+}
+
+func (*mockCachedTableWithPinnedDatumCache) PutCachedResult(table.ResultCacheKey, []byte, []*chunk.Chunk, []*types.FieldType) bool {
+	return false
+}
+
+func (t *mockCachedTableWithPinnedDatumCache) GetCachedDatumData() *tables.CachedDatumData {
+	return t.latestDatumCache
+}
+
+func (t *mockCachedTableWithPinnedDatumCache) GetCachedDatumDataForMemBuffer(mb kv.MemBuffer) *tables.CachedDatumData {
+	if mb != t.cacheData {
+		return nil
+	}
+	return t.pinnedDatumCache
+}
+
+func (t *mockCachedTableWithPinnedDatumCache) GetCachedIndexDatumData(indexID int64) *tables.CachedIndexDatumData {
+	return t.latestIndexDatumCaches[indexID]
+}
+
+func (t *mockCachedTableWithPinnedDatumCache) GetCachedIndexDatumDataForMemBuffer(mb kv.MemBuffer, indexID int64) *tables.CachedIndexDatumData {
+	if mb != t.cacheData {
+		return nil
+	}
+	return t.pinnedIndexDatumCaches[indexID]
+}
+
+type mockBypassDataSourceExecutor struct {
+	exec.BaseExecutor
+	tbl   table.Table
+	dummy bool
+}
+
+func (e *mockBypassDataSourceExecutor) Table() table.Table {
+	return e.tbl
+}
+
+func (e *mockBypassDataSourceExecutor) setDummy() {
+	e.dummy = true
+}
+
+func TestHandleCachedTablePinsDatumCachesToMemBufferGeneration(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	cacheTxn, err := store.Begin(tikv.WithStartTS(0))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = cacheTxn.Rollback()
+	})
+	cacheData := cacheTxn.GetMemBuffer()
+
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	tblInfo := &model.TableInfo{
+		ID:                   42,
+		Name:                 pmodel.NewCIStr("t_cache"),
+		TableCacheStatusType: model.TableCacheStatusEnable,
+		Columns: []*model.ColumnInfo{{
+			ID:        1,
+			Name:      pmodel.NewCIStr("a"),
+			Offset:    0,
+			State:     model.StatePublic,
+			FieldType: *ft,
+		}},
+		Indices: []*model.IndexInfo{{
+			ID:    7,
+			Name:  pmodel.NewCIStr("idx_a"),
+			State: model.StatePublic,
+			Columns: []*model.IndexColumn{{
+				Name:   pmodel.NewCIStr("a"),
+				Offset: 0,
+			}},
+		}},
+	}
+
+	pinnedDatumCache := buildTestDatumCache([][]any{{int64(1), "pinned", int64(10)}})
+	latestDatumCache := buildTestDatumCache([][]any{{int64(2), "stale", int64(20)}})
+	pinnedIndexCache := &tables.CachedIndexDatumData{
+		Entries: map[string][]types.Datum{"pinned": {types.NewIntDatum(1)}},
+	}
+	latestIndexCache := &tables.CachedIndexDatumData{
+		Entries: map[string][]types.Datum{"stale": {types.NewIntDatum(2)}},
+	}
+
+	cachedTbl := &mockCachedTableWithPinnedDatumCache{
+		Table:                  tables.MockTableFromMeta(tblInfo),
+		cacheData:              cacheData,
+		pinnedDatumCache:       pinnedDatumCache,
+		latestDatumCache:       latestDatumCache,
+		pinnedIndexDatumCaches: map[int64]*tables.CachedIndexDatumData{7: pinnedIndexCache},
+		latestIndexDatumCaches: map[int64]*tables.CachedIndexDatumData{7: latestIndexCache},
+	}
+
+	sctx := mock.NewContext()
+	sctx.Store = store
+	builder := &executorBuilder{ctx: sctx}
+	us := &UnionScanExec{}
+	reader := &mockBypassDataSourceExecutor{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 1),
+		tbl:          cachedTbl,
+	}
+
+	us.handleCachedTable(builder, reader, sctx.GetSessionVars(), 123)
+
+	require.True(t, reader.dummy)
+	require.Same(t, cacheData, us.cacheTable)
+	require.Same(t, pinnedDatumCache, us.datumCache)
+	require.NotSame(t, latestDatumCache, us.datumCache)
+	require.Len(t, us.indexDatumCaches, 1)
+	require.Same(t, pinnedIndexCache, us.indexDatumCaches[7])
+	require.NotSame(t, latestIndexCache, us.indexDatumCaches[7])
+	require.Same(t, cachedTbl, builder.cachedTbl)
 }
