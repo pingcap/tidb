@@ -17,9 +17,11 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -42,12 +44,17 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/tracing"
+=======
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -679,8 +686,12 @@ type candidatePath struct {
 	path              *util.AccessPath
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
+<<<<<<< HEAD
 	isMatchProp       bool
 	indexJoinCols     int // how many index columns are used in access conditions in this IndexJoin.
+=======
+	matchPropResult   property.PhysicalPropMatchResult
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 }
 
 func compareBool(l, r bool) int {
@@ -734,7 +745,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
 	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
-	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
+	matchResult, globalResult := compareBool(lhs.matchPropResult.Matched(), rhs.matchPropResult.Matched()), compareGlobalIndex(lhs, rhs)
 	// accessResult: comparison result of access condition coverage (1=LHS better, -1=RHS better, 0=equal)
 	// comparable1: whether the access conditions are comparable between LHS and RHS
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
@@ -908,8 +919,9 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
 
-	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then `isMatchProp` is true. However, we need to consider
-	// the situations when some columns of `path.IdxCols` are evaluated as constant. For example:
+	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then the property is matched.
+	// However, we need to consider the situations when some columns of `path.IdxCols` are evaluated as constant.
+	// For example:
 	// ```
 	// create table t(a int, b int, c int, d int, index idx_a_b_c(a, b, c), index idx_d_c_b_a(d, c, b, a));
 	// select * from t where a = 1 order by b, c;
@@ -917,6 +929,7 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 	// select * from t where d = 1 and b = 2 order by c, a;
 	// select * from t where d = 1 and b = 2 order by c, b, a;
 	// ```
+<<<<<<< HEAD
 	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
 	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
 	if !prop.IsSortItemEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
@@ -941,6 +954,112 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 		}
 	}
 	return isMatchProp
+=======
+	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order.
+	// In the last two `SELECT` statements, `idx_d_c_b_a` matches the sort order.
+	// Hence, we use `path.ConstCols` to deal with the above situations. This corresponds to Case 2 in the code below.
+	//
+	// Moreover, we also need to consider the situation when some columns of `path.IdxCols` are a list of constant
+	// values. For example, for query `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c`, we can use `idx_a_b_c` to
+	// access 3 ranges and use a merge sort to satisfy `ORDER BY b, c`. This corresponds to Case 3 in the code below.
+	matchResult := property.PropMatched
+	groupByColIdxs := make([]int, 0)
+	colIdx := 0
+	for _, sortItem := range prop.SortItems {
+		found := false
+		for ; colIdx < len(path.IdxCols); colIdx++ {
+			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
+			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
+				found = true
+				colIdx++
+				break
+			}
+			// Below: this sort item is not satisfied by the index column
+
+			// Case 2: the accessed range on this index column is a single constant value, so we can skip this
+			// column and try to use the next index column to satisfy this sort item.
+			if path.ConstCols != nil && colIdx < len(path.ConstCols) && path.ConstCols[colIdx] {
+				continue
+			}
+
+			// Check if the accessed range on this index column is a single constant value **for each range**.
+			allRangesPoint := true
+			for _, ran := range path.Ranges {
+				if len(ran.LowVal) <= colIdx || len(ran.HighVal) <= colIdx {
+					allRangesPoint = false
+					break
+				}
+				cmpResult, err := ran.LowVal[colIdx].Compare(
+					ds.SCtx().GetSessionVars().StmtCtx.TypeCtx(),
+					&ran.HighVal[colIdx],
+					ran.Collators[colIdx],
+				)
+				if err != nil || cmpResult != 0 {
+					allRangesPoint = false
+					break
+				}
+			}
+			// Case 3: the accessed range on this index column is a constant value in each range respectively,
+			// we can also skip this column and try the next index column. But we need to record this column
+			// as a "group by" column, because we need to do a merge sort on these ranges later.
+			// So `len(groupByColIdxs) > 0` means we need to do a merge sort to satisfy the required property.
+			if allRangesPoint {
+				groupByColIdxs = append(groupByColIdxs, colIdx)
+				continue
+			}
+			// Case 4: cannot satisfy this sort item, the path cannot match the required property.
+			intest.Assert(!found)
+			break
+		}
+		if !found {
+			matchResult = property.PropNotMatched
+			break
+		}
+	}
+	if len(groupByColIdxs) > 0 && matchResult == property.PropMatched {
+		groups, err := GroupRangesByCols(path.Ranges, groupByColIdxs)
+		if err != nil {
+			return property.PropNotMatched
+		}
+		// Multiple ranges can be put into one cop task. But when we group them, they are forced to be split into
+		// multiple cop tasks. This can cause large overhead besides the merge sort operation itself.
+		// After some performance tests, we set a threshold here to limit the max number of groups to prevent this
+		// overhead becomes too large unexpectedly.
+		const maxGroupCount = 2048
+		if len(groups) > maxGroupCount {
+			return property.PropNotMatched
+		}
+		if len(groups) > 0 {
+			path.GroupedRanges = groups
+			path.GroupByColIdxs = groupByColIdxs
+			return property.PropMatchedNeedMergeSort
+		}
+	}
+	return matchResult
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
+}
+
+// GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.
+func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) ([][]*ranger.Range, error) {
+	groups := make(map[string][]*ranger.Range)
+	for _, ran := range ranges {
+		var datums []types.Datum
+		for _, idx := range groupByColIdxs {
+			datums = append(datums, ran.LowVal[idx])
+		}
+		// We just use it to group the values, so any time zone is ok.
+		keyBytes, err := codec.EncodeValue(time.UTC, nil, datums...)
+		intest.AssertNoError(err)
+		if err != nil {
+			return nil, err
+		}
+		key := string(keyBytes)
+		groups[key] = append(groups[key], ran)
+	}
+
+	// Convert map to slice
+	result := slices.Collect(maps.Values(groups))
+	return result, nil
 }
 
 // matchPropForIndexMergeAlternatives will match the prop with inside PartialAlternativeIndexPaths, and choose
@@ -998,7 +1117,7 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 //
 // at last, according to determinedIndexPartialPaths to rewrite their real countAfterAccess, this part is move from deriveStats to
 // here.
-func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) (*util.AccessPath, bool) {
+func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) (*util.AccessPath, property.PhysicalPropMatchResult) {
 	// target:
 	//	1: index merge case, try to match the every alternative partial path to the order property as long as
 	//	possible, and generate that property-matched index merge path out if any.
@@ -1007,13 +1126,13 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 
 	// Execution part doesn't support the merge operation for intersection case yet.
 	if path.IndexMergeIsIntersection {
-		return nil, false
+		return nil, property.PropNotMatched
 	}
 
 	noSortItem := prop.IsSortItemEmpty()
 	allSame, _ := prop.AllSameOrder()
 	if !allSame {
-		return nil, false
+		return nil, property.PropNotMatched
 	}
 	// step1: match the property from all the index partial alternative paths.
 	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
@@ -1022,7 +1141,18 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		matchIdxes := make([]int, 0, 1)
 		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
+<<<<<<< HEAD
 			if !noSortItem && !isMatchProp(ds, oneAlternative, prop) {
+=======
+			match := true
+			for _, oneAccessPath := range oneAlternative {
+				// Satisfying the property by a merge sort is not supported for partial paths of index merge.
+				if !noSortItem && matchProperty(ds, oneAccessPath, prop) != property.PropMatched {
+					match = false
+				}
+			}
+			if !match {
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 				continue
 			}
 			// two possibility here:
@@ -1033,7 +1163,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		if len(matchIdxes) == 0 {
 			// if all index alternative of one of the cnf item's couldn't match the sort property,
 			// the entire index merge union path can be ignored for this sort property, return false.
-			return nil, false
+			return nil, property.PropNotMatched
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
@@ -1078,7 +1208,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
 	if len(usedIndexMap) == 1 && len(ds.IndexMergeHints) <= 0 {
 		// if all partial path are using a same index, meaningless and fail over.
-		return nil, false
+		return nil, property.PropNotMatched
 	}
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
@@ -1133,39 +1263,53 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	indexMergePath.CountAfterAccess = sel * ds.TableStats.RowCount
 	if noSortItem {
 		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
-		// countAfterAccess, here the returned matchProperty should be false.
-		return indexMergePath, false
+		// countAfterAccess, here the returned matchProperty should be PropNotMatched.
+		return indexMergePath, property.PropNotMatched
 	}
-	return indexMergePath, true
+	return indexMergePath, property.PropMatched
 }
 
-func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
+func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
 	// Execution part doesn't support the merge operation for intersection case yet.
 	if path.IndexMergeIsIntersection {
-		return false
+		return property.PropNotMatched
 	}
 	allSame, _ := prop.AllSameOrder()
 	if !allSame {
-		return false
+		return property.PropNotMatched
 	}
 	for _, partialPath := range path.PartialIndexPaths {
+<<<<<<< HEAD
 		if !isMatchProp(ds, partialPath, prop) {
 			return false
+=======
+		// Satisfying the property by a merge sort is not supported for partial paths of index merge.
+		if matchProperty(ds, partialPath, prop) != property.PropMatched {
+			return property.PropNotMatched
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 		}
 	}
-	return true
+	return property.PropMatched
 }
 
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
+<<<<<<< HEAD
 	candidate.isMatchProp = isMatchProp(ds, path, prop)
+=======
+	candidate.matchPropResult = matchProperty(ds, path, prop)
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	return candidate
 }
 
 func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
+<<<<<<< HEAD
 	candidate.isMatchProp = isMatchProp(ds, path, prop)
+=======
+	candidate.matchPropResult = matchProperty(ds, path, prop)
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
@@ -1193,13 +1337,13 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 	if possiblePath == nil {
 		return nil
 	}
-	candidate := &candidatePath{path: possiblePath, isMatchProp: match}
+	candidate := &candidatePath{path: possiblePath, matchPropResult: match}
 	return candidate
 }
 
 func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	candidate.isMatchProp = isMatchPropForIndexMerge(ds, path, prop)
+	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
 	return candidate
 }
 
@@ -1289,6 +1433,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
+<<<<<<< HEAD
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
 				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
@@ -1300,6 +1445,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+=======
+			if !c.path.IsFullScanRange(ds.TableInfo) {
+				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+				indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1770,7 +1921,10 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	// lift the limitation of that double read can not build index merge **COP** task with intersection.
 	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
 
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	intest.Assert(candidate.matchPropResult != property.PropMatchedNeedMergeSort,
+		"index merge path should not match property using merge sort")
+
+	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// while for now, we still can not push the sort prop to the intersection index plan side, temporarily banned here.
@@ -1808,10 +1962,14 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	for _, partPath := range path.PartialIndexPaths {
 		var scan base.PhysicalPlan
 		if partPath.IsTablePath() {
-			scan = convertToPartialTableScan(ds, prop, partPath, candidate.isMatchProp, byItems)
+			scan = convertToPartialTableScan(ds, prop, partPath, candidate.matchPropResult, byItems)
 		} else {
 			var remainingFilters []expression.Expression
+<<<<<<< HEAD
 			scan, remainingFilters, err = convertToPartialIndexScan(ds, cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
+=======
+			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, prop, partPath, candidate.matchPropResult, byItems)
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 			if err != nil {
 				return base.InvalidTask, err
 			}
@@ -1827,7 +1985,11 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
+<<<<<<< HEAD
 	ts, remainingFilters2, moreColumn, err := buildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.isMatchProp)
+=======
+	ts, remainingFilters2, moreColumn, err := physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.matchPropResult == property.PropMatched)
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	if err != nil {
 		return base.InvalidTask, err
 	}
@@ -1835,11 +1997,19 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		return base.InvalidTask, nil
 	}
 	globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
+<<<<<<< HEAD
 	cop.keepOrder = candidate.isMatchProp
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.idxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+=======
+	cop.KeepOrder = candidate.matchPropResult == property.PropMatched
+	cop.TablePlan = ts
+	cop.IdxMergePartPlans = scans
+	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
+	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	if moreColumn {
 		cop.needExtraProj = true
 		cop.originSchema = ds.Schema()
@@ -1912,8 +2082,15 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 	return true
 }
 
+<<<<<<< HEAD
 func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
 	ts, rowCount := getOriginalPhysicalTableScan(ds, prop, path, matchProp)
+=======
+func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
+	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
+		"partial paths of index merge path should not match property using merge sort")
+	ts, rowCount := physicalop.GetOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
 	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
@@ -1923,8 +2100,13 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			newFilterConds = append(newFilterConds, cond)
 		}
 	}
+<<<<<<< HEAD
 	ts.filterCondition = newFilterConds
 	if matchProp {
+=======
+	ts.FilterCondition = newFilterConds
+	if matchProp.Matched() {
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
 		}
@@ -2203,7 +2385,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// If it's parent requires double read task, return max cost.
 		return base.InvalidTask, nil
 	}
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
@@ -2215,12 +2397,21 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	path := candidate.path
+<<<<<<< HEAD
 	is := getOriginalPhysicalIndexScan(ds, prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
 	cop := &CopTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
+=======
+	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
+	cop := &physicalop.CopTask{
+		IndexPlan:   is,
+		TblColHists: ds.TblColHists,
+		TblCols:     ds.TblCols,
+		ExpectCnt:   uint64(prop.ExpectedCnt),
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	}
 	cop.physPlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
@@ -2265,6 +2456,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 		}
 	}
+<<<<<<< HEAD
 	if candidate.isMatchProp {
 		cop.keepOrder = true
 		if cop.tablePlan != nil && !ds.TableInfo.IsCommonHandle {
@@ -2286,6 +2478,38 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
 			}
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+=======
+	if candidate.matchPropResult.Matched() {
+		cop.KeepOrder = true
+		if cop.TablePlan != nil && !ds.TableInfo.IsCommonHandle {
+			col, isNew := cop.TablePlan.(*physicalop.PhysicalTableScan).AppendExtraHandleCol(ds)
+			cop.ExtraHandleCol = col
+			cop.NeedExtraProj = cop.NeedExtraProj || isNew
+		}
+
+		// Add sort items for index scan for the merge-sort operation
+		// Case 1: keep order between partitions (only required for local index)
+		// Case 2: keep order between range groups (see comments of PropMatchedNeedMergeSort and
+		// AccessPath.GroupedRanges for details)
+		// Case 3: both
+		if (ds.TableInfo.GetPartitionInfo() != nil && !is.Index.Global) ||
+			candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+			for _, si := range prop.SortItems {
+				byItems = append(byItems, &util.ByItems{
+					Expr: si.Col,
+					Desc: si.Desc,
+				})
+			}
+			cop.IndexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
+		}
+		if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+			is.GroupedRanges = candidate.path.GroupedRanges
+			is.GroupByColIdxs = candidate.path.GroupByColIdxs
+		}
+		if ds.TableInfo.GetPartitionInfo() != nil {
+			if cop.TablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 				if !is.Index.Global {
 					is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 				}
@@ -2662,7 +2886,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if prop.TaskTp == property.CopMultiReadTaskType {
 		return base.InvalidTask, nil
 	}
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
@@ -2673,12 +2897,16 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
+<<<<<<< HEAD
 	ts, _ := getOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.isMatchProp)
 	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return base.InvalidTask, nil
 	}
 
+=======
+	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := ts.StoreType == kv.TiFlash
@@ -2692,10 +2920,26 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
 		}
-		// If it has vector property, we need to check the candidate.isMatchProp.
-		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
+		// If it has vector property, we need to check the candidate.matchProperty.
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.matchPropResult.Matched() {
 			return base.InvalidTask, nil
 		}
+<<<<<<< HEAD
+=======
+	} else {
+		if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
+			// prop.TaskTp is cop related, just return base.InvalidTask.
+			return base.InvalidTask, nil
+		}
+		if isTiFlashPath && candidate.matchPropResult.Matched() && ds.TableInfo.GetPartitionInfo() != nil {
+			// TableScan on partition table on TiFlash can't keep order.
+			return base.InvalidTask, nil
+		}
+	}
+
+	// MPP task
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
 			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
@@ -2786,6 +3030,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	var task base.Task = copTask
+<<<<<<< HEAD
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
 		if ds.TableInfo.GetPartitionInfo() != nil {
@@ -2793,6 +3038,11 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			if ts.StoreType == kv.TiFlash {
 				return base.InvalidTask, nil
 			}
+=======
+	if candidate.matchPropResult.Matched() {
+		copTask.KeepOrder = true
+		if ds.TableInfo.GetPartitionInfo() != nil || candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 			// Add sort items for table scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 			for _, si := range prop.SortItems {
@@ -2802,6 +3052,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				})
 			}
 			ts.ByItems = byItems
+		}
+		if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+			ts.GroupedRanges = candidate.path.GroupedRanges
+			ts.GroupByColIdxs = candidate.path.GroupByColIdxs
 		}
 	}
 	ts.addPushedDownSelection(copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt))
@@ -2821,10 +3075,10 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 	if prop.TaskTp == property.CopMultiReadTaskType {
 		return base.InvalidTask, nil
 	}
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
-	if candidate.isMatchProp {
+	if candidate.matchPropResult.Matched() {
 		// Disable keep order property for sample table path.
 		return base.InvalidTask, nil
 	}
@@ -2832,7 +3086,7 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.Table,
 		PhysicalTableID: ds.PhysicalTableID,
-		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
+		Desc:            candidate.matchPropResult.Matched() && prop.SortItems[0].Desc,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	p.schema = ds.Schema()
 	rt := &RootTask{}
@@ -2841,7 +3095,7 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 }
 
 func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
@@ -2917,7 +3171,9 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 }
 
 func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	// For batch point get, we don't try to satisfy the sort property with an extra merge sort,
+	// so only PropMatched is allowed.
+	if !prop.IsSortItemEmpty() && candidate.matchPropResult != property.PropMatched {
 		return base.InvalidTask
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
