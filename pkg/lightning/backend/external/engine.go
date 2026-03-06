@@ -28,7 +28,6 @@ import (
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -37,9 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -247,28 +244,6 @@ func NewExternalEngine(
 		onDup:             onDup,
 		filePrefix:        filePrefix,
 	}
-}
-
-func getPrefixLength(key []byte) int {
-	prefixLength := 0
-	ks, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
-	if err == nil {
-		prefixLength = len(ks)
-	} else {
-		k = key
-	}
-
-	_, _, isRecordKey, err := tablecodec.DecodeKeyHead(k)
-	if err != nil {
-		return 0
-	}
-	if isRecordKey {
-		prefixLength += 11
-	} else {
-		prefixLength += tablecodec.RecordRowKeyLen
-	}
-
-	return prefixLength
 }
 
 func (e *Engine) loadRangeBatchData(
