@@ -395,6 +395,112 @@ SELECT c FROM privilege__column_masking_policy.dst_prepare_restrict ORDER BY c;
 c
 ******
 DEALLOCATE PREPARE stmt_prepare_restrict;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_toggle;
+DROP USER IF EXISTS cmp_prepare_toggle;
+CREATE TABLE privilege__column_masking_policy.t_prepare_toggle(id INT PRIMARY KEY, c VARCHAR(20));
+INSERT INTO privilege__column_masking_policy.t_prepare_toggle VALUES (1, 'xray');
+CREATE USER cmp_prepare_toggle;
+GRANT SELECT ON privilege__column_masking_policy.t_prepare_toggle TO cmp_prepare_toggle;
+CREATE MASKING POLICY p_prepare_toggle ON privilege__column_masking_policy.t_prepare_toggle(c)
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+PREPARE stmt_prepare_toggle FROM
+'SELECT c FROM privilege__column_masking_policy.t_prepare_toggle WHERE id = ?';
+SET @toggle_id = 1;
+EXECUTE stmt_prepare_toggle USING @toggle_id;
+c
+xray
+ALTER TABLE privilege__column_masking_policy.t_prepare_toggle DISABLE MASKING POLICY p_prepare_toggle;
+EXECUTE stmt_prepare_toggle USING @toggle_id;
+c
+xray
+ALTER TABLE privilege__column_masking_policy.t_prepare_toggle ENABLE MASKING POLICY p_prepare_toggle;
+EXECUTE stmt_prepare_toggle USING @toggle_id;
+c
+xray
+DEALLOCATE PREPARE stmt_prepare_toggle;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_recreate;
+DROP USER IF EXISTS cmp_prepare_recreate;
+CREATE TABLE privilege__column_masking_policy.t_prepare_recreate(id INT PRIMARY KEY, c VARCHAR(20));
+INSERT INTO privilege__column_masking_policy.t_prepare_recreate VALUES (1, 'yankee');
+CREATE USER cmp_prepare_recreate;
+GRANT SELECT ON privilege__column_masking_policy.t_prepare_recreate TO cmp_prepare_recreate;
+CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_prepare_recreate(c)
+AS MASK_FULL(c, '*') ENABLE;
+PREPARE stmt_prepare_recreate FROM
+'SELECT c FROM privilege__column_masking_policy.t_prepare_recreate WHERE id = 1';
+EXECUTE stmt_prepare_recreate;
+c
+yankee
+ALTER TABLE privilege__column_masking_policy.t_prepare_recreate DROP MASKING POLICY p_prepare_recreate;
+EXECUTE stmt_prepare_recreate;
+c
+yankee
+CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_prepare_recreate(c)
+AS MASK_PARTIAL(c, '*', 1, 1) ENABLE;
+EXECUTE stmt_prepare_recreate;
+c
+yankee
+DEALLOCATE PREPARE stmt_prepare_recreate;
+DROP VIEW IF EXISTS privilege__column_masking_policy.v_view_mask;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_view_mask;
+DROP USER IF EXISTS cmp_view;
+CREATE TABLE privilege__column_masking_policy.t_view_mask(id INT PRIMARY KEY, c VARCHAR(20));
+INSERT INTO privilege__column_masking_policy.t_view_mask VALUES (1, 'alpha'), (2, 'alpha'), (3, 'zulu');
+CREATE VIEW privilege__column_masking_policy.v_view_mask AS
+SELECT id, c FROM privilege__column_masking_policy.t_view_mask;
+CREATE USER cmp_view;
+GRANT SELECT ON privilege__column_masking_policy.t_view_mask TO cmp_view;
+GRANT SELECT ON privilege__column_masking_policy.v_view_mask TO cmp_view;
+CREATE MASKING POLICY p_view_mask ON privilege__column_masking_policy.t_view_mask(c)
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+SELECT c FROM privilege__column_masking_policy.t_view_mask ORDER BY id;
+c
+*****
+*****
+****
+SELECT c FROM privilege__column_masking_policy.v_view_mask ORDER BY id;
+c
+*****
+*****
+****
+SELECT COUNT(*) FROM privilege__column_masking_policy.v_view_mask WHERE c = 'alpha';
+COUNT(*)
+0
+DROP TABLE IF EXISTS privilege__column_masking_policy.src_prepare_ud;
+DROP TABLE IF EXISTS privilege__column_masking_policy.dst_prepare_ud;
+DROP USER IF EXISTS cmp_prepare_ud;
+CREATE TABLE privilege__column_masking_policy.src_prepare_ud(c VARCHAR(20));
+CREATE TABLE privilege__column_masking_policy.dst_prepare_ud(c VARCHAR(20));
+INSERT INTO privilege__column_masking_policy.src_prepare_ud VALUES ('secret');
+INSERT INTO privilege__column_masking_policy.dst_prepare_ud VALUES ('plain');
+CREATE USER cmp_prepare_ud;
+GRANT SELECT, UPDATE, DELETE ON privilege__column_masking_policy.* TO cmp_prepare_ud;
+CREATE MASKING POLICY p_prepare_ud ON privilege__column_masking_policy.src_prepare_ud(c)
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+RESTRICT ON (UPDATE_SELECT, DELETE_SELECT) ENABLE;
+PREPARE stmt_prepare_ud_upd FROM
+'UPDATE privilege__column_masking_policy.dst_prepare_ud
+SET c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1)';
+Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
+PREPARE stmt_prepare_ud_del FROM
+'DELETE FROM privilege__column_masking_policy.dst_prepare_ud
+WHERE c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1)';
+Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
+ALTER TABLE privilege__column_masking_policy.src_prepare_ud
+MODIFY MASKING POLICY p_prepare_ud SET RESTRICT ON NONE;
+PREPARE stmt_prepare_ud_upd FROM
+'UPDATE privilege__column_masking_policy.dst_prepare_ud
+SET c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1)';
+EXECUTE stmt_prepare_ud_upd;
+PREPARE stmt_prepare_ud_del FROM
+'DELETE FROM privilege__column_masking_policy.dst_prepare_ud
+WHERE c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1)';
+EXECUTE stmt_prepare_ud_del;
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_ud;
+COUNT(*)
+0
+DEALLOCATE PREPARE stmt_prepare_ud_upd;
+DEALLOCATE PREPARE stmt_prepare_ud_del;
 ALTER TABLE privilege__column_masking_policy.t_lifecycle DROP MASKING POLICY p_lifecycle;
 ALTER TABLE privilege__column_masking_policy.t_role DROP MASKING POLICY p_role;
 ALTER TABLE privilege__column_masking_policy.src_restrict DROP MASKING POLICY p_restrict;
@@ -405,6 +511,10 @@ ALTER TABLE privilege__column_masking_policy.t_cross_session_rename DROP MASKING
 ALTER TABLE privilege__column_masking_policy.t_part_mask DROP MASKING POLICY p_part_mask;
 ALTER TABLE privilege__column_masking_policy.t_txn_mask DROP MASKING POLICY p_txn_mask;
 ALTER TABLE privilege__column_masking_policy.src_prepare_restrict DROP MASKING POLICY p_prepare_restrict;
+ALTER TABLE privilege__column_masking_policy.t_prepare_toggle DROP MASKING POLICY p_prepare_toggle;
+ALTER TABLE privilege__column_masking_policy.t_prepare_recreate DROP MASKING POLICY p_prepare_recreate;
+ALTER TABLE privilege__column_masking_policy.t_view_mask DROP MASKING POLICY p_view_mask;
+ALTER TABLE privilege__column_masking_policy.src_prepare_ud DROP MASKING POLICY p_prepare_ud;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_lifecycle;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_role;
 DROP TABLE IF EXISTS privilege__column_masking_policy.src_restrict;
@@ -420,6 +530,12 @@ DROP TABLE IF EXISTS privilege__column_masking_policy.t_part_mask;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_txn_mask;
 DROP TABLE IF EXISTS privilege__column_masking_policy.src_prepare_restrict;
 DROP TABLE IF EXISTS privilege__column_masking_policy.dst_prepare_restrict;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_toggle;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_recreate;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_view_mask;
+DROP TABLE IF EXISTS privilege__column_masking_policy.src_prepare_ud;
+DROP TABLE IF EXISTS privilege__column_masking_policy.dst_prepare_ud;
 DROP VIEW IF EXISTS privilege__column_masking_policy.v_mask;
-DROP USER IF EXISTS cmp_allowed, cmp_denied, cmp_runtime, cmp_role_user, cmp_query, cmp_mask_creator, cmp_mask_alter, cmp_mask_drop, cmp_mask_none, cmp_prepare, cmp_rename, cmp_part, cmp_txn, cmp_prepare_dml;
+DROP VIEW IF EXISTS privilege__column_masking_policy.v_view_mask;
+DROP USER IF EXISTS cmp_allowed, cmp_denied, cmp_runtime, cmp_role_user, cmp_query, cmp_mask_creator, cmp_mask_alter, cmp_mask_drop, cmp_mask_none, cmp_prepare, cmp_rename, cmp_part, cmp_txn, cmp_prepare_dml, cmp_prepare_toggle, cmp_prepare_recreate, cmp_view, cmp_prepare_ud;
 DROP ROLE IF EXISTS cmp_unmask_role;
