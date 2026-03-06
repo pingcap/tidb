@@ -423,6 +423,18 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcu
 	tk.MustQuery("select a, b, minc, cnt from mv_concurrent_drop_idx").Check(testkit.Rows("1 2 5 2"))
 }
 
+func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table base_test(id int, v1 int, v2 int, v3 int, v4 int, index k(v1,v2,v3,v4))")
+	tk.MustExec("create materialized view log on base_test(v1, v2) purge next date_add(now(), interval 1 hour)")
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='$mlog$base_test' and column_name='v1'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='$mlog$base_test' and column_name='v2'").
+		Check(testkit.Rows(""))
+}
+
 func TestShowCreateMaterializedView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
