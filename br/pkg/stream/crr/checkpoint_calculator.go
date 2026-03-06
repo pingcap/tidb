@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
@@ -131,6 +132,8 @@ func NewCheckpointCalculator(
 // ComputeNextCheckpoint waits for upstream checkpoint progress, confirms the
 // required files are synced to downstream, and returns the safe checkpoint.
 func (c *CheckpointCalculator) ComputeNextCheckpoint(ctx context.Context) (uint64, error) {
+	failpoint.InjectCall("begin-calculate-checkpoint")
+
 	upstreamCheckpoint, err := c.waitUpstreamCheckpointAdvance(ctx)
 	if err != nil {
 		return 0, err
@@ -240,6 +243,8 @@ func (c *CheckpointCalculator) planRound(
 		}
 
 		eg.Go(func() error {
+			failpoint.InjectCall("before-read-meta", metaFile.path)
+
 			metaBytes, err := c.upstream.ReadFile(egCtx, metaFile.path)
 			if err != nil {
 				return fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
@@ -269,6 +274,8 @@ func (c *CheckpointCalculator) planRound(
 				plan.maxFlushTSByStore[storeID] = metaFile.flushTS
 			}
 			planMu.Unlock()
+
+			failpoint.InjectCall("flush-meta", metaFile.path, storeID, metaFile.flushTS)
 			return nil
 		})
 	}

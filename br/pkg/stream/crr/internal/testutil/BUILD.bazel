@@ -9,6 +9,7 @@ go_library(
         "pd_sim.go",
         "pd_sim_service.go",
         "storage_mask.go",
+        "sync_script.go",
         "types.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil",
@@ -21,6 +22,7 @@ go_library(
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/codec",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/logbackuppb",
@@ -38,9 +40,15 @@ go_library(
 go_test(
     name = "testutil_test",
     timeout = "short",
-    srcs = ["builder_test.go"],
+    srcs = [
+        "builder_test.go",
+        "sync_script_test.go",
+    ],
     embed = [":testutil"],
     flaky = True,
-    shard_count = 3,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 4,
+    deps = [
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
 )

@@ -10,6 +10,7 @@ go_library(
         "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
         "//pkg/objstore/storeapi",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@org_golang_x_sync//errgroup",
     ],

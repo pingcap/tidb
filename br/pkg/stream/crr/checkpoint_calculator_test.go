@@ -17,7 +17,7 @@ package crr_test
 import (
 	"context"
 	"fmt"
-	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,14 +105,24 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	_, err = h.Replicate(ctx, 0)
 	require.NoError(t, err)
 
-	upstream := &blockingUpstreamStorage{
-		inner:      h.Upstream,
-		metaDelay:  30 * time.Millisecond,
-		readRecord: &concurrencyRecorder{},
-	}
+	script := testutil.NewSyncScript(t, "github.com/pingcap/tidb/br/pkg/stream/crr")
+	var started atomic.Int32
+	firstTwoStarted := make(chan struct{})
+	releaseFirstTwo := make(chan struct{})
+	var closeStarted sync.Once
+	script.On("before-read-meta", func(ctx testutil.InjectContext, _ string) {
+		current := started.Add(1)
+		if current == 2 {
+			closeStarted.Do(func() { close(firstTwoStarted) })
+		}
+		if current <= 2 {
+			<-releaseFirstTwo
+		}
+	})
+
 	calculator, err := crr.NewCheckpointCalculator(
 		h.PDSim,
-		upstream,
+		h.Upstream,
 		h.Downstream,
 		crr.CheckpointCalculatorConfig{
 			TaskName:            "drr_test_task",
@@ -122,10 +132,31 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	checkpoint, err := calculator.ComputeNextCheckpoint(ctx)
-	require.NoError(t, err)
-	require.Greater(t, checkpoint, uint64(0))
-	require.Equal(t, int32(2), upstream.readRecord.maxSeen.Load())
+	type calcResult struct {
+		checkpoint uint64
+		err        error
+	}
+	resultCh := make(chan calcResult, 1)
+	go func() {
+		checkpoint, err := calculator.ComputeNextCheckpoint(ctx)
+		resultCh <- calcResult{checkpoint: checkpoint, err: err}
+	}()
+
+	<-firstTwoStarted
+	require.Equal(t, int32(2), started.Load())
+
+	select {
+	case result := <-resultCh:
+		require.FailNowf(t, "checkpoint should still wait for blocked meta readers", "unexpected result: %+v", result)
+	default:
+	}
+
+	close(releaseFirstTwo)
+
+	result := <-resultCh
+	require.NoError(t, result.err)
+	require.Greater(t, result.checkpoint, uint64(0))
+	require.GreaterOrEqual(t, started.Load(), int32(2))
 }
 
 func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
@@ -184,58 +215,4 @@ func (s *recordingUpstreamStorage) URI() string {
 		return s.uri
 	}
 	return s.inner.URI()
-}
-
-type blockingUpstreamStorage struct {
-	inner interface {
-		WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error
-		ReadFile(ctx context.Context, name string) ([]byte, error)
-		URI() string
-	}
-	metaDelay  time.Duration
-	readRecord *concurrencyRecorder
-}
-
-func (s *blockingUpstreamStorage) WalkDir(
-	ctx context.Context,
-	opt *storeapi.WalkOption,
-	fn func(path string, size int64) error,
-) error {
-	return s.inner.WalkDir(ctx, opt, fn)
-}
-
-func (s *blockingUpstreamStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
-	if strings.HasSuffix(name, ".meta") {
-		active := s.readRecord.active.Add(1)
-		s.readRecord.observe(active)
-		defer s.readRecord.active.Add(-1)
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(s.metaDelay):
-		}
-	}
-	return s.inner.ReadFile(ctx, name)
-}
-
-func (s *blockingUpstreamStorage) URI() string {
-	return s.inner.URI()
-}
-
-type concurrencyRecorder struct {
-	active  atomic.Int32
-	maxSeen atomic.Int32
-}
-
-func (r *concurrencyRecorder) observe(active int32) {
-	for {
-		maxSeen := r.maxSeen.Load()
-		if active <= maxSeen {
-			return
-		}
-		if r.maxSeen.CompareAndSwap(maxSeen, active) {
-			return
-		}
-	}
 }
