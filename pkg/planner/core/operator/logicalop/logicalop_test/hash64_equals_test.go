@@ -810,14 +810,18 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
 	require.Nil(t, err)
 	la1 := &logicalop.LogicalAggregation{
-		AggFuncs:           []*aggregation.AggFuncDesc{desc},
-		GroupByItems:       []expression.Expression{col},
-		PossibleProperties: [][]*expression.Column{{col}},
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: []expression.Expression{col},
+		PossibleProperties: plannerbase.PossiblePropertiesInfo{
+			Orders: [][]*expression.Column{{col}},
+		},
 	}
 	la2 := &logicalop.LogicalAggregation{
-		AggFuncs:           []*aggregation.AggFuncDesc{desc},
-		GroupByItems:       []expression.Expression{col},
-		PossibleProperties: [][]*expression.Column{{col}},
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: []expression.Expression{col},
+		PossibleProperties: plannerbase.PossiblePropertiesInfo{
+			Orders: [][]*expression.Column{{col}},
+		},
 	}
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
@@ -833,11 +837,22 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	require.False(t, la1.Equals(la2))
 
 	la2.GroupByItems = []expression.Expression{col}
-	la2.PossibleProperties = [][]*expression.Column{{}}
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Orders: [][]*expression.Column{{}},
+	}
 	hasher2.Reset()
 	la2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, la1.Equals(la2))
+
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{{col}},
+		HasTiflash: true,
+	}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, la1.Equals(la2))
 }
 
 func MockFunc(sctx expression.EvalContext, lhsArg, rhsArg expression.Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {

@@ -130,16 +130,24 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiflash := false
+	if is.Source != nil {
+		hasTiflash = is.Source.HasTiflash() && is.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+	is.hasTiflash = hasTiflash
 	if len(is.IdxCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{HasTiflash: is.hasTiflash}
 	}
 	result := make([][]*expression.Column, 0, is.EqCondCount+1)
 	for i := 0; i <= is.EqCondCount; i++ {
 		result = append(result, make([]*expression.Column, len(is.IdxCols)-i))
 		copy(result[i], is.IdxCols[i:])
 	}
-	return result
+	return &base.PossiblePropertiesInfo{
+		Orders:     result,
+		HasTiflash: is.hasTiflash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.

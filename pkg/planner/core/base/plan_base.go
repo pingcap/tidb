@@ -224,7 +224,7 @@ type LogicalPlan interface {
 
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
-	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
+	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...*PossiblePropertiesInfo) *PossiblePropertiesInfo
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -377,4 +377,64 @@ type PhysicalJoin interface {
 	PhysicalJoinImplement()
 	GetInnerChildIdx() int
 	GetJoinType() JoinType
+}
+
+// PossiblePropertiesInfo is used to store all possible order properties.
+type PossiblePropertiesInfo struct {
+	// all possible order properties
+	Orders [][]*expression.Column
+	// HasTiflash is a runtime pruning signal and is intentionally excluded from hash/equals.
+	HasTiflash bool
+}
+
+// Hash64 implements the HashEquals interface.
+func (info *PossiblePropertiesInfo) Hash64(h base.Hasher) {
+	if info == nil {
+		h.HashByte(base.NilFlag)
+		return
+	}
+	h.HashByte(base.NotNilFlag)
+	if info.Orders == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(info.Orders))
+		for _, one := range info.Orders {
+			h.HashInt(len(one))
+			for _, col := range one {
+				col.Hash64(h)
+			}
+		}
+	}
+}
+
+// Equals implements the HashEquals interface.
+func (info *PossiblePropertiesInfo) Equals(other any) bool {
+	info2, ok := other.(*PossiblePropertiesInfo)
+	if !ok {
+		return false
+	}
+	if info == nil {
+		return info2 == nil
+	}
+	if info2 == nil {
+		return false
+	}
+	if (info.Orders == nil && info2.Orders != nil) || (info.Orders != nil && info2.Orders == nil) || len(info.Orders) != len(info2.Orders) {
+		return false
+	}
+	for i, one := range info.Orders {
+		if len(one) != len(info2.Orders[i]) {
+			return false
+		}
+		for j, col := range one {
+			if (col == nil && info2.Orders[i][j] != nil) || (col != nil && info2.Orders[i][j] == nil) {
+				return false
+			}
+			if col != nil && !col.Equals(info2.Orders[i][j]) {
+				return false
+			}
+		}
+	}
+	return true
 }
