@@ -16,9 +16,12 @@ package session
 
 import (
 	"context"
+	"strconv"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 )
 
 // Advisory Locks are the locks in GET_LOCK() and RELEASE_LOCK().
@@ -40,6 +43,10 @@ type advisoryLock struct {
 	clean          func()
 	referenceCount int
 	owner          uint64
+
+	// Save/restore innodb_lock_wait_timeout to avoid polluting internal session pools.
+	innodbLockWaitTimeoutOriginal       string
+	innodbLockWaitTimeoutOriginalLoaded bool
 }
 
 // IncrReferences increments the reference count for the advisory lock.
@@ -57,11 +64,52 @@ func (a *advisoryLock) ReferenceCount() int {
 	return a.referenceCount
 }
 
+func (a *advisoryLock) setInnodbLockWaitTimeout(timeout int64) error {
+	if !a.innodbLockWaitTimeoutOriginalLoaded {
+		// Use GetSessionOrGlobalSystemVar because internal sessions lazily initialize `systems`.
+		orig, err := a.session.sessionVars.GetSessionOrGlobalSystemVar(a.ctx, vardef.InnodbLockWaitTimeout)
+		if err != nil {
+			return err
+		}
+		a.innodbLockWaitTimeoutOriginal = orig
+		a.innodbLockWaitTimeoutOriginalLoaded = true
+	}
+	return a.session.sessionVars.SetSystemVar(vardef.InnodbLockWaitTimeout, strconv.FormatInt(timeout, 10))
+}
+
+func (a *advisoryLock) restoreInnodbLockWaitTimeout() error {
+	if !a.innodbLockWaitTimeoutOriginalLoaded {
+		return nil
+	}
+	return a.session.sessionVars.SetSystemVar(vardef.InnodbLockWaitTimeout, a.innodbLockWaitTimeoutOriginal)
+}
+
+func (a *advisoryLock) destroySession() {
+	dom := domain.GetDomain(a.session)
+	if dom != nil {
+		dom.SysSessionPool().Destroy(a.session)
+		return
+	}
+	// Fallback (should not happen for advisory locks): close the session directly.
+	a.session.Close()
+}
+
 // Close releases the advisory lock, which includes
-// rolling back the transaction and closing the session.
+// rolling back the transaction, restoring sysvars, and closing the session.
 func (a *advisoryLock) Close() {
-	_, err := a.session.ExecuteInternal(a.ctx, "ROLLBACK")
-	terror.Log(err)
+	_, rbErr := a.session.ExecuteInternal(a.ctx, "ROLLBACK")
+	if rbErr != nil {
+		terror.Log(rbErr)
+	}
+	restoreErr := a.restoreInnodbLockWaitTimeout()
+	if restoreErr != nil {
+		terror.Log(restoreErr)
+	}
+	if rbErr != nil || restoreErr != nil {
+		// If rollback/restore fails, do not put the session back to the pool.
+		a.destroySession()
+		return
+	}
 	a.clean()
 }
 
@@ -71,12 +119,13 @@ func (a *advisoryLock) Close() {
 // if the lock was successfully acquired.
 func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
 	a.ctx = kv.WithInternalSourceType(a.ctx, kv.InternalTxnOthers)
-	_, err := a.session.ExecuteInternal(a.ctx, "SET innodb_lock_wait_timeout = %?", timeout)
-	if err != nil {
+	if err := a.setInnodbLockWaitTimeout(timeout); err != nil {
+		a.Close()
 		return err
 	}
-	_, err = a.session.ExecuteInternal(a.ctx, "BEGIN PESSIMISTIC")
+	_, err := a.session.ExecuteInternal(a.ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
+		a.Close()
 		return err
 	}
 	_, err = a.session.ExecuteInternal(a.ctx, "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
@@ -95,11 +144,10 @@ func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
 func (a *advisoryLock) IsUsedLock(lockName string) error {
 	defer a.Close() // Rollback
 	a.ctx = kv.WithInternalSourceType(a.ctx, kv.InternalTxnOthers)
-	_, err := a.session.ExecuteInternal(a.ctx, "SET innodb_lock_wait_timeout = 1")
-	if err != nil {
+	if err := a.setInnodbLockWaitTimeout(1); err != nil {
 		return err
 	}
-	_, err = a.session.ExecuteInternal(a.ctx, "BEGIN PESSIMISTIC")
+	_, err := a.session.ExecuteInternal(a.ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return err
 	}
