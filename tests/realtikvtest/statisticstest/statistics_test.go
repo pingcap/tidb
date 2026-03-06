@@ -65,6 +65,8 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
+	// show stats_buckets/topn reads from the in-memory cache, which includes
+	// synthesized index stats for the consolidated single-column index `ia`.
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 0 3 1 \x00A \x00A\x00A\x00A 0",
 		"test t  a 0 1 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00B 0",
@@ -99,9 +101,11 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := tblInfo.Meta().ID
-	// Check histogram stats, using tolerance for correlation which can vary slightly
+	// Check histogram stats, using tolerance for correlation which can vary slightly.
+	// Only 3 rows: column a, prefix index ia3, prefix index ia10.
+	// The non-prefix single-column index ia is consolidated with column a.
 	rows := tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where table_id = ?", tableID).Sort().Rows()
-	require.Len(t, rows, 4)
+	require.Len(t, rows, 3)
 
 	// Check column histogram (is_index=0)
 	require.Equal(t, "0", rows[0][0])
@@ -114,11 +118,10 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 0.8411764705882353, correlationFloat, 0.01, "correlation should be approximately 0.841")
 
-	// Check index histograms (is_index=1)
+	// Check index histograms (is_index=1) — only prefix indexes ia3 and ia10
 	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where is_index=1 and table_id = ?", tableID).Sort().Check(testkit.Rows(
 		"1 1 8 0 2 0",
 		"1 2 13 0 2 0",
-		"1 3 15 0 2 0",
 	))
 }
 

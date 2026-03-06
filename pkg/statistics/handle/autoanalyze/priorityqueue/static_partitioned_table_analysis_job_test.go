@@ -144,8 +144,9 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
-	// Because analyze one index will analyze all indexes and all columns together, so there are 4 jobs.
-	require.Len(t, rows, 4)
+	// 1 partition analyze job + 1 global merge for columns = 2 jobs.
+	// Single-column indexes are consolidated with column stats, so no separate index merge jobs.
+	require.Len(t, rows, 2)
 }
 
 func TestStaticPartitionedTableValidateAndPrepare(t *testing.T) {

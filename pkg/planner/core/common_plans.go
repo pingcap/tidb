@@ -391,6 +391,9 @@ type AnalyzeColumnsTask struct {
 	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
+	// ConsolidatedIdxIDs lists single-column non-prefix index IDs whose stats
+	// are consolidated with their underlying column stats in V2.
+	ConsolidatedIdxIDs []int64
 	AnalyzeInfo
 }
 

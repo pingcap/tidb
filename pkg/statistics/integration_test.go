@@ -313,13 +313,13 @@ func TestAnalyzeSnapshot(t *testing.T) {
 	require.True(t, s1 < math.MaxUint64)
 
 	// TestHistogramsWithSameTxnTS
+	// After consolidation, single-column index stats are no longer persisted
+	// separately, so only the column histogram row remains.
 	v1 := rows[0][2].(string)
 	rows = tk.MustQuery("select version from mysql.stats_histograms").Rows()
-	require.Len(t, rows, 2)
+	require.Len(t, rows, 1)
 	v2 := rows[0][0].(string)
 	require.Equal(t, v1, v2)
-	v3 := rows[1][0].(string)
-	require.Equal(t, v2, v3)
 
 	tk.MustExec("insert into t values(1), (1), (1)")
 	tk.MustExec("analyze table t")

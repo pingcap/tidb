@@ -68,9 +68,8 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	require.True(t, h.HandleAutoAnalyze())
+	// 5 jobs: idx_b(b) is consolidated so no separate index analyze jobs are created.
 	tk.MustQuery("select state from mysql.analyze_jobs").Check(testkit.Rows(
-		"finished",
-		"finished",
 		"finished",
 		"finished",
 		"finished",

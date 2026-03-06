@@ -60,6 +60,7 @@ type AnalyzeColumnsExec struct {
 	schemaForVirtualColEval *expression.Schema
 	baseCount               int64
 	baseModifyCnt           int64
+	consolidatedIdxIDs      []int64
 
 	memTracker *memory.Tracker
 }

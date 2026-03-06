@@ -875,8 +875,9 @@ func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// Create a table with enough data to generate both TopN and buckets
-	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	// Create a table with enough data to generate both TopN and buckets.
+	// Use a prefix index so it is not eligible for single-column consolidation.
+	tk.MustExec("create table t(a int, b varchar(64), c int, primary key(a), key idx(b(10)))")
 	// Insert more data to ensure buckets are generated (not just TopN)
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))

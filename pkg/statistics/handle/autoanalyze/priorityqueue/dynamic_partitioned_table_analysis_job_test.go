@@ -120,8 +120,9 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
-	// Because analyze one index will analyze all indexes and all columns together, so there are 5 jobs.
-	require.Len(t, rows, 5)
+	// 2 partition analyze jobs + 1 global merge for columns = 3 jobs.
+	// Single-column indexes are consolidated with column stats, so no separate index merge jobs.
+	require.Len(t, rows, 3)
 }
 
 func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	tableinfo "github.com/pingcap/tidb/pkg/table"
@@ -192,10 +193,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		if table == nil || table.PhysicalID != tblID {
-			tblInfoValid = false
 			if table != nil {
+				if tblInfoValid {
+					populateSyntheticIndexStats(table, tblInfo)
+				}
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
+			tblInfoValid = false
 			var ok bool
 			// This table must be already in the cache since we load stats_meta first.
 			table, ok = cache.Get(tblID)
@@ -298,7 +302,151 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		}
 	}
 	if table != nil {
+		if tblInfoValid {
+			populateSyntheticIndexStats(table, tblInfo)
+		}
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+	}
+}
+
+// populateSyntheticIndexExistenceMap marks consolidated single-column indexes
+// as analyzed in the ColAndIdxExistenceMap when their corresponding column is
+// analyzed. This is the lite-init counterpart of populateSyntheticIndexStats:
+// it only updates the existence map (no full stats are loaded).
+func populateSyntheticIndexExistenceMap(table *statistics.Table, tblInfo *model.TableInfo) {
+	if tblInfo == nil {
+		return
+	}
+	for _, idx := range tblInfo.Indices {
+		if !idx.IsSingleColumnNonPrefixIndex() {
+			continue
+		}
+		// Already has an entry from storage.
+		if table.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+			continue
+		}
+		colInfo := tblInfo.Columns[idx.Columns[0].Offset]
+		if colInfo.IsVirtualGenerated() {
+			continue
+		}
+		// If the corresponding column is analyzed, mark this index as analyzed too.
+		if table.ColAndIdxExistenceMap.HasAnalyzed(colInfo.ID, false) {
+			table.ColAndIdxExistenceMap.InsertIndex(idx.ID, true)
+		}
+	}
+}
+
+// populateSyntheticIndexStats fills in synthetic Index stats for single-column
+// non-prefix indexes from their underlying column stats. This is called after
+// all column and index stats for a table have been loaded, so that eligible
+// indexes without their own stored stats can still serve identical data via
+// the column stats they correspond to.
+func populateSyntheticIndexStats(table *statistics.Table, tblInfo tableinfo.Table) {
+	if tblInfo == nil {
+		return
+	}
+	for _, idx := range tblInfo.Meta().Indices {
+		if !idx.IsSingleColumnNonPrefixIndex() {
+			continue
+		}
+		if existingIdx := table.GetIdx(idx.ID); existingIdx != nil && statistics.IsAnalyzed(existingIdx.StatsVer) {
+			continue // already has analyzed stored index stats (backward compat)
+		}
+		colInfo := tblInfo.Meta().Columns[idx.Columns[0].Offset]
+		if colInfo.IsVirtualGenerated() {
+			continue
+		}
+		col := table.GetCol(colInfo.ID)
+		if col == nil {
+			continue
+		}
+		synth := statistics.SynthesizeIndexFromColumn(col, idx, table.PhysicalID)
+		if synth != nil {
+			table.SetIdx(idx.ID, synth)
+			table.ColAndIdxExistenceMap.InsertIndex(idx.ID, col.StatsVer != statistics.Version0)
+		}
+	}
+}
+
+// loadConsolidatedIndexStatsForFullInit fully loads TopN and buckets for
+// consolidated (single-column non-prefix) indexes from their column storage
+// entries. This is needed for the full init path because the TopN and bucket
+// loading steps only read is_index=1 entries, which don't exist for
+// consolidated indexes.
+func (h *Handle) loadConsolidatedIndexStatsForFullInit(
+	sctx sessionctx.Context,
+	is infoschema.InfoSchema,
+	cache statstypes.StatsCache,
+) {
+	for _, table := range cache.Values() {
+		if table == nil {
+			continue
+		}
+		tblInfo, ok := h.TableInfoByIDForInitStats(is, table.PhysicalID)
+		if !ok {
+			continue
+		}
+		needUpdate := false
+		for _, idx := range tblInfo.Meta().Indices {
+			if !idx.IsSingleColumnNonPrefixIndex() {
+				continue
+			}
+			colInfo := tblInfo.Meta().Columns[idx.Columns[0].Offset]
+			if colInfo.IsVirtualGenerated() {
+				continue
+			}
+			existing := table.GetIdx(idx.ID)
+			// Skip if the index already has real data loaded from storage
+			// (e.g., from before consolidation). Note: SetAllIndexFullLoadForBootstrap
+			// may mark synthesized indexes as FullLoad even though they lack TopN/bucket
+			// data, so we also check for actual histogram content.
+			if existing != nil && existing.IsFullLoad() && existing.Len() > 0 {
+				continue
+			}
+			// Load column histogram, TopN, and CMSketch from storage.
+			colItem := model.TableItemID{
+				TableID: table.PhysicalID,
+				ID:      colInfo.ID,
+				IsIndex: false,
+			}
+			hgMeta, statsVer, err := storage.HistMetaFromStorageWithHighPriority(sctx, &colItem, colInfo)
+			if hgMeta == nil || err != nil {
+				continue
+			}
+			hg, err := storage.HistogramFromStorageWithPriority(sctx, table.PhysicalID, colInfo.ID, &colInfo.FieldType, hgMeta.NDV, 0, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
+			if err != nil {
+				continue
+			}
+			cms, topN, err := storage.CMSketchAndTopNFromStorageWithHighPriority(sctx, table.PhysicalID, 0, colInfo.ID, statsVer)
+			if err != nil {
+				continue
+			}
+			colHist := &statistics.Column{
+				PhysicalID: table.PhysicalID,
+				Histogram:  *hg,
+				Info:       colInfo,
+				CMSketch:   cms,
+				TopN:       topN,
+				IsHandle:   tblInfo.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				StatsVer:   statsVer,
+			}
+			if colHist.StatsAvailable() {
+				colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			}
+			synth := statistics.SynthesizeIndexFromColumn(colHist, idx, table.PhysicalID)
+			if synth == nil {
+				continue
+			}
+			if !needUpdate {
+				table = table.CopyAs(statistics.BothMapsWritable)
+				needUpdate = true
+			}
+			table.SetIdx(idx.ID, synth)
+			table.ColAndIdxExistenceMap.InsertIndex(idx.ID, statsVer != statistics.Version0)
+		}
+		if needUpdate {
+			cache.Put(table.PhysicalID, table)
+		}
 	}
 }
 
@@ -851,6 +999,19 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
+	// Mark consolidated single-column indexes in the existence map so that
+	// the sync/async stats load paths know these indexes need loading.
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	for _, table := range cache.Values() {
+		if table == nil {
+			continue
+		}
+		tblInfo, ok := h.TableInfoByIDForInitStats(is, table.PhysicalID)
+		if !ok {
+			continue
+		}
+		populateSyntheticIndexExistenceMap(table, tblInfo.Meta())
+	}
 	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
 	// So we can replace the global cache with the new cache.
 	if len(tableIDs) == 0 {
@@ -933,6 +1094,11 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
+
+	// Fully load consolidated single-column index stats from column storage.
+	// This must happen after TopN and bucket loading since those only read
+	// is_index=1 entries which don't exist for consolidated indexes.
+	h.loadConsolidatedIndexStatsForFullInit(sctx, is, cache)
 
 	// If tableIDs is empty, it means we load all the tables' stats.
 	// So we can replace the global cache with the new cache.

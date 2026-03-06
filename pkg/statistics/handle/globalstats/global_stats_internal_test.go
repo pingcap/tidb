@@ -84,9 +84,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 		"test tint p1 c 1 1 5 1 14 15 0"))
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
-		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1",  // p0
-			"7 0")) // p1
+		testkit.Rows()) // single-column index stats are consolidated with column stats; no is_index=1 entries in storage
 
 	// double + (column + index with 1 column)
 	tk.MustExec("drop table if exists tdouble")

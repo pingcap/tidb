@@ -307,6 +307,21 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 			}
 		}
 	}
+	// 2b. Clean up old index stats for consolidated single-column indexes.
+	for _, idxID := range results.ConsolidatedIdxIDs {
+		if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and is_index = 1 and hist_id = %?", tableID, idxID); err != nil {
+			return 0, err
+		}
+		if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = 1 and hist_id = %?", tableID, idxID); err != nil {
+			return 0, err
+		}
+		if _, err = util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = 1 and hist_id = %?", tableID, idxID); err != nil {
+			return 0, err
+		}
+		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %? and is_index = 1 and hist_id = %?", tableID, idxID); err != nil {
+			return 0, err
+		}
+	}
 	return
 }
 
@@ -526,6 +541,14 @@ func InsertTableStats2KV(
 		}
 	}
 	for _, idx := range info.Indices {
+		// Skip creating storage entries for single-column non-prefix indexes.
+		// Their stats are synthesized from the underlying column stats in V2.
+		if idx.IsSingleColumnNonPrefixIndex() {
+			colInfo := info.Columns[idx.Columns[0].Offset]
+			if !colInfo.IsVirtualGenerated() {
+				continue
+			}
+		}
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
 			`insert ignore into mysql.stats_histograms
