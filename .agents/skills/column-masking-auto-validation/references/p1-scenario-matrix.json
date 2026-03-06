@@ -28,6 +28,34 @@
     }
   },
   {
+    "id": "P1-CACHE-03",
+    "scenario": "Prepared statement sees ENABLE/DISABLE policy transitions",
+    "coverage_cases": [
+      {
+        "name": "Prepared query output flips with policy enable/disable (IT-MASK-P1-006)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P1-CACHE-04",
+    "scenario": "Prepared statement sees DROP and re-CREATE policy transitions",
+    "coverage_cases": [
+      {
+        "name": "Prepared query output transitions masked/plain/partial (IT-MASK-P1-007)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
     "id": "P1-COMPAT-01",
     "scenario": "Partition table keeps AT RESULT semantics",
     "coverage_cases": [
@@ -56,11 +84,39 @@
     }
   },
   {
+    "id": "P1-COMPAT-03",
+    "scenario": "View over masked table preserves masking and AT RESULT predicate semantics",
+    "coverage_cases": [
+      {
+        "name": "View query returns masked output and original-value filtering (IT-MASK-P1-008)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
     "id": "P1-RES-01",
     "scenario": "RESTRICT ON with prepared DML statement",
     "coverage_cases": [
       {
         "name": "Prepare-time denial and post-toggle success for INSERT ... SELECT (IT-MASK-P1-005)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P1-RES-02",
+    "scenario": "RESTRICT ON with prepared UPDATE/DELETE subquery statements",
+    "coverage_cases": [
+      {
+        "name": "Prepare-time denial and post-toggle execution for UPDATE/DELETE ... (SELECT ...) (IT-MASK-P1-009)",
         "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
       }
     ],
