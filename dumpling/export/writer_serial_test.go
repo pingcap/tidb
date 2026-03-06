@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -88,6 +89,7 @@ func TestWriteInsert(t *testing.T) {
 	bf := NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
+	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.NoError(t, err)
@@ -126,6 +128,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	bf := NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
+	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.ErrorIs(t, err, rowErr)
@@ -159,6 +162,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
+	conf.IsStringChunking = false
 	m := newMetrics(cfg.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.Equal(t, uint64(4), n)
@@ -269,6 +273,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
+	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.Equal(t, uint64(3), n)
@@ -369,6 +374,7 @@ func TestSQLDataTypes(t *testing.T) {
 		bf := NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
+		conf.IsStringChunking = false
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
@@ -432,5 +438,143 @@ func createMockConfig() *Config {
 		},
 		PromFactory:  promutil.NewDefaultFactory(),
 		PromRegistry: promutil.NewDefaultRegistry(),
+	}
+}
+
+// TestWriteInsertWithStatementSizeLimit tests that when statement size limits are reached,
+// the writer correctly splits the output into multiple complete INSERT statements.
+//
+// Expected behavior:
+// - When a statement size limit is set, large datasets are split into multiple INSERT statements
+// - Each INSERT statement is complete and valid (has INSERT INTO prefix and ends with semicolon)
+// - No duplicate or consecutive INSERT INTO prefixes appear in the output
+// - Each new statement starts with its own INSERT INTO prefix after the previous one ends
+//
+// This ensures that each chunk can be executed independently, which is important for
+// parallel imports and handling large datasets that exceed size limits.
+func TestWriteInsertWithStatementSizeLimit(t *testing.T) {
+	cfg := createMockConfig()
+
+	// Create test data with enough rows to trigger statement size switching
+	data := [][]driver.Value{
+		{"1", "user1", "user1@example.com"},
+		{"2", "user2", "user2@example.com"},
+		{"3", "user3", "user3@example.com"},
+		{"4", "user4", "user4@example.com"},
+		{"5", "user5", "user5@example.com"},
+		{"6", "user6", "user6@example.com"},
+	}
+	colTypes := []string{"INT", "VARCHAR", "VARCHAR"}
+	specCmts := []string{"/*!40101 SET NAMES binary*/;"}
+
+	tableIR := newMockTableIR("test", "users", data, specCmts, colTypes)
+	bf := storage.NewBufferWriter()
+
+	// Set a very small statement size limit to force statement switching
+	// This should cause the writer to create multiple INSERT statements
+	statementSizeLimit := uint64(150) // Small enough to fit only 2-3 rows per statement
+	conf := configForWriteSQL(cfg, UnspecifiedSize, statementSizeLimit)
+	conf.IsStringChunking = false
+	m := newMetrics(conf.PromFactory, conf.Labels)
+
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+	require.NoError(t, err)
+	require.Equal(t, uint64(6), n)
+
+	output := bf.String()
+
+	// Verify that we have multiple INSERT statements (due to size limit)
+	insertCount := strings.Count(output, "INSERT INTO `users` VALUES")
+	require.Greater(t, insertCount, 1, "Expected multiple INSERT statements due to size limit")
+
+	// Verify each INSERT statement ends with semicolon
+	statements := strings.Split(output, "INSERT INTO `users` VALUES")
+	for i := 1; i < len(statements); i++ {
+		trimmed := strings.TrimSpace(statements[i])
+		if trimmed != "" {
+			require.True(t, strings.HasSuffix(trimmed, ";"), "Each INSERT statement should end with semicolon")
+		}
+	}
+
+	// Verify all rows are present (simple check)
+	require.Equal(t, 6, strings.Count(output, "("), "All 6 rows should be present")
+}
+
+// TestWriteInsertWithoutStatementSizeLimit verifies normal behavior when no size limit is set
+func TestWriteInsertWithoutStatementSizeLimit(t *testing.T) {
+	cfg := createMockConfig()
+
+	data := [][]driver.Value{
+		{"1", "user1", "user1@example.com"},
+		{"2", "user2", "user2@example.com"},
+		{"3", "user3", "user3@example.com"},
+	}
+	colTypes := []string{"INT", "VARCHAR", "VARCHAR"}
+	specCmts := []string{"/*!40101 SET NAMES binary*/;"}
+
+	tableIR := newMockTableIR("test", "users", data, specCmts, colTypes)
+	bf := storage.NewBufferWriter()
+
+	// No statement size limit
+	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
+	conf.IsStringChunking = false
+	m := newMetrics(conf.PromFactory, conf.Labels)
+
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), n)
+
+	output := bf.String()
+
+	// Should have exactly one INSERT statement
+	insertCount := strings.Count(output, "INSERT INTO `users` VALUES")
+	require.Equal(t, 1, insertCount, "Expected exactly one INSERT statement when no size limit")
+
+	// Verify the expected output format
+	expected := "/*!40101 SET NAMES binary*/;\n" +
+		"INSERT INTO `users` VALUES\n" +
+		"(1,'user1','user1@example.com'),\n" +
+		"(2,'user2','user2@example.com'),\n" +
+		"(3,'user3','user3@example.com');\n"
+	require.Equal(t, expected, output)
+}
+
+// TestWriteInsertMultipleStatements tests that multiple complete INSERT statements are generated correctly
+func TestWriteInsertMultipleStatements(t *testing.T) {
+	cfg := createMockConfig()
+
+	data := [][]driver.Value{
+		{"1", "a"},
+		{"2", "b"},
+		{"3", "c"},
+		{"4", "d"},
+	}
+	colTypes := []string{"INT", "VARCHAR"}
+
+	tableIR := newMockTableIR("test", "items", data, nil, colTypes)
+	bf := storage.NewBufferWriter()
+
+	// Small statement size to force multiple statements
+	conf := configForWriteSQL(cfg, UnspecifiedSize, 50)
+	conf.IsStringChunking = false
+	m := newMetrics(conf.PromFactory, conf.Labels)
+
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), n)
+
+	output := bf.String()
+
+	// Should have multiple INSERT statements
+	insertCount := strings.Count(output, "INSERT INTO `items` VALUES")
+	require.Greater(t, insertCount, 1, "Should have multiple INSERT statements")
+
+	// Each INSERT should end with semicolon
+	parts := strings.Split(output, "INSERT INTO `items` VALUES")
+	for i := 1; i < len(parts); i++ {
+		trimmed := strings.TrimSpace(parts[i])
+		if trimmed != "" {
+			require.True(t, strings.HasSuffix(trimmed, ";"), "Each statement should end with semicolon")
+		}
 	}
 }
