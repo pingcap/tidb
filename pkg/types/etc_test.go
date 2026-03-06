@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +54,7 @@ func testTypeStr(t *testing.T, tp byte, expect string) {
 }
 
 func testTypeToStr(t *testing.T, tp byte, charset string, expect string) {
-	v := TypeToStr(tp, charset)
+	v := TypeToStr(tp, charset, ast.GeomGeometry)
 	require.Equal(t, expect, v)
 }
 
@@ -91,6 +92,23 @@ func TestTypeToStr(t *testing.T) {
 	testTypeToStr(t, mysql.TypeBit, "binary", "bit")
 	testTypeToStr(t, mysql.TypeEnum, "binary", "enum")
 	testTypeToStr(t, mysql.TypeSet, "binary", "set")
+}
+
+func testGeoTypeToStr(t *testing.T, geo ast.GeometryType, expect string) {
+	v := TypeToStr(mysql.TypeGeometry, "", geo)
+	require.Equal(t, expect, v)
+}
+
+func TestGeoTypeToStr(t *testing.T) {
+	testGeoTypeToStr(t, ast.GeomGeometry, "geometry")
+	testGeoTypeToStr(t, ast.GeomPoint, "point")
+	testGeoTypeToStr(t, ast.GeomLineString, "linestring")
+	testGeoTypeToStr(t, ast.GeomPolygon, "polygon")
+
+	testGeoTypeToStr(t, ast.GeomGeometryCollection, "geometrycollection")
+	testGeoTypeToStr(t, ast.GeomMultiPoint, "multipoint")
+	testGeoTypeToStr(t, ast.GeomMultiLineString, "multilinestring")
+	testGeoTypeToStr(t, ast.GeomMultiPolygon, "multipolygon")
 }
 
 func TestEOFAsNil(t *testing.T) {

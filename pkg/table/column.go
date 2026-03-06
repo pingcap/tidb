@@ -86,7 +86,7 @@ func (n *ClonableExprNode) Internal() ast.ExprNode {
 
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
-	ans := []string{c.Name.O, types.TypeToStr(c.GetType(), c.GetCharset())}
+	ans := []string{c.Name.O, types.TypeToStr(c.GetType(), c.GetCharset(), c.GetGeometryType())}
 	if mysql.HasAutoIncrementFlag(c.GetFlag()) {
 		ans = append(ans, "AUTO_INCREMENT")
 	}

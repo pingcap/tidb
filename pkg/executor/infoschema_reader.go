@@ -1259,7 +1259,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			ordinalPos[i],         // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(colType, ft.GetCharset()), // DATA_TYPE
+			types.TypeToStr(colType, ft.GetCharset(), ft.GetGeometryType()), // DATA_TYPE
 			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
 			charOctLen,           // CHARACTER_OCTET_LENGTH
 			numericPrecision,     // NUMERIC_PRECISION

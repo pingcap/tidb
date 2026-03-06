@@ -109,6 +109,7 @@ go_test(
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/parser/types",
         "//pkg/testkit/testsetup",
         "//pkg/util/collate",
         "//pkg/util/context",

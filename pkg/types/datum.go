@@ -1039,7 +1039,7 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return d.convertToFloat(ctx, target)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeGeometry:
 		return d.convertToString(ctx, target)
 	case mysql.TypeTimestamp:
 		return d.convertToMysqlTimestamp(ctx, target)

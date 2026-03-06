@@ -526,6 +526,7 @@ const (
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
 	ColumnOptionSecondaryEngineAttribute
+	ColumnOptionSrid
 )
 
 var (
@@ -563,6 +564,7 @@ type ColumnOption struct {
 	ConstraintName      string
 	PrimaryKeyTp        PrimaryKeyType
 	SecondaryEngineAttr string
+	Srid                uint32
 }
 
 // Restore implements Node interface.
@@ -685,6 +687,8 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.StrValue)
+	case ColumnOptionSrid:
+		ctx.WritePlainf("/*!80003 SRID %d */", n.Srid)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
