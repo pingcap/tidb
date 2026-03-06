@@ -128,6 +128,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
 		nil,
+		nil,
 		1,
 	)
 	require.NoError(t, err)

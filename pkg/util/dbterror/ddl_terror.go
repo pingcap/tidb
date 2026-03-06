@@ -349,6 +349,11 @@ var (
 	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
 	ErrPlacementPolicyInUse = ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
 
+	// ErrMaskingPolicyExists is returned when masking policy already exists.
+	ErrMaskingPolicyExists = ClassDDL.NewStd(mysql.ErrMaskingPolicyExists)
+	// ErrMaskingPolicyNotExists is returned when masking policy does not exist.
+	ErrMaskingPolicyNotExists = ClassDDL.NewStd(mysql.ErrMaskingPolicyNotExists)
+
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 

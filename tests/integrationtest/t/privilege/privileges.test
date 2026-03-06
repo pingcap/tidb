@@ -84,6 +84,92 @@ disconnect placement_user;
 connection default;
 drop user placement_user;
 
+# TestMaskingPolicyStmt
+drop table if exists privilege__privileges.mask_t;
+create table privilege__privileges.mask_t (c char(10));
+CREATE USER mask_creator, mask_alter, mask_drop, mask_none;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_creator;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_alter;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_drop;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_none;
+GRANT `CREATE MASKING POLICY` ON *.* TO mask_creator;
+GRANT `ALTER MASKING POLICY` ON *.* TO mask_alter;
+GRANT `DROP MASKING POLICY` ON *.* TO mask_drop;
+
+connect (mask_none, localhost, mask_none,, privilege__privileges);
+connection mask_none;
+--error 1227
+create masking policy p on mask_t(c) as c;
+--error 1227
+alter table mask_t disable masking policy p;
+--error 1227
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+--error 1227
+alter table mask_t modify masking policy p set restrict on (insert_into_select);
+disconnect mask_none;
+
+connect (mask_creator, localhost, mask_creator,, privilege__privileges);
+connection mask_creator;
+create masking policy p on mask_t(c) as c;
+--error 1227
+alter table mask_t disable masking policy p;
+--error 1227
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+--error 1227
+alter table mask_t modify masking policy p set restrict on (insert_into_select);
+disconnect mask_creator;
+
+connect (mask_alter, localhost, mask_alter,, privilege__privileges);
+connection mask_alter;
+alter table mask_t disable masking policy p;
+alter table mask_t enable masking policy p;
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+alter table mask_t modify masking policy p set restrict on (insert_into_select, update_select);
+--error 1227
+alter table mask_t drop masking policy p;
+disconnect mask_alter;
+
+connect (mask_drop, localhost, mask_drop,, privilege__privileges);
+connection mask_drop;
+alter table mask_t drop masking policy p;
+disconnect mask_drop;
+
+connection default;
+drop user mask_creator;
+drop user mask_alter;
+drop user mask_drop;
+drop user mask_none;
+drop table privilege__privileges.mask_t;
+
+# TestMaskingPolicyRestrictOnRuntime
+drop table if exists privilege__privileges.mask_src;
+drop table if exists privilege__privileges.mask_dst;
+create table privilege__privileges.mask_src (c char(10));
+create table privilege__privileges.mask_dst (c char(10));
+insert into privilege__privileges.mask_src values ('secret');
+create user mask_restrict;
+grant select, insert, update, delete on privilege__privileges.* to mask_restrict;
+create masking policy p_restrict on mask_src(c) as
+    case when current_user() = 'root@%' then c else mask_full(c, '*') end
+    restrict on (insert_into_select, update_select, delete_select) enable;
+
+connect (mask_restrict, localhost, mask_restrict,, privilege__privileges);
+connection mask_restrict;
+--error 8274
+insert into mask_dst select c from mask_src;
+insert into mask_dst values ('secret');
+--error 8274
+update mask_dst set c = (select c from mask_src limit 1);
+--error 8274
+delete from mask_dst where c = (select c from mask_src limit 1);
+disconnect mask_restrict;
+
+connection default;
+alter table privilege__privileges.mask_src drop masking policy p_restrict;
+drop user mask_restrict;
+drop table privilege__privileges.mask_src;
+drop table privilege__privileges.mask_dst;
+
 # TestResourceGroupAdminDynamicPriv
 CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
