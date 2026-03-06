@@ -3595,6 +3595,34 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogRules, Value: "", Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			slowLogRules, err := ParseSessionSlowLogRules(val)
+			if err != nil {
+				return err
+			}
+			s.SlowLogRules.SlowLogRules = slowLogRules
+			s.SlowLogRules.NeedUpdateEffectiveFields = true
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			if vars.SlowLogRules.SlowLogRules != nil {
+				return vars.SlowLogRules.RawRules, nil
+			}
+			return "", nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			gRules, err := ParseGlobalSlowLogRules(s)
+			if err != nil {
+				return err
+			}
+			GlobalSlowLogRules.Store(gRules)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return GlobalSlowLogRules.Load().RawRules, nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
