@@ -1096,6 +1096,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
 		}
 		ft := baseCol.FieldType
+		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: c},
 			Tp:   &ft,
