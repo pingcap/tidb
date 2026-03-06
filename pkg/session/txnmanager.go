@@ -55,6 +55,7 @@ type txnManager struct {
 
 	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
+	traceCtx    context.Context
 
 	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
 	reservedOptimisticProviders [2]isolation.OptimisticTxnContextProvider
@@ -154,6 +155,7 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 }
 
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
+	m.traceCtx = ctx
 	ctxProvider, err := m.newProviderWithRequest(r)
 	if err != nil {
 		return err
@@ -190,8 +192,14 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 }
 
 func (m *txnManager) OnTxnEnd() {
+	traceCtx := m.traceCtx
+	if traceCtx == nil {
+		traceCtx = context.Background()
+	}
+
 	m.ctxProvider = nil
 	m.stmtNode = nil
+	m.traceCtx = nil
 
 	m.events = append(m.events, event{event: "txn end", duration: time.Since(m.lastInstant)})
 
@@ -202,7 +210,7 @@ func (m *txnManager) OnTxnEnd() {
 	// Emit txn.end trace event
 	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
 		sessVars := m.sctx.GetSessionVars()
-		traceevent.TraceEvent(context.Background(), traceevent.TxnLifecycle, "txn.end",
+		traceevent.TraceEvent(traceCtx, traceevent.TxnLifecycle, "txn.end",
 			zap.Duration("duration", duration),
 			zap.Uint64("stmt_count", uint64(sessVars.TxnCtx.StatementCount)),
 			zap.Bool("slow", slow),
@@ -228,6 +236,7 @@ func (m *txnManager) GetCurrentStmt() ast.StmtNode {
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	m.traceCtx = ctx
 	m.stmtNode = node
 
 	if m.ctxProvider == nil {
