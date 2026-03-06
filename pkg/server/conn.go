@@ -1232,15 +1232,27 @@ func (cc *clientConn) Run(ctx context.Context) {
 						timestamp = ctx.GetSessionVars().TxnCtx.StaleReadTs
 					}
 				}
-				logutil.Logger(ctx).Warn("command dispatched failed",
-					zap.String("connInfo", cc.String()),
-					zap.String("command", mysql.Command2Str[data[0]]),
-					zap.String("status", cc.SessionStatusToString()),
-					zap.Stringer("sql", getLastStmtInConn{cc}),
-					zap.String("txn_mode", txnMode),
-					zap.Uint64("timestamp", timestamp),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
-				)
+				sqlStmt := getLastStmtInConn{cc}.String()
+				if sqlStmt == `select $$` {
+					// MySQL Client sends `select $$` on connection. This is used to detect support for
+					// dollar quoted function or procedure body
+					// We suppress this here to reduce the log volume and noise.
+					//
+					// As the statement is hardcoded in MySQL, we don't need to `strings.EqualFold()` this.
+					//
+					// https://github.com/mysql/mysql-server/blob/447eb26e094b444a88c532028647e48228c3c04f/client/mysql.cc#L1288-L1292
+					logutil.Logger(ctx).Debug("command dispatched failed for `select $$`, this is expected")
+				} else {
+					logutil.Logger(ctx).Warn("command dispatched failed",
+						zap.String("connInfo", cc.String()),
+						zap.String("command", mysql.Command2Str[data[0]]),
+						zap.String("status", cc.SessionStatusToString()),
+						zap.String("sql", sqlStmt),
+						zap.String("txn_mode", txnMode),
+						zap.Uint64("timestamp", timestamp),
+						zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+					)
+				}
 			}
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)

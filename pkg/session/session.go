@@ -2561,8 +2561,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
 				sql = parser.Normalize(sql, s.sessionVars.EnableRedactLog)
-				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
-					zap.String("SQL", sql))
+				if sql == `select $$` {
+					logutil.Logger(ctx).Debug("compile SQL failed, expected for this query", zap.Error(err),
+						zap.String("SQL", sql))
+				} else {
+					logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+						zap.String("SQL", sql))
+				}
 			}
 		}
 		return nil, err
