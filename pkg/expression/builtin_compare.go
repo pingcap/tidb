@@ -3174,13 +3174,13 @@ func CompareInt(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chun
 		return compareNull(isNull0, isNull1), true, nil
 	}
 
-	getFlag := func(arg Expression) uint {
+	getTypeFlag := func(arg Expression) uint {
 		if c, ok := arg.(*Constant); ok && c.ParamMarker == nil {
 			return c.RetType.GetFlag()
 		}
 		return arg.GetType(sctx).GetFlag()
 	}
-	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(getFlag(lhsArg)), mysql.HasUnsignedFlag(getFlag(rhsArg))
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(getTypeFlag(lhsArg)), mysql.HasUnsignedFlag(getTypeFlag(rhsArg))
 	return int64(types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1)), false, nil
 }
 

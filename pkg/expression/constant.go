@@ -221,8 +221,8 @@ func (c *Constant) GetType(ctx EvalContext) *types.FieldType {
 	return c.RetType
 }
 
-// getTypeNonAlloc fills the provided FieldType for ParamMarker constants
-// without heap allocation, or returns c.RetType for non-ParamMarker constants.
+// getTypeNonAlloc fills buf for ParamMarker constants without heap allocation,
+// or returns c.RetType for non-ParamMarker constants.
 func (c *Constant) getTypeNonAlloc(ctx EvalContext, buf *types.FieldType) *types.FieldType {
 	if c.ParamMarker != nil {
 		types.InitUnspecifiedFieldType(buf)
