@@ -13,5 +13,8 @@ go_test(
     srcs = ["scope_test.go"],
     embed = [":servicescope"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_time//rate",
+    ],
 )
