@@ -197,7 +197,8 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 	if tp == mysql.TypeUnspecified {
 		tp = t.Type()
 	}
-	if tp == mysql.TypeTimestamp && loc != time.UTC {
+	// loc can be nil in some callers; treat it as UTC (i.e., skip conversion).
+	if tp == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
 		err = t.ConvertTimeZone(loc, time.UTC)
 		if err != nil {
 			return nil, err

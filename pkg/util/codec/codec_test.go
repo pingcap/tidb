@@ -1335,3 +1335,17 @@ func TestDatumHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, tests[len(tests)-1].d1.Equals(tests[len(tests)-1].d2))
 }
+
+func TestEncodeMySQLTimeNilLocForTimestamp(t *testing.T) {
+	ts := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 0), mysql.TypeTimestamp, types.DefaultFsp)
+	var gotNil, gotUTC []byte
+	require.NotPanics(t, func() {
+		var err error
+		gotNil, err = EncodeMySQLTime(nil, ts, mysql.TypeUnspecified, nil)
+		require.NoError(t, err)
+	})
+	var err error
+	gotUTC, err = EncodeMySQLTime(time.UTC, ts, mysql.TypeUnspecified, nil)
+	require.NoError(t, err)
+	require.Equal(t, gotUTC, gotNil)
+}
