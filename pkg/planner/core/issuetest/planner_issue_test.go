@@ -446,3 +446,34 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowAggPushDown = true
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE t1 (
+  c1 int NOT NULL,
+  c2 char(255) DEFAULT NULL,
+  PRIMARY KEY (c1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t2 (
+  c3 int NOT NULL,
+  c4 char(255) DEFAULT NULL,
+  PRIMARY KEY (c3) /*T![clustered_index] CLUSTERED */,
+  KEY f1 (c3),
+  CONSTRAINT f1 FOREIGN KEY (c3) REFERENCES t1 (c1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t3 (
+  c5 int DEFAULT NULL,
+  c6 char(255) DEFAULT NULL,
+  KEY c5 (c5),
+  CONSTRAINT f2 FOREIGN KEY (c5) REFERENCES t1 (c1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustQuery(`
+EXPLAIN SELECT COUNT(t1.c1), t1.c2 
+FROM t2 
+INNER JOIN t3 ON t3.c6 = t2.c4
+INNER JOIN t1 ON t1.c1 = t2.c3
+GROUP BY t2.c3, t1.c1, t1.c2;`).Check(testkit.Rows())
+}
