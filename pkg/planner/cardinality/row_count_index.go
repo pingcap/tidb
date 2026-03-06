@@ -353,40 +353,46 @@ func estimateRowCountWithUniformDistribution(
 	totalRowCount := stats.TotalRowCount()
 	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
 	notNullCount := histogram.NotNullCount()
+	// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+	skewMax := notNullCount - (histNDV - 1)
+	minTopN := topN.MinCount()
+	if minTopN > 0 && skewMax > 0 {
+		// The skewEstimate should not be larger than the minimum TopN value.
+		skewMax = min(skewMax, float64(minTopN))
+	} else {
+		skewMax = max(skewMax, float64(minTopN))
+	}
 
-	var avgRowEstimate float64
+	var count statistics.RowEstimate
 	if histNDV <= 0 || notNullCount == 0 { // Branch 1: all NDV's are in TopN, and no histograms.
-		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
-		// This can happen when sampling collects fewer than all NDV.
-		if histNDV > 0 && modifyCount == 0 {
-			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
-		}
-		// All values are in TopN (and TopN NDV is accurate).
+		// All values are in TopN.
 		// We need to derive a RowCount because the histogram is empty.
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
-		avgRowEstimate = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		count.Est = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		// if result is 0, it means that modifyCount is 0.
+		if count.Est == 0 {
+			count.Est = max(float64(minTopN)/max(histNDV, float64(outOfRangeBetweenRate)), 1)
+		}
 	} else { // Branch 2: some NDV's are in histograms
 		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-		avgRowEstimate = notNullCount / histNDV
+		count.Est = notNullCount / histNDV
 	}
 
 	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
 	if skewRatio > 0 {
-		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate := notNullCount - (histNDV - 1)
-		minTopN := topN.MinCount()
-		if minTopN > 0 {
-			// The skewEstimate should not be larger than the minimum TopN value.
-			skewEstimate = min(skewEstimate, float64(minTopN))
-		}
-		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
+		count = statistics.CalculateSkewRatioCounts(count.Est, skewMax, skewRatio)
 	}
+	if minTopN > 0 {
+		count.Est = min(count.Est, float64(minTopN))
+	}
+	count.MinEst = min(count.MinEst, count.Est)
+	count.MaxEst = max(count.MaxEst, count.Est)
 
-	return statistics.DefaultRowEst(avgRowEstimate)
+	return count
 }
 
 // equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
