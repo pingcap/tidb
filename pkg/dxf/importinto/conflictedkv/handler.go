@@ -282,9 +282,6 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		rowKeys2Handle[string(rowKey)] = hdl.handle
 	}
 
-	if err := h.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	res, err := h.snapshot.BatchGet(ctx, rowKeys)
 	if err != nil {
 		return errors.Trace(err)

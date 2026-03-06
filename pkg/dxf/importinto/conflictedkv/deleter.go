@@ -209,9 +209,6 @@ func (d *Deleter) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []comm
 // existence of the KVs to be deleted to avoid the overhead to refresh the TS
 // every time.
 func (d *Deleter) gatherKeysToDelete(ctx context.Context, pairs []common.KvPair) (err error) {
-	if err = d.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	allKeys := make([]tidbkv.Key, 0, len(pairs))
 	for _, p := range pairs {
 		allKeys = append(allKeys, p.Key)

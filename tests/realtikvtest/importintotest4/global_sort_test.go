@@ -547,6 +547,113 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond)
 }
 
+func TestNextGenMeteringWithConflictResolution(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Metering is not supported in classic kernel type")
+	}
+	bak := metering.FlushInterval
+	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("meter-conflict-test")
+	srcStore, err := handle.NewObjStore(ctx, srcDirURI)
+	s.NoError(err)
+	t.Cleanup(func() {
+		srcStore.Close()
+	})
+	// row 2 and row 3 conflict on unique key b, they should be removed.
+	s.NoError(srcStore.WriteFile(ctx, "t.1.csv", []byte("1,10\n2,20\n3,20\n4,40\n")))
+	s.prepareAndUseDB("metering_conflict")
+	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort-conflict")
+	s.tk.MustExec("create table t (a bigint primary key, b bigint, unique key uk_b(b));")
+
+	baseTime := time.Now().Truncate(time.Minute).Unix()
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+		// the metering library requires the timestamp to be at minute boundary, but
+		// during test, we want to reduce the flush interval.
+		*ts = baseTime
+		baseTime += 60
+	})
+	var gotMeterData atomic.String
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+		gotMeterData.Store(s.String())
+	})
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
+	})
+
+	importSQL := fmt.Sprintf(`import into t FROM '%s'
+		with cloud_storage_uri='%s'`, realtikvtest.GetNextGenObjStoreURI("meter-conflict-test/*.csv"), glSortURI)
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 10", "4 40"))
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		return gotMeterData.Load() != ""
+	}, 30*time.Second, 300*time.Millisecond)
+
+	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
+	s.Regexp(`requests\{get: [1-9]\d*, put: [1-9]\d*\}`, gotMeterData.Load())
+	s.NotContains(gotMeterData.Load(), "cluster{r: 0B")
+	s.NotContains(gotMeterData.Load(), ", w: 0B}")
+
+	collectSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepCollectConflicts)
+	s.Greater(collectSum.GetReqCnt.Load(), uint64(0))
+	s.Greater(collectSum.PutReqCnt.Load(), uint64(0))
+	conflictResolutionSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepConflictResolution)
+	s.Greater(conflictResolutionSum.GetReqCnt.Load(), uint64(0))
+	s.EqualValues(0, conflictResolutionSum.PutReqCnt.Load())
+
+	ingestSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.Greater(ingestSum.PutReqCnt.Load(), uint64(0))
+
+	s.Eventually(func() bool {
+		itemsPtr := rowAndSizeMeterItems.Load()
+		if itemsPtr == nil {
+			return false
+		}
+		items := *itemsPtr
+		rowCnt, ok := items[metering.RowCountField].(int64)
+		if !ok || rowCnt != 2 {
+			return false
+		}
+		dataKVBytes, ok := items[metering.DataKVBytesField].(int64)
+		if !ok || dataKVBytes <= 0 {
+			return false
+		}
+		indexKVBytes, ok := items[metering.IndexKVBytesField].(int64)
+		if !ok || indexKVBytes <= 0 {
+			return false
+		}
+		requiredSlots, ok := items[metering.RequiredSlotsField].(int)
+		if !ok || requiredSlots != task.RequiredSlots {
+			return false
+		}
+		maxNodeCount, ok := items[metering.MaxNodeCountField].(int)
+		if !ok || maxNodeCount != task.MaxNodeCount {
+			return false
+		}
+		durationSeconds, ok := items[metering.DurationSecondsField].(int64)
+		return ok && durationSeconds > 0
+	}, 30*time.Second, 100*time.Millisecond)
+}
+
 func TestDropTableBeforeCleanup(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("switching table mode is not supported in nextgen")
