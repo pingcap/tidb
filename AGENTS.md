@@ -175,6 +175,13 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 - Avoid force-push when possible; prefer follow-up commits and squash merge.
 - If force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
 
+#### Writing good PR descriptions
+
+- **"Problem Summary" (why) is the primary section.** Lead with why the change is needed: what problem exists, what limitation it removes, or what invariant it restores. The reviewer should understand the motivation before reading any code.
+- **"What changed" (how) is secondary.** Summarize the general approach in 1–3 sentences. Do not enumerate every file or function touched; the diff already shows that. Only call out non-obvious design decisions or trade-offs.
+- Bad example: "Rename function A to B. Remove function C. Add parameter X to function D. Update callers E, F, G." — this restates the diff without explaining motivation.
+- Good example: "Callers of A need both X and Y, but A only returns X, so every caller has to compute Y separately with duplicated logic. Combine both into A so callers get everything in one call." — this explains the problem first, then the approach.
+
 ## Agent Output Contract
 
 When finishing a task, report:
