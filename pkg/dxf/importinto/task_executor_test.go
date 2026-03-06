@@ -72,7 +72,7 @@ func TestImportTaskExecutor(t *testing.T) {
 
 func TestGetOnDupForKVGroup(t *testing.T) {
 	t.Run("data-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeRecord)
+		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
@@ -88,7 +88,7 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	}
 
 	t.Run("unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeRecord)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
@@ -99,7 +99,7 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	})
 
 	t.Run("non-unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeRecord)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRemove, onDup)
 
@@ -109,14 +109,14 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	})
 
 	t.Run("unknown-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3), importer.OnDupKeyModeRecord)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3), importer.OnDupKeyModeCapture)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 		require.ErrorContains(t, err, "unknown index 3")
 	})
 
 	t.Run("invalid-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number", importer.OnDupKeyModeRecord)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number", importer.OnDupKeyModeCapture)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 	})

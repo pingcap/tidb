@@ -155,14 +155,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
-	sqlrec := sql + ", " + onDupKeyOption + "='record'"
-	stmt, err = p.ParseOneStmt(sqlrec, "", "")
-	require.NoError(t, err, sqlrec)
+	sqlCapture := sql + ", " + onDupKeyOption + "='capture'"
+	stmt, err = p.ParseOneStmt(sqlCapture, "", "")
+	require.NoError(t, err, sqlCapture)
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sqlrec)
-	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlrec)
-	require.Equal(t, OnDupKeyModeRecord, plan.OnDupKey, sql)
+	require.NoError(t, err, sqlCapture)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlCapture)
+	require.Equal(t, OnDupKeyModeCapture, plan.OnDupKey, sqlCapture)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
@@ -209,7 +209,7 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 		return options
 	}
 
-	sql := "import into t from '/file.csv' with on_duplicate_key='record'"
+	sql := "import into t from '/file.csv' with on_duplicate_key='capture'"
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -248,8 +248,8 @@ func TestGetConflictHandlingMode(t *testing.T) {
 	plan := &Plan{}
 	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 
-	plan.OnDupKey = OnDupKeyModeRecord
-	require.Equal(t, OnDupKeyModeRecord, plan.GetOnDupKeyMode())
+	plan.OnDupKey = OnDupKeyModeCapture
+	require.Equal(t, OnDupKeyModeCapture, plan.GetOnDupKeyMode())
 
 	plan.OnDupKey = OnDupKeyModeError
 	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())

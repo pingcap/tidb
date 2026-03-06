@@ -113,7 +113,7 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 
 	sortStorageURI := fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t %s FROM 'gs://conflicts/t.*.csv?endpoint=%s'
-		with __max_engine_size = '1', cloud_storage_uri='%s', on_duplicate_key='record'`,
+		with __max_engine_size = '1', cloud_storage_uri='%s', on_duplicate_key='capture'`,
 		columnVars, gcsEndpoint, sortStorageURI)
 	if len(options) > 0 {
 		importSQL = fmt.Sprintf("%s, %s", importSQL, options)
@@ -780,7 +780,7 @@ func (s *mockGCSSuite) TestGlobalSortOnDuplicateKeyError() {
 		_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
 		return goerrors.Is(err2, storage.ErrTaskNotFound)
 	}, 30*time.Second, 100*time.Millisecond)
-	importSQL = fmt.Sprintf(`%s, on_duplicate_key='record'`, importSQL)
+	importSQL = fmt.Sprintf(`%s, on_duplicate_key='capture'`, importSQL)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("2 2"))
 }

@@ -520,7 +520,7 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 }
 
 func getOnDupForConflictedKV(onDupKeyMode importer.OnDupKeyMode) engineapi.OnDuplicateKey {
-	if onDupKeyMode == importer.OnDupKeyModeRecord {
+	if onDupKeyMode == importer.OnDupKeyModeCapture {
 		return engineapi.OnDuplicateKeyRecord
 	}
 	return engineapi.OnDuplicateKeyError

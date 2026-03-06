@@ -212,9 +212,9 @@ var (
 type OnDupKeyMode string
 
 const (
-	// OnDupKeyModeRecord keeps current behavior, i.e. remove conflicted
-	// rows and record them for later inspection.
-	OnDupKeyModeRecord OnDupKeyMode = "record"
+	// OnDupKeyModeCapture keeps current behavior, i.e. remove conflicted
+	// rows and capture them for later inspection.
+	OnDupKeyModeCapture OnDupKeyMode = "capture"
 	// OnDupKeyModeError means fail on first conflict.
 	OnDupKeyModeError OnDupKeyMode = "error"
 )
@@ -334,7 +334,7 @@ type Plan struct {
 	Keyspace string
 }
 
-// GetOnDupKeyMode returns the normalized conflict handling mode.
+// GetOnDupKeyMode returns the conflict handling mode.
 // For task metadata generated before this option was introduced, the value is
 // empty.
 // Note: currently it's not possible to have other unknown values, so we don't
@@ -889,7 +889,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		mode := OnDupKeyMode(strings.ToLower(v))
 		switch mode {
-		case OnDupKeyModeRecord, OnDupKeyModeError:
+		case OnDupKeyModeCapture, OnDupKeyModeError:
 			p.OnDupKey = mode
 		default:
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
