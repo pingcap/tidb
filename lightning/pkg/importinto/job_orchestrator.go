@@ -40,7 +40,7 @@ const (
 	// continue after the batch context is canceled. This gives the client enough
 	// time to get the job ID and record the checkpoint so later cleanup can find
 	// the job reliably.
-	submitGraceTimeout = 30 * time.Second
+	submitGraceTimeout = time.Minute
 )
 
 const (
@@ -339,12 +339,13 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 		eg.Go(func() error {
 			logger := o.logger.With(zap.String("database", table.Database), zap.String("table", table.Table))
 
-			if err := egCtx.Err(); err != nil {
-				return errors.Trace(err)
-			}
+			// Still inspect checkpoints after errgroup cancellation so previously
+			// running jobs remain tracked and can be reconciled during cleanup.
+			checkpointCtx, cancelCheckpoint := context.WithTimeout(context.WithoutCancel(ctx), cancelTimeout)
+			defer cancelCheckpoint()
 
 			// Check if we can resume an existing job
-			cp, err := o.cpMgr.Get(egCtx, common.UniqueTable(table.Database, table.Table))
+			cp, err := o.cpMgr.Get(checkpointCtx, common.UniqueTable(table.Database, table.Table))
 			if err != nil {
 				return errors.Annotatef(err, "get checkpoint for %s.%s", table.Database, table.Table)
 			}
@@ -354,47 +355,46 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 				return nil
 			}
 
-			var job *ImportJob
 			if cp != nil && cp.JobID > 0 && cp.Status == CheckpointStatusRunning {
 				// Resume existing running job
 				logger.Info("resuming previously running job", zap.Int64("jobID", cp.JobID))
-				job = &ImportJob{
+				appendJob(&ImportJob{
 					JobID:     cp.JobID,
 					TableMeta: table,
 					GroupKey:  o.submitter.GetGroupKey(),
-				}
-			} else {
-				// Need to submit new job
-				// This handles: no checkpoint, failed checkpoint, or cancelled checkpoint
-				if cp != nil {
-					logger.Info("previous job failed or cancelled, submitting new job",
-						zap.String("previousStatus", cp.Status.String()),
-						zap.Int64("previousJobID", cp.JobID),
-					)
-				} else {
-					logger.Info("submitting new import job")
-				}
-
-				if err := egCtx.Err(); err != nil {
-					return errors.Trace(err)
-				}
-
-				submitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), submitGraceTimeout)
-				defer cancel()
-
-				job, err = o.submitter.SubmitTable(submitCtx, table)
-				if err != nil {
-					return errors.Annotatef(err, "submit table %s.%s", table.Database, table.Table)
-				}
-
-				appendJob(job)
-				if err := o.recordSubmission(submitCtx, job); err != nil {
-					return errors.Annotatef(err, "record submission for %s.%s", table.Database, table.Table)
-				}
+				})
 				return nil
 			}
 
+			// Need to submit new job
+			// This handles: no checkpoint, failed checkpoint, or cancelled checkpoint
+			if cp != nil {
+				logger.Info("previous job failed or cancelled, submitting new job",
+					zap.String("previousStatus", cp.Status.String()),
+					zap.Int64("previousJobID", cp.JobID),
+				)
+			} else {
+				logger.Info("submitting new import job")
+			}
+
+			if err := egCtx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
+			submitCtx, cancel := newStartedSubmitContext(ctx)
+			defer cancel()
+
+			job, err := o.submitter.SubmitTable(submitCtx, table)
+			if err != nil {
+				return errors.Annotatef(err, "submit table %s.%s", table.Database, table.Table)
+			}
+
 			appendJob(job)
+			recordCtx, cancelRecord := newSubmissionRecordContext(ctx)
+			defer cancelRecord()
+			if err := o.recordSubmission(recordCtx, job); err != nil {
+				return errors.Annotatef(err, "record submission for %s.%s", table.Database, table.Table)
+			}
 			return nil
 		})
 	}
@@ -410,4 +410,43 @@ func (o *DefaultJobOrchestrator) recordSubmission(ctx context.Context, job *Impo
 		Status:    CheckpointStatusRunning,
 		GroupKey:  job.GroupKey,
 	})
+}
+
+func getSubmitGraceTimeout() time.Duration {
+	graceTimeout := submitGraceTimeout
+	failpoint.Inject("setSubmitGraceTimeout", func(val failpoint.Value) {
+		parsedTimeout, err := time.ParseDuration(val.(string))
+		if err == nil {
+			graceTimeout = parsedTimeout
+		}
+	})
+	return graceTimeout
+}
+
+// newStartedSubmitContext is used for submits that have already started.
+// We cannot keep using the parent errgroup context here, because a sibling
+// submit failure or parent cancellation would abort this request immediately
+// and we could return before receiving the detached job ID. Instead, keep the
+// started submit alive for a bounded grace period that begins when the parent
+// context is canceled.
+func newStartedSubmitContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	graceCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, func() {
+		timer := time.NewTimer(getSubmitGraceTimeout())
+		defer timer.Stop()
+
+		select {
+		case <-graceCtx.Done():
+		case <-timer.C:
+			cancel()
+		}
+	})
+	return graceCtx, func() {
+		stop()
+		cancel()
+	}
+}
+
+func newSubmissionRecordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), getSubmitGraceTimeout())
 }
