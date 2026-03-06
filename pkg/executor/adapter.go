@@ -1747,17 +1747,24 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		v.ResTbl.Lock()
-		err1 := v.ResTbl.DerefAndClose()
-		// Make sure we do not hold the lock for longer than necessary.
-		v.ResTbl.Unlock()
-		// No need to lock IterInTbl.
-		err2 := v.IterInTbl.DerefAndClose()
-		if err1 != nil {
-			return err1
+		if v == nil {
+			continue
 		}
-		if err2 != nil {
-			return err2
+		if v.ResTbl != nil {
+			v.ResTbl.Lock()
+			err1 := v.ResTbl.DerefAndClose()
+			// Make sure we do not hold the lock for longer than necessary.
+			v.ResTbl.Unlock()
+			if err1 != nil {
+				return err1
+			}
+		}
+		// No need to lock IterInTbl.
+		if v.IterInTbl != nil {
+			err2 := v.IterInTbl.DerefAndClose()
+			if err2 != nil {
+				return err2
+			}
 		}
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil

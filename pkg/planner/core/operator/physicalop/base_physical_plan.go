@@ -381,7 +381,7 @@ func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.P
 		newChildren := children[:0]
 		for _, child := range children {
 			if child.TaskTp != property.MppTaskType {
-				child.IndexJoinProp = prop.IndexJoinProp
+				child.IndexJoinProp = prop.IndexJoinProp.CloneEssentialFields()
 				// only admit non-mpp task prop.
 				newChildren = append(newChildren, child)
 			}
@@ -400,7 +400,7 @@ func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.Physic
 	// only admit root & cop task type to push down indexJoinProp.
 	if prop.IndexJoinProp != nil {
 		if child.TaskTp != property.MppTaskType {
-			child.IndexJoinProp = prop.IndexJoinProp
+			child.IndexJoinProp = prop.IndexJoinProp.CloneEssentialFields()
 		} else {
 			// only admit non-mpp task prop.
 			child = nil

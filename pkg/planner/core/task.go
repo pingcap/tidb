@@ -246,6 +246,12 @@ func attach2Task4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &physicalop.RootTask{}
 	task.SetPlan(p)
+	if rt, ok := lTask.(*physicalop.RootTask); ok && rt.IndexJoinInfo != nil {
+		task.IndexJoinInfo = rt.IndexJoinInfo
+	}
+	if rt, ok := rTask.(*physicalop.RootTask); ok && rt.IndexJoinInfo != nil {
+		task.IndexJoinInfo = rt.IndexJoinInfo
+	}
 	task.Warnings.CopyFrom(&rTask.(*physicalop.RootTask).Warnings, &lTask.(*physicalop.RootTask).Warnings)
 	return task
 }
