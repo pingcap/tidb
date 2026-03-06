@@ -7205,7 +7205,9 @@ func (e *executor) AlterTableSetRegionSplitPolicy(ctx sessionctx.Context, ident 
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
-	}
+		SessionVars:    make(map[string]string),
+ 	}
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	args := &model.AlterTableSetRegionSplitPolicyArgs{
 		IndexName: indexName,
