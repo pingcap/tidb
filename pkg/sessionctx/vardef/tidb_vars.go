@@ -984,6 +984,10 @@ const (
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
+	// TiDBEnableSampleBasedGlobalStats indicates whether to build global stats from merged
+	// partition samples during ANALYZE, instead of merging already-built partition-level
+	// TopN and Histogram structures. Only works with analyze version 2.
+	TiDBEnableSampleBasedGlobalStats = "tidb_enable_sample_based_global_stats"
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
@@ -1684,6 +1688,7 @@ const (
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
 	DefTiDBEnableAsyncMergeGlobalStats                = true
+	DefTiDBEnableSampleBasedGlobalStats               = false
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true

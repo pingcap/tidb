@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -42,11 +43,13 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
@@ -66,6 +69,25 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	// globalSampleCollectors accumulates per-partition sample collectors keyed by table ID
+	// for building global stats from merged samples. Only populated when
+	// tidb_enable_sample_based_global_stats is enabled.
+	globalSampleCollectors map[int64]*statistics.ReservoirRowSampleCollector
+	// partitionSamplesToSave stores serialized (proto-marshalled) pruned per-partition
+	// sample collectors keyed by partition physical ID, to persist after analysis completes.
+	partitionSamplesToSave map[int64][]byte
+	// samplePruners stores per-table sample pruners for proportional pruning.
+	samplePruners map[int64]*statistics.SamplePruner
+	// analyzedPartitions tracks freshly analyzed partition IDs per table.
+	analyzedPartitions map[int64]map[int64]struct{} // tableID → set of partitionIDs
+	// globalSampleColsInfo stores the filtered ColsInfo from the analyze task
+	// for each table, keyed by table ID. These match the column positions in
+	// the sample collectors (after filterSkipColumnTypes).
+	globalSampleColsInfo map[int64][]*model.ColumnInfo
+	// globalSampleIndexes stores the adjusted Indexes from the analyze task
+	// for each table, keyed by table ID. Their col.Offset values match the
+	// positions in globalSampleColsInfo (after getModifiedIndexesInfoForAnalyze).
+	globalSampleIndexes map[int64][]*model.IndexInfo
 }
 
 var (
@@ -138,6 +160,21 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
+	sampleBasedGlobalStats := needGlobalStats && sessionVars.EnableSampleBasedGlobalStats
+	if sampleBasedGlobalStats {
+		e.globalSampleCollectors = make(map[int64]*statistics.ReservoirRowSampleCollector)
+		e.partitionSamplesToSave = make(map[int64][]byte)
+		e.samplePruners = make(map[int64]*statistics.SamplePruner)
+		e.analyzedPartitions = make(map[int64]map[int64]struct{})
+		e.globalSampleColsInfo = make(map[int64][]*model.ColumnInfo)
+		e.globalSampleIndexes = make(map[int64][]*model.IndexInfo)
+	}
+	statslogutil.StatsLogger().Info("analyze started",
+		zap.Int("tasks", len(tasks)),
+		zap.Int("partitionTasks", countPartitionTasks(tasks)),
+		zap.Int("concurrency", buildStatsConcurrency),
+		zap.Bool("needGlobalStats", needGlobalStats),
+		zap.Bool("sampleBasedGlobalStats", sampleBasedGlobalStats))
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
@@ -145,6 +182,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
+		// Capture the filtered ColsInfo and adjusted Indexes from partition
+		// column tasks so that buildGlobalStatsFromSamples can pass them
+		// (instead of raw table.Meta().Columns/Indices) to align with sample
+		// collector positions after filterSkipColumnTypes.
+		if sampleBasedGlobalStats && task.taskType == colTask && task.colExec != nil {
+			tableID := task.colExec.tableID
+			if tableID.IsPartitionTable() {
+				if _, ok := e.globalSampleColsInfo[tableID.TableID]; !ok {
+					e.globalSampleColsInfo[tableID.TableID] = task.colExec.colsInfo
+					e.globalSampleIndexes[tableID.TableID] = task.colExec.indexes
+				}
+			}
+		}
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
@@ -184,7 +234,22 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
+		statslogutil.StatsLogger().Info("analyze global stats merge starting",
+			zap.Int("tables", len(globalStatsMap)),
+			zap.Bool("sampleBasedGlobalStats", sampleBasedGlobalStats))
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
+		// Release accumulated sample collectors to free memory.
+		for id, c := range e.globalSampleCollectors {
+			if c != nil {
+				c.DestroyAndPutToPool()
+			}
+			delete(e.globalSampleCollectors, id)
+		}
+		e.globalSampleCollectors = nil
+		e.partitionSamplesToSave = nil
+		statslogutil.StatsLogger().Info("analyze global stats merge done",
+			zap.Int("tables", len(globalStatsMap)),
+			zap.Error(err))
 		if err != nil {
 			return err
 		}
@@ -207,6 +272,8 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
+	statslogutil.StatsLogger().Info("analyze complete",
+		zap.Int("tasks", len(tasks)))
 	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
 }
 
@@ -478,7 +545,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			finishJobWithLog(statsHandle, results.Job, err)
 			continue
 		}
-		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		recordPartitionForGlobalStats(needGlobalStats, globalStatsMap, results)
+		e.mergePartitionSamplesForGlobal(results)
+		// Save pruned samples immediately using pool session (not analyze session).
+		if e.globalSampleCollectors != nil {
+			e.flushPartitionSample(statsHandle, results.TableID.PartitionID)
+		}
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
@@ -530,6 +602,10 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			break
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
+		statslogutil.StatsLogger().Info("analyze partition start",
+			zap.String("table", task.job.TableName),
+			zap.String("partition", task.job.PartitionName),
+			zap.String("job", task.job.JobInfo))
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
@@ -612,7 +688,146 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 	}
 }
 
-func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
+// mergePartitionSamplesForGlobal incrementally merges per-partition sample collectors into
+// the global sample collector for sample-based global stats. Only operates when the feature
+// is enabled and results carry a RowCollector.
+// It also prunes and stashes a copy for later persistence.
+func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.AnalyzeResults) {
+	if e.globalSampleCollectors == nil || results.RowCollector == nil || !results.TableID.IsPartitionTable() {
+		return
+	}
+	rc := results.RowCollector
+	// Release the memory tracked by the per-partition analyze worker. When
+	// keepRootCollector is true, buildSamplingStats intentionally skips
+	// releasing rootCollectorMemSize so the caller can use the collector.
+	// Now that we are consuming and destroying it, release the debt.
+	rcMemSize := rc.Base().MemSize
+	tableID := results.TableID.TableID
+	partitionID := results.TableID.PartitionID
+	// Track the analyzed partition.
+	if e.analyzedPartitions[tableID] == nil {
+		e.analyzedPartitions[tableID] = make(map[int64]struct{})
+	}
+	e.analyzedPartitions[tableID][partitionID] = struct{}{}
+
+	// Initialize SamplePruner for the table if not yet done.
+	if _, ok := e.samplePruners[tableID]; !ok {
+		totalPartitions := 1
+		is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+		if tbl, ok := is.TableByID(context.Background(), tableID); ok {
+			if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+				totalPartitions = len(pi.Definitions)
+			}
+		}
+		e.samplePruners[tableID] = statistics.NewSamplePruner(totalPartitions, statistics.DefaultSampleBudget)
+	}
+
+	// Prune and serialize a copy for later persistence. We serialize immediately
+	// to avoid shared-pointer issues with FMSketches when the original collector
+	// is destroyed during merge.
+	pruner := e.samplePruners[tableID]
+	target := pruner.PruneCount(rc.Base().Count)
+	data := serializePrunedSamples(rc, target)
+	if data != nil {
+		e.partitionSamplesToSave[partitionID] = data
+	}
+	pruner.Observe(rc.Base().Count)
+
+	// Merge into the global collector.
+	globalCollector, ok := e.globalSampleCollectors[tableID]
+	if !ok {
+		// First partition for this table — create a Reservoir accumulator with
+		// initialized FMSketches so that MergeCollector can merge into them.
+		totalLen := len(rc.Base().FMSketches)
+		global := statistics.NewReservoirRowSampleCollector(statistics.DefaultSampleBudget, totalLen)
+		for range totalLen {
+			global.Base().FMSketches = append(global.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+		}
+		global.MergeCollector(rc)
+		e.globalSampleCollectors[tableID] = global
+		if results.MemTracker != nil {
+			results.MemTracker.Release(rcMemSize)
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
+		}
+		rc.DestroyAndPutToPool()
+		results.RowCollector = nil
+		return
+	}
+	globalCollector.MergeCollector(rc)
+	if results.MemTracker != nil {
+		results.MemTracker.Release(rcMemSize)
+	} else {
+		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
+	}
+	rc.DestroyAndPutToPool()
+	results.RowCollector = nil
+}
+
+// flushPartitionSample saves a single partition's pruned sample to storage
+// using a pool session (not the analyze session's memory tracker), then
+// removes it from the pending map.
+func (e *AnalyzeExec) flushPartitionSample(statsHandle *handle.Handle, partitionID int64) {
+	data, ok := e.partitionSamplesToSave[partitionID]
+	if !ok || len(data) == 0 {
+		return
+	}
+	delete(e.partitionSamplesToSave, partitionID)
+	err := handleutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return storage.SavePartitionSampleData(sctx, partitionID, data)
+	}, handleutil.FlagWrapTxn)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to save partition samples",
+			zap.Int64("partitionID", partitionID), zap.Error(err))
+	}
+}
+
+// serializePrunedSamples prunes the collector's samples to targetSize and
+// serializes the result to protobuf bytes. Works with any RowSampleCollector type.
+// Serializing immediately avoids shared-pointer issues with FMSketches when the
+// original collector is later destroyed during merge.
+func serializePrunedSamples(rc statistics.RowSampleCollector, targetSize int) []byte {
+	// For ReservoirRowSampleCollector, use PruneTo for proper A-Res sub-sampling.
+	if reservoir, ok := rc.(*statistics.ReservoirRowSampleCollector); ok && targetSize > 0 && targetSize < len(rc.Base().Samples) {
+		pruned := reservoir.PruneTo(targetSize)
+		pb := pruned.Base().ToProto()
+		data, err := pb.Marshal()
+		if err != nil {
+			statslogutil.StatsLogger().Warn("failed to marshal pruned sample collector",
+				zap.Int("targetSize", targetSize), zap.Error(err))
+			return nil
+		}
+		return data
+	}
+	// For Bernoulli or when no pruning is needed, serialize via ToProto() which
+	// creates safe copies of FMSketches. Then truncate samples in the proto if needed.
+	pb := rc.Base().ToProto()
+	if targetSize > 0 && targetSize < len(pb.Samples) {
+		pb.Samples = pb.Samples[:targetSize]
+	}
+	data, err := pb.Marshal()
+	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to marshal sample collector",
+			zap.Int("targetSize", targetSize), zap.Error(err))
+		return nil
+	}
+	return data
+}
+
+// countPartitionTasks counts distinct partition tasks (tasks whose TableID
+// indicates a partitioned table).
+func countPartitionTasks(tasks []*analyzeTask) int {
+	seen := make(map[int64]struct{})
+	for _, task := range tasks {
+		tid := getTableIDFromTask(task)
+		if tid.IsPartitionTable() {
+			seen[tid.PartitionID] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+func recordPartitionForGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
 	if results.TableID.IsPartitionTable() && needGlobalStats {
 		for _, result := range results.Ars {
 			if result.IsIndex == 0 {
