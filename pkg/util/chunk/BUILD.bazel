@@ -27,6 +27,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/types",
         "//pkg/util/checksum",
+        "//pkg/util/collate",
         "//pkg/util/disjointset",
         "//pkg/util/disk",
         "//pkg/util/encrypt",

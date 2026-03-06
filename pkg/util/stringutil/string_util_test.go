@@ -15,6 +15,7 @@
 package stringutil
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -284,6 +285,110 @@ func BenchmarkBuildStringFromLabels(b *testing.B) {
 		b.Run(testcase.name, func(b *testing.B) {
 			b.ResetTimer()
 			BuildStringFromLabels(testcase.labels)
+		})
+	}
+}
+
+func TestGetUtf8SubStringBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		n        int
+		expected []byte
+	}{
+		{
+			name:     "ASCII取前5个字符",
+			input:    "Hello, World!",
+			n:        5,
+			expected: []byte("Hello"),
+		},
+		{
+			name:     "ASCII取全部字符",
+			input:    "Hello",
+			n:        5,
+			expected: []byte("Hello"),
+		},
+		{
+			name:     "ASCII超过长度",
+			input:    "Hi",
+			n:        10,
+			expected: []byte("Hi"),
+		},
+		{
+			name:     "中文取前2个字符",
+			input:    "你好世界",
+			n:        2,
+			expected: []byte("你好"),
+		},
+		{
+			name:     "中文取部分",
+			input:    "Hello世界",
+			n:        7,
+			expected: []byte("Hello世界"),
+		},
+		{
+			name:     "包含Emoji",
+			input:    "Hi🌍Go",
+			n:        3,
+			expected: []byte("Hi🌍"),
+		},
+		{
+			name:     "只取Emoji",
+			input:    "🌍🌎🌏",
+			n:        2,
+			expected: []byte("🌍🌎"),
+		},
+		{
+			name:     "中英文混合",
+			input:    "Hello, 世界! 🌍",
+			n:        8,
+			expected: []byte("Hello, 世"),
+		},
+		{
+			name:     "n为0",
+			input:    "Hello",
+			n:        0,
+			expected: []byte{},
+		},
+		{
+			name:     "n为负数",
+			input:    "Hello",
+			n:        -3,
+			expected: []byte{},
+		},
+		{
+			name:     "空字符串",
+			input:    "",
+			n:        5,
+			expected: []byte{},
+		},
+		{
+			name:     "取1个字符",
+			input:    "你好",
+			n:        1,
+			expected: []byte("你"),
+		},
+		{
+			name:     "包含换行符",
+			input:    "Line1\nLine2",
+			n:        6,
+			expected: []byte("Line1\n"),
+		},
+		{
+			name:     "包含空格",
+			input:    "   ",
+			n:        2,
+			expected: []byte("  "),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetUtf8SubStringBytes(tt.input, tt.n)
+			if !bytes.Equal(got, tt.expected) {
+				t.Errorf("GetUtf8SubStringBytes(%q, %d) = %q, want %q",
+					tt.input, tt.n, got, tt.expected)
+			}
 		})
 	}
 }

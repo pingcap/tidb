@@ -18,7 +18,12 @@
 
 package collate
 
-import "unicode/utf8"
+import (
+	"unicode/utf8"
+
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+)
 
 // unicode0900AICICollator implements UCA. see http://unicode.org/reports/tr10/
 type unicode0900AICICollator struct {
@@ -146,6 +151,11 @@ func (uc *unicode0900AICICollator) KeyWithoutTrimRightSpace(str string) []byte {
 // Pattern implements Collator interface.
 func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
+}
+
+// ImmutablePrefixKey implements Collator interface
+func (uc *unicode0900AICICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	return uc.ImmutableKey(uc.impl.Preprocess(string(hack.String(stringutil.GetUtf8SubStringBytes(truncateTailingSpace(str), prefixCharCount)))))
 }
 
 // MaxKeyLen implements Collator interface.
