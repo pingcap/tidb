@@ -33,6 +33,7 @@ go_library(
         "distsql.go",
         "expand.go",
         "explain.go",
+        "mv_refresh_observability.go",
         "foreign_key.go",
         "grant.go",
         "import_into.go",

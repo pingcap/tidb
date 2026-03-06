@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,18 @@ func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
 	rs, err := tk.Session().ExecuteInternal(ctx, sql)
 	require.NoError(t, err)
 	require.Nil(t, rs)
+}
+
+func requireRowsContainPrefix(t *testing.T, rows [][]any, prefix string) {
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		if strings.HasPrefix(fmt.Sprintf("%v", row[0]), prefix) {
+			return
+		}
+	}
+	require.Failf(t, "prefix not found", "prefix=%s rows=%v", prefix, rows)
 }
 
 func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
@@ -80,6 +93,29 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("success complete manually 1 1 1 1"))
+}
+
+func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_explain_analyze (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_explain_analyze values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_explain_analyze (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_explain_analyze (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_explain_analyze group by a")
+
+	tk.MustExec("insert into t_mv_explain_analyze values (2, 3), (3, 4)")
+	fastRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze fast with profile").Rows()
+	requireRowsContainPrefix(t, fastRows, "[S01 TXN_BEGIN]")
+	requireRowsContainPrefix(t, fastRows, "[S04 DATA_CHANGE_FAST_MERGE]")
+	requireRowsContainPrefix(t, fastRows, "  MVDeltaMerge")
+	requireRowsContainPrefix(t, fastRows, "[S07 FINALIZE_HIST]")
+
+	tk.MustExec("insert into t_mv_explain_analyze values (4, 8)")
+	completeRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete with profile").Rows()
+	requireRowsContainPrefix(t, completeRows, "[S04 DATA_CHANGE_COMPLETE_DELETE]")
+	requireRowsContainPrefix(t, completeRows, "[S05 DATA_CHANGE_COMPLETE_INSERT]")
+	requireRowsContainPrefix(t, completeRows, "[S08 FINALIZE_HIST]")
 }
 
 func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {

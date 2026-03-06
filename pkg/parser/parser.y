@@ -1443,6 +1443,7 @@ import (
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
 	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
 	RefreshWithSyncModeOpt                 "REFRESH MATERIALIZED VIEW WITH SYNC MODE option"
+	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5581,9 +5582,10 @@ PurgeMaterializedViewLogStmt:
 	}
 
 RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithSyncModeOpt RefreshMaterializedViewType
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithSyncModeOpt RefreshMaterializedViewType RefreshMaterializedViewObserveOpt
 	{
-		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithSyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType)}
+		observeType := $7.(ast.RefreshMaterializedViewObserveType)
+		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithSyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType), ObserveType: observeType}
 	}
 
 RefreshMaterializedViewType:
@@ -5594,6 +5596,20 @@ RefreshMaterializedViewType:
 |	"FAST"
 	{
 		$$ = ast.RefreshMaterializedViewTypeFast
+	}
+
+RefreshMaterializedViewObserveOpt:
+	/* EMPTY */
+	{
+		$$ = ast.RefreshMaterializedViewObserveNone
+	}
+|	"DRY" "RUN"
+	{
+		$$ = ast.RefreshMaterializedViewObserveDryRun
+	}
+|	"WITH" "PROFILE"
+	{
+		$$ = ast.RefreshMaterializedViewObserveProfile
 	}
 
 RefreshWithSyncModeOpt:
