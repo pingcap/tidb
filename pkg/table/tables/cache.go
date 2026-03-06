@@ -456,9 +456,8 @@ func (c *cachedTable) GetCachedResult(key table.ResultCacheKey, paramBytes []byt
 func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
 	rc := c.getOrCreateResultCache()
 	paramCopy := append([]byte(nil), paramBytes...)
-	ok := rc.Put(key, paramCopy, chunks, fieldTypes)
-	if ok {
-		memSize := estimateChunksMemory(chunks) + int64(len(paramCopy))
+	ok, memSize := rc.put(key, paramCopy, chunks, fieldTypes)
+	if ok && memSize > 0 {
 		// If the result cache is invalidated concurrently, don't account its memory in metrics.
 		if c.resultCache.Load() == rc {
 			c.resultCacheMem.Add(memSize)

@@ -299,6 +299,30 @@ func TestBuildCachedIndexDatumDataRestoredDecoderDurability(t *testing.T) {
 	require.Equal(t, int64(2), row2[1].GetInt64())
 }
 
+func TestCachedTablePutCachedResultNoDoubleAccount(t *testing.T) {
+	ct := &cachedTable{}
+	chk := makeTestChunk()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	fts := []*types.FieldType{ft}
+	key := ResultCacheKey{PlanDigest: [16]byte{7}, ParamHash: 7}
+	paramBytes := []byte("pb")
+	expectedMem := estimateChunksMemory([]*chunk.Chunk{chk}) + int64(len(paramBytes))
+
+	require.True(t, ct.PutCachedResult(key, paramBytes, []*chunk.Chunk{chk}, fts))
+	require.Equal(t, expectedMem, ct.resultCacheMem.Load())
+
+	// A duplicate fill for the same cache entry should be a no-op for memory accounting.
+	require.True(t, ct.PutCachedResult(key, paramBytes, []*chunk.Chunk{chk}, fts))
+	require.Equal(t, expectedMem, ct.resultCacheMem.Load())
+
+	// A hash collision should still be rejected without changing the accounted memory.
+	require.False(t, ct.PutCachedResult(key, []byte("other"), []*chunk.Chunk{chk}, fts))
+	require.Equal(t, expectedMem, ct.resultCacheMem.Load())
+
+	ct.invalidateResultCache()
+	require.Zero(t, ct.resultCacheMem.Load())
+}
+
 func TestBuildCachedDatumDataEmpty(t *testing.T) {
 	setup := newTestSetup()
 	mb := newTestMemBuf()
