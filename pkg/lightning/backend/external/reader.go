@@ -22,6 +22,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -38,6 +39,7 @@ func readAllData(
 	store storeapi.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
+	startOffsets, endOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
@@ -65,16 +67,34 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		store,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
+	concurrences := make([]uint64, len(statsFiles))
+	totalFileSize := uint64(0)
+	bufSize := uint64(ConcurrentReaderBufferSizePerConc)
+	for i := range statsFiles {
+		size := endOffsets[i] - startOffsets[i]
+		totalFileSize += size
+		expectedConc := size / bufSize
+		// let the stat internals cover the [startKey, endKey) since the offsets
+		// always point to a position that is less than or equal to the key.
+		expectedConc += 1
+
+		if expectedConc >= readAllDataConcThreshold {
+			concurrences[i] = expectedConc
+		} else {
+			concurrences[i] = 1
+		}
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in readAllData",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffsets[i]),
+				zap.Uint64("endOffset", endOffsets[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", concurrences[i]),
+			)
+		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000

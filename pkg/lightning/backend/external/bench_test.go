@@ -701,7 +701,14 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, statFiles, store)
+	require.NoError(t, err)
+	err = readAllData(
+		ctx, store, dataFiles, statFiles,
+		startKey, endKey,
+		readRanges[0][0],
+		readRanges[1][1],
+		smallBlockBufPool, largeBlockBufPool, output)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
 }
@@ -850,7 +857,14 @@ finishCreateFiles:
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output)
+	readRanges, err := getReadRangeFromProps(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
+	require.NoError(t, err)
+	err = readAllData(
+		ctx, store, dataFiles, statFiles,
+		readRangeStart, readRangeEnd,
+		readRanges[0][0],
+		readRanges[1][1],
+		smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)

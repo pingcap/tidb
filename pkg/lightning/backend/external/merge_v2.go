@@ -121,7 +121,16 @@ func MergeOverlappingFilesV2(
 		if len(endKeyOfGroup) == 0 {
 			curEnd = kv.Key(endKey).Clone()
 		}
+
 		now := time.Now()
+
+		var readRanges [][2][]uint64
+		readRanges, err = getReadRangeFromProps(
+			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
+		if err != nil {
+			return err
+		}
+
 		err1 = readAllData(
 			ctx,
 			store,
@@ -129,6 +138,8 @@ func MergeOverlappingFilesV2(
 			statFilesOfGroup,
 			curStart,
 			curEnd,
+			readRanges[0][0],
+			readRanges[1][1],
 			bufPool,
 			bufPool,
 			loaded,

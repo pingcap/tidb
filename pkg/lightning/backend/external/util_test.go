@@ -22,29 +22,21 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSeekPropsOffsets(t *testing.T) {
+func TestGetReadRangeFromProps(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 
+	// file1 has props at offsets 10, 30, 50 with keys "key1", "key3", "key5"
+	// each prop has size=10, keys=1 so totalSize = 10 + 1*2*8 = 26
 	rc1 := &rangePropertiesCollector{
 		props: []*rangeProperty{
-			{
-				firstKey: []byte("key1"),
-				offset:   10,
-			},
-			{
-				firstKey: []byte("key3"),
-				offset:   30,
-			},
-			{
-				firstKey: []byte("key5"),
-				offset:   50,
-			},
+			{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1},
+			{firstKey: []byte("key3"), offset: 30, size: 10, keys: 1},
+			{firstKey: []byte("key5"), offset: 50, size: 10, keys: 1},
 		},
 	}
 	file1 := "/test1"
@@ -55,16 +47,11 @@ func TestSeekPropsOffsets(t *testing.T) {
 	err = w1.Close(ctx)
 	require.NoError(t, err)
 
+	// file2 has props at offsets 20, 40 with keys "key2", "key4"
 	rc2 := &rangePropertiesCollector{
 		props: []*rangeProperty{
-			{
-				firstKey: []byte("key2"),
-				offset:   20,
-			},
-			{
-				firstKey: []byte("key4"),
-				offset:   40,
-			},
+			{firstKey: []byte("key2"), offset: 20, size: 10, keys: 1},
+			{firstKey: []byte("key4"), offset: 40, size: 10, keys: 1},
 		},
 	}
 	file2 := "/test2"
@@ -75,62 +62,72 @@ func TestSeekPropsOffsets(t *testing.T) {
 	err = w2.Close(ctx)
 	require.NoError(t, err)
 
-	got, err := seekPropsOffsets(ctx, []kv.Key{[]byte("key2.5")}, []string{file1, file2}, store)
-	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{10, 20}}, got)
+	paths := []string{file1, file2}
+	ts := uint64(26) // totalSize per prop: size(10) + keys(1)*2*lengthBytes(8) = 26
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key2.5"), []byte("key2.6")}, []string{file1, file2}, store)
+	// single key between props
+	got, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{10, 20}, {10, 20}}, got)
+	// key2.5: file1 => prop "key1" matches (offset=10), file2 => prop "key2" matches (offset=20)
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[0])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key3")}, []string{file1, file2}, store)
+	// two keys between props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{30, 20}}, got)
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[0])
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[1])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key2.5"), []byte("key3")}, []string{file1, file2}, store)
+	// key exactly on a prop boundary
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{10, 20}, {30, 20}}, got)
+	// key3: file1 => prop "key3" matches (offset=30), file2 => prop "key2" matches (offset=20)
+	require.Equal(t, [2][]uint64{{30, 20}, {30 + ts, 20 + ts}}, got[0])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key0")}, []string{file1, file2}, store)
+	// two keys, second exactly on a prop boundary
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{0, 0}}, got)
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[0])
+	require.Equal(t, [2][]uint64{{30, 20}, {30 + ts, 20 + ts}}, got[1])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key1")}, []string{file1, file2}, store)
+	// key below all props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{10, 0}}, got)
+	// key0: no prop <= key0, so offset stays at zero default
+	require.Equal(t, [2][]uint64{{0, 0}, {0, 0}}, got[0])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key0"), []byte("key1")}, []string{file1, file2}, store)
+	// key exactly on first prop
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{0, 0}, {10, 0}}, got)
+	// key1: file1 => prop "key1" matches (offset=10), file2 => no prop <= key1 so 0
+	require.Equal(t, [2][]uint64{{10, 0}, {10 + ts, 0}}, got[0])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key999")}, []string{file1, file2}, store)
+	// two keys: one below all, one on first prop
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{50, 40}}, got)
+	require.Equal(t, [2][]uint64{{0, 0}, {0, 0}}, got[0])
+	require.Equal(t, [2][]uint64{{10, 0}, {10 + ts, 0}}, got[1])
 
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key999"), []byte("key999")}, []string{file1, file2}, store)
+	// key above all props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{50, 40}, {50, 40}}, got)
+	// key999: file1 => last prop "key5" (offset=50), file2 => last prop "key4" (offset=40)
+	require.Equal(t, [2][]uint64{{50, 40}, {50 + ts, 40 + ts}}, got[0])
 
+	// two identical keys above all props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, [2][]uint64{{50, 40}, {50 + ts, 40 + ts}}, got[0])
+	require.Equal(t, [2][]uint64{{50, 40}, {50 + ts, 40 + ts}}, got[1])
+
+	// empty stat file should return zero offsets
 	file3 := "/test3"
 	w3, err := store.Create(ctx, file3, nil)
 	require.NoError(t, err)
 	err = w3.Close(ctx)
 	require.NoError(t, err)
-
-	file4 := "/test4"
-	w4, err := store.Create(ctx, file4, nil)
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
 	require.NoError(t, err)
-	_, err = w4.Write(ctx, rc1.encode())
-	require.NoError(t, err)
-	err = w4.Close(ctx)
-	require.NoError(t, err)
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key3")}, []string{file1, file2, file3, file4}, store)
-	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{30, 20, 0, 30}}, got)
-
-	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key3"), []byte("key999")}, []string{file1, file2, file3, file4}, store)
-	require.NoError(t, err)
-	require.Equal(t, [][]uint64{{30, 20, 0, 30}, {50, 40, 0, 50}}, got)
+	require.Equal(t, [2][]uint64{{30, 20, 0}, {30 + ts, 20 + ts, 0}}, got[0])
 }
 
 func TestGetAllFileNames(t *testing.T) {
