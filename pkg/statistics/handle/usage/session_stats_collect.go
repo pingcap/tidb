@@ -78,7 +78,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once 5 minutes.
+		// Dump the stats to kv at least once per hour to make sure the stats can be updated when there are only few modifications.
 		return true
 	}
 	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
