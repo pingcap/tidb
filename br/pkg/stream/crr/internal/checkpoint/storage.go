@@ -68,12 +68,12 @@ func walkDirSeq(
 
 func (c *Calculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFile, error] {
 	walkOpt := &storeapi.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
-	if startAfter := metaScanStartAfter(c.syncedTS); startAfter != "" {
+	if startAfter := metaScanStartAfter(c.state.syncedTS); startAfter != "" {
 		walkOpt.StartAfter = startAfter
 	}
 
 	return func(yield func(parsedMetaFile, error) bool) {
-		for entry, err := range walkDirSeq(ctx, c.upstream, walkOpt) {
+		for entry, err := range walkDirSeq(ctx, c.deps.upstream, walkOpt) {
 			if err != nil {
 				var zero parsedMetaFile
 				yield(zero, err)
@@ -89,7 +89,7 @@ func (c *Calculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFil
 				yield(zero, fmt.Errorf("parse backupmeta name %s: %w", entry.path, err))
 				return
 			}
-			if parsed.FlushTS <= c.syncedTS {
+			if parsed.FlushTS <= c.state.syncedTS {
 				continue
 			}
 			if !yield(parsedMetaFile{

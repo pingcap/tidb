@@ -61,14 +61,18 @@ type CheckpointCalculatorConfig struct {
 //
 // It is stateful and expected to be reused across rounds.
 type Calculator struct {
+	deps  calculatorDeps
+	cfg   CheckpointCalculatorConfig
+	state calculatorState
+}
+
+type calculatorDeps struct {
 	pd         PDMetaReader
 	upstream   UpstreamStorageReader
 	downstream DownstreamObjectChecker
+}
 
-	taskName            string
-	pollInterval        time.Duration
-	metaReadConcurrency int
-
+type calculatorState struct {
 	lastCheckpoint uint64
 	syncedTS       uint64
 	syncedByStore  map[uint64]uint64
@@ -104,13 +108,15 @@ func NewCalculator(
 	}
 
 	return &Calculator{
-		pd:                  pd,
-		upstream:            upstream,
-		downstream:          downstream,
-		taskName:            cfg.TaskName,
-		pollInterval:        cfg.PollInterval,
-		metaReadConcurrency: cfg.MetaReadConcurrency,
-		syncedByStore:       map[uint64]uint64{},
+		deps: calculatorDeps{
+			pd:         pd,
+			upstream:   upstream,
+			downstream: downstream,
+		},
+		cfg: cfg,
+		state: calculatorState{
+			syncedByStore: map[uint64]uint64{},
+		},
 	}, nil
 }
 
@@ -138,16 +144,16 @@ func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (uint64, error) 
 	}
 
 	c.advanceSyncedState(aliveStores, round.maxFlushTSByStore)
-	c.lastCheckpoint = upstreamCheckpoint
+	c.state.lastCheckpoint = upstreamCheckpoint
 	return upstreamCheckpoint, nil
 }
 
 // SyncedTS returns the latest synced_ts tracked by this calculator.
 func (c *Calculator) SyncedTS() uint64 {
-	return c.syncedTS
+	return c.state.syncedTS
 }
 
 // LastCheckpoint returns the most recent returned checkpoint.
 func (c *Calculator) LastCheckpoint() uint64 {
-	return c.lastCheckpoint
+	return c.state.lastCheckpoint
 }

@@ -34,21 +34,21 @@ type roundPlan struct {
 
 func (c *Calculator) waitUpstreamCheckpointAdvance(ctx context.Context) (uint64, error) {
 	for {
-		checkpoint, err := c.pd.GetGlobalCheckpointForTask(ctx, c.taskName)
+		checkpoint, err := c.deps.pd.GetGlobalCheckpointForTask(ctx, c.cfg.TaskName)
 		if err != nil {
-			return 0, fmt.Errorf("get global checkpoint for task %s: %w", c.taskName, err)
+			return 0, fmt.Errorf("get global checkpoint for task %s: %w", c.cfg.TaskName, err)
 		}
-		if checkpoint > c.lastCheckpoint {
+		if checkpoint > c.state.lastCheckpoint {
 			return checkpoint, nil
 		}
-		if err := sleepWithContext(ctx, c.pollInterval); err != nil {
+		if err := sleepWithContext(ctx, c.cfg.PollInterval); err != nil {
 			return 0, err
 		}
 	}
 }
 
 func (c *Calculator) loadAliveStores(ctx context.Context) (map[uint64]struct{}, error) {
-	stores, err := c.pd.Stores(ctx)
+	stores, err := c.deps.pd.Stores(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load alive stores from pd: %w", err)
 	}
@@ -75,7 +75,7 @@ func (c *Calculator) planRound(
 	defer cancel()
 
 	eg, egCtx := errgroup.WithContext(planCtx)
-	eg.SetLimit(c.metaReadConcurrency)
+	eg.SetLimit(c.cfg.MetaReadConcurrency)
 
 	var planMu sync.Mutex
 	var iterErr error
@@ -94,7 +94,7 @@ func (c *Calculator) planRound(
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
 
-			metaBytes, err := c.upstream.ReadFile(egCtx, metaFile.path)
+			metaBytes, err := c.deps.upstream.ReadFile(egCtx, metaFile.path)
 			if err != nil {
 				return fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
 			}
@@ -174,7 +174,7 @@ func extractDataFilePaths(meta *backuppb.Metadata) []string {
 func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[string]struct{}) error {
 	for len(pendingPaths) > 0 {
 		for filePath := range pendingPaths {
-			exists, err := c.downstream.FileExists(ctx, filePath)
+			exists, err := c.deps.downstream.FileExists(ctx, filePath)
 			if err != nil {
 				return fmt.Errorf("check downstream file %s: %w", filePath, err)
 			}
@@ -185,7 +185,7 @@ func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[st
 		if len(pendingPaths) == 0 {
 			return nil
 		}
-		if err := sleepWithContext(ctx, c.pollInterval); err != nil {
+		if err := sleepWithContext(ctx, c.cfg.PollInterval); err != nil {
 			return err
 		}
 	}
@@ -196,14 +196,14 @@ func (c *Calculator) advanceSyncedState(
 	aliveStores map[uint64]struct{},
 	maxFlushTSByStore map[uint64]uint64,
 ) {
-	for storeID := range c.syncedByStore {
+	for storeID := range c.state.syncedByStore {
 		if _, ok := aliveStores[storeID]; !ok {
-			delete(c.syncedByStore, storeID)
+			delete(c.state.syncedByStore, storeID)
 		}
 	}
 	for storeID, flushTS := range maxFlushTSByStore {
-		if flushTS > c.syncedByStore[storeID] {
-			c.syncedByStore[storeID] = flushTS
+		if flushTS > c.state.syncedByStore[storeID] {
+			c.state.syncedByStore[storeID] = flushTS
 		}
 	}
 
@@ -214,7 +214,7 @@ func (c *Calculator) advanceSyncedState(
 	syncedCandidate := uint64(math.MaxUint64)
 	consideredStores := 0
 	for storeID := range aliveStores {
-		storeSyncedTS, ok := c.syncedByStore[storeID]
+		storeSyncedTS, ok := c.state.syncedByStore[storeID]
 		if !ok {
 			continue
 		}
@@ -226,8 +226,8 @@ func (c *Calculator) advanceSyncedState(
 	if consideredStores == 0 {
 		return
 	}
-	if syncedCandidate > c.syncedTS {
-		c.syncedTS = syncedCandidate
+	if syncedCandidate > c.state.syncedTS {
+		c.state.syncedTS = syncedCandidate
 	}
 }
 
