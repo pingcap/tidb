@@ -317,14 +317,26 @@ func TestCalculateRawChecksumValidationAndCompatibility(t *testing.T) {
 	_, err = r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, nil, nil, nil)
 	require.ErrorIs(t, err, errInvalidChecksumKey)
 
-	r.checksumHeader &^= checksumMaskVersion
-	r.checksumHeader |= checksumVersionRawKey
-	rawChecksum, err := r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, kv.Key("k"), nil, nil)
+	rawChecksum, err := r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, nil, kv.IntHandle(1), nil)
 	require.NoError(t, err)
 
 	expected := r.toBytes(nil)
 	expected = append(expected, r.checksumHeader)
+	require.Equal(t, crc32.Update(crc32.Checksum(expected, crc32.IEEETable), crc32.IEEETable, kv.IntHandle(1).Encoded()), rawChecksum)
+
+	r.checksumHeader &^= checksumMaskVersion
+	r.checksumHeader |= checksumVersionRawKey
+	rawChecksum, err = r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, kv.Key("k"), nil, nil)
+	require.NoError(t, err)
+
+	expected = r.toBytes(nil)
+	expected = append(expected, r.checksumHeader)
 	require.Equal(t, crc32.Update(crc32.Checksum(expected, crc32.IEEETable), crc32.IEEETable, kv.Key("k")), rawChecksum)
+
+	r.checksumHeader &^= checksumMaskVersion
+	r.checksumHeader |= checksumVersionColumn
+	_, err = r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, nil, kv.IntHandle(1), nil)
+	require.ErrorIs(t, err, errInvalidChecksumVer)
 }
 
 func TestDecodeToBytesNoHandleInto(t *testing.T) {

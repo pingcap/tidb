@@ -58,18 +58,19 @@ const (
 //
 // Checksum
 //
-//		0               1               2               3               4               5               6               7               8
-//		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//		|       |E| VER |                            CHECKSUM                           |                    EXTRA_CHECKSUM(OPTIONAL)                   |
-//		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//		     HEADER
+//	0               1               2               3               4               5               6               7               8
+//	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//	|       |E| VER |                            CHECKSUM                           |                    EXTRA_CHECKSUM(OPTIONAL)                   |
+//	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//	     HEADER
 //
-//		- HEADER
-//		  - VER: version
-//		  - E:   has extra checksum
-//		- CHECKSUM
-//		  - little-endian CRC32(IEEE) when hdr.ver = 0 (old version, columns-level checksum)
-//	   - little-endian CRC32(IEEE) when hdr.ver = 1 (default, bytes-level checksum)
+//	- HEADER
+//	  - VER: version
+//	  - E:   has extra checksum
+//	- CHECKSUM
+//	  - little-endian CRC32(IEEE) when hdr.ver = 0 (legacy columns-level checksum; decode-only)
+//	  - little-endian CRC32(IEEE) over raw row bytes and the row key when hdr.ver = 1
+//	  - little-endian CRC32(IEEE) over raw row bytes and the row handle when hdr.ver = 2
 type row struct {
 	flags          byte
 	checksumHeader byte
@@ -151,7 +152,7 @@ func (r *row) fromBytes(rowData []byte) error {
 	if r.hasChecksum() {
 		r.checksumHeader = rowData[cursor]
 		checksumVersion := r.ChecksumVersion()
-		// make sure it can be read previous version checksum to support backward compatibility.
+		// Keep backward compatibility when decoding rows written by older checksum versions.
 		switch checksumVersion {
 		case 0, 1, 2:
 		default:
@@ -302,7 +303,7 @@ func (r *row) initOffsets32() {
 	}
 }
 
-// CalculateRawChecksum calculates the bytes-level checksum by using the given elements.
+// CalculateRawChecksum calculates the raw bytes checksum by using the given elements.
 // this is mainly used by the TiCDC to implement E2E checksum functionality.
 func (r *row) CalculateRawChecksum(
 	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, handle kv.Handle, buf []byte,
@@ -323,17 +324,20 @@ func (r *row) CalculateRawChecksum(
 	buf = r.toBytes(buf)
 	buf = append(buf, r.checksumHeader)
 	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
-	// keep backward compatibility to v8.3.0
-	if r.ChecksumVersion() == int(checksumVersionRawKey) {
+	switch r.ChecksumVersion() {
+	// Keep backward compatibility to v8.3.0.
+	case int(checksumVersionRawKey):
 		if key == nil {
 			return 0, errInvalidChecksumKey
 		}
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
-	} else {
+	case int(checksumVersionRawHandle):
 		if handle == nil {
 			return 0, errInvalidChecksumKey
 		}
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, handle.Encoded())
+	default:
+		return 0, errInvalidChecksumVer
 	}
 	return rawChecksum, nil
 }

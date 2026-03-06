@@ -248,7 +248,7 @@ const checksumVersionRawKey byte = 1
 // introduced since v8.4.0
 const checksumVersionRawHandle byte = 2
 
-// RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.
+// RawChecksum encodes a handle-based raw checksum (checksum version 2) into the row bytes.
 type RawChecksum struct {
 	Handle kv.Handle
 }
