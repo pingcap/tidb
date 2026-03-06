@@ -31,9 +31,9 @@ description: Guidelines for creating GitHub issues and PRs in the TiDB repositor
 ### Writing Good PR Descriptions
 
 - **"Problem Summary" (why) is the primary section.** Lead with why the change is needed: what problem exists, what limitation it removes, or what invariant it restores. The reviewer should understand the motivation before reading any code.
-- **"What changed" (how) is secondary.** Summarize the general approach in 1-3 sentences. Do not enumerate every file or function touched; the diff already shows that. Only call out non-obvious design decisions or trade-offs.
-- Bad example: "Rename function A to B. Remove function C. Add parameter X to function D. Update callers E, F, G." -- this restates the diff without explaining motivation.
-- Good example: "Callers of A need both X and Y, but A only returns X, so every caller has to compute Y separately with duplicated logic. Combine both into A so callers get everything in one call." -- this explains the problem first, then the approach.
+- **"What changed" (how) is secondary.** Lead with a 1-3 sentence summary of the general approach, then optionally follow with a bullet list of notable specifics. The summary should explain the approach and trade-offs; the list provides scannable detail for reviewers. Do not skip the summary and jump straight to a list of mechanical changes.
+- Bad example (list without motivation): "Rename function A to B. Remove function C. Add parameter X to function D. Update callers E, F, G." -- this restates the diff without explaining why.
+- Good example (summary + details): "Callers of A need both X and Y, but A only returns X, so every caller has to compute Y separately with duplicated logic. Combine both into A so callers get everything in one call. Specifically: - Merged computeX and computeY into A. - Updated callers in pkg/foo and pkg/bar to use the new signature." -- this explains the problem first, then lists notable changes for scannability.
 
 ### Writing Good Issue Reports
 
