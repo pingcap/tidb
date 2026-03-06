@@ -596,6 +596,26 @@ func compareGlobalPrivRecord(x, y globalPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
+func compareTablesPrivRecord(x, y tablesPrivRecord) int {
+	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if cmp != 0 {
+		return cmp
+	}
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+	switch {
+	case x.TableName > y.TableName:
+		return 1
+	case x.TableName < y.TableName:
+		return -1
+	}
+	return 0
+}
+
 func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
 	if cmp != 0 {
@@ -757,6 +777,10 @@ func (p *MySQLPrivilege) buildTablesPrivMap() {
 	for _, record := range p.tablesPriv {
 		tablesPrivMap[record.User] = append(tablesPrivMap[record.User], record)
 	}
+	// Sort the records to make the matching rule work.
+	for _, records := range tablesPrivMap {
+		slices.SortFunc(records, compareTablesPrivRecord)
+	}
 	p.TablesPrivMap = tablesPrivMap
 }
 
@@ -764,6 +788,10 @@ func (p *MySQLPrivilege) buildColumnsPrivMap() {
 	columnsPrivMap := make(map[string][]columnsPrivRecord, len(p.columnsPriv))
 	for _, record := range p.columnsPriv {
 		columnsPrivMap[record.User] = append(columnsPrivMap[record.User], record)
+	}
+	// Sort the records to make the matching rule work.
+	for _, records := range columnsPrivMap {
+		slices.SortFunc(records, compareColumnsPrivRecord)
 	}
 	p.ColumnsPrivMap = columnsPrivMap
 }
