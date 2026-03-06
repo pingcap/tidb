@@ -341,6 +341,7 @@ go_test(
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
+        "//pkg/lightning/backend/local",
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",

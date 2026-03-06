@@ -108,6 +108,12 @@ func NewAddIndexIngestPipeline(
 	concurrency int,
 	collector execute.Collector,
 ) (*operator.AsyncPipeline, error) {
+	var injectedErr error
+	failpoint.InjectCall("mockNewAddIndexIngestPipelineError", &injectedErr)
+	if injectedErr != nil {
+		return nil, injectedErr
+	}
+
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
 		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
