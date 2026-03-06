@@ -115,6 +115,9 @@ func getReadRangeFromProps(
 				}
 				offsetsPerFile[i][keyIdx] = [2]uint64{p.offset, p.offset + p.totalSize()}
 				p, err3 = r.nextProp()
+				if err3 == nil {
+					firstKey = kv.Key(p.firstKey)
+				}
 			}
 		})
 	}

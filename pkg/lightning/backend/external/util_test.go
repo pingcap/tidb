@@ -26,6 +26,110 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGetReadRangeFromProps(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+
+	// file1 has props at offsets 10, 30, 50 with keys "key1", "key3", "key5"
+	// each prop has size=10, keys=1 so totalSize = 10 + 1*2*8 = 26
+	rc1 := &rangePropertiesCollector{
+		props: []*rangeProperty{
+			{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1},
+			{firstKey: []byte("key3"), offset: 30, size: 10, keys: 1},
+			{firstKey: []byte("key5"), offset: 50, size: 10, keys: 1},
+		},
+	}
+	file1 := "/test1"
+	w1, err := store.Create(ctx, file1, nil)
+	require.NoError(t, err)
+	_, err = w1.Write(ctx, rc1.encode())
+	require.NoError(t, err)
+	err = w1.Close(ctx)
+	require.NoError(t, err)
+
+	// file2 has props at offsets 20, 40 with keys "key2", "key4"
+	rc2 := &rangePropertiesCollector{
+		props: []*rangeProperty{
+			{firstKey: []byte("key2"), offset: 20, size: 10, keys: 1},
+			{firstKey: []byte("key4"), offset: 40, size: 10, keys: 1},
+		},
+	}
+	file2 := "/test2"
+	w2, err := store.Create(ctx, file2, nil)
+	require.NoError(t, err)
+	_, err = w2.Write(ctx, rc2.encode())
+	require.NoError(t, err)
+	err = w2.Close(ctx)
+	require.NoError(t, err)
+
+	paths := []string{file1, file2}
+	ts := uint64(26) // totalSize per prop: size(10) + keys(1)*2*lengthBytes(8) = 26
+
+	// single key between props
+	got, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
+	require.NoError(t, err)
+	// key2.5: file1 => prop "key1" matches (offset=10), file2 => prop "key2" matches (offset=20)
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[0])
+
+	// two keys between props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[0])
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[1])
+
+	// key exactly on a prop boundary
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
+	require.NoError(t, err)
+	// key3: file1 => prop "key3" matches (offset=30), file2 => prop "key2" matches (offset=20)
+	require.Equal(t, [2][]uint64{{30, 20}, {30 + ts, 20 + ts}}, got[0])
+
+	// two keys, second exactly on a prop boundary
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, [2][]uint64{{10, 20}, {10 + ts, 20 + ts}}, got[0])
+	require.Equal(t, [2][]uint64{{30, 20}, {30 + ts, 20 + ts}}, got[1])
+
+	// key below all props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
+	require.NoError(t, err)
+	// key0: no prop <= key0, so offset stays at zero default
+	require.Equal(t, [2][]uint64{{0, 0}, {0, 0}}, got[0])
+
+	// key exactly on first prop
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
+	require.NoError(t, err)
+	// key1: file1 => prop "key1" matches (offset=10), file2 => no prop <= key1 so 0
+	require.Equal(t, [2][]uint64{{10, 0}, {10 + ts, 0}}, got[0])
+
+	// two keys: one below all, one on first prop
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, [2][]uint64{{0, 0}, {0, 0}}, got[0])
+	require.Equal(t, [2][]uint64{{10, 0}, {10 + ts, 0}}, got[1])
+
+	// key above all props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
+	require.NoError(t, err)
+	// key999: file1 => last prop "key5" (offset=50), file2 => last prop "key4" (offset=40)
+	require.Equal(t, [2][]uint64{{50, 40}, {50 + ts, 40 + ts}}, got[0])
+
+	// two identical keys above all props
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, [2][]uint64{{50, 40}, {50 + ts, 40 + ts}}, got[0])
+	require.Equal(t, [2][]uint64{{50, 40}, {50 + ts, 40 + ts}}, got[1])
+
+	// empty stat file should return zero offsets
+	file3 := "/test3"
+	w3, err := store.Create(ctx, file3, nil)
+	require.NoError(t, err)
+	err = w3.Close(ctx)
+	require.NoError(t, err)
+	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
+	require.NoError(t, err)
+	require.Equal(t, [2][]uint64{{30, 20, 0}, {30 + ts, 20 + ts, 0}}, got[0])
+}
+
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
