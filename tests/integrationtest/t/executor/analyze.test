@@ -877,7 +877,7 @@ set tidb_enable_clustered_index=default;
 set @@tidb_analyze_version = 2;
 ## Issue15993
 drop table if exists t0;
-# PRIMARY must be NONCLUSTERED so ANALYZE ... INDEX PRIMARY sees a real index under v2.
+# PRIMARY must be NONCLUSTERED so ANALYZE ... INDEX PRIMARY sees a separate index under v2.
 CREATE TABLE t0(c0 INT PRIMARY KEY NONCLUSTERED);
 ANALYZE TABLE t0 INDEX PRIMARY;
 ## Issue15751
