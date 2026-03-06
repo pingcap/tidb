@@ -1056,6 +1056,38 @@ type ActiveTaskSummary struct {
 	PerKeyspace map[string]int64 `json:"per_keyspace"`
 }
 
+// ImportIntoJobDuration is duration breakdown for one IMPORT INTO history job.
+type ImportIntoJobDuration struct {
+	Total            string `json:"total"`
+	Encode           string `json:"encode"`
+	MergeSort        string `json:"merge_sort"`
+	Ingest           string `json:"ingest"`
+	CollectConflicts string `json:"collect_conflicts"`
+	ResolveConflicts string `json:"resolve_conflicts"`
+	PostProcess      string `json:"post_process"`
+}
+
+// ImportIntoJobHistoryInfo is detail information of one IMPORT INTO history job.
+type ImportIntoJobHistoryInfo struct {
+	ImportID               int64                 `json:"import_id"`
+	Keyspace               string                `json:"keyspace"`
+	TaskID                 int64                 `json:"task_id"`
+	State                  string                `json:"state"`
+	Concurrency            int                   `json:"concurrency"`
+	MaxNodeCount           int                   `json:"max_node_count"`
+	DistSQLScanConcurrency int                   `json:"distsql_scan_concurrency"`
+	IndexCount             int                   `json:"index_count"`
+	ColumnCount            int                   `json:"column_count"`
+	FileSize               string                `json:"file_size"`
+	DataKVSize             string                `json:"data_kv_size"`
+	IndexKVSize            string                `json:"index_kv_size"`
+	PerCoreSpeed           string                `json:"per_core_speed"`
+	OverallSpeed           string                `json:"overall_speed"`
+	RowCount               int64                 `json:"row_count"`
+	RowLength              int64                 `json:"row_length"`
+	Duration               ImportIntoJobDuration `json:"duration"`
+}
+
 // GetActiveTaskCountsByKeyspace gets active task summary grouped by keyspace.
 func (mgr *TaskManager) GetActiveTaskCountsByKeyspace(ctx context.Context) (*ActiveTaskSummary, error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
@@ -1076,6 +1108,151 @@ func (mgr *TaskManager) GetActiveTaskCountsByKeyspace(ctx context.Context) (*Act
 		summary.PerKeyspace[keyspace] = cnt
 	}
 	return summary, nil
+}
+
+// GetImportIntoJobInfoFromHistory returns IMPORT INTO job info from history table.
+// It only looks at history, and returns ErrTaskNotFound when absent.
+func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
+	ctx context.Context,
+	keyspace string,
+	jobID int64,
+) (*ImportIntoJobHistoryInfo, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	taskKey := fmt.Sprintf("%s/%s/%d", keyspace, proto.ImportInto, jobID)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select
+			t.id,
+			t.state,
+			t.concurrency,
+			t.max_node_count,
+			cast(json_extract(cast(cast(t.meta as char) as json), '$.Plan.DistSQLScanConcurrency') as signed) as distsql_con,
+			cast(json_length(json_extract(cast(cast(t.meta as char) as json), '$.Plan.DesiredTableInfo.index_info')) as signed) as index_count,
+			cast(json_length(json_extract(cast(cast(t.meta as char) as json), '$.Plan.DesiredTableInfo.cols')) as signed) as col_cnt,
+			concat(round(json_extract(cast(cast(t.meta as char) as json), '$.Plan.TotalFileSize') / 1024 / 1024 / 1024, 2), 'GiB') as file_size,
+			(
+				select concat(round(sum(json_extract(summary, '$.bytes')) / 1024 / 1024 / 1024, 2), 'GiB')
+				from mysql.tidb_background_subtask_history
+				where task_key = t.id and step = %?
+					and json_extract(cast(meta as char), '$."kv-group"') = 'data'
+			) as data_kv_size,
+			(
+				select concat(round(sum(json_extract(summary, '$.bytes')) / 1024 / 1024 / 1024, 2), 'GiB')
+				from mysql.tidb_background_subtask_history
+				where task_key = t.id and step = %?
+					and json_extract(cast(meta as char), '$."kv-group"') != 'data'
+			) as index_kv_size,
+			concat(round(
+				round(json_extract(cast(cast(t.meta as char) as json), '$.Plan.TotalFileSize') / 1024 / 1024 / 1024, 2) /
+				(
+					select TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time))) / 3600
+					from mysql.tidb_background_subtask_history
+					where task_key = t.id
+				) / t.max_node_count / t.concurrency, 1), 'GiB/core/hour') as per_core_speed,
+			concat(round(
+				round(json_extract(cast(cast(t.meta as char) as json), '$.Plan.TotalFileSize') / 1024 / 1024 / 1024, 2) /
+				(
+					select TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time))) / 3600
+					from mysql.tidb_background_subtask_history
+					where task_key = t.id
+				), 1), 'GiB/hour') as overall_speed,
+			cast(json_extract(cast(cast(t.meta as char) as json), '$.Summary."row-count"') as signed) as row_cnt,
+			cast(round(
+				json_extract(cast(cast(t.meta as char) as json), '$.Plan.TotalFileSize') /
+				nullif(cast(json_extract(cast(cast(t.meta as char) as json), '$.Summary."row-count"') as signed), 0), 0
+			) as signed) as row_len
+		from mysql.tidb_global_task_history t
+		where t.task_key = %? and t.type = %?`,
+		proto.ImportStepWriteAndIngest, proto.ImportStepWriteAndIngest, taskKey, proto.ImportInto)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, errors.Annotatef(ErrTaskNotFound, "import-into job %d in keyspace %s not found in history", jobID, keyspace)
+	}
+	row := rs[0]
+	ret := &ImportIntoJobHistoryInfo{
+		ImportID:     jobID,
+		Keyspace:     keyspace,
+		TaskID:       row.GetInt64(0),
+		State:        row.GetString(1),
+		Concurrency:  int(row.GetInt64(2)),
+		MaxNodeCount: int(row.GetInt64(3)),
+	}
+	if !row.IsNull(4) {
+		ret.DistSQLScanConcurrency = int(row.GetInt64(4))
+	}
+	if !row.IsNull(5) {
+		ret.IndexCount = int(row.GetInt64(5))
+	}
+	if !row.IsNull(6) {
+		ret.ColumnCount = int(row.GetInt64(6))
+	}
+	if !row.IsNull(7) {
+		ret.FileSize = row.GetString(7)
+	}
+	if !row.IsNull(8) {
+		ret.DataKVSize = row.GetString(8)
+	}
+	if !row.IsNull(9) {
+		ret.IndexKVSize = row.GetString(9)
+	}
+	if !row.IsNull(10) {
+		ret.PerCoreSpeed = row.GetString(10)
+	}
+	if !row.IsNull(11) {
+		ret.OverallSpeed = row.GetString(11)
+	}
+	if !row.IsNull(12) {
+		ret.RowCount = row.GetInt64(12)
+	}
+	if !row.IsNull(13) {
+		ret.RowLength = row.GetInt64(13)
+	}
+
+	// duration by step
+	stepRows, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select step, SEC_TO_TIME(TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time)))) as duration
+		from mysql.tidb_background_subtask_history
+		where task_key = %?
+		group by step`,
+		ret.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, stepRow := range stepRows {
+		if stepRow.IsNull(1) {
+			continue
+		}
+		duration := stepRow.GetString(1)
+		switch proto.Step(stepRow.GetInt64(0)) {
+		case proto.ImportStepEncodeAndSort:
+			ret.Duration.Encode = duration
+		case proto.ImportStepMergeSort:
+			ret.Duration.MergeSort = duration
+		case proto.ImportStepWriteAndIngest:
+			ret.Duration.Ingest = duration
+		case proto.ImportStepCollectConflicts:
+			ret.Duration.CollectConflicts = duration
+		case proto.ImportStepConflictResolution:
+			ret.Duration.ResolveConflicts = duration
+		case proto.ImportStepPostProcess:
+			ret.Duration.PostProcess = duration
+		}
+	}
+	totalRows, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select SEC_TO_TIME(TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time))))
+		from mysql.tidb_background_subtask_history
+		where task_key = %?`,
+		ret.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(totalRows) > 0 && !totalRows[0].IsNull(0) {
+		ret.Duration.Total = totalRows[0].GetString(0)
+	}
+	return ret, nil
 }
 
 // GetAllSubtasks gets all subtasks with basic columns.

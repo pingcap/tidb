@@ -94,6 +94,48 @@ func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, summary)
 }
 
+// DXFImportIntoJobInfoHandler handles getting IMPORT INTO history job details.
+type DXFImportIntoJobInfoHandler struct{}
+
+// NewDXFImportIntoJobInfoHandler creates a new DXFImportIntoJobInfoHandler.
+func NewDXFImportIntoJobInfoHandler() *DXFImportIntoJobInfoHandler {
+	return &DXFImportIntoJobInfoHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (*DXFImportIntoJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+	params := mux.Vars(req)
+	targetKeyspace := params["keyspace"]
+	if targetKeyspace == "" || naming.CheckKeyspaceName(targetKeyspace) != nil {
+		handler.WriteError(w, errors.Errorf("invalid or empty target keyspace %s", targetKeyspace))
+		return
+	}
+	jobID, err := strconv.ParseInt(params["jobID"], 10, 64)
+	if err != nil || jobID <= 0 {
+		handler.WriteError(w, errors.Errorf("invalid job id %s", params["jobID"]))
+		return
+	}
+
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+	defer cancel()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	info, err := taskMgr.GetImportIntoJobInfoFromHistory(ctx, targetKeyspace, jobID)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, info)
+}
+
 // DXFScheduleHandler handles the DXF schedule actions.
 type DXFScheduleHandler struct{}
 
