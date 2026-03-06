@@ -36,10 +36,12 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
 )
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -89,7 +91,16 @@ func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownV2(gp)
+		result := e.toV2().analyzeColumnsPushDownV2(gp)
+		// If TypeSSTMetadata failed, fall back to TypeFullSampling.
+		if result.Err != nil && e.analyzePB.Tp == tipb.AnalyzeType_TypeSSTMetadata {
+			logutil.BgLogger().Warn("SST metadata analyze failed, falling back to full sampling",
+				zap.String("table", e.job.TableName),
+				zap.Error(result.Err))
+			e.analyzePB.Tp = tipb.AnalyzeType_TypeFullSampling
+			result = e.toV2().analyzeColumnsPushDownV2(gp)
+		}
+		return result
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }

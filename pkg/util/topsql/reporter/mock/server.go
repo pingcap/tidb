@@ -138,6 +138,18 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
+func (svr *mockAgentServer) ReportTopRURecords(stream tipb.TopSQLAgent_ReportTopRURecordsServer) error {
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+	}
+	return stream.SendAndClose(&tipb.EmptyResponse{})
+}
+
 func (svr *mockAgentServer) RecordsCnt() int {
 	svr.Lock()
 	defer svr.Unlock()

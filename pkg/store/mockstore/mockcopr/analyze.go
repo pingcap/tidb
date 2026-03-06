@@ -56,6 +56,9 @@ func (h coprHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
 		resp, err = h.handleAnalyzeIndexReq(req, analyzeReq)
 	} else {
+		// TypeColumn, TypeFullSampling, TypeSSTMetadata, and others all use the columns handler.
+		// TypeSSTMetadata is handled identically to TypeFullSampling in the mock since there
+		// are no real SST files — the response format is the same.
 		resp, err = h.handleAnalyzeColumnsReq(req, analyzeReq)
 	}
 	if err != nil {
