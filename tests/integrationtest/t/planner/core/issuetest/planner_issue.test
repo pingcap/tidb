@@ -903,3 +903,40 @@ drop table t1, t2;
 # Issue65521
 SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA);
 SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_ID = 1);
+
+# Issue63035
+set @old_db := database();
+drop database if exists lock_db1;
+drop database if exists lock_db2;
+create database lock_db1;
+create database lock_db2;
+
+use lock_db1;
+create table t(id int primary key, v int);
+insert into t values (1, 100);
+--enable_warnings
+select ue1_0.id from t ue1_0 where ue1_0.id=1 for update of t;
+select ue1_0.id from t ue1_0 where ue1_0.id=1 for update of ue1_0;
+select * from t ue1_0 for update of t;
+select * from t ue1_0 for update of t, t, ue1_0;
+select * from t ue1_0 for update of lock_db1.t;
+select * from t ue1_0 for update of lock_db1.ue1_0;
+
+--error 1109
+select * from t ue1_0 for update of non_exist_table;
+
+use lock_db2;
+create table t(id int primary key, v int);
+insert into t values (1, 200);
+select * from lock_db1.t ue1_0 for update of t;
+select * from lock_db1.t ue1_0, lock_db2.t ue1_1 for update of t;
+with cte_t as (select * from t) select * from cte_t for update of cte_t;
+--disable_warnings
+
+set @old_db = ifnull(@old_db, 'test');
+set @stmt = concat('use ', @old_db);
+prepare _ldbstmt from @stmt;
+execute _ldbstmt;
+drop database if exists lock_db1;
+drop database if exists lock_db2;
+deallocate prepare _ldbstmt;
