@@ -33,6 +33,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
+	testDataMap.LoadTestSuiteData("testdata", "decorrelate_limit_suite", true)
 
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
@@ -59,4 +60,12 @@ func TestMain(m *testing.M) {
 
 func GetRuntimeFilterGeneratorData() testdata.TestData {
 	return testDataMap["runtime_filter_generator_suite"]
+}
+
+func GetDecorrelateLimitSuiteData() testdata.TestData {
+	return testDataMap["decorrelate_limit_suite"]
+}
+
+func GetCascadesSuiteData() testdata.TestData {
+	return testDataMap["cascades_suite"]
 }
