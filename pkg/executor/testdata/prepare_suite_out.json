@@ -155,6 +155,7 @@
               }
             ],
             "Plan": [
+<<<<<<< HEAD
               "HashJoin_36 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
               "├─IndexLookUp_51(Build) 99.90 root  ",
               "│ ├─IndexRangeScan_49(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
@@ -162,6 +163,15 @@
               "└─IndexLookUp_48(Probe) 99.90 root  ",
               "  ├─IndexRangeScan_46(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
               "  └─TableRowIDScan_47(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+=======
+              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+              "├─IndexLookUp_47(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_36(Probe) 99.90 root  ",
+              "  ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -175,6 +185,7 @@
               }
             ],
             "Plan": [
+<<<<<<< HEAD
               "HashJoin_36 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
               "├─IndexLookUp_51(Build) 99.90 root  ",
               "│ ├─IndexRangeScan_49(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
@@ -182,6 +193,15 @@
               "└─IndexLookUp_48(Probe) 99.90 root  ",
               "  ├─IndexRangeScan_46(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
               "  └─TableRowIDScan_47(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+=======
+              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+              "├─IndexLookUp_47(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_36(Probe) 99.90 root  ",
+              "  ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
             ],
             "LastPlanUseCache": "1",
             "Result": [
@@ -197,6 +217,7 @@
               }
             ],
             "Plan": [
+<<<<<<< HEAD
               "HashJoin_36 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
               "├─IndexLookUp_51(Build) 99.90 root  ",
               "│ ├─IndexRangeScan_49(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
@@ -204,6 +225,15 @@
               "└─IndexLookUp_48(Probe) 99.90 root  ",
               "  ├─IndexRangeScan_46(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
               "  └─TableRowIDScan_47(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+=======
+              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+              "├─IndexLookUp_47(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_36(Probe) 99.90 root  ",
+              "  ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
             ],
             "LastPlanUseCache": "0",
             "Result": null
