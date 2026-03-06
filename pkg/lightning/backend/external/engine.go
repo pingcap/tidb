@@ -28,8 +28,8 @@ import (
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -247,53 +249,34 @@ func NewExternalEngine(
 	}
 }
 
-func getFilesReadConcurrency(
-	ctx context.Context,
-	storage storeapi.Storage,
-	statsFiles []string,
-	startKey, endKey []byte,
-) ([]uint64, []uint64, error) {
-	result := make([]uint64, len(statsFiles))
-	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
+func getPrefixLength(key []byte) int {
+	prefixLength := 0
+	ks, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+	if err == nil {
+		prefixLength = len(ks)
+	} else {
+		k = key
+	}
+
+	_, _, isRecordKey, err := tablecodec.DecodeKeyHead(k)
 	if err != nil {
-		return nil, nil, err
+		return 0
 	}
-	startOffs, endOffs := offsets[0], offsets[1]
-	totalFileSize := uint64(0)
-	for i := range statsFiles {
-		size := endOffs[i] - startOffs[i]
-		totalFileSize += size
-		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
-		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
-		// always return an offset that is less than or equal to the key.
-		expectedConc += 1
-		// readAllData will enable concurrent read and use large buffer if result[i] > 1
-		// when expectedConc < readAllDataConcThreshold, we don't use concurrent read to
-		// reduce overhead
-		if expectedConc >= readAllDataConcThreshold {
-			result[i] = expectedConc
-		} else {
-			result[i] = 1
-		}
-		// only log for files with expected concurrency > 1, to avoid too many logs
-		if expectedConc > 1 {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-				zap.Uint64("startOffset", startOffs[i]),
-				zap.Uint64("endOffset", endOffs[i]),
-				zap.Uint64("expectedConc", expectedConc),
-				zap.Uint64("concurrency", result[i]),
-			)
-		}
+	if isRecordKey {
+		prefixLength += 11
+	} else {
+		prefixLength += tablecodec.RecordRowKeyLen
 	}
-	// Note: this is the file size of the range group, KV size is smaller, as we
-	// need additional 8*2 for each KV.
-	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
-	return result, startOffs, nil
+
+	return prefixLength
 }
 
-func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
+func (e *Engine) loadRangeBatchData(
+	ctx context.Context,
+	jobKeys [][]byte,
+	startOffsets, endOffsets []uint64,
+	outCh chan<- engineapi.DataAndRanges,
+) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -328,6 +311,8 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		e.statsFiles,
 		startKey,
 		endKey,
+		startOffsets,
+		endOffsets,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -558,11 +543,18 @@ func (e *Engine) LoadIngestData(
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
 
+	readRangesPerKey, err := getReadRangeFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for start := 0; start < len(e.jobKeys)-1; {
 		currBatchSize = e.handleConcurrencyChange(ctx, currBatchSize)
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+currBatchSize, len(e.jobKeys))
-		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], outCh)
+		startOffsets := readRangesPerKey[start][0]
+		endOffsets := readRangesPerKey[end-1][1]
+		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], startOffsets, endOffsets, outCh)
 		if err != nil {
 			return err
 		}

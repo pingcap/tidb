@@ -156,7 +156,15 @@ func TestReadLargeFile(t *testing.T) {
 	startKey := []byte("key000000")
 	maxKey := []byte("key004998")
 	endKey := []byte("key004999")
-	err := readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, stats, memStore)
+	require.NoError(t, err)
+
+	err = readAllData(
+		ctx, memStore, datas, stats,
+		startKey, endKey,
+		readRanges[0][0],
+		readRanges[1][1],
+		smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	require.Equal(t, startKey, output.kvs[0].Key)

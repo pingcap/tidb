@@ -46,29 +46,34 @@ const (
 	metaName = "meta.json"
 )
 
-// seekPropsOffsets reads the statistic files to find the largest offset of
+// getReadRangeFromProps reads the statistic files to find the largest offset of
 // corresponding sorted data file such that the key at offset is less than or
 // equal to the given start keys. These returned offsets can be used to seek data
 // file reader, read, parse and skip few smaller keys, and then locate the needed
 // data.
 //
-// Caller can specify multiple ascending keys and seekPropsOffsets will return
+// Caller can specify multiple ascending keys and getReadRangeFromProps will return
 // the offsets list per file for each key.
-func seekPropsOffsets(
+func getReadRangeFromProps(
 	ctx context.Context,
-	starts []kv.Key,
+	jobKeys [][]byte,
 	paths []string,
 	exStorage storeapi.Storage,
-) (_ [][]uint64, err error) {
+) (_ [][2][]uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
 	defer func() {
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	offsetsPerFile := make([][]uint64, len(paths))
+	starts := make([]kv.Key, len(jobKeys))
+	for i := range jobKeys {
+		starts[i] = kv.Key(jobKeys[i])
+	}
+
+	offsetsPerFile := make([][][2]uint64, len(paths))
 	for i := range offsetsPerFile {
-		offsetsPerFile[i] = make([]uint64, len(starts))
+		offsetsPerFile[i] = make([][2]uint64, len(starts))
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
@@ -87,6 +92,7 @@ func seekPropsOffsets(
 			curKey := starts[keyIdx]
 
 			p, err3 := r.nextProp()
+			firstKey := kv.Key(p.firstKey)
 			for {
 				if err3 != nil {
 					if goerrors.Is(err3, io.EOF) {
@@ -99,8 +105,7 @@ func seekPropsOffsets(
 					}
 					return errors.Trace(err3)
 				}
-				propKey := kv.Key(p.firstKey)
-				for propKey.Cmp(curKey) > 0 {
+				for firstKey.Cmp(curKey) > 0 {
 					keyIdx++
 					if keyIdx >= len(starts) {
 						return nil
@@ -108,7 +113,7 @@ func seekPropsOffsets(
 					offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
 					curKey = starts[keyIdx]
 				}
-				offsetsPerFile[i][keyIdx] = p.offset
+				offsetsPerFile[i][keyIdx] = [2]uint64{p.offset, p.offset + p.totalSize()}
 				p, err3 = r.nextProp()
 			}
 		})
@@ -118,15 +123,16 @@ func seekPropsOffsets(
 		return nil, err
 	}
 
-	// TODO(lance6716): change the caller so we don't need to transpose the result
-	offsetsPerKey := make([][]uint64, len(starts))
+	readRangesPerKey := make([][2][]uint64, len(starts))
 	for i := range starts {
-		offsetsPerKey[i] = make([]uint64, len(paths))
+		readRangesPerKey[i][0] = make([]uint64, len(paths))
+		readRangesPerKey[i][1] = make([]uint64, len(paths))
 		for j := range paths {
-			offsetsPerKey[i][j] = offsetsPerFile[j][i]
+			readRangesPerKey[i][0][j] = offsetsPerFile[j][i][0]
+			readRangesPerKey[i][1][j] = offsetsPerFile[j][i][1]
 		}
 	}
-	return offsetsPerKey, nil
+	return readRangesPerKey, nil
 }
 
 // GetAllFileNames returns files with the same non-partitioned dir.
