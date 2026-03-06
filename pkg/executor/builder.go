@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/executor/join"
-	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
+	"github.com/pingcap/tidb/pkg/util/joinversion"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"

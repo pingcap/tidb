@@ -61,7 +61,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/distsql",
-        "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
@@ -109,6 +108,7 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "//pkg/util/intest",
+        "//pkg/util/joinversion",
         "//pkg/util/logutil",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",

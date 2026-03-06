@@ -12,9 +12,9 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "//pkg/executor/join/joinversion",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/slowlogrule",
+        "//pkg/util/joinversion",
         "//pkg/util/memory",
         "//pkg/util/paging",
         "//pkg/util/size",

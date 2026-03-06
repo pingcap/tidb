@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
+	"github.com/pingcap/tidb/pkg/util/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
