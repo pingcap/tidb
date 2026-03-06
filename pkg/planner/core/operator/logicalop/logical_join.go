@@ -173,11 +173,20 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		)
 	}
 	simplifyOuterJoin(p, predicates)
+	p.OtherConditions, ret = p.filterOtherCondBySchema(p.OtherConditions, ret)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	p.allJoinLeaf = getAllJoinLeaf(p)
 	switch p.JoinType {
 	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
+		var leftOnly []expression.Expression
+		if len(p.OtherConditions) > 0 {
+			leftSchema := p.Children()[0].Schema()
+			rightSchema := p.Children()[1].Schema()
+			p.OtherConditions, leftOnly = expression.FilterOutInPlace(p.OtherConditions, func(expr expression.Expression) bool {
+				return expression.ExprFromSchema(expr, leftSchema) && !expression.ExprFromSchema(expr, rightSchema)
+			})
+		}
 		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
 		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
 			p.Children()[0].Schema(), p.Children()[1].Schema(), false, nil)
@@ -187,17 +196,28 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
+		predicates, ret = p.filterPredicatesBySchema(predicates, ret)
 		// Only derive left where condition, because right where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, false)
-		leftCond = leftPushCond
+		otherCond, ret = p.filterOtherCondBySchema(otherCond, ret)
+		leftCond = append(leftPushCond, leftOnly...)
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
 		_, derivedRightJoinCond := DeriveOtherConditions(
 			p, p.Children()[0].Schema(), p.Children()[1].Schema(), false, true)
 		rightCond = append(p.RightConditions, derivedRightJoinCond...)
 		p.RightConditions = nil
-		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
+		ret = append(ret, expression.ScalarFuncs2Exprs(equalCond)...)
+		ret = append(ret, otherCond...)
 		ret = append(ret, rightPushCond...)
 	case base.RightOuterJoin:
+		var rightOnly []expression.Expression
+		if len(p.OtherConditions) > 0 {
+			leftSchema := p.Children()[0].Schema()
+			rightSchema := p.Children()[1].Schema()
+			p.OtherConditions, rightOnly = expression.FilterOutInPlace(p.OtherConditions, func(expr expression.Expression) bool {
+				return expression.ExprFromSchema(expr, rightSchema) && !expression.ExprFromSchema(expr, leftSchema)
+			})
+		}
 		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
 			p.Children()[0].Schema(), p.Children()[1].Schema(), true, nil)
 		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
@@ -207,15 +227,18 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
+		predicates, ret = p.filterPredicatesBySchema(predicates, ret)
 		// Only derive right where condition, because left where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, false, true)
-		rightCond = rightPushCond
+		otherCond, ret = p.filterOtherCondBySchema(otherCond, ret)
+		rightCond = append(rightPushCond, rightOnly...)
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
 		derivedLeftJoinCond, _ := DeriveOtherConditions(
 			p, p.Children()[0].Schema(), p.Children()[1].Schema(), true, false)
 		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
 		p.LeftConditions = nil
-		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
+		ret = append(ret, expression.ScalarFuncs2Exprs(equalCond)...)
+		ret = append(ret, otherCond...)
 		ret = append(ret, leftPushCond...)
 	case base.SemiJoin, base.InnerJoin:
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
@@ -228,12 +251,14 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
 			true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+		tempCond, ret = p.filterPredicatesBySchema(tempCond, ret)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual, nil
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
+		otherCond, ret = p.filterOtherCondBySchema(otherCond, ret)
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
@@ -251,7 +276,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 			return ret, dual, nil
 		}
 		// `predicates` should only contain left conditions or constant filters.
-		_, leftPushCond, rightPushCond, _ = p.extractOnCondition(predicates, true, true)
+		predicates, ret = p.filterPredicatesBySchema(predicates, ret)
+		_, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, true)
+		_, ret = p.filterOtherCondBySchema(otherCond, ret)
 		// Do not derive `is not null` for anti join, since it may cause wrong results.
 		// For example:
 		// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
@@ -395,7 +422,15 @@ func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
 func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
-	leftCols, rightCols := p.ExtractUsedCols(parentUsedCols)
+	usedCols := make([]*expression.Column, 0, len(parentUsedCols))
+	usedCols = append(usedCols, parentUsedCols...)
+	usedCols = append(usedCols, expression.ExtractColumnsFromExpressions(p.OtherConditions, nil)...)
+	usedCols = append(usedCols, expression.ExtractColumnsFromExpressions(p.LeftConditions, nil)...)
+	usedCols = append(usedCols, expression.ExtractColumnsFromExpressions(p.RightConditions, nil)...)
+	usedCols = append(usedCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(p.EqualConditions), nil)...)
+	usedCols = append(usedCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(p.NAEQConditions), nil)...)
+
+	leftCols, rightCols := p.ExtractUsedCols(usedCols)
 
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols)
@@ -409,12 +444,90 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	}
 
 	p.MergeSchema()
+	p.appendFullSchemaColumns(parentUsedCols)
 	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
 	p.InlineProjection(parentUsedCols)
 	return p, nil
+}
+
+func (p *LogicalJoin) appendFullSchemaColumns(parentUsedCols []*expression.Column) {
+	if p.FullSchema == nil || len(parentUsedCols) == 0 {
+		return
+	}
+	used := make(map[int64]struct{}, len(parentUsedCols))
+	for _, col := range parentUsedCols {
+		used[col.UniqueID] = struct{}{}
+	}
+	names := p.OutputNames()
+	if names == nil {
+		names = make(types.NameSlice, p.Schema().Len())
+	}
+	for i, col := range p.FullSchema.Columns {
+		if _, ok := used[col.UniqueID]; !ok {
+			continue
+		}
+		if p.Schema().Contains(col) {
+			continue
+		}
+		p.Schema().Append(col)
+		if p.FullNames != nil && i < len(p.FullNames) {
+			name := *p.FullNames[i]
+			names = append(names, &name)
+		} else {
+			names = append(names, types.EmptyName)
+		}
+	}
+	p.SetOutputNames(names)
+}
+
+// AppendFullSchemaColumns appends columns from FullSchema into Schema if they are used by upper expressions.
+// It is intended for optimizer rules that rearrange join conditions after column pruning.
+func (p *LogicalJoin) AppendFullSchemaColumns(parentUsedCols []*expression.Column) {
+	p.appendFullSchemaColumns(parentUsedCols)
+}
+
+// EnsureSchemaForConditions appends condition columns from child schemas into Schema
+// when they are missing from the current output schema.
+func (p *LogicalJoin) EnsureSchemaForConditions(conds ...[]expression.Expression) {
+	lChild := p.Children()[0]
+	rChild := p.Children()[1]
+	lSchema, rSchema := lChild.Schema(), rChild.Schema()
+	lNames, rNames := lChild.OutputNames(), rChild.OutputNames()
+	outNames := p.OutputNames()
+	if outNames == nil {
+		outNames = make(types.NameSlice, p.Schema().Len())
+	}
+	for _, condList := range conds {
+		cols := expression.ExtractColumnsFromExpressions(condList, nil)
+		for _, col := range cols {
+			if p.Schema().Contains(col) {
+				continue
+			}
+			if idx := lSchema.ColumnIndex(col); idx != -1 {
+				p.Schema().Append(col)
+				if lNames != nil && idx < len(lNames) {
+					name := *lNames[idx]
+					outNames = append(outNames, &name)
+				} else {
+					outNames = append(outNames, types.EmptyName)
+				}
+				continue
+			}
+			if idx := rSchema.ColumnIndex(col); idx != -1 {
+				p.Schema().Append(col)
+				if rNames != nil && idx < len(rNames) {
+					name := *rNames[idx]
+					outNames = append(outNames, &name)
+				} else {
+					outNames = append(outNames, types.EmptyName)
+				}
+			}
+		}
+	}
+	p.SetOutputNames(outNames)
 }
 
 // FindBestTask inherits the BaseLogicalPlan.LogicalPlan.<3rd> implementation.
@@ -1585,6 +1698,38 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	rightSchema := child[1].Schema()
 	leftSchema := child[0].Schema()
 	return p.ExtractOnCondition(conditions, leftSchema, rightSchema, deriveLeft, deriveRight)
+}
+
+func (p *LogicalJoin) filterOtherCondBySchema(otherCond []expression.Expression, ret []expression.Expression) (kept []expression.Expression, remaining []expression.Expression) {
+	if len(otherCond) == 0 {
+		return otherCond, ret
+	}
+	mergedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
+	dst := otherCond[:0]
+	for _, cond := range otherCond {
+		if expression.ExprFromSchema(cond, mergedSchema) {
+			dst = append(dst, cond)
+			continue
+		}
+		ret = append(ret, cond)
+	}
+	return dst, ret
+}
+
+func (p *LogicalJoin) filterPredicatesBySchema(predicates []expression.Expression, ret []expression.Expression) (kept []expression.Expression, remaining []expression.Expression) {
+	if len(predicates) == 0 {
+		return predicates, ret
+	}
+	mergedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
+	dst := predicates[:0]
+	for _, expr := range predicates {
+		if expression.ExprFromSchema(expr, mergedSchema) {
+			dst = append(dst, expr)
+			continue
+		}
+		ret = append(ret, expr)
+	}
+	return dst, ret
 }
 
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
