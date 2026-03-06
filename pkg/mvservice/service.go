@@ -35,7 +35,6 @@ type mvItem = Item[*mv]
 type MVMetricsReporter interface {
 	reportMetrics(*MVService)
 	observeTaskDuration(taskType, result string, duration time.Duration)
-	observeFetchDuration(fetchType, result string, duration time.Duration)
 	observeRunEvent(eventType string)
 }
 
@@ -59,7 +58,7 @@ type MVService struct {
 
 	mh Helper
 
-	fetchInterval            time.Duration
+	fetchIntervalMillis      atomic.Int64
 	basicInterval            time.Duration
 	serverRefreshInterval    time.Duration
 	historyGCIntervalMillis  atomic.Int64
@@ -120,13 +119,9 @@ const (
 	mvRunEventServerRefreshError = "server_refresh_error"
 	mvRunEventFetchByDDL         = "fetch_meta_trigger_ddl"
 	mvRunEventFetchByInterval    = "fetch_meta_trigger_interval"
-	mvRunEventFetchMLogOK        = "fetch_mlog_ok"
-	mvRunEventFetchMLogErr       = "fetch_mlog_error"
-	mvRunEventFetchMViewOK       = "fetch_mviews_ok"
-	mvRunEventFetchMViewErr      = "fetch_mviews_error"
 	mvRunEventHistoryGCGetTSOErr = "history_gc_get_tso_error"
 
-	mvHistoryGCOwnerKey = "mv-history-gc"
+	mvHistoryGCOwnerKey = "gc-mv-op-hist"
 )
 
 type mv struct {
@@ -511,18 +506,16 @@ func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mvLog, error) {
 	start := mvsNow()
 	result := mvDurationResultSuccess
 	defer func() {
-		t.mh.observeFetchDuration(mvFetchTypeMLogPurge, result, mvsSince(start))
+		t.mh.observeTaskDuration(mvFetchTypeMLogPurge, result, mvsSince(start))
 	}()
 
 	newPending, err := t.mh.fetchAllTiDBMVLogPurge(t.ctx, t.sysSessionPool)
 	if err != nil {
 		result = mvDurationResultFailed
-		t.mh.observeRunEvent(mvRunEventFetchMLogErr)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("fetch all mvlog purge tasks failed", fields...)
 		return nil, err
 	}
-	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
 	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
@@ -532,18 +525,16 @@ func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mv, error) {
 	start := mvsNow()
 	result := mvDurationResultSuccess
 	defer func() {
-		t.mh.observeFetchDuration(mvFetchTypeMViewRefresh, result, mvsSince(start))
+		t.mh.observeTaskDuration(mvFetchTypeMViewRefresh, result, mvsSince(start))
 	}()
 
 	newPending, err := t.mh.fetchAllTiDBMVRefresh(t.ctx, t.sysSessionPool)
 	if err != nil {
 		result = mvDurationResultFailed
-		t.mh.observeRunEvent(mvRunEventFetchMViewErr)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("fetch all materialized view refresh tasks failed", fields...)
 		return nil, err
 	}
-	t.mh.observeRunEvent(mvRunEventFetchMViewOK)
 	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
@@ -715,6 +706,7 @@ func (t *MVService) Run() {
 
 // markFetchFailure records a synthetic lastMetaFetchMillis to control next fetch time.
 func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
+	fetchInterval := t.GetFetchInterval()
 	if !ddlTriggered {
 		t.lastMetaFetchMillis.Store(now.UnixMilli())
 		return
@@ -724,11 +716,11 @@ func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
 	if retryDelay <= 0 {
 		retryDelay = defaultMVBasicInterval
 	}
-	if retryDelay > t.fetchInterval {
-		retryDelay = t.fetchInterval
+	if retryDelay > fetchInterval {
+		retryDelay = fetchInterval
 	}
 	// next fetch time = lastMetaFetchMillis + fetchInterval = now + retryDelay
-	t.lastMetaFetchMillis.Store(now.Add(retryDelay - t.fetchInterval).UnixMilli())
+	t.lastMetaFetchMillis.Store(now.Add(retryDelay - fetchInterval).UnixMilli())
 }
 
 // shouldFetchMVMeta reports whether a periodic metadata refresh is due.
@@ -737,16 +729,17 @@ func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
 	if last == 0 {
 		return true
 	}
-	return now.Sub(mvsUnixMilli(last)) >= t.fetchInterval
+	return now.Sub(mvsUnixMilli(last)) >= t.GetFetchInterval()
 }
 
 // nextFetchTime returns the next periodic metadata refresh time.
 func (t *MVService) nextFetchTime(now time.Time) time.Time {
+	fetchInterval := t.GetFetchInterval()
 	last := t.lastMetaFetchMillis.Load()
 	if last == 0 {
 		return now
 	}
-	next := mvsUnixMilli(last).Add(t.fetchInterval)
+	next := mvsUnixMilli(last).Add(fetchInterval)
 	if next.Before(now) {
 		return now
 	}

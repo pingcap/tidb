@@ -40,11 +40,12 @@ type serviceHelper struct {
 	runEventCounterCache  runEventCounterCache
 
 	reportCache struct {
-		submittedCount int64
-		finishedCount  int64
-		failedCount    int64
-		timeoutCount   int64
-		rejectedCount  int64
+		submittedCount    int64
+		finishedCount     int64
+		failedCount       int64
+		timeoutCount      int64
+		rejectedCount     int64
+		backpressureCount int64
 	}
 }
 
@@ -330,7 +331,6 @@ func (*serviceHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
-		logutil.BgLogger().Warn("fetch mysql.tidb_mlog_purge_info failed", zap.Error(err))
 		return nil, err
 	}
 	newPending := make(map[int64]*mvLog, len(rows))
@@ -358,7 +358,6 @@ func (*serviceHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool 
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
-		logutil.BgLogger().Warn("fetch mysql.tidb_mview_refresh_info failed", zap.Error(err))
 		return nil, err
 	}
 	newPending := make(map[int64]*mv, len(rows))
@@ -389,7 +388,6 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 			"get system session for restricted SQL failed",
 			zap.String("sql", sql),
 			zap.Int("param_count", len(params)),
-			zap.Any("params", params),
 			zap.Error(err),
 		)
 		return nil, err
@@ -414,7 +412,6 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 			"execute restricted SQL failed",
 			zap.String("sql", sql),
 			zap.Int("param_count", len(params)),
-			zap.Any("params", params),
 			zap.NamedError("context_error", ctx.Err()),
 			zap.Error(err),
 		)

@@ -175,7 +175,7 @@ func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		return svc.executor.metrics.counters.finishedCount.Load() == expected
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 }
 
 func setupPurgeMVLogMetaForTest(t *testing.T, se *recordingSessionContext, nextTimeRows []chunk.Row) {
@@ -218,10 +218,9 @@ type mockMVServiceHelper struct {
 	lastRefreshID int64
 	lastPurgeID   int64
 
-	metricsMu              sync.Mutex
-	taskDurationCounts     map[string]int
-	metaFetchDurationCount map[string]int
-	runEventCounts         map[string]int
+	metricsMu          sync.Mutex
+	taskDurationCounts map[string]int
+	runEventCounts     map[string]int
 }
 
 func (m *mockMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
@@ -281,18 +280,6 @@ func (m *mockMVServiceHelper) observeTaskDuration(taskType, result string, durat
 	m.metricsMu.Unlock()
 }
 
-func (m *mockMVServiceHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
-	if duration < 0 {
-		return
-	}
-	m.metricsMu.Lock()
-	if m.metaFetchDurationCount == nil {
-		m.metaFetchDurationCount = make(map[string]int)
-	}
-	m.metaFetchDurationCount[fetchType+"/"+result]++
-	m.metricsMu.Unlock()
-}
-
 func (m *mockMVServiceHelper) taskDurationCount(taskType, result string) int {
 	m.metricsMu.Lock()
 	defer m.metricsMu.Unlock()
@@ -302,7 +289,7 @@ func (m *mockMVServiceHelper) taskDurationCount(taskType, result string) int {
 func (m *mockMVServiceHelper) fetchDurationCount(fetchType, result string) int {
 	m.metricsMu.Lock()
 	defer m.metricsMu.Unlock()
-	return m.metaFetchDurationCount[fetchType+"/"+result]
+	return m.taskDurationCounts[fetchType+"/"+result]
 }
 
 func (m *mockMVServiceHelper) observeRunEvent(eventType string) {
@@ -387,12 +374,10 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 	svc.NotifyDDLChange()
 	require.Eventually(t, func() bool {
 		return helper.fetchLogsCalls.Load() > 0 && helper.fetchViewCalls.Load() > 0
-	}, time.Second, 20*time.Millisecond)
+	}, time.Second, time.Millisecond)
 	require.Eventually(t, func() bool {
-		return helper.runEventCount(mvRunEventFetchByDDL) > 0 &&
-			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
-			helper.runEventCount(mvRunEventFetchMViewOK) > 0
-	}, time.Second, 20*time.Millisecond)
+		return helper.runEventCount(mvRunEventFetchByDDL) > 0
+	}, time.Second, time.Millisecond)
 }
 
 func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
@@ -425,17 +410,17 @@ func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
 	require.Equal(t, int32(0), helper.historyGCCalls.Load())
 	require.Eventually(t, func() bool {
 		return helper.runEventCount(mvRunEventServerRefreshOK) > 0
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 
 	module.Advance(defaultMVHistoryGCInterval + cfg.BasicInterval)
 	require.Eventually(t, func() bool {
 		return helper.historyGCCalls.Load() > 0
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 	require.Equal(t, helper.currentTSO, helper.lastHistoryGCCurrentTSO.Load())
 	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastHistoryGCRetention.Load())
 	require.Eventually(t, func() bool {
 		return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 }
 
 func TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner(t *testing.T) {
@@ -612,10 +597,6 @@ func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultFailed))
 	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMLogPurge, mvDurationResultFailed))
 	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultSuccess))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMLogOK))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMViewErr))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMLogErr))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMViewOK))
 
 	svc.mvLogPurgeMu.Lock()
 	_, hasOldMLog := svc.mvLogPurgeMu.pending[101]
@@ -653,7 +634,7 @@ func TestMVServicePurgeMVLogTaskResult(t *testing.T) {
 			_, ok := svc.mvLogPurgeMu.pending[l.ID]
 			svc.mvLogPurgeMu.Unlock()
 			return !ok
-		}, time.Second, 10*time.Millisecond)
+		}, time.Second, time.Millisecond)
 		require.Equal(t, int64(0), l.retryCount.Load())
 		require.Equal(t, int64(0), svc.metrics.mvLogCount.Load())
 	})
@@ -709,7 +690,7 @@ func TestMVServiceRefreshMVTaskResult(t *testing.T) {
 			_, ok := svc.mvRefreshMu.pending[m.ID]
 			svc.mvRefreshMu.Unlock()
 			return !ok
-		}, time.Second, 10*time.Millisecond)
+		}, time.Second, time.Millisecond)
 		require.Equal(t, int64(0), m.retryCount.Load())
 		require.Equal(t, int64(0), svc.metrics.mvCount.Load())
 	})

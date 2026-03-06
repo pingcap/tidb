@@ -35,16 +35,18 @@ type TaskExecutor struct {
 
 	metrics struct {
 		counters struct {
-			submittedCount atomic.Int64
-			finishedCount  atomic.Int64
-			failedCount    atomic.Int64
-			timeoutCount   atomic.Int64
-			rejectedCount  atomic.Int64
+			submittedCount    atomic.Int64
+			finishedCount     atomic.Int64
+			failedCount       atomic.Int64
+			timeoutCount      atomic.Int64
+			rejectedCount     atomic.Int64
+			backpressureCount atomic.Int64
 		}
 		gauges struct {
 			runningCount         atomic.Int64
 			waitingCount         atomic.Int64
 			timedOutRunningCount atomic.Int64
+			backpressureBlocked  atomic.Int64
 		}
 	}
 
@@ -297,6 +299,7 @@ func (e *TaskExecutor) workerLoop() {
 // nextTask picks the next executable task.
 // It waits when the queue is empty, respects worker down-scaling, and applies backpressure.
 func (e *TaskExecutor) nextTask() (taskRequest, bool) {
+	inBackpressureWait := false
 	for {
 		e.queue.mu.Lock()
 		for e.lifecycleState.Load() != taskExecutorStateClosed && e.queue.tasks.length() == 0 {
@@ -314,12 +317,19 @@ func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 		e.queue.mu.Unlock()
 
 		if blocked, delay := e.shouldBackpressure(); blocked {
+			if !inBackpressureWait {
+				e.metrics.counters.backpressureCount.Add(1)
+				inBackpressureWait = true
+			}
+			e.metrics.gauges.backpressureBlocked.Add(1)
 			select {
 			case <-e.closeCh:
 			case <-mvsAfter(delay):
 			}
+			e.metrics.gauges.backpressureBlocked.Add(-1)
 			continue
 		}
+		inBackpressureWait = false
 
 		e.queue.mu.Lock()
 		if e.shouldExitWorkerWithLock() {

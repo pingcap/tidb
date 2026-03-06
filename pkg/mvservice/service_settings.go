@@ -117,9 +117,12 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 		ctx:      ctx,
 		mh:       helper,
 
-		fetchInterval:         cfg.FetchInterval,
 		basicInterval:         cfg.BasicInterval,
 		serverRefreshInterval: cfg.ServerRefreshInterval,
+	}
+	if err := mgr.SetFetchInterval(cfg.FetchInterval); err != nil {
+		panic(fmt.Sprintf("invalid MV service fetch interval config: fetch_interval=%s err=%v",
+			cfg.FetchInterval, err))
 	}
 	if err := mgr.SetHistoryGCConfig(cfg.HistoryGCInterval, cfg.HistoryGCRetention); err != nil {
 		panic(fmt.Sprintf("invalid MV service history GC config: interval=%s retention=%s err=%v",
@@ -139,6 +142,33 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 // SetTaskExecConfig sets the execution config for MV tasks.
 func (t *MVService) SetTaskExecConfig(maxConcurrency int, timeout time.Duration) {
 	t.executor.UpdateConfig(maxConcurrency, timeout)
+}
+
+// SetFetchInterval sets metadata fetch interval.
+func (t *MVService) SetFetchInterval(interval time.Duration) error {
+	if t == nil {
+		return fmt.Errorf("mv service is nil")
+	}
+	if interval <= 0 {
+		return fmt.Errorf("fetch interval must be positive")
+	}
+	if interval < time.Millisecond {
+		return fmt.Errorf("fetch interval must be at least 1ms")
+	}
+	t.fetchIntervalMillis.Store(interval.Milliseconds())
+	return nil
+}
+
+// GetFetchInterval returns metadata fetch interval.
+func (t *MVService) GetFetchInterval() time.Duration {
+	if t == nil {
+		return defaultMVFetchInterval
+	}
+	interval := time.Duration(t.fetchIntervalMillis.Load()) * time.Millisecond
+	if interval <= 0 {
+		return defaultMVFetchInterval
+	}
+	return interval
 }
 
 // GetTaskExecConfig returns the current execution config for MV tasks.
