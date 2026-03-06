@@ -47,9 +47,9 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 		conf.TempStoragePath = t.TempDir()
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/testSortedRowContainerSpill"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -110,8 +110,8 @@ func TestIssue16696(t *testing.T) {
 	vardef.MemoryUsageAlarmRatio.Store(0.0)
 	defer vardef.MemoryUsageAlarmRatio.Store(alarmRatio)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/testSortedRowContainerSpill", "return(true)"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/testSortedRowContainerSpill"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill", "return(true)"))
 	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill"))
 	store := testkit.CreateMockStore(t)

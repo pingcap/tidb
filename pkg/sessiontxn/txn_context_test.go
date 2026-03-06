@@ -58,7 +58,6 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInShortPointGetPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInRunStmt", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInCachedPlanExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/assertTxnManagerForUpdateTSEqual", "return"))
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
@@ -85,7 +84,6 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInShortPointGetPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInRunStmt"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInCachedPlanExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/assertTxnManagerForUpdateTSEqual"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)

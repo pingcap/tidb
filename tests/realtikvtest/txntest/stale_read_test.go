@@ -1177,7 +1177,7 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 		// assert select statement in stale transaction
 		{
 			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
-			hasStaleFlag: false,
+			hasStaleFlag: true,
 		},
 		{
 			sql:          "select * from t",
@@ -1223,7 +1223,7 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 		// assert execute select statement in stale transaction
 		{
 			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
-			hasStaleFlag: false,
+			hasStaleFlag: true,
 		},
 		{
 			sql:          "execute p1",
@@ -1236,10 +1236,10 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 	}
 
 	for _, testcase := range testcases {
-		failpoint.Enable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness",
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertStmtCtxIsStaleness",
 			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
 		tk.MustExec(testcase.sql)
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertStmtCtxIsStaleness"))
 		// assert stale read flag should be false after each statement execution
 		require.False(t, staleread.IsStmtStaleness(tk.Session()))
 	}
