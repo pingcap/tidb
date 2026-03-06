@@ -84,6 +84,7 @@ go_test(
     timeout = "short",
     srcs = [
         "arena_test.go",
+        "bench_ab_test.go",
         "bench_test.go",
         "differential_test.go",
         "digester_test.go",
