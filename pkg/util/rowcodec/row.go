@@ -325,8 +325,14 @@ func (r *row) CalculateRawChecksum(
 	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
 	// keep backward compatibility to v8.3.0
 	if r.ChecksumVersion() == int(checksumVersionRawKey) {
+		if key == nil {
+			return 0, errInvalidChecksumKey
+		}
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
 	} else {
+		if handle == nil {
+			return 0, errInvalidChecksumKey
+		}
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, handle.Encoded())
 	}
 	return rawChecksum, nil
