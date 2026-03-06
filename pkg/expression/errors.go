@@ -60,6 +60,9 @@ var (
 	errUserLockWrongName             = dbterror.ClassExpression.NewStd(mysql.ErrUserLockWrongName)
 	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(mysql.ErrJSONInBooleanContext)
 	errBadNull                       = dbterror.ClassExpression.NewStd(mysql.ErrBadNull)
+	errModelNotExists                = dbterror.ClassSchema.NewStd(mysql.ErrModelNotExists)
+	errDatabaseNotExists             = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
+	errModelInferenceDisabled        = dbterror.ClassSchema.NewStd(mysql.ErrModelInferenceDisabled)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)

@@ -78,6 +78,9 @@ const (
 	Values             = "values"
 	BitCount           = "bit_count"
 	GetParam           = "getparam"
+	// model functions
+	ModelPredict       = "model_predict"
+	ModelPredictOutput = "tidb_model_predict_output"
 
 	// common functions
 	Coalesce = "coalesce"

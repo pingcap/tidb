@@ -329,6 +329,8 @@ var (
 		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
+		{ID: metadef.TiDBModelTableID, Name: "tidb_model", SQL: metadef.CreateTiDBModelTable},
+		{ID: metadef.TiDBModelVersionTableID, Name: "tidb_model_version", SQL: metadef.CreateTiDBModelVersionTable},
 	}
 )
 

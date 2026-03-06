@@ -157,6 +157,7 @@ go_test(
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
+        "bootstrap_update_test.go",
         "main_test.go",
         "session_test.go",
         "tidb_test.go",
@@ -165,7 +166,7 @@ go_test(
     embed = [":session"],
     flaky = True,
     race = "off",
-    shard_count = 47,
+    shard_count = 48,
     deps = [
         "//pkg/autoid_service",
         "//pkg/bindinfo",

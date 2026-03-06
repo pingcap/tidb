@@ -24,10 +24,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -484,7 +486,7 @@ func BenchmarkCheckSlowThreshold(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -522,7 +524,7 @@ func BenchmarkCheckSlowLogRulesLazy(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -559,7 +561,7 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -648,4 +650,50 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			}
 		})
 	}
+}
+
+type mockConsumptionReporter struct {
+	mu          sync.Mutex
+	groupName   string
+	consumption *rmpb.Consumption
+	calls       int
+}
+
+func (m *mockConsumptionReporter) ReportConsumption(groupName string, consumption *rmpb.Consumption) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.groupName = groupName
+	m.consumption = consumption
+	m.calls++
+}
+
+func TestReportModelInferenceRUConsumption(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	stmt, err := parser.New().ParseOneStmt("select 1", "", "")
+	require.NoError(t, err)
+	compiler := executor.Compiler{Ctx: tk.Session()}
+	execStmt, err := compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+
+	reporter := &mockConsumptionReporter{}
+	dctx := execStmt.Ctx.GetDistSQLCtx()
+	dctx.RUConsumptionReporter = reporter
+
+	stats := execStmt.Ctx.GetSessionVars().StmtCtx.ModelInferenceStats()
+	stats.RecordInference(1, 1, 1, stmtctx.ModelInferenceRolePredicate, 1, 500*time.Millisecond, nil)
+
+	execStmt.FinishExecuteStmt(oracle.GoTimeToTS(time.Now()), nil, false)
+
+	reporter.mu.Lock()
+	consumption := reporter.consumption
+	calls := reporter.calls
+	reporter.mu.Unlock()
+
+	require.Equal(t, 1, calls)
+	require.NotNil(t, consumption)
+	require.InDelta(t, 500.0, consumption.SqlLayerCpuTimeMs, 0.001)
+	require.InDelta(t, 500.0, consumption.TotalCpuTimeMs, 0.001)
 }

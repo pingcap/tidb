@@ -23,6 +23,9 @@ const (
 	// of a Selection or a JoinCondition, we can use this default value.
 	SelectionFactor = 0.8
 
+	// ModelPredictCostFactor is the relative cost of predicates containing model inference.
+	ModelPredictCostFactor = 10.0
+
 	DistinctFactor = 0.8
 
 	// ToleranceFactor is an arbitrary value used in (some) floating point

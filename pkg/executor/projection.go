@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -224,7 +225,8 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	if e.childResult.NumRows() == 0 {
 		return nil
 	}
-	err = e.evaluatorSuit.Run(e.evalCtx, e.enableVectorizedExpression, e.childResult, chk)
+	evalCtx := expression.WithModelInferenceStatsTarget(e.evalCtx, stmtctx.ModelInferenceRoleProjection, e.ID())
+	err = e.evaluatorSuit.Run(evalCtx, e.enableVectorizedExpression, e.childResult, chk)
 	return err
 }
 
@@ -456,6 +458,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 		}
 		w.proj.wg.Done()
 	}()
+	evalCtx := expression.WithModelInferenceStatsTarget(w.ctx.evalCtx, stmtctx.ModelInferenceRoleProjection, w.proj.ID())
 	for {
 		input, isNil := readProjection[*projectionInput](w.inputCh, w.globalFinishCh)
 		if isNil {
@@ -468,7 +471,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 		}
 
 		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
-		err := w.evaluatorSuit.Run(w.ctx.evalCtx, w.ctx.enableVectorizedExpression, input.chk, output.chk)
+		err := w.evaluatorSuit.Run(evalCtx, w.ctx.enableVectorizedExpression, input.chk, output.chk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
 		output.done <- err

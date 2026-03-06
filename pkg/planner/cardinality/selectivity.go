@@ -43,6 +43,8 @@ var (
 	outOfRangeBetweenRate int64 = 100
 )
 
+const modelPredictDefaultSelectivity = 0.1
+
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
@@ -380,6 +382,24 @@ OUTER:
 		}
 		if len(notCoveredNegateStrMatch) > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity())
+		}
+		hasModelPredicate := false
+		for _, expr := range notCoveredOtherExpr {
+			if expression.ContainsModelPredict(expr) {
+				hasModelPredicate = true
+				break
+			}
+		}
+		if !hasModelPredicate {
+			for _, expr := range notCoveredDNF {
+				if expression.ContainsModelPredict(expr) {
+					hasModelPredicate = true
+					break
+				}
+			}
+		}
+		if hasModelPredicate {
+			minSelectivity = math.Min(minSelectivity, modelPredictDefaultSelectivity)
 		}
 		ret *= minSelectivity
 		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)

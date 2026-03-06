@@ -791,6 +791,41 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBModelTable is the CREATE TABLE SQL of `tidb_model`.
+	CreateTiDBModelTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_model (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		db_name VARCHAR(64) NOT NULL,
+		model_name VARCHAR(64) NOT NULL,
+		owner VARCHAR(64) NOT NULL DEFAULT '',
+		created_by VARCHAR(64) NOT NULL DEFAULT '',
+		updated_by VARCHAR(64) NOT NULL DEFAULT '',
+		status VARCHAR(16) NOT NULL DEFAULT 'public',
+		comment TEXT,
+		create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP NULL DEFAULT NULL,
+		UNIQUE KEY uniq_model (db_name, model_name)
+	);`
+
+	// CreateTiDBModelVersionTable is the CREATE TABLE SQL of `tidb_model_version`.
+	CreateTiDBModelVersionTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_model_version (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		model_id BIGINT(20) NOT NULL,
+		version BIGINT(20) NOT NULL,
+		engine VARCHAR(16) NOT NULL,
+		location TEXT NOT NULL,
+		checksum VARCHAR(128) NOT NULL,
+		input_schema JSON NOT NULL,
+		output_schema JSON NOT NULL,
+		options JSON,
+		created_by VARCHAR(64) NOT NULL DEFAULT '',
+		status VARCHAR(16) NOT NULL DEFAULT 'public',
+		create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP NULL DEFAULT NULL,
+		UNIQUE KEY uniq_model_version (model_id, version),
+		KEY idx_model_id (model_id)
+	);`
 )
 
 // all below are related to DDL or DXF tables

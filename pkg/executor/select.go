@@ -772,7 +772,8 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.evalCtx, e.enableVectorizedExpression, e.filters, e.inputIter, e.selected)
+		evalCtx := expression.WithModelInferenceStatsTarget(e.evalCtx, stmtctx.ModelInferenceRolePredicate, e.ID())
+		e.selected, err = expression.VectorizedFilter(evalCtx, e.enableVectorizedExpression, e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return err
 		}
@@ -784,7 +785,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) error {
-	evalCtx := e.evalCtx
+	evalCtx := expression.WithModelInferenceStatsTarget(e.evalCtx, stmtctx.ModelInferenceRolePredicate, e.ID())
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 			selected, _, err := expression.EvalBool(evalCtx, e.filters, e.inputRow)

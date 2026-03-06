@@ -19,10 +19,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -33,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
@@ -1880,6 +1883,100 @@ func TestTiDBOptSelectivityFactor(t *testing.T) {
 	require.NoError(t, err)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
+}
+
+func TestTiDBModelSessionCacheConfig(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+
+	capVar := GetSysVar(vardef.TiDBModelCacheCapacity)
+	require.NotNil(t, capVar)
+	ttlVar := GetSysVar(vardef.TiDBModelCacheTTL)
+	require.NotNil(t, ttlVar)
+
+	oldCache := modelruntime.GetProcessSessionCache()
+	oldCapacity := readSessionCacheCapacity(t, oldCache)
+	oldTTL := readSessionCacheTTL(t, oldCache)
+
+	t.Cleanup(func() {
+		_ = capVar.SetGlobal(ctx, vars, strconv.FormatUint(uint64(oldCapacity), 10))
+		_ = ttlVar.SetGlobal(ctx, vars, oldTTL.String())
+	})
+
+	require.NoError(t, capVar.SetGlobal(ctx, vars, "2"))
+	cache := modelruntime.GetProcessSessionCache()
+	require.NotNil(t, cache)
+	require.Equal(t, uint(2), readSessionCacheCapacity(t, cache))
+
+	require.NoError(t, ttlVar.SetGlobal(ctx, vars, "150ms"))
+	cache = modelruntime.GetProcessSessionCache()
+	require.NotNil(t, cache)
+	require.Equal(t, 150*time.Millisecond, readSessionCacheTTL(t, cache))
+}
+
+func TestTiDBModelGovernanceSysvars(t *testing.T) {
+	const (
+		modelMaxBatchVar        = "tidb_model_max_batch_size"
+		modelTimeoutVar         = "tidb_model_timeout"
+		modelAllowNondetVar     = "tidb_model_allow_nondeterministic"
+		modelEnableCustomOpsVar = "tidb_enable_model_custom_ops"
+	)
+
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+
+	sv := GetSysVar(modelMaxBatchVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "128"))
+	got, err := sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "128", got)
+
+	sv = GetSysVar(modelTimeoutVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "150ms"))
+	got, err = sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "150ms", got)
+
+	sv = GetSysVar(modelAllowNondetVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "ON"))
+	got, err = sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", got)
+
+	sv = GetSysVar(modelEnableCustomOpsVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "ON"))
+	got, err = sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", got)
+}
+
+func readSessionCacheCapacity(t *testing.T, cache *modelruntime.SessionCache) uint {
+	t.Helper()
+	if cache == nil {
+		return 0
+	}
+	cacheValue := reflect.ValueOf(cache).Elem().FieldByName("cache")
+	require.True(t, cacheValue.IsValid())
+	require.False(t, cacheValue.IsNil())
+	capacityValue := cacheValue.Elem().FieldByName("capacity")
+	require.True(t, capacityValue.IsValid())
+	require.True(t, capacityValue.CanAddr())
+	return *(*uint)(unsafe.Pointer(capacityValue.UnsafeAddr()))
+}
+
+func readSessionCacheTTL(t *testing.T, cache *modelruntime.SessionCache) time.Duration {
+	t.Helper()
+	if cache == nil {
+		return 0
+	}
+	ttlValue := reflect.ValueOf(cache).Elem().FieldByName("ttl")
+	require.True(t, ttlValue.IsValid())
+	require.True(t, ttlValue.CanAddr())
+	return *(*time.Duration)(unsafe.Pointer(ttlValue.UnsafeAddr()))
 }
 
 func TestSynonyms(t *testing.T) {

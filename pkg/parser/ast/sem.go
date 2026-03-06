@@ -18,6 +18,8 @@ package ast
 const (
 	// AlterDatabaseCommand represents ALTER DATABASE statement
 	AlterDatabaseCommand = "ALTER DATABASE"
+	// AlterModelCommand represents ALTER MODEL statement
+	AlterModelCommand = "ALTER MODEL"
 	// AlterInstanceCommand represents ALTER INSTANCE statement
 	AlterInstanceCommand = "ALTER INSTANCE"
 	// AlterPlacementPolicyCommand represents ALTER PLACEMENT POLICY statement
@@ -36,6 +38,8 @@ const (
 	AdminCleanupTableLockCommand = "ADMIN CLEANUP TABLE LOCK"
 	// CreateDatabaseCommand represents CREATE DATABASE statement
 	CreateDatabaseCommand = "CREATE DATABASE"
+	// CreateModelCommand represents CREATE MODEL statement
+	CreateModelCommand = "CREATE MODEL"
 	// CreateIndexCommand represents CREATE INDEX statement
 	CreateIndexCommand = "CREATE INDEX"
 	// CreatePlacementPolicyCommand represents CREATE PLACEMENT POLICY statement
@@ -54,6 +58,8 @@ const (
 	CreateViewCommand = "CREATE VIEW"
 	// DropDatabaseCommand represents DROP DATABASE statement
 	DropDatabaseCommand = "DROP DATABASE"
+	// DropModelCommand represents DROP MODEL statement
+	DropModelCommand = "DROP MODEL"
 	// DropIndexCommand represents DROP INDEX statement
 	DropIndexCommand = "DROP INDEX"
 	// DropPlacementPolicyCommand represents DROP PLACEMENT POLICY statement
@@ -128,6 +134,8 @@ const (
 	ShowCreateTableCommand = "SHOW CREATE TABLE"
 	// ShowCreateViewCommand represents SHOW CREATE VIEW statement
 	ShowCreateViewCommand = "SHOW CREATE VIEW"
+	// ShowCreateModelCommand represents SHOW CREATE MODEL statement
+	ShowCreateModelCommand = "SHOW CREATE MODEL"
 	// ShowCreateDatabaseCommand represents SHOW CREATE DATABASE statement
 	ShowCreateDatabaseCommand = "SHOW CREATE DATABASE"
 	// ShowCreateUserCommand represents SHOW CREATE USER statement
@@ -478,6 +486,11 @@ func (n *AlterDatabaseStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *AlterModelStmt) SEMCommand() string {
+	return AlterModelCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *AlterInstanceStmt) SEMCommand() string {
 	return AlterInstanceCommand
 }
@@ -523,6 +536,11 @@ func (n *CreateDatabaseStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateModelStmt) SEMCommand() string {
+	return CreateModelCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *CreateIndexStmt) SEMCommand() string {
 	return CreateIndexCommand
 }
@@ -565,6 +583,11 @@ func (n *CreateViewStmt) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *DropDatabaseStmt) SEMCommand() string {
 	return DropDatabaseCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropModelStmt) SEMCommand() string {
+	return DropModelCommand
 }
 
 // SEMCommand returns the command string for the statement.
@@ -712,6 +735,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowCreateTableCommand
 	case ShowCreateView:
 		return ShowCreateViewCommand
+	case ShowCreateModel:
+		return ShowCreateModelCommand
 	case ShowCreateDatabase:
 		return ShowCreateDatabaseCommand
 	case ShowCreateUser:

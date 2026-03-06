@@ -42,6 +42,9 @@ func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, expr
 	minFactor := sctx.GetSessionVars().SelectivityFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
+		if expression.ContainsModelPredict(expr) {
+			minFactor = math.Min(minFactor, modelPredictDefaultSelectivity)
+		}
 		fun, ok := expr.(*expression.ScalarFunction)
 		if !ok {
 			continue

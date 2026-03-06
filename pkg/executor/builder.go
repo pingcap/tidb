@@ -2538,6 +2538,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
+			strings.ToLower(infoschema.TableTiDBModelVersions),
+			strings.ToLower(infoschema.TableTiDBModelCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableKeyspaceMeta):

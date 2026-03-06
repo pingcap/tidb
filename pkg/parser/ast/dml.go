@@ -3056,6 +3056,7 @@ const (
 	ShowCollation
 	ShowCreateTable
 	ShowCreateView
+	ShowCreateModel
 	ShowCreateUser
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
@@ -3221,6 +3222,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE VIEW ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.VIEW")
+		}
+	case ShowCreateModel:
+		ctx.WriteKeyWord("CREATE MODEL ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MODEL")
 		}
 	case ShowCreateDatabase:
 		ctx.WriteKeyWord("CREATE DATABASE ")

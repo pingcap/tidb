@@ -373,6 +373,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.ImportIntoStmt:
 		p.stmtTp = TypeImportInto
 		p.flag |= inImportInto
+	case *ast.CreateModelStmt:
+		p.stmtTp = TypeCreate
+		p.flag |= inCreateOrDropTable
+		p.resolveCreateModelStmt(node)
+	case *ast.AlterModelStmt:
+		p.stmtTp = TypeAlter
+		p.flag |= inCreateOrDropTable
+	case *ast.DropModelStmt:
+		p.stmtTp = TypeDrop
+		p.flag |= inCreateOrDropTable
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -690,6 +700,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
+	case *ast.CreateModelStmt, *ast.AlterModelStmt, *ast.DropModelStmt:
+		p.flag &= ^inCreateOrDropTable
 	case *ast.CreateSequenceStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.BRIEStmt:
@@ -1757,6 +1769,10 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.handleRepairName(tn)
 		return
 	}
+	if p.stmtTp == TypeShow && p.showTp == ast.ShowCreateModel {
+		p.resolveCtx.AddTableName(&resolve.TableNameW{TableName: tn})
+		return
+	}
 
 	if p.stmtTp == TypeSelect {
 		if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
@@ -1891,6 +1907,14 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 }
 
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
+	sName := stmt.Name.Name.String()
+	if util.IsInCorrectIdentifierName(sName) {
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(sName)
+		return
+	}
+}
+
+func (p *preprocessor) resolveCreateModelStmt(stmt *ast.CreateModelStmt) {
 	sName := stmt.Name.Name.String()
 	if util.IsInCorrectIdentifierName(sName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(sName)

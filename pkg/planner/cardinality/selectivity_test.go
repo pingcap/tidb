@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -122,7 +123,7 @@ func BenchmarkSelectivity(b *testing.B) {
 
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, err := cardinality.Selectivity(sctx.GetPlanCtx(), &statsTbl.HistColl, p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection).Conditions, nil)
 			require.NoError(b, err)
 		}
@@ -566,7 +567,7 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	}
 	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
 	idxValues := make([]types.Datum, 51)
-	for i := 0; i < 51; i++ {
+	for i := range 51 {
 		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
 		require.NoError(t, err)
 		idxValues[i].SetBytes(enc)
@@ -926,6 +927,46 @@ func TestSelectivity(t *testing.T) {
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
 	}
+}
+
+func TestSelectivityModelPredictDefault(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	statsTbl, err := prepareSelectivity(testKit, dom)
+	require.NoError(t, err)
+
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl := tb.Meta()
+	colInfo := tbl.Columns[0]
+	col := &expression.Column{
+		ID:       colInfo.ID,
+		UniqueID: colInfo.ID,
+		RetType:  colInfo.FieldType.Clone(),
+	}
+	histColl := statsTbl.GenerateHistCollFromColumnInfo(tbl, []*expression.Column{col})
+
+	sctx := testKit.Session().(sessionctx.Context)
+	ectx := sctx.GetExprCtx()
+	modelOutput := expression.NewFunctionInternal(
+		ectx,
+		ast.ModelPredictOutput,
+		types.NewFieldType(mysql.TypeDouble),
+		expression.NewStrConst("m1"),
+		expression.NewStrConst("score"),
+		col,
+	)
+	modelPred := expression.NewFunctionInternal(
+		ectx,
+		ast.GT,
+		types.NewFieldType(mysql.TypeTiny),
+		modelOutput,
+		expression.NewInt64Const(0),
+	)
+
+	ratio, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, []expression.Expression{modelPred}, nil)
+	require.NoError(t, err)
+	require.Truef(t, math.Abs(ratio-0.1) < eps, "expected model default selectivity, got: %v", ratio)
 }
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
@@ -2296,7 +2337,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Values 1-10 each appear 100 times (1000 rows)
 	// Value 11 appears only once (to be in last bucket with low count)
 	for i := 1; i <= 10; i++ {
-		for j := 0; j < 100; j++ {
+		for range 100 {
 			testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 	}
@@ -2324,7 +2365,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Test Case 1: Insufficient new rows (should NOT trigger heuristic)
 	// avgBucketSize = 1001/10 = 100.1, threshold = 100.1 * 0.5 = 50.05
 	// So 10 new rows should be insufficient
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		testKit.MustExec("insert into t values (11)")
 	}
 
@@ -2344,7 +2385,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 	// Test Case 2: Sufficient new rows (should trigger heuristic)
 	// Insert more rows to reach threshold (need 50+ total new rows)
-	for i := 0; i < 90; i++ { // 10 + 90 = 100 total
+	for range 90 { // 10 + 90 = 100 total
 		testKit.MustExec("insert into t values (11)")
 	}
 

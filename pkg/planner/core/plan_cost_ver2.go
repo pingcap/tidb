@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1043,7 +1044,11 @@ func numFunctions(exprs []expression.Expression) float64 {
 	num := 0.0
 	for _, e := range exprs {
 		if _, ok := e.(*expression.ScalarFunction); ok {
-			num++
+			if expression.ContainsModelPredict(e) {
+				num += cost.ModelPredictCostFactor
+			} else {
+				num++
+			}
 		} else { // Column and Constant
 			num += 0.01 // an empirical value
 		}

@@ -222,7 +222,40 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
+	simplifiedPredicate = reorderModelPredicates(simplifiedPredicate)
 	return simplifiedPredicate
+}
+
+func reorderModelPredicates(predicates []expression.Expression) []expression.Expression {
+	if len(predicates) < 2 {
+		return predicates
+	}
+	modelPredicates := make([]bool, len(predicates))
+	hasModelPredicate := false
+	for i, pred := range predicates {
+		if expression.IsMutableEffectsExpr(pred) {
+			return predicates
+		}
+		if expression.ContainsModelPredict(pred) {
+			modelPredicates[i] = true
+			hasModelPredicate = true
+		}
+	}
+	if !hasModelPredicate {
+		return predicates
+	}
+	reordered := make([]expression.Expression, 0, len(predicates))
+	for i, pred := range predicates {
+		if !modelPredicates[i] {
+			reordered = append(reordered, pred)
+		}
+	}
+	for i, pred := range predicates {
+		if modelPredicates[i] {
+			reordered = append(reordered, pred)
+		}
+	}
+	return reordered
 }
 
 func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
