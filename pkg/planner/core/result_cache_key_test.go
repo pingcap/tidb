@@ -17,6 +17,7 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -226,4 +227,50 @@ func TestBuildResultCacheKey_DifferentTimezones(t *testing.T) {
 	require.True(t, ok3)
 	require.Equal(t, key1, key3)
 	require.Equal(t, pb1, pb3)
+}
+
+func TestBuildResultCacheKey_PlanDigestVerificationBytes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_t where v = 1")
+	require.True(t, ok1)
+
+	sctx := tk.Session().(sessionctx.Context)
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	normalized, planDigest := stmtCtx.GetPlanDigest()
+	require.NotNil(t, planDigest)
+
+	altDigestBytes := append([]byte(nil), planDigest.Bytes()...)
+	altDigestBytes[len(altDigestBytes)-1] ^= 0xff
+	stmtCtx.SetPlanDigest(normalized, parser.NewDigest(altDigestBytes))
+
+	key2, pb2, ok2 := core.BuildResultCacheKey(sctx)
+	require.True(t, ok2)
+	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
+	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
+	require.NotEqual(t, pb1, pb2)
+}
+
+func TestBuildResultCacheKey_DifferentCollations(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t_coll (id int primary key, v varchar(10))")
+	tk.MustExec("alter table cached_t_coll cache")
+
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+	key1, pb1, ok1 := execAndBuildKey(t, tk, "select * from cached_t_coll where v = 'a'")
+	require.True(t, ok1)
+
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	key2, pb2, ok2 := execAndBuildKey(t, tk, "select * from cached_t_coll where v = 'a'")
+	require.True(t, ok2)
+
+	require.Equal(t, key1.PlanDigest, key2.PlanDigest)
+	require.NotEqual(t, key1.ParamHash, key2.ParamHash)
+	require.NotEqual(t, pb1, pb2)
 }

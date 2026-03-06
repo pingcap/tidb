@@ -28,16 +28,18 @@ import (
 // BuildResultCacheKey constructs a ResultCacheKey from the current session
 // context. It uses the plan digest to identify the query shape and hashes
 // prepared-statement parameter values (or non-prep plan cache literal values)
-// so that the same query template with different arguments maps to different
-// cache entries.
+// together with session-sensitive fields so that semantically different
+// executions do not share the same cache entry.
 //
-// The returned []byte contains the raw encoded parameter bytes used for
-// secondary verification on cache hit (to guard against hash collisions).
+// The returned []byte is the structured verification payload stored alongside
+// the cache entry and compared again on lookup to guard against hash
+// collisions.
 //
 // Returns false when no plan digest is available (e.g. the plan has not been
 // finalized yet).
 func BuildResultCacheKey(sctx sessionctx.Context) (table.ResultCacheKey, []byte, bool) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
+	vars := sctx.GetSessionVars()
+	stmtCtx := vars.StmtCtx
 
 	// Obtain the plan digest. It is set after optimization.
 	_, planDigest := stmtCtx.GetPlanDigest()
@@ -49,33 +51,34 @@ func BuildResultCacheKey(sctx sessionctx.Context) (table.ResultCacheKey, []byte,
 	digestBytes := planDigest.Bytes()
 	copy(key.PlanDigest[:], digestBytes)
 
-	var paramBytes []byte
+	verificationBytes := appendLengthPrefixedBytes(nil, digestBytes)
 
 	// Hash parameter values when present. For prepared statements these are the
 	// EXECUTE parameters; for non-prepared plan cache they are the extracted
 	// literal values.
-	if params := sctx.GetSessionVars().PlanCacheParams.AllParamValues(); len(params) > 0 {
-		var ok bool
-		paramBytes, ok = encodeParams(sctx.GetSessionVars().Location(), params)
+	if params := vars.PlanCacheParams.AllParamValues(); len(params) > 0 {
+		encodedParams, ok := encodeParams(vars.Location(), params)
 		if !ok {
 			return table.ResultCacheKey{}, nil, false
 		}
+		verificationBytes = appendLengthPrefixedBytes(verificationBytes, encodedParams)
 	} else if len(stmtCtx.OriginalSQL) > 0 {
 		// PlanCacheParams is empty when non-prepared plan cache is disabled or
 		// the query bypasses plan cache parameterization. Fall back to hashing
 		// the original SQL text to distinguish queries with different literals.
-		paramBytes = []byte(stmtCtx.OriginalSQL)
+		verificationBytes = appendLengthPrefixedBytes(verificationBytes, []byte(stmtCtx.OriginalSQL))
 	}
 
-	// Include the session timezone offset in the cache key so that the same
-	// query executed under different timezones maps to different cache entries.
-	// TIMESTAMP columns are stored in UTC and converted on read; cached result
-	// sets contain the post-conversion values and must not be reused across
-	// timezone changes.
-	paramBytes = appendTZOffset(paramBytes, sctx.GetSessionVars().Location())
+	// Include session fields that can change result bytes without changing the
+	// physical plan shape. TIMESTAMP values are rendered in session timezone, and
+	// connection charset/collation affect literal string semantics.
+	verificationBytes = appendTZOffset(verificationBytes, vars.Location())
+	charset, collation := vars.GetCharsetInfo()
+	verificationBytes = appendLengthPrefixedBytes(verificationBytes, []byte(charset))
+	verificationBytes = appendLengthPrefixedBytes(verificationBytes, []byte(collation))
 
-	key.ParamHash = hashBytes(paramBytes)
-	return key, paramBytes, true
+	key.ParamHash = hashBytes(verificationBytes)
+	return key, verificationBytes, true
 }
 
 // HashParamsForTest is exported for testing only.
@@ -124,6 +127,13 @@ func hashParams(params []types.Datum) uint64 {
 	return hashBytes(encoded)
 }
 
+func appendLengthPrefixedBytes(buf []byte, payload []byte) []byte {
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], uint32(len(payload)))
+	buf = append(buf, b[:]...)
+	return append(buf, payload...)
+}
+
 // appendTZOffset appends the timezone UTC offset (in seconds) to buf so that
 // different session timezones produce distinct cache keys.
 //
@@ -137,9 +147,5 @@ func appendTZOffset(buf []byte, loc *time.Location) []byte {
 	var b [4]byte
 	binary.BigEndian.PutUint32(b[:], uint32(int32(offset)))
 	buf = append(buf, b[:]...)
-
-	nameBytes := []byte(loc.String())
-	binary.BigEndian.PutUint32(b[:], uint32(len(nameBytes)))
-	buf = append(buf, b[:]...)
-	return append(buf, nameBytes...)
+	return appendLengthPrefixedBytes(buf, []byte(loc.String()))
 }

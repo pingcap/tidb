@@ -41,10 +41,12 @@ var resultCacheNonDeterministicFuncs = map[string]struct{}{
 	ast.Sleep: {}, ast.SetVar: {}, ast.GetVar: {},
 	ast.AnyValue:     {},
 	ast.ConnectionID: {}, ast.CurrentUser: {}, ast.User: {},
-	ast.Database: {}, ast.CurrentRole: {}, ast.CurrentResourceGroup: {},
+	ast.SessionUser: {}, ast.SystemUser: {},
+	ast.Database: {}, ast.Schema: {}, ast.CurrentRole: {}, ast.CurrentResourceGroup: {},
 	ast.LastInsertId: {}, ast.RowCount: {}, ast.FoundRows: {},
 	ast.NextVal: {}, ast.LastVal: {}, ast.SetVal: {},
 	ast.GetLock: {}, ast.ReleaseLock: {}, ast.IsFreeLock: {}, ast.IsUsedLock: {},
+	ast.ReleaseAllLocks: {}, ast.MasterPosWait: {},
 }
 
 // CanCacheResultSet checks whether a physical plan's result set can be cached
@@ -178,6 +180,15 @@ func checkNodeCacheable(plan base.PhysicalPlan) bool {
 	}
 	// 2. Check that scanned tables are cached tables.
 	switch x := plan.(type) {
+	case *PhysicalUnionScan:
+		// Cached-table reads also use UnionScan machinery. Only reject the
+		// session-local case where UnionScan merges dirty rows from the current
+		// transaction.
+		for _, dirty := range plan.SCtx().GetSessionVars().StmtCtx.TblInfo2UnionScan {
+			if dirty {
+				return false
+			}
+		}
 	case *PhysicalMemTable:
 		return false
 	case *PhysicalTableScan:

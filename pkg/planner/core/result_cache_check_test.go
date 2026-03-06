@@ -52,6 +52,22 @@ func compileQuery(t *testing.T, tk *testkit.TestKit, sql string) compiledQuery {
 	return compiledQuery{stmtNode: stmts[0], plan: pp}
 }
 
+func hasPhysicalUnionScan(plan base.PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	flat := core.FlattenPhysicalPlan(plan, false)
+	if flat == nil {
+		return false
+	}
+	for _, op := range flat.Main {
+		if _, ok := op.Origin.(*core.PhysicalUnionScan); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCanCache_PointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -240,6 +256,39 @@ func TestCanCache_DatabaseFunc(t *testing.T) {
 	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
 }
 
+func TestCanCache_SchemaFunc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	q := compileQuery(t, tk, "select schema(), id from cached_t")
+	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+}
+
+func TestCanCache_SessionUser(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	q := compileQuery(t, tk, "select session_user(), id from cached_t")
+	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+}
+
+func TestCanCache_ReleaseAllLocks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("alter table cached_t cache")
+
+	q := compileQuery(t, tk, "select release_all_locks(), id from cached_t")
+	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+}
+
 func TestCanCache_InfoSchema(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -250,4 +299,22 @@ func TestCanCache_InfoSchema(t *testing.T) {
 	// information_schema tables are represented by PhysicalMemTable and must not be cached.
 	q := compileQuery(t, tk, "select * from cached_t, information_schema.tables limit 1")
 	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+}
+
+func TestCanCache_UnionScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached_t (id int primary key, v int)")
+	tk.MustExec("insert into cached_t values (1, 1)")
+	tk.MustExec("alter table cached_t cache")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into cached_t values (2, 2)")
+
+	q := compileQuery(t, tk, "select * from cached_t where v >= 1")
+	require.True(t, hasPhysicalUnionScan(q.plan), "expected UnionScan in plan, got %T", q.plan)
+	require.False(t, core.CanCacheResultSet(q.stmtNode, q.plan, false))
+
+	tk.MustExec("rollback")
 }
