@@ -312,12 +312,13 @@ index:
 				zap.String("table", tbInfo.Name.O),
 				zap.String("index", idx.Name.O),
 				zap.Error(err))
+			continue
 		}
 
 		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
 		if err != nil {
 			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
-			goto index
+			continue
 		}
 		regionIDs = append(regionIDs, ids...)
 	}
@@ -341,6 +342,20 @@ func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string) ([]types.
 }
 
 func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexOption, tbInfo *model.TableInfo) (*model.RegionSplitPolicy, string, error) {
+	indexName := ""
+	if !splitOpt.TableLevel {
+		pkName := strings.ToLower(mysql.PrimaryKeyName)
+		indexName = splitOpt.IndexName.L
+		// fill primary key name if empty
+		if splitOpt.PrimaryKey && indexName == "" {
+			indexName = pkName
+		}
+		// set PrimaryKey if SPLIT INDEX `PRIMARY`
+		if indexName == pkName {
+			splitOpt.PrimaryKey = true
+		}
+	}
+
 	if tbInfo.HasClusteredIndex() && splitOpt.PrimaryKey {
 		// cannot specify both SPLIT PRIMARY for CLUSTERED table
 		// it is for unclustered primary
@@ -350,26 +365,6 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 	if splitOpt.SplitOpt.Num < 1 {
 		// must larger than 1
 		return nil, "", dbterror.ErrForbiddenDDL.FastGenByArgs("SPLIT REGION number must not be zero or negative")
-	}
-
-	indexName := ""
-	if !splitOpt.TableLevel {
-		pkName := strings.ToLower(mysql.PrimaryKeyName)
-		indexName = splitOpt.IndexName.L
-
-		// fill primary key name
-		isPK := splitOpt.PrimaryKey
-		if isPK && indexName == "" {
-			indexName = pkName
-		}
-		if indexName == pkName {
-			isPK = true
-		}
-
-		if isPK && (pkName != indexName) {
-			// specified pk, but incorrect name, or reverse
-			return nil, "", dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
-		}
 	}
 
 	// default int, it is 1

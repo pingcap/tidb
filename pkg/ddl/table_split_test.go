@@ -16,11 +16,13 @@ package ddl_test
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -350,4 +352,54 @@ func TestTableSplitPolicyMultipleIndexes(t *testing.T) {
 	}
 
 	tk.MustExec("admin check table t_multi")
+}
+
+func TestTableSplitPolicyShowCreateRoundTrip(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_src, t_dst")
+	tk.MustExec(`create table t_src (
+		id bigint primary key,
+		user_id bigint,
+		index idx_user_id (user_id)
+	)
+	split between (0) and (1000000) regions 4
+	split index idx_user_id between (1000) and (100000) regions 3`)
+
+	createSQL := tk.MustQuery("show create table t_src").Rows()[0][1].(string)
+	require.Contains(t, createSQL, "/*T![region_split]")
+
+	roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_src`", "CREATE TABLE `t_dst`", 1)
+	tk.MustExec(roundTripSQL)
+
+	tbl := external.GetTableByName(t, tk, "test", "t_dst")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+	idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+	require.NotNil(t, idxInfo)
+	require.NotNil(t, idxInfo.RegionSplitPolicy)
+	require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+}
+
+func TestTableSplitPolicyRejectSplitIndexPrimaryOnClustered(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_clustered_index = ON")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+		id bigint,
+		user_id bigint,
+		primary key (id) clustered,
+		index idx_user_id (user_id)
+	)`)
+	tk.MustGetErrCode("alter table t split index `PRIMARY` between (0) and (1000000) regions 4", errno.ErrForbiddenDDL)
+
+	tk.MustGetErrCode(`create table t_create_fail (
+		id bigint,
+		primary key (id) clustered
+	) split index `+"`PRIMARY`"+` between (0) and (1000000) regions 4`, errno.ErrForbiddenDDL)
 }
