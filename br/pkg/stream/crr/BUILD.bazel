@@ -11,28 +11,39 @@ go_library(
         "//br/pkg/streamhelper",
         "//pkg/objstore/storeapi",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@org_golang_x_sync//errgroup",
     ],
 )
 
 go_test(
     name = "drr_test",
     timeout = "short",
-    srcs = ["integration_test.go"],
+    srcs = [
+        "checkpoint_calculator_test.go",
+        "integration_test.go",
+    ],
     flaky = True,
-    shard_count = 2,
+    shard_count = 5,
     deps = [
         ":crr",
+        "//br/pkg/stream",
         "//br/pkg/stream/crr/internal/testutil",
+        "//pkg/objstore/storeapi",
         "@com_github_stretchr_testify//require",
     ],
 )
 
 go_test(
     name = "crr_test",
-    srcs = ["integration_test.go"],
+    srcs = [
+        "checkpoint_calculator_test.go",
+        "integration_test.go",
+    ],
     deps = [
         ":crr",
+        "//br/pkg/stream",
         "//br/pkg/stream/crr/internal/testutil",
+        "//pkg/objstore/storeapi",
         "@com_github_stretchr_testify//require",
     ],
 )

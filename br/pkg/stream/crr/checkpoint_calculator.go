@@ -16,11 +16,14 @@ package crr
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"math"
+	"net/url"
 	"path"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -28,12 +31,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	metaSuffix          = ".meta"
-	defaultPollInterval = 500 * time.Millisecond
+	metaSuffix                 = ".meta"
+	defaultPollInterval        = 500 * time.Millisecond
+	defaultMetaReadConcurrency = 16
+	maxStoreIDSuffix           = "ffffffffffffffff~"
 )
+
+var errStopWalkIteration = errors.New("stop walk iteration")
 
 // PDMetaReader defines the upstream metadata APIs used by checkpoint calculation.
 type PDMetaReader interface {
@@ -45,6 +53,7 @@ type PDMetaReader interface {
 type UpstreamStorageReader interface {
 	WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error
 	ReadFile(ctx context.Context, name string) ([]byte, error)
+	URI() string
 }
 
 // DownstreamObjectChecker defines downstream checks allowed by checkpoint calculation.
@@ -57,8 +66,9 @@ type DownstreamObjectChecker interface {
 
 // CheckpointCalculatorConfig controls checkpoint calculation behavior.
 type CheckpointCalculatorConfig struct {
-	TaskName     string
-	PollInterval time.Duration
+	TaskName            string
+	PollInterval        time.Duration
+	MetaReadConcurrency int
 }
 
 // CheckpointCalculator calculates a downstream-safe checkpoint for CRR.
@@ -69,8 +79,9 @@ type CheckpointCalculator struct {
 	upstream   UpstreamStorageReader
 	downstream DownstreamObjectChecker
 
-	taskName     string
-	pollInterval time.Duration
+	taskName            string
+	pollInterval        time.Duration
+	metaReadConcurrency int
 
 	lastCheckpoint uint64
 	syncedTS       uint64
@@ -99,14 +110,21 @@ func NewCheckpointCalculator(
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = defaultPollInterval
 	}
+	if cfg.MetaReadConcurrency <= 0 {
+		cfg.MetaReadConcurrency = defaultMetaReadConcurrency
+	}
+	if err := validateIncrementalMetaScanStorage(upstream.URI()); err != nil {
+		return nil, err
+	}
 
 	return &CheckpointCalculator{
-		pd:            pd,
-		upstream:      upstream,
-		downstream:    downstream,
-		taskName:      cfg.TaskName,
-		pollInterval:  cfg.PollInterval,
-		syncedByStore: map[uint64]uint64{},
+		pd:                  pd,
+		upstream:            upstream,
+		downstream:          downstream,
+		taskName:            cfg.TaskName,
+		pollInterval:        cfg.PollInterval,
+		metaReadConcurrency: cfg.MetaReadConcurrency,
+		syncedByStore:       map[uint64]uint64{},
 	}, nil
 }
 
@@ -157,6 +175,11 @@ type roundPlan struct {
 	maxFlushTSByStore map[uint64]uint64
 }
 
+type walkEntry struct {
+	path string
+	size int64
+}
+
 func (c *CheckpointCalculator) waitUpstreamCheckpointAdvance(ctx context.Context) (uint64, error) {
 	for {
 		checkpoint, err := c.pd.GetGlobalCheckpointForTask(ctx, c.taskName)
@@ -191,48 +214,72 @@ func (c *CheckpointCalculator) planRound(
 	ctx context.Context,
 	aliveStores map[uint64]struct{},
 ) (roundPlan, error) {
-	metaFiles, err := c.collectNewMetaFiles(ctx)
-	if err != nil {
-		return roundPlan{}, err
-	}
-
 	plan := roundPlan{
 		pendingPaths:      make(map[string]struct{}),
 		maxFlushTSByStore: make(map[uint64]uint64),
 	}
 
-	for _, metaFile := range metaFiles {
+	planCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	eg, egCtx := errgroup.WithContext(planCtx)
+	eg.SetLimit(c.metaReadConcurrency)
+
+	var planMu sync.Mutex
+	var iterErr error
+	for metaFile, err := range c.newMetaFileSeq(egCtx) {
+		if err != nil {
+			iterErr = err
+			cancel()
+			break
+		}
 		if metaFile.storeID != 0 {
 			if _, ok := aliveStores[metaFile.storeID]; !ok {
 				continue
 			}
 		}
 
-		metaBytes, err := c.upstream.ReadFile(ctx, metaFile.path)
-		if err != nil {
-			return roundPlan{}, fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
-		}
+		eg.Go(func() error {
+			metaBytes, err := c.upstream.ReadFile(egCtx, metaFile.path)
+			if err != nil {
+				return fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
+			}
 
-		meta := &backuppb.Metadata{}
-		if err := meta.Unmarshal(metaBytes); err != nil {
-			return roundPlan{}, fmt.Errorf("unmarshal backupmeta %s: %w", metaFile.path, err)
-		}
+			meta := &backuppb.Metadata{}
+			if err := meta.Unmarshal(metaBytes); err != nil {
+				return fmt.Errorf("unmarshal backupmeta %s: %w", metaFile.path, err)
+			}
 
-		storeID, err := resolveStoreID(metaFile.storeID, meta.GetStoreId(), metaFile.path)
-		if err != nil {
-			return roundPlan{}, err
-		}
-		if _, ok := aliveStores[storeID]; !ok {
-			continue
-		}
+			storeID, err := resolveStoreID(metaFile.storeID, meta.GetStoreId(), metaFile.path)
+			if err != nil {
+				return err
+			}
+			if _, ok := aliveStores[storeID]; !ok {
+				return nil
+			}
 
-		plan.pendingPaths[metaFile.path] = struct{}{}
-		for _, logPath := range extractDataFilePaths(meta) {
-			plan.pendingPaths[logPath] = struct{}{}
+			logPaths := extractDataFilePaths(meta)
+
+			planMu.Lock()
+			plan.pendingPaths[metaFile.path] = struct{}{}
+			for _, logPath := range logPaths {
+				plan.pendingPaths[logPath] = struct{}{}
+			}
+			if metaFile.flushTS > plan.maxFlushTSByStore[storeID] {
+				plan.maxFlushTSByStore[storeID] = metaFile.flushTS
+			}
+			planMu.Unlock()
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		if iterErr != nil && errors.Is(err, context.Canceled) {
+			return roundPlan{}, iterErr
 		}
-		if metaFile.flushTS > plan.maxFlushTSByStore[storeID] {
-			plan.maxFlushTSByStore[storeID] = metaFile.flushTS
-		}
+		return roundPlan{}, err
+	}
+	if iterErr != nil {
+		return roundPlan{}, iterErr
 	}
 	return plan, nil
 }
@@ -268,39 +315,61 @@ func extractDataFilePaths(meta *backuppb.Metadata) []string {
 	return paths
 }
 
-func (c *CheckpointCalculator) collectNewMetaFiles(ctx context.Context) ([]parsedMetaFile, error) {
-	metaFiles := make([]parsedMetaFile, 0, 128)
-	err := c.upstream.WalkDir(ctx, &storeapi.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()},
-		func(filePath string, size int64) error {
-			_ = size
-			if !strings.HasSuffix(filePath, metaSuffix) {
-				return nil
+func walkDirSeq(
+	ctx context.Context,
+	storage UpstreamStorageReader,
+	opt *storeapi.WalkOption,
+) iter.Seq2[walkEntry, error] {
+	return func(yield func(walkEntry, error) bool) {
+		err := storage.WalkDir(ctx, opt, func(filePath string, size int64) error {
+			if !yield(walkEntry{path: filePath, size: size}, nil) {
+				return errStopWalkIteration
 			}
-			baseName := strings.TrimSuffix(path.Base(filePath), metaSuffix)
-			parsed, err := backupmetas.ParseName(baseName)
-			if err != nil {
-				return fmt.Errorf("parse backupmeta name %s: %w", filePath, err)
-			}
-			if parsed.FlushTS <= c.syncedTS {
-				return nil
-			}
-			metaFiles = append(metaFiles, parsedMetaFile{
-				path:    filePath,
-				flushTS: parsed.FlushTS,
-				storeID: parsed.StoreID,
-			})
 			return nil
 		})
-	if err != nil {
-		return nil, fmt.Errorf("walk upstream backupmeta prefix: %w", err)
-	}
-	sort.Slice(metaFiles, func(i, j int) bool {
-		if metaFiles[i].flushTS == metaFiles[j].flushTS {
-			return metaFiles[i].path < metaFiles[j].path
+		if err == nil || errors.Is(err, errStopWalkIteration) {
+			return
 		}
-		return metaFiles[i].flushTS < metaFiles[j].flushTS
-	})
-	return metaFiles, nil
+		var zero walkEntry
+		yield(zero, fmt.Errorf("walk upstream backupmeta prefix: %w", err))
+	}
+}
+
+func (c *CheckpointCalculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFile, error] {
+	walkOpt := &storeapi.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
+	if startAfter := metaScanStartAfter(c.syncedTS); startAfter != "" {
+		walkOpt.StartAfter = startAfter
+	}
+
+	return func(yield func(parsedMetaFile, error) bool) {
+		for entry, err := range walkDirSeq(ctx, c.upstream, walkOpt) {
+			if err != nil {
+				var zero parsedMetaFile
+				yield(zero, err)
+				return
+			}
+			if !strings.HasSuffix(entry.path, metaSuffix) {
+				continue
+			}
+			baseName := strings.TrimSuffix(path.Base(entry.path), metaSuffix)
+			parsed, err := backupmetas.ParseName(baseName)
+			if err != nil {
+				var zero parsedMetaFile
+				yield(zero, fmt.Errorf("parse backupmeta name %s: %w", entry.path, err))
+				return
+			}
+			if parsed.FlushTS <= c.syncedTS {
+				continue
+			}
+			if !yield(parsedMetaFile{
+				path:    entry.path,
+				flushTS: parsed.FlushTS,
+				storeID: parsed.StoreID,
+			}, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (c *CheckpointCalculator) waitDownstreamSync(ctx context.Context, pendingPaths map[string]struct{}) error {
@@ -372,4 +441,32 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func validateIncrementalMetaScanStorage(rawURI string) error {
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return fmt.Errorf("parse upstream storage uri %q: %w", rawURI, err)
+	}
+	switch parsed.Scheme {
+	case "s3", "file", "gcs":
+		return nil
+	case "":
+		return fmt.Errorf("upstream storage uri %q has empty scheme", rawURI)
+	default:
+		return fmt.Errorf(
+			"crr checkpoint calculator requires StartAfter-capable upstream storage, got %s",
+			rawURI,
+		)
+	}
+}
+
+func metaScanStartAfter(syncedTS uint64) string {
+	if syncedTS == 0 {
+		return ""
+	}
+	return path.Join(
+		stream.GetStreamBackupMetaPrefix(),
+		fmt.Sprintf("%016x%s", syncedTS, maxStoreIDSuffix),
+	)
 }

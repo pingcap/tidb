@@ -89,7 +89,8 @@ type WalkOption struct {
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
 	// StartAfter is the key to start after. If not empty, the walk will start
-	// after the key. Currently only S3-like storage supports this option.
+	// after the key. This is currently supported by S3-like storage, GCS and
+	// local storage.
 	StartAfter string
 }
 

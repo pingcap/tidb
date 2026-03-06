@@ -874,6 +874,11 @@ bazel_lint_changed: bazel_prepare
 		echo "No changed bazel packages detected, skip bazel_lint_changed."; \
 		exit 0; \
 	fi; \
+	{ curl -s bazel-cache.pingcap.net:8080 || \
+	{ echo "PingCAP intranet not accessible, will use public mirror." && \
+	gsed -Ei.origin '/bazel-cache|ats\.apps/d' DEPS.bzl WORKSPACE && \
+	trap 'mv DEPS.bzl.origin DEPS.bzl && mv WORKSPACE.origin WORKSPACE && true' EXIT; }; \
+	}; \
 	bazel build $(BAZEL_CMD_CONFIG) $$PKGS --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
