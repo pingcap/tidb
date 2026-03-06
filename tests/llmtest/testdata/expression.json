@@ -12804,9 +12804,9 @@
     {
       "sql": "SELECT DATE_FORMAT('2023-10-30', '')",
       "args": null,
-      "pass": false,
-      "known": true,
-      "comment": "https://github.com/pingcap/tidb/issues/59424"
+      "pass": true,
+      "known": false,
+      "comment": ""
     },
     {
       "sql": "SELECT DATE_FORMAT('1000-01-01', '%Y-%M')",
