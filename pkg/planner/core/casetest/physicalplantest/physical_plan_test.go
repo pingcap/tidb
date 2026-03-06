@@ -1583,7 +1583,7 @@ func TestLimitPushdown(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int, key(c1));")
 	tk.MustExec("set @@cte_max_recursion_depth = 10000;")
 	tk.MustExec("insert into t1 with recursive cte1 as (select 1 cola, 1 colb union all select cola+1 as cola, colb+1 as colb from cte1 limit 5000) select * from cte1;")
-	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t1 all columns;")
 
 	var input []string
 	var output []struct {
