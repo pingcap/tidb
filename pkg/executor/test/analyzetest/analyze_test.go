@@ -170,10 +170,8 @@ func TestFailedAnalyzeRequestV2(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_enable_global_index = 1")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	defer tk.MustExec("set @@tidb_analyze_version = default")
-	defer tk.MustExec("set @@tidb_enable_global_index = default")
 
 	tk.MustExec(`create table t(
 		a int,
