@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -58,7 +59,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms)
 	}
 
-	t.Run("delete keys for stale instance after restart", func(t *testing.T) {
+	setupStaleKeysAfterRestart := func(t *testing.T) {
 		clearKeys()
 		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		_, err := cli.Put(ctx, DDLOwnerKey+"/stale", string(owner.JoinOwnerValues([]byte("old"), []byte{byte(owner.OpSyncUpgradingState)})))
@@ -93,11 +94,12 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 				},
 			},
 		})
+	}
 
-		cleanupStaleDDLOwnerKeys(context.Background(), cli, "self")
-
-		ctx, cancel = context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
+	checkStaleKeysAfterRestartCleaned := func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		defer cancel()
+
 		resp, err := cli.Get(ctx, DDLOwnerKey+"/stale")
 		require.NoError(t, err)
 		require.Empty(t, resp.Kvs)
@@ -105,6 +107,26 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		resp, err = cli.Get(ctx, DDLOwnerKey+"/other")
 		require.NoError(t, err)
 		require.Len(t, resp.Kvs, 1)
+	}
+
+	t.Run("delete keys for stale instance after restart", func(t *testing.T) {
+		setupStaleKeysAfterRestart(t)
+
+		cleanupStaleDDLOwnerKeys(context.Background(), cli, "self")
+
+		checkStaleKeysAfterRestartCleaned(t)
+	})
+
+	t.Run("delete uses fresh ctx even if list path is slow", func(t *testing.T) {
+		setupStaleKeysAfterRestart(t)
+
+		delayMs := int((etcd.KeyOpDefaultTimeout + 500*time.Millisecond) / time.Millisecond)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ddlCleanupStaleDDLOwnerKeysDelayBeforeDelete",
+			fmt.Sprintf("sleep(%d)", delayMs))
+
+		cleanupStaleDDLOwnerKeys(context.Background(), cli, "self")
+
+		checkStaleKeysAfterRestartCleaned(t)
 	})
 
 	t.Run("single node deletes unknown key even if stale server info is removed", func(t *testing.T) {

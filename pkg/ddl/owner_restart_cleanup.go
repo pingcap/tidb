@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -48,10 +49,10 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+	listCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 	defer cancel()
 
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
+	serverInfos, err := infosync.GetAllServerInfo(listCtx)
 	if err != nil {
 		logutil.DDLLogger().Debug("skip DDL owner key cleanup, get server infos failed", zap.Error(err))
 		return
@@ -99,11 +100,14 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 	}
 
 	prefix := DDLOwnerKey + "/"
-	getResp, err := etcdCli.Get(ctx, prefix, clientv3.WithPrefix())
+	getResp, err := etcdCli.Get(listCtx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		logutil.DDLLogger().Debug("skip DDL owner key cleanup, list owner keys failed", zap.Error(err))
 		return
 	}
+
+	// For tests: simulate a slow discovery/list path so the listCtx can expire.
+	failpoint.Inject("ddlCleanupStaleDDLOwnerKeysDelayBeforeDelete", func() {})
 
 	deleted := 0
 	for _, kv := range getResp.Kvs {
