@@ -346,9 +346,8 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 		s.EqualValues(sum.Bytes.Load(), 2782604)
 	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
-	// during collect_conflicts step, we will write the subtask meta again to
-	// fill the conflict info.
-	s.EqualValues(4, sum.PutReqCnt.Load())
+	// No conflicts in this case, no need to rewrite the external subtask meta.
+	s.EqualValues(0, sum.PutReqCnt.Load())
 }
 
 func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {
@@ -513,11 +512,11 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 13}")
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 11}")
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
-	s.Regexp(`obj_store{r: 2.\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
+	s.Regexp(`obj_store{r: 2.\d*KiB, w: [123].\d*KiB}`, gotMeterData.Load())
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
 
@@ -536,7 +535,7 @@ func TestNextGenMetering(t *testing.T) {
 	// if we retry write, the bytes may be larger than 288
 	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
 	s.EqualValues(6, sum.GetReqCnt.Load())
-	s.EqualValues(2, sum.PutReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {
 		items := *rowAndSizeMeterItems.Load()

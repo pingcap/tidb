@@ -694,12 +694,20 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 	// only data kv group has loaded row count
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
-	subtaskMeta.RecordedConflictKVCount = subtaskMeta.ConflictInfo.Count
+	conflictInfo := localBackend.GetExternalEngineConflictInfo(engineUUID)
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
+
+	// If no conflict KV is recorded, we skip rewriting the external subtask meta
+	// file to avoid unnecessary PUT requests.
+	if conflictInfo.Count == 0 {
+		return nil
+	}
+
+	subtaskMeta.ConflictInfo = conflictInfo
+	subtaskMeta.RecordedConflictKVCount = conflictInfo.Count
 	subtaskMeta.ExternalPath = external.SubtaskMetaPath(e.taskID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, objStore, subtaskMeta); err != nil {
 		return errors.Trace(err)

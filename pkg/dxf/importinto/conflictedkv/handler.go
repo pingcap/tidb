@@ -44,6 +44,14 @@ var (
 	BufferedHandleLimit = 256
 )
 
+// TrafficRecorder records the best-effort traffic between TiDB and TiKV.
+// It's used to report metering data for conflict handling without introducing
+// a dependency on the metering package.
+type TrafficRecorder interface {
+	IncClusterReadBytes(uint64)
+	IncClusterWriteBytes(uint64)
+}
+
 // Handler is the conflict KV Handler, either collecting info about those KVs or
 // delete those KVs from the cluster.
 type Handler interface {
@@ -305,13 +313,15 @@ type LazyRefreshedSnapshot struct {
 	tidbkv.Snapshot
 	store           tidbkv.Storage
 	lastRefreshTime time.Time
+	trafficRec      TrafficRecorder
 }
 
 // NewLazyRefreshedSnapshot creates a new LazyRefreshedSnapshot.
 // exported for test.
-func NewLazyRefreshedSnapshot(store tidbkv.Storage) *LazyRefreshedSnapshot {
+func NewLazyRefreshedSnapshot(store tidbkv.Storage, rec TrafficRecorder) *LazyRefreshedSnapshot {
 	return &LazyRefreshedSnapshot{
-		store: store,
+		store:      store,
+		trafficRec: rec,
 	}
 }
 
@@ -334,6 +344,28 @@ func (s *LazyRefreshedSnapshot) refreshAsNeeded() error {
 	s.Snapshot = s.store.GetSnapshot(ver)
 	s.lastRefreshTime = time.Now()
 	return nil
+}
+
+func (s *LazyRefreshedSnapshot) BatchGet(
+	ctx context.Context,
+	keys []tidbkv.Key,
+	options ...tidbkv.BatchGetOption,
+) (map[string]tidbkv.ValueEntry, error) {
+	if err := s.refreshAsNeeded(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	res, err := s.Snapshot.BatchGet(ctx, keys, options...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if s.trafficRec != nil {
+		var readBytes uint64
+		for k, v := range res {
+			readBytes += uint64(len(k) + len(v.Value))
+		}
+		s.trafficRec.IncClusterReadBytes(readBytes)
+	}
+	return res, nil
 }
 
 // the encoded key is prepended with keyspace prefix before store to object
