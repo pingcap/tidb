@@ -596,8 +596,8 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 		rowAndSizeMeterItems.Store(&items)
 	})
 
-	importSQL := fmt.Sprintf(`import into t FROM '%s'
-		with cloud_storage_uri='%s'`, realtikvtest.GetNextGenObjStoreURI("meter-conflict-test/*.csv"), glSortURI)
+	importSQL := fmt.Sprintf(`import into t FROM '%s' with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("meter-conflict-test/*.csv"), glSortURI)
 	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
