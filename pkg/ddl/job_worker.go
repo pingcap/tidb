@@ -783,9 +783,16 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
-	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
-		job.State = model.JobStateCancelling
+	if job.ErrorCount > vardef.GetDDLErrorCountLimit() {
+		if job.State == model.JobStateRunning && job.IsRollbackable() {
+			logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
+			job.State = model.JobStateCancelling
+		} else if job.IsRollingback() {
+			// The rollback itself is stuck in an unrecoverable error loop.
+			// Force-cancel the job so it does not spin forever.
+			logger.Warn("DDL job rollback error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
+			job.State = model.JobStateCancelled
+		}
 	}
 	return err
 }
