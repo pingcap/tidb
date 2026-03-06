@@ -71,9 +71,10 @@ func getReadRangeFromProps(
 		starts[i] = kv.Key(jobKeys[i])
 	}
 
-	offsetsPerFile := make([][][2]uint64, len(paths))
-	for i := range offsetsPerFile {
-		offsetsPerFile[i] = make([][2]uint64, len(starts))
+	readRangesPerKey := make([][2][]uint64, len(starts))
+	for i := range starts {
+		readRangesPerKey[i][0] = make([]uint64, len(paths))
+		readRangesPerKey[i][1] = make([]uint64, len(paths))
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
@@ -92,14 +93,19 @@ func getReadRangeFromProps(
 			curKey := starts[keyIdx]
 
 			p, err3 := r.nextProp()
-			firstKey := kv.Key(p.firstKey)
+			var firstKey kv.Key
+			if err3 == nil {
+				firstKey = kv.Key(p.firstKey)
+			}
 			for {
 				if err3 != nil {
 					if goerrors.Is(err3, io.EOF) {
 						// fill the rest of the offsets with the last offset
-						currOffset := offsetsPerFile[i][keyIdx]
+						startOff := readRangesPerKey[keyIdx][0][i]
+						endOff := readRangesPerKey[keyIdx][1][i]
 						for keyIdx++; keyIdx < len(starts); keyIdx++ {
-							offsetsPerFile[i][keyIdx] = currOffset
+							readRangesPerKey[keyIdx][0][i] = startOff
+							readRangesPerKey[keyIdx][1][i] = endOff
 						}
 						return nil
 					}
@@ -110,10 +116,12 @@ func getReadRangeFromProps(
 					if keyIdx >= len(starts) {
 						return nil
 					}
-					offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
+					readRangesPerKey[keyIdx][0][i] = readRangesPerKey[keyIdx-1][0][i]
+					readRangesPerKey[keyIdx][1][i] = readRangesPerKey[keyIdx-1][1][i]
 					curKey = starts[keyIdx]
 				}
-				offsetsPerFile[i][keyIdx] = [2]uint64{p.offset, p.offset + p.totalSize()}
+				readRangesPerKey[keyIdx][0][i] = p.offset
+				readRangesPerKey[keyIdx][1][i] = p.offset + p.totalSize()
 				p, err3 = r.nextProp()
 				if err3 == nil {
 					firstKey = kv.Key(p.firstKey)
@@ -124,16 +132,6 @@ func getReadRangeFromProps(
 
 	if err = eg.Wait(); err != nil {
 		return nil, err
-	}
-
-	readRangesPerKey := make([][2][]uint64, len(starts))
-	for i := range starts {
-		readRangesPerKey[i][0] = make([]uint64, len(paths))
-		readRangesPerKey[i][1] = make([]uint64, len(paths))
-		for j := range paths {
-			readRangesPerKey[i][0][j] = offsetsPerFile[j][i][0]
-			readRangesPerKey[i][1][j] = offsetsPerFile[j][i][1]
-		}
 	}
 	return readRangesPerKey, nil
 }
