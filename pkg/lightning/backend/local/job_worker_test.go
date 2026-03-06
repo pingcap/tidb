@@ -131,8 +131,8 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		})
 
 		workGroup.Go(func() error {
-			jobInCh <- job
 			jobWg.Add(1)
+			jobInCh <- job
 			close(jobInCh)
 			jobWg.Wait()
 
