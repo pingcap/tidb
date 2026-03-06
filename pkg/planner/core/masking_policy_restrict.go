@@ -72,7 +72,7 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	return nil
 }
 
-func (b *PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
+func (*PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 	p base.LogicalPlan,
 	outputColIdx int,
 ) []*types.FieldName {

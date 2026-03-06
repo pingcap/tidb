@@ -61,3 +61,31 @@ func TestMaskingPolicyRestrictOnSubquerySources(t *testing.T) {
 	tkRoot.MustExec("update dst set c = (select c from src_restrict limit 1)")
 	tkRoot.MustExec("delete from dst where c = (select c from src_restrict limit 1)")
 }
+
+func TestMaskingPolicyRestrictOnNoneToggle(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tkRoot := testkit.NewTestKit(t, store)
+	require.NoError(t, tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tkRoot.MustExec("use test")
+
+	tkRoot.MustExec("drop table if exists src_toggle, dst_toggle")
+	tkRoot.MustExec("create table src_toggle(c varchar(20))")
+	tkRoot.MustExec("create table dst_toggle(c varchar(20))")
+	tkRoot.MustExec("insert into src_toggle values ('secret')")
+
+	tkRoot.MustExec(`create masking policy p_toggle on src_toggle(c) as
+		case when current_user() = 'root@%' then c else mask_full(c, '*') end
+		restrict on (insert_into_select) enable`)
+
+	tkRoot.MustExec("create user if not exists 'u_toggle'@'%'")
+	tkRoot.MustExec("grant select, insert on test.* to 'u_toggle'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u_toggle", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("use test")
+
+	tkUser.MustGetErrCode("insert into dst_toggle select c from src_toggle", errno.ErrAccessDeniedToMaskedColumn)
+	tkRoot.MustExec("alter table src_toggle modify masking policy p_toggle set restrict on none")
+	tkUser.MustExec("insert into dst_toggle select c from src_toggle")
+	tkUser.MustQuery("select c from dst_toggle").Check(testkit.Rows("******"))
+}

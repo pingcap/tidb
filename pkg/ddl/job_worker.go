@@ -980,7 +980,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddColumn:
 		ver, err = w.onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(jobCtx, job)
+		ver, err = w.onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(jobCtx, job)
 	case model.ActionSetDefaultValue:

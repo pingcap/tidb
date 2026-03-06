@@ -256,6 +256,7 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",

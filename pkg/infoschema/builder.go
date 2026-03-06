@@ -614,7 +614,68 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			return nil, errors.Trace(err)
 		}
 	}
+	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+		if err := refreshMaskingPoliciesForTableIDs(b, m, oldTableID, newTableID); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return tblIDs, nil
+}
+
+func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionDropTable,
+		model.ActionDropColumn,
+		model.ActionModifyColumn,
+		model.ActionRenameTable,
+		model.ActionRenameTables:
+		return true
+	default:
+		return false
+	}
+}
+
+func refreshMaskingPoliciesForTableIDs(b *Builder, m meta.Reader, tableIDs ...int64) error {
+	targetIDs := make(map[int64]struct{}, len(tableIDs))
+	for _, tableID := range tableIDs {
+		if !tableIDIsValid(tableID) {
+			continue
+		}
+		targetIDs[tableID] = struct{}{}
+	}
+	if len(targetIDs) == 0 {
+		return nil
+	}
+
+	targetIS := b.infoSchema
+	if b.enableV2 && b.infoschemaV2.infoSchema != nil {
+		targetIS = b.infoschemaV2.infoSchema
+	}
+
+	existingNames := make([]string, 0)
+	for tableID := range targetIDs {
+		colMap, ok := targetIS.maskingPolicyTableColumnMap[tableID]
+		if !ok {
+			continue
+		}
+		for _, policy := range colMap {
+			existingNames = append(existingNames, policy.Name.L)
+		}
+	}
+	for _, name := range existingNames {
+		targetIS.deleteMaskingPolicy(name)
+	}
+
+	policies, err := m.ListMaskingPolicies()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		if _, ok := targetIDs[policy.TableID]; ok {
+			targetIS.setMaskingPolicy(policy)
+		}
+	}
+	return nil
 }
 
 // getKeptAllocators get allocators that is not changed by the DDL.

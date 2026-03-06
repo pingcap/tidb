@@ -143,14 +143,14 @@ func TestShowMaskingPolicies(t *testing.T) {
 	tk.MustExec("alter table t modify masking policy p set restrict on (insert_into_select, delete_select)")
 
 	tk.MustQuery("show masking policies for t").
-		Check(testkit.Rows("p c MASK_FULL(`c`, _UTF8MB4'*') ENABLE MASK_FULL INSERT_INTO_SELECT,DELETE_SELECT"))
+		Check(testkit.Rows("p c MASK_FULL(`c`, _UTF8MB4'*') ENABLED MASK_FULL INSERT_INTO_SELECT,DELETE_SELECT"))
 	tk.MustQuery("show masking policies for t where column_name = 'c'").
-		Check(testkit.Rows("p c MASK_FULL(`c`, _UTF8MB4'*') ENABLE MASK_FULL INSERT_INTO_SELECT,DELETE_SELECT"))
+		Check(testkit.Rows("p c MASK_FULL(`c`, _UTF8MB4'*') ENABLED MASK_FULL INSERT_INTO_SELECT,DELETE_SELECT"))
 	tk.MustQuery("show masking policies for t where column_name = 'missing'").Check(testkit.Rows())
 
 	rows := tk.MustQuery("show create table t").Rows()
 	require.Len(t, rows, 1)
-	require.Contains(t, rows[0][1], "/* MASKING POLICY `p` ENABLE */")
+	require.Contains(t, rows[0][1], "/* MASKING POLICY `p` ENABLED */")
 }
 
 func TestShowIndex(t *testing.T) {
