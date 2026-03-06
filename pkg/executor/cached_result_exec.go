@@ -120,12 +120,17 @@ func (e *CachedResultExec) Close() error {
 		return nil
 	}
 
-	// Back-fill the cache with collected results.
+	if err := e.original.Close(); err != nil {
+		e.collecting = false
+		return err
+	}
+
+	// Back-fill the cache only after the wrapped executor closes successfully.
 	if e.collecting {
 		e.cachedTable.PutCachedResult(e.cacheKey, e.paramBytes, e.collectedChunks, e.resultSchema)
 	}
 
-	return e.original.Close()
+	return nil
 }
 
 // nextFromCache serves chunks from the cached result set.

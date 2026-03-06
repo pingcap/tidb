@@ -622,6 +622,101 @@ func TestMemTableReaderDatumCacheFallbackOnTxnOverride(t *testing.T) {
 	require.Nil(t, row)
 }
 
+func TestMemTableReaderDatumCacheFallbackOnPartialRange(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	sctx := mock.NewContext()
+	sctx.Store = store
+
+	const tableID int64 = 1
+
+	ftID := types.NewFieldType(mysql.TypeLonglong)
+	ftName := types.NewFieldType(mysql.TypeVarchar)
+	ftName.SetFlen(64)
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	retFieldTypes := []*types.FieldType{ftID, ftName, ftVal}
+
+	colIDExpr := &expression.Column{ID: 1, UniqueID: 1, Index: 0, RetType: ftID}
+	colNameExpr := &expression.Column{ID: 2, UniqueID: 2, Index: 1, RetType: ftName}
+	colValExpr := &expression.Column{ID: 3, UniqueID: 3, Index: 2, RetType: ftVal}
+	schema := expression.NewSchema(colIDExpr, colNameExpr, colValExpr)
+
+	col1Info := &model.ColumnInfo{ID: 1, Offset: 0, State: model.StatePublic, FieldType: *ftID}
+	col2Info := &model.ColumnInfo{ID: 2, Offset: 1, State: model.StatePublic, FieldType: *ftName}
+	col3Info := &model.ColumnInfo{ID: 3, Offset: 2, State: model.StatePublic, FieldType: *ftVal}
+	tblInfo := &model.TableInfo{ID: tableID, Columns: []*model.ColumnInfo{col1Info, col2Info, col3Info}}
+
+	cd := NewRowDecoder(sctx, schema, tblInfo)
+
+	buffTxn, err := store.Begin(tikv.WithStartTS(0))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = buffTxn.Rollback()
+	})
+	cacheTable := buffTxn.GetMemBuffer()
+
+	var encoder rowcodec.Encoder
+	colIDs := []int64{1, 2, 3}
+	loc := sctx.GetSessionVars().Location()
+	rows := [][]types.Datum{
+		{types.NewIntDatum(1), types.NewStringDatum("alice"), types.NewIntDatum(100)},
+		{types.NewIntDatum(2), types.NewStringDatum("bob"), types.NewIntDatum(200)},
+		{types.NewIntDatum(3), types.NewStringDatum("charlie"), types.NewIntDatum(300)},
+	}
+	for _, row := range rows {
+		key := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(row[0].GetInt64()))
+		val, err := encoder.Encode(loc, colIDs, row, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, cacheTable.Set(key, append([]byte(nil), val...)))
+	}
+
+	kvRanges := []kv.KeyRange{{
+		StartKey: tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(2)),
+		EndKey:   tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(3)),
+	}}
+
+	memTblReader := &memTableReader{
+		ctx:           sctx,
+		table:         tblInfo,
+		columns:       []*model.ColumnInfo{col1Info, col2Info, col3Info},
+		kvRanges:      kvRanges,
+		retFieldTypes: retFieldTypes,
+		colIDs:        map[int64]int{1: 0, 2: 1, 3: 2},
+		buffer: allocBuf{
+			handleBytes: make([]byte, 0, 16),
+			cd:          cd,
+		},
+		cacheTable: cacheTable,
+		datumCache: buildTestDatumCache([][]any{
+			{int64(1), "alice", int64(100)},
+			{int64(2), "bob", int64(200)},
+			{int64(3), "charlie", int64(300)},
+		}),
+	}
+
+	it, err := memTblReader.getMemRowsIter(context.Background())
+	require.NoError(t, err)
+	defer it.Close()
+
+	_, isDatumIter := it.(*memCachedDatumIter)
+	require.False(t, isDatumIter)
+
+	row, err := it.Next()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, int64(2), row[0].GetInt64())
+	require.Equal(t, "bob", row[1].GetString())
+	require.Equal(t, int64(200), row[2].GetInt64())
+
+	row, err = it.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
 type mockCachedTableWithPinnedDatumCache struct {
 	table.Table
 	cacheData kv.MemBuffer
