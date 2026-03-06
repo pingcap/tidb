@@ -29,7 +29,6 @@ insert into t2 values (1, 'xxx', '2003-06-09 10:51:26');
 select ts from t1 inner join t2 where t2.name = 'xxx';
 ts
 2003-06-09 10:51:26
-set tidb_cost_model_version=2;
 set @@tidb_init_chunk_size=2;
 DROP TABLE IF EXISTS t;
 CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk));
@@ -297,7 +296,6 @@ id	a	b
 select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
 id	a	b
 1	1	1
-set tidb_cost_model_version=default;
 set @@tidb_init_chunk_size=default;
 set @@tidb_index_join_batch_size=default;
 set @@tidb_init_chunk_size=default;

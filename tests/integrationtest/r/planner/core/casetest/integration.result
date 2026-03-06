@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int);
 insert into t values(1),(2);
@@ -35,7 +34,6 @@ count(1)
 SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e;
 avg(2)
 2.0000
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a bigint, b bigint);
 explain format='plan_tree' select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);
@@ -48,7 +46,6 @@ Projection	root		planner__core__casetest__integration.t.a, planner__core__casete
   └─TableReader(Probe)	root		data:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int not null, b datetime default null);
 explain format='plan_tree' select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01';
@@ -103,7 +100,6 @@ a	b
 21	1
 22	2
 set tidb_opt_limit_push_down_threshold=default;
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int primary key);
 set tidb_enable_clustered_index='ON';
@@ -163,7 +159,6 @@ StreamAgg	root		funcs:min(Column)->Column, funcs:max(Column)->Column
     └─Selection	cop[tikv]		eq(planner__core__casetest__integration.cluster_index_t.b, 1)
       └─TableFullScan	cop[tikv]	table:cluster_index_t	keep order:false, stats:pseudo
 set tidb_enable_clustered_index=DEFAULT;
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int, b int);
 explain format='plan_tree' select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1);
@@ -384,7 +379,6 @@ create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
 select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 count(1)
 1
-set tidb_cost_model_version=2;
 drop table if exists t1,t2,t3;
 create table t1 (pk char(32) primary key nonclustered, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3));
 create table t2 (pk char(32) primary key nonclustered, col1 varchar(100));
@@ -1057,7 +1051,6 @@ Projection	root		planner__core__casetest__integration.t2.c
       ├─Selection(Build)	cop[tikv]		or(eq(planner__core__casetest__integration.t2.b, 1), eq(planner__core__casetest__integration.t2.b, 2))
       │ └─IndexRangeScan	cop[tikv]	table:t2, index:PRIMARY(a, b)	range: decided by [eq(planner__core__casetest__integration.t2.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
       └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop sequence if exists s1, s2;
 create sequence s1;
 create sequence s2;
@@ -1085,7 +1078,6 @@ HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
   │ └─TableDual	root		rows:1
   └─StreamAgg	root		funcs:count(1)->Column
     └─TableDual	root		rows:1
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g));
 set @@tidb_enable_chunk_rpc = on;
@@ -1122,7 +1114,6 @@ IndexLookUp	10.00	root
 │ └─IndexFullScan	10000.00	cop[tikv]	table:t, index:c_d_e(c, d, e)	keep order:true, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 set @@tidb_enable_chunk_rpc = default;
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int unsigned primary key, b int, c int, index idx_b(b));
 insert into t values (1,2,3), (4,5,6), (7,8,9), (10,11,12), (13,14,15);
@@ -1362,7 +1353,6 @@ HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
         └─TableFullScan	cop[tikv]	table:t8	keep order:false, stats:pseudo
 select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 a
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (id int, value decimal(10,5));
 explain format='plan_tree' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;

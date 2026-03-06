@@ -133,7 +133,6 @@ select /*+ INL_HASH_JOIN(t5,t6) */ count(*) from t6 join t5 on t6.b = t5.b where
 select * from t7 where a is null or a > 0 order by a;
 
 # TestListColumnsDefaultPartitionPruner
-set tidb_cost_model_version=2;
 drop database if exists test_partition_2;
 set @@session.tidb_regard_null_as_point=false;
 create database test_partition_2;

@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
 insert into t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def '), (5, 'abc', 'ABC');
 explain format='plan_tree' select group_concat(value order by 1) from t;
@@ -28,7 +27,7 @@ group_concat(value collate utf8mb4_bin)
 abc,Abc,def,abc
 explain format='plan_tree' select group_concat(distinct value order by 1) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:group_concat(distinct collation_agg_func.t.value order by collation_agg_func.t.value separator ",")->Column
+HashAgg	root		funcs:group_concat(distinct collation_agg_func.t.value order by collation_agg_func.t.value separator ",")->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value order by 1)) from t;
@@ -36,7 +35,7 @@ upper(group_concat(distinct value order by 1))
 ABC,DEF
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:group_concat(distinct Column order by Column separator ",")->Column
+HashAgg	root		funcs:group_concat(distinct Column order by Column separator ",")->Column
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -45,7 +44,7 @@ upper(group_concat(distinct value collate utf8mb4_bin order by 1))
 ABC,ABC,DEF
 explain format='plan_tree' select group_concat(distinct value) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:group_concat(distinct collation_agg_func.t.value separator ",")->Column
+HashAgg	root		funcs:group_concat(distinct collation_agg_func.t.value separator ",")->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value)) from t;
@@ -53,7 +52,7 @@ upper(group_concat(distinct value))
 ABC,DEF
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:group_concat(distinct Column separator ",")->Column
+HashAgg	root		funcs:group_concat(distinct Column separator ",")->Column
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -62,7 +61,7 @@ upper(group_concat(distinct value collate utf8mb4_bin))
 ABC,ABC,DEF
 explain format='plan_tree' select count(distinct value) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct collation_agg_func.t.value)->Column
+HashAgg	root		funcs:count(distinct collation_agg_func.t.value)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value) from t;
@@ -70,7 +69,7 @@ count(distinct value)
 2
 explain format='plan_tree' select count(distinct value collate utf8mb4_bin) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct Column)->Column
+HashAgg	root		funcs:count(distinct Column)->Column
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -79,7 +78,7 @@ count(distinct value collate utf8mb4_bin)
 3
 explain format='plan_tree' select count(distinct value, value1) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct collation_agg_func.t.value, collation_agg_func.t.value1)->Column
+HashAgg	root		funcs:count(distinct collation_agg_func.t.value, collation_agg_func.t.value1)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value, value1) from t;
@@ -87,7 +86,7 @@ count(distinct value, value1)
 3
 explain format='plan_tree' select count(distinct value collate utf8mb4_bin, value1) from t;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct Column, Column)->Column
+HashAgg	root		funcs:count(distinct Column, Column)->Column
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column, collation_agg_func.t.value1->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -199,9 +198,9 @@ max(a collate utf8mb4_bin)
 c
 explain format='plan_tree' select min(b) from tt;
 id	task	access object	operator info
-StreamAgg	root		funcs:min(Column)->Column
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:min(collation_agg_func.tt.b)->Column
+HashAgg	root		funcs:min(Column)->Column
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		funcs:min(collation_agg_func.tt.b)->Column
     └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(b) from tt;
 min(b)
@@ -212,9 +211,9 @@ select min(b collate utf8mb4_bin) from tt;
 Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 explain format='plan_tree' select max(b) from tt;
 id	task	access object	operator info
-StreamAgg	root		funcs:max(Column)->Column
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:max(collation_agg_func.tt.b)->Column
+HashAgg	root		funcs:max(Column)->Column
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		funcs:max(collation_agg_func.tt.b)->Column
     └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select max(b) from tt;
 max(b)

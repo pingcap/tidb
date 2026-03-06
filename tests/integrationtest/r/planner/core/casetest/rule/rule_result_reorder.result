@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 set tidb_opt_limit_push_down_threshold=0;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t;
@@ -129,7 +128,6 @@ id	task	access object	operator info
 Update	root		N/A
 └─TableReader	root		data:TableRangeScan
   └─TableRangeScan	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;
 drop table if exists t2;
@@ -217,7 +215,6 @@ Projection	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planne
     └─TableReader(Probe)	root		data:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_result_reorder.t1.b))
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;
 drop table if exists t2;
@@ -256,7 +253,6 @@ Projection	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planne
     │ └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;
 drop table if exists t2;

@@ -59,7 +59,6 @@ commit;
 drop binding for select a from t where a in (1);
 drop binding for select b from t where b in (1,2,3);
 drop binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3);
-set tidb_cost_model_version=2;
 drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
@@ -124,7 +123,6 @@ HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
 drop global binding for SELECT * from t1 union SELECT * from t1;
-set tidb_cost_model_version=default;
 drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
