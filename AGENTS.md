@@ -152,35 +152,11 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 
 ## Issue and PR Rules
 
-### Issue rules
-
-- Follow templates under `.github/ISSUE_TEMPLATE/` and fill all required fields.
-- Bug reports should include minimal reproduction, expected/actual behavior, and TiDB version (for example `SELECT tidb_version()` output).
-- Search existing issues/PRs first (for example `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), then add relevant logs/configuration/SQL plans.
-- Labeling requirements:
-  - `type/*` is usually applied by the issue template (GitHub UI); if creating issues via `gh issue create`, add it explicitly via `--label` (or follow up with `gh issue edit --add-label`).
-  - Add at least one `component/*` label.
-  - For bug/regression, include `severity/*` and affected-version labels (for example `affects-8.5`, or `may-affects-*` if unsure).
-  - If label permissions are missing, include `Suggested labels: ...` in issue body.
-
-### PR requirements
-
-- PR title MUST use one of:
-  - `pkg [, pkg2, pkg3]: what is changed`
-  - `*: what is changed`
-- PR description MUST follow `.github/pull_request_template.md`.
-- PR description MUST contain one line starting with `Issue Number:` and reference related issue(s) using `close #<id>` or `ref #<id>`.
-- If you create PRs via GitHub CLI, start from the template to avoid breaking required HTML comments: `gh pr create -T .github/pull_request_template.md` (then fill in the fields; do not delete/alter the HTML comment markers).
-- Keep HTML comments unchanged, including `Tests <!-- At least one of them must be included. -->`, because CI tooling depends on them.
-- Avoid force-push when possible; prefer follow-up commits and squash merge.
-- If force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
-
-#### Writing good PR descriptions
-
-- **"Problem Summary" (why) is the primary section.** Lead with why the change is needed: what problem exists, what limitation it removes, or what invariant it restores. The reviewer should understand the motivation before reading any code.
-- **"What changed" (how) is secondary.** Summarize the general approach in 1–3 sentences. Do not enumerate every file or function touched; the diff already shows that. Only call out non-obvious design decisions or trade-offs.
-- Bad example: "Rename function A to B. Remove function C. Add parameter X to function D. Update callers E, F, G." — this restates the diff without explaining motivation.
-- Good example: "Callers of A need both X and Y, but A only returns X, so every caller has to compute Y separately with duplicated logic. Combine both into A so callers get everything in one call." — this explains the problem first, then the approach.
+- PR title MUST use one of: `pkg [, pkg2, pkg3]: what is changed` or `*: what is changed`.
+- PR description MUST follow `.github/pull_request_template.md` and contain `Issue Number:` with `close #<id>` or `ref #<id>`.
+- Keep HTML comments unchanged (CI tooling depends on them).
+- Issues and PRs MUST be written in English (title and description).
+- For detailed guidance on writing issues, PRs, labeling, and descriptions, see `.agents/skills/github-workflow/SKILL.md`.
 
 ## Agent Output Contract
 
