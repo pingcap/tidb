@@ -9,7 +9,9 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/server/internal/handshake",
         "//pkg/server/internal/util",
+        "//pkg/sessionctx/vardef",
         "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )

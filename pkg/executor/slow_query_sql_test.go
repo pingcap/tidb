@@ -544,3 +544,54 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 		"where query like 'select%tablesample%;'").
 		Check(testkit.Rows("1 0"))
 }
+
+func TestSessionConnectAttrsInSlowQuery(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	_, err = f.WriteString(`# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+# Session_connect_attrs: {"_client_name":"Go-MySQL-Driver","_os":"linux","app_name":"test_app"}
+select * from t;
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@time_zone='+08:00'")
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+
+	// Verify Session_connect_attrs column is present and returns the correct JSON value.
+	rows := tk.MustQuery("select Session_connect_attrs from information_schema.slow_query " +
+		"where query = 'select * from t;'").Rows()
+	require.Len(t, rows, 1)
+	attrsStr := rows[0][0].(string)
+	require.Contains(t, attrsStr, `"_client_name"`)
+	require.Contains(t, attrsStr, `"Go-MySQL-Driver"`)
+	require.Contains(t, attrsStr, `"_os"`)
+	require.Contains(t, attrsStr, `"linux"`)
+	require.Contains(t, attrsStr, `"app_name"`)
+	require.Contains(t, attrsStr, `"test_app"`)
+
+	// Verify individual keys are accessible via JSON_EXTRACT.
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$._client_name') from information_schema.slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"Go-MySQL-Driver"`))
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$.app_name') from information_schema.slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"test_app"`))
+}

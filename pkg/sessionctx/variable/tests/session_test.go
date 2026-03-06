@@ -346,6 +346,35 @@ func TestSlowLogFormat(t *testing.T) {
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
 
+	// Verify SessionConnectAttrs serialization.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_client_name": "libmysql",
+		"_os":          "Linux",
+		"app_name":     "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	// json.Encoder sorts map keys, so the output is deterministic.
+	expectedAttrsLine := `# Session_connect_attrs: {"_client_name":"libmysql","_os":"Linux","app_name":"test_svc"}`
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = vardef.On
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = vardef.Off
+	// Session_connect_attrs should appear after Storage_from_mpp, before Prev_stmt, and before the SQL.
+	attrsIdx := strings.Index(logString, "Session_connect_attrs")
+	mppIdx := strings.Index(logString, variable.SlowLogStorageFromMPP)
+	prevStmtIdx := strings.Index(logString, variable.SlowLogPrevStmt)
+	sqlIdx := strings.Index(logString, sql)
+	require.Greater(t, attrsIdx, 0)
+	require.Greater(t, mppIdx, 0)
+	require.Greater(t, attrsIdx, mppIdx, "Session_connect_attrs should appear after Storage_from_mpp")
+	if prevStmtIdx > 0 {
+		require.Less(t, attrsIdx, prevStmtIdx, "Session_connect_attrs should appear before Prev_stmt")
+	}
+	require.Less(t, attrsIdx, sqlIdx, "Session_connect_attrs should appear before the SQL statement")
+	// Restore for subsequent assertions.
+	logItems.SessionConnectAttrs = nil
+
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
@@ -831,7 +860,6 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	_, err = sv.Validate(vars, "1", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
-
 	_, err = sv.Validate(vars, "0", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
@@ -868,6 +896,38 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	err = sv.SetSessionFromHook(vars, "DISABLE")
 	require.NoError(t, err)
 	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
+}
+
+func TestPerfSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originSize := vardef.ConnectAttrsSize.Load()
+	defer func() {
+		vardef.ConnectAttrsSize.Store(originSize)
+		tk.MustExec("set global performance_schema_session_connect_attrs_size = " + strconv.FormatInt(originSize, 10))
+	}()
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 0")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("0"))
+	require.Equal(t, int64(0), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 65536")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -1")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), vardef.ConnectAttrsSize.Load())
+
+	// Out-of-range values are normalized by int sysvar min/max.
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 70000")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -2")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), vardef.ConnectAttrsSize.Load())
 }
 
 func TestSetTiDBCloudStorageURI(t *testing.T) {

@@ -18,10 +18,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
+	"strconv"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -128,13 +133,28 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, intOff := util2.ParseLengthEncodedInt(data[offset:]); !null {
-			offset += intOff // Length of variable length encoded integer itself in bytes
-			row := data[offset : offset+int(num)]
-			attrs, err := parseAttrs(row)
+		num, null, intOff := util2.ParseLengthEncodedInt(data[offset:])
+		offset += intOff // Length of variable length encoded integer itself in bytes
+		if !null {
+			if num > 1<<20 { // 1 MiB hard limit
+				return errors.New("connection refused: session connection attributes exceed the 1 MiB hard limit")
+			}
+			end := offset + int(num)
+			if end > len(data) {
+				logutil.Logger(ctx).Error("malformed connection attributes packet",
+					zap.Int("offset", offset),
+					zap.Uint64("attrLength", num),
+					zap.Int("dataLen", len(data)))
+				return mysql.ErrMalformPacket
+			}
+			row := data[offset:end]
+			attrs, warning, err := parseAttrs(row)
 			if err != nil {
 				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err))
 				return nil
+			}
+			if warning != "" {
+				logutil.Logger(ctx).Debug(warning)
 			}
 			packet.Attrs = attrs
 			offset += int(num) // Length of attributes
@@ -148,22 +168,112 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 	return nil
 }
 
-func parseAttrs(data []byte) (map[string]string, error) {
+// reservedConnAttrTruncated is injected by TiDB when connection attributes
+// are truncated. A client-provided key with the same name may be overwritten
+// when truncation happens.
+const reservedConnAttrTruncated = "_truncated"
+
+var standardConnAttrs = map[string]struct{}{
+	"_client_name":    {},
+	"_client_version": {},
+	"_os":             {},
+	"_pid":            {},
+	"_platform":       {},
+}
+
+func parseAttrs(data []byte) (map[string]string, string, error) {
 	attrs := make(map[string]string)
 	pos := 0
+	var totalSize int64
+	var acceptedSize int64
+	truncated := false
+	hasDeprecatedUnderscoreAttr := false
+	limit := vardef.ConnectAttrsSize.Load()
+	if limit == 0 {
+		// Disabled: do not collect, truncate, or emit metadata.
+		return attrs, "", nil
+	}
+
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, err
+			return attrs, "", err
 		}
 		pos += off
 		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, err
+			return attrs, "", err
 		}
 		pos += off
 
-		attrs[string(key)] = string(value)
+		keyStr := string(key)
+
+		// Keep all client-provided keys (including underscore-prefixed MySQL
+		// connector attributes). If truncation happens, server may overwrite
+		// the reserved "_truncated" key for observability metadata.
+		if !hasDeprecatedUnderscoreAttr && strings.HasPrefix(keyStr, "_") {
+			if _, ok := standardConnAttrs[keyStr]; !ok {
+				hasDeprecatedUnderscoreAttr = true
+			}
+		}
+
+		kvSize := int64(len(key)) + int64(len(value))
+		totalSize += kvSize
+
+		// In MySQL, -1 means autosizing. We map it to a maximum of 64KB (65536)
+		// to prevent unconstrained slow log bloating. 0 means disabled.
+		effectiveLimit := limit
+		if effectiveLimit < 0 {
+			effectiveLimit = 65536
+		}
+
+		if totalSize > effectiveLimit {
+			if !truncated {
+				truncated = true
+				vardef.ConnectAttrsLost.Add(1)
+			}
+			continue
+		}
+
+		if !truncated {
+			attrs[keyStr] = string(value)
+			acceptedSize += kvSize
+		}
 	}
-	return attrs, nil
+
+	// Update LongestSeen only for normal-sized payloads (< 64 KiB).
+	// Abnormally large payloads are still accepted (up to 1 MiB) but should
+	// not skew this monitoring metric.
+	if totalSize < 65536 {
+		for {
+			old := vardef.ConnectAttrsLongestSeen.Load()
+			if totalSize <= old {
+				break
+			}
+			if vardef.ConnectAttrsLongestSeen.CompareAndSwap(old, totalSize) {
+				break
+			}
+		}
+	}
+
+	warnings := make([]string, 0, 2)
+	if hasDeprecatedUnderscoreAttr {
+		warnings = append(warnings,
+			"custom connection attributes with leading underscore are deprecated and will be rejected in a future release")
+	}
+	if truncated {
+		// Calculate what limit was actually enforced
+		effectiveLimit := limit
+		if effectiveLimit < 0 {
+			effectiveLimit = 65536
+		}
+
+		truncatedBytes := totalSize - acceptedSize
+		attrs[reservedConnAttrTruncated] = strconv.FormatInt(truncatedBytes, 10)
+		warnings = append(warnings, fmt.Sprintf(
+			"session connection attributes truncated: total size %d bytes exceeds "+
+				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
+			totalSize, effectiveLimit, truncatedBytes))
+	}
+	return attrs, strings.Join(warnings, "; "), nil
 }
