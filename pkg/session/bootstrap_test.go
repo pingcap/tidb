@@ -1869,26 +1869,76 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	// make sure that later change won't affect existing version schemas.
 	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
+	// version 2: stats_table_data
+	require.Len(t, versionedBootstrapSchemas[1].databases[0].Tables, 1)
 
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
-	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
 
 			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
-				allIDs = append(allIDs, tbl.ID)
+				allTableIDs = append(allTableIDs, tbl.ID)
 			}
 		}
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
-	slices.Sort(allIDs)
-	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+	slices.Sort(allTableIDs)
+	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
+}
+
+func TestBootstrapSchemasUpgradeToVersion2(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	// Simulate an existing NextGen cluster at version 1 by running bootstrapSchemas
+	// with only version 1 tables, then verifying version 2 creates the new table.
+
+	// First, seed the store with version 1 (create the database and set the version).
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if err := m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID); err != nil {
+			return err
+		}
+		return m.SetNextGenBootTableVersion(meta.BaseNextGenBootTableVersion)
+	}))
+
+	// Verify version is 1 and stats_table_data does not exist yet.
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.Equal(t, meta.BaseNextGenBootTableVersion, ver)
+		tbl, err := m.GetTable(metadef.SystemDatabaseID, metadef.StatsTableDataTableID)
+		require.NoError(t, err)
+		require.Nil(t, tbl, "stats_table_data should not exist before upgrade")
+		return nil
+	}))
+
+	// Run bootstrapSchemas — this should apply version 2 and create stats_table_data.
+	require.NoError(t, bootstrapSchemas(store))
+
+	// Verify version advanced to 2 and the table was created with the reserved ID.
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.Equal(t, meta.NextGenBootTableVersion2, ver)
+		tbl, err := m.GetTable(metadef.SystemDatabaseID, metadef.StatsTableDataTableID)
+		require.NoError(t, err)
+		require.NotNil(t, tbl, "stats_table_data should be created by version 2 upgrade")
+		require.Equal(t, metadef.StatsTableDataTableID, tbl.ID)
+		require.Equal(t, "stats_table_data", tbl.Name.L)
+		return nil
+	}))
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {
