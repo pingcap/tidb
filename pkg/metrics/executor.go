@@ -22,10 +22,10 @@ var (
 	// ExecutorCounter records the number of expensive executors.
 	ExecutorCounter *prometheus.CounterVec
 
-	// StmtNodeCounter records the number of statement with the same type.
+	// StmtNodeCounter records the number of statements with the same type.
 	StmtNodeCounter *prometheus.CounterVec
 
-	// DbStmtNodeCounter records the number of statement with the same type and db.
+	// DbStmtNodeCounter records the number of statements with the same type and database.
 	DbStmtNodeCounter *prometheus.CounterVec
 
 	// ExecPhaseDuration records the duration of each execution phase.
@@ -34,7 +34,7 @@ var (
 	// OngoingTxnDurationHistogram records the duration of ongoing transactions.
 	OngoingTxnDurationHistogram *prometheus.HistogramVec
 
-	// MppCoordinatorStats records the number of mpp coordinator instances and related events
+	// MppCoordinatorStats records the number of MPP coordinator instances and related events.
 	MppCoordinatorStats *prometheus.GaugeVec
 
 	// MppCoordinatorLatency records latencies of mpp coordinator operations.
@@ -64,7 +64,7 @@ var (
 	// ResultCacheMemoryGauge records the memory usage of result cache on cached tables.
 	ResultCacheMemoryGauge prometheus.Gauge
 
-	// ResultCacheEvictCounter records the number of cached result entries evicted from the result cache.
+	// ResultCacheEvictCounter records the number of cached result entries evicted from the cached table result cache.
 	ResultCacheEvictCounter prometheus.Counter
 )
 

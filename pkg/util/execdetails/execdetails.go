@@ -947,7 +947,7 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
-	// TpResultCacheRuntimeStats is the tp for ResultCacheRuntimeStats
+	// TpResultCacheRuntimeStats is the tp for ResultCacheRuntimeStats.
 	TpResultCacheRuntimeStats
 )
 

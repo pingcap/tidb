@@ -568,12 +568,12 @@ func TestResultCacheRuntimeStats(t *testing.T) {
 	require.Equal(t, TpResultCacheRuntimeStats, hit.Tp())
 
 	// Test miss case.
-	miss := &ResultCacheRuntimeStats{HitCache: false}
+	miss := &ResultCacheRuntimeStats{}
 	require.Equal(t, "result_cache:miss", miss.String())
 
 	// Test Clone.
 	cloned := hit.Clone().(*ResultCacheRuntimeStats)
-	require.Equal(t, true, cloned.HitCache)
+	require.True(t, cloned.HitCache)
 	require.Equal(t, int64(100), cloned.CachedRows)
 
 	// Test Merge: miss + hit = hit.
