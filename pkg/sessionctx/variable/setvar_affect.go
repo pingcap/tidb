@@ -71,6 +71,16 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_table_rowid_scan_cost_factor":           {},
 	"tidb_opt_table_tiflash_scan_cost_factor":         {},
 	"tidb_opt_topn_cost_factor":                       {},
+<<<<<<< HEAD
+=======
+	"tidb_opt_selectivity_factor":                     {},
+	"tidb_opt_risk_eq_skew_ratio":                     {},
+	"tidb_opt_risk_range_skew_ratio":                  {},
+	"tidb_opt_group_ndv_skew_ratio":                   {},
+	"tidb_opt_scale_ndv_skew_ratio":                   {},
+	"tidb_opt_always_keep_join_key":                   {},
+	"tidb_opt_cartesian_join_order_threshold":         {},
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 	"tidb_index_join_batch_size":                      {},
 	"tidb_index_lookup_size":                          {},
 	"tidb_index_serial_scan_concurrency":              {},
