@@ -714,10 +714,6 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				return false, errors.Trace(err1)
 			}
 			lastAccessedHandle = recordKey
-			if recordKey.Cmp(taskRange.endKey) == 0 {
-				taskDone = true
-				return false, nil
-			}
 			return true, nil
 		})
 
