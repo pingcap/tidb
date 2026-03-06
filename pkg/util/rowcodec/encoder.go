@@ -42,7 +42,7 @@ type Encoder struct {
 // `buf` is not truncated before encoding.
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
-// the caller needs to ensure the key is not nil if checksum is required.
+// If row-level raw checksum is required, the caller must provide a non-nil handle.
 func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, checksum Checksum, buf []byte) ([]byte, error) {
 	encoder.reset()
 	encoder.appendColVals(colIDs, values)
@@ -254,6 +254,9 @@ type RawChecksum struct {
 }
 
 func (c RawChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
+	if c.Handle == nil {
+		return nil, errInvalidChecksumKey
+	}
 	encoder.flags |= rowFlagChecksum
 	encoder.checksumHeader &^= checksumFlagExtra       // revert extra checksum flag
 	encoder.checksumHeader &^= checksumMaskVersion     // revert checksum version

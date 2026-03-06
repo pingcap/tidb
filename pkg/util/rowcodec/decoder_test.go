@@ -16,6 +16,7 @@ package rowcodec
 
 import (
 	"encoding/binary"
+	"hash/crc32"
 	"testing"
 	"time"
 
@@ -290,6 +291,40 @@ func TestEncodeOldDatumArena(t *testing.T) {
 		expected := dec.encodeOldDatum(tt.tp, tt.val)
 		require.Equal(t, expected, []byte(results[i]), "arena sequential mismatch for %s", tt.name)
 	}
+}
+
+func TestRawChecksumRequiresHandle(t *testing.T) {
+	enc := Encoder{}
+	_, err := enc.Encode(time.UTC, []int64{1}, []types.Datum{types.NewIntDatum(1)}, RawChecksum{}, nil)
+	require.ErrorIs(t, err, errInvalidChecksumKey)
+}
+
+func TestCalculateRawChecksumValidationAndCompatibility(t *testing.T) {
+	enc := Encoder{}
+	rowData, err := enc.Encode(
+		time.UTC,
+		[]int64{1},
+		[]types.Datum{types.NewIntDatum(1)},
+		RawChecksum{Handle: kv.IntHandle(1)},
+		nil,
+	)
+	require.NoError(t, err)
+
+	var r row
+	require.NoError(t, r.fromBytes(rowData))
+
+	datum := types.NewIntDatum(1)
+	_, err = r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, nil, nil, nil)
+	require.ErrorIs(t, err, errInvalidChecksumKey)
+
+	r.checksumHeader &^= checksumMaskVersion
+	r.checksumHeader |= checksumVersionRawKey
+	rawChecksum, err := r.CalculateRawChecksum(time.UTC, []int64{1}, []*types.Datum{&datum}, kv.Key("k"), nil, nil)
+	require.NoError(t, err)
+
+	expected := r.toBytes(nil)
+	expected = append(expected, r.checksumHeader)
+	require.Equal(t, crc32.Update(crc32.Checksum(expected, crc32.IEEETable), crc32.IEEETable, kv.Key("k")), rawChecksum)
 }
 
 func TestDecodeToBytesNoHandleInto(t *testing.T) {

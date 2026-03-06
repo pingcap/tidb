@@ -36,6 +36,7 @@ var (
 	errInvalidCodecVer    = errors.New("invalid codec version")
 	errInvalidChecksumVer = errors.New("invalid checksum version")
 	errInvalidChecksumTyp = errors.New("invalid type for checksum")
+	errInvalidChecksumKey = errors.New("invalid key or handle for checksum")
 )
 
 // First byte in the encoded value which specifies the encoding type.
