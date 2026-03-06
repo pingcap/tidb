@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -56,9 +55,8 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 
 	tk.MustExec("analyze table test.t")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip analyze locked table: test.t partition (p0)",
-	))
+	warnings := tk.MustQuery("show warnings").Rows()
+	requireWarningContains(t, warnings, "Warning 1105 skip analyze locked table: test.t partition (p0)")
 	partitionStats1 := handle.GetPhysicalTableStats(p0Id, tbl)
 	require.Equal(t, partitionStats.RealtimeCount, partitionStats1.RealtimeCount)
 	require.Equal(t, int64(0), partitionStats1.RealtimeCount)
@@ -278,12 +276,9 @@ func TestUnlockTheUnlockedTableWouldGenerateWarning(t *testing.T) {
 }
 
 func TestSkipLockALotOfPartitions(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b)) partition by range(a) " +
@@ -491,9 +486,8 @@ func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 
 	// Check the new partition is locked.
 	tk.MustExec("analyze table t partition p2")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip analyze locked table: test.t partition (p2)",
-	))
+	warnings := tk.MustQuery("show warnings").Rows()
+	requireWarningContains(t, warnings, "Warning 1105 skip analyze locked table: test.t partition (p2)")
 
 	// Unlock the whole table.
 	tk.MustExec("unlock stats t")
@@ -535,12 +529,9 @@ func TestUnlockSomePartitionsWouldUpdateGlobalCountCorrectly(t *testing.T) {
 }
 
 func setupTestEnvironmentWithPartitionedTableT(t *testing.T) (kv.Storage, *domain.Domain, *testkit.TestKit, *model.TableInfo) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")

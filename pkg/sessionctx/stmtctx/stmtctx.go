@@ -69,6 +69,26 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+// LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
+// building a logical plan from AST.
+type LogicalPlanBuildState struct {
+	warnings             []SQLWarn
+	extraWarnings        []SQLWarn
+	tables               []TableEntry
+	tableStats           map[int64]any
+	lockTableIDs         map[int64]struct{}
+	tblInfo2UnionScan    map[*model.TableInfo]bool
+	useDynamicPruneMode  bool
+	viewDepth            int32
+	colRefFromUpdatePlan intset.FastIntSet
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
+}
+
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
 
@@ -581,6 +601,44 @@ func (sc *StatementContext) Reset() bool {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
 	return true
+}
+
+// SaveLogicalPlanBuildState captures the statement-scoped planner state before building
+// another logical plan candidate from the same AST.
+func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
+	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
+	return LogicalPlanBuildState{
+		warnings:             slices.Clone(sc.GetWarnings()),
+		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
+		tables:               slices.Clone(sc.Tables),
+		tableStats:           maps.Clone(sc.TableStats),
+		lockTableIDs:         maps.Clone(sc.LockTableIDs),
+		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
+		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		viewDepth:            sc.ViewDepth,
+		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
+		planCacheUseCache:    planCacheUseCache,
+		planCacheType:        planCacheType,
+		planCacheUnqualified: planCacheUnqualified,
+		planCacheForce:       planCacheForce,
+		planCacheAlwaysWarn:  planCacheAlwaysWarn,
+	}
+}
+
+// RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
+// discarded logical plan build attempt.
+func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.SetWarnings(slices.Clone(state.warnings))
+	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
+	sc.Tables = slices.Clone(state.tables)
+	sc.TableStats = maps.Clone(state.tableStats)
+	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
+	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
+	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ViewDepth = state.viewDepth
+	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
+	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
 // CtxID returns the context id of the statement
