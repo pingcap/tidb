@@ -436,6 +436,7 @@ go_test(
         "//pkg/executor/internal/testutil",
         "//pkg/executor/join",
         "//pkg/executor/sortexec",
+        "//pkg/executor/unionexec",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprstatic",
