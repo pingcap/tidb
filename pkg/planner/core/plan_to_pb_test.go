@@ -97,9 +97,7 @@ func TestColumnToProto(t *testing.T) {
 	require.Equal(t, expect, pc)
 }
 
-// TestGeneratedColumnFlagForTiFlash verifies that the GeneratedColumnFlag is set
-// on virtual generated columns when building protobuf for TiFlash.
-// This is a regression test for https://github.com/pingcap/tidb/issues/59831.
+// TestGeneratedColumnFlagForTiFlash is a regression test for https://github.com/pingcap/tidb/issues/59831.
 func TestGeneratedColumnFlagForTiFlash(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(false)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -107,38 +105,36 @@ func TestGeneratedColumnFlagForTiFlash(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeVarchar)
 	tp.SetCollate("utf8_bin")
 
-	// A virtual generated column.
-	virtualGenCol := &model.ColumnInfo{
+	genCol := &model.ColumnInfo{
 		ID:                  1,
 		FieldType:           *tp,
 		GeneratedExprString: "lower(c1)",
 		GeneratedStored:     false,
 	}
-	require.True(t, virtualGenCol.IsVirtualGenerated())
+	require.True(t, genCol.IsVirtualGenerated())
 
-	// A normal column.
 	normalCol := &model.ColumnInfo{
 		ID:        2,
 		FieldType: *tp,
 	}
 
+	genFlag := int32(mysql.GeneratedColumnFlag)
+
 	// When isTiFlashStore=true, GeneratedColumnFlag should be set on virtual generated columns.
-	pc := util.ColumnToProto(virtualGenCol, false, true)
-	require.NotZero(t, pc.Flag&int32(mysql.GeneratedColumnFlag), "GeneratedColumnFlag should be set for virtual generated column when isTiFlashStore=true")
+	pc := util.ColumnToProto(genCol, false, true)
+	require.NotZero(t, pc.Flag&genFlag)
 
-	// When isTiFlashStore=false, GeneratedColumnFlag should NOT be set.
-	pc = util.ColumnToProto(virtualGenCol, false, false)
-	require.Zero(t, pc.Flag&int32(mysql.GeneratedColumnFlag), "GeneratedColumnFlag should not be set when isTiFlashStore=false")
+	pc = util.ColumnToProto(genCol, false, false)
+	require.Zero(t, pc.Flag&genFlag)
 
-	// Normal column should never have GeneratedColumnFlag.
 	pc = util.ColumnToProto(normalCol, false, true)
-	require.Zero(t, pc.Flag&int32(mysql.GeneratedColumnFlag), "GeneratedColumnFlag should not be set for normal column")
+	require.Zero(t, pc.Flag&genFlag)
 
 	// Test via ColumnsToProto with isTiFlashStore=true.
-	cols := []*model.ColumnInfo{virtualGenCol, normalCol}
+	cols := []*model.ColumnInfo{genCol, normalCol}
 	pcs := util.ColumnsToProto(cols, false, false, true)
-	require.NotZero(t, pcs[0].Flag&int32(mysql.GeneratedColumnFlag), "GeneratedColumnFlag should be set for virtual generated column in ColumnsToProto")
-	require.Zero(t, pcs[1].Flag&int32(mysql.GeneratedColumnFlag), "GeneratedColumnFlag should not be set for normal column in ColumnsToProto")
+	require.NotZero(t, pcs[0].Flag&genFlag)
+	require.Zero(t, pcs[1].Flag&genFlag)
 
 	// Test BuildPartitionTableScanFromInfos sets GeneratedColumnFlag correctly.
 	// This is the specific regression from https://github.com/pingcap/tidb/issues/59831:
@@ -149,8 +145,6 @@ func TestGeneratedColumnFlagForTiFlash(t *testing.T) {
 		Columns: cols,
 	}
 	ptsExec := tables.BuildPartitionTableScanFromInfos(tableInfo, cols, false)
-	require.NotZero(t, ptsExec.Columns[0].Flag&int32(mysql.GeneratedColumnFlag),
-		"BuildPartitionTableScanFromInfos should set GeneratedColumnFlag for virtual generated columns (TiFlash only)")
-	require.Zero(t, ptsExec.Columns[1].Flag&int32(mysql.GeneratedColumnFlag),
-		"BuildPartitionTableScanFromInfos should not set GeneratedColumnFlag for normal columns")
+	require.NotZero(t, ptsExec.Columns[0].Flag&genFlag)
+	require.Zero(t, ptsExec.Columns[1].Flag&genFlag)
 }
