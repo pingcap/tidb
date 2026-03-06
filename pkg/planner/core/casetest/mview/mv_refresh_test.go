@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/mvmerge"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
@@ -110,7 +110,6 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
 	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
 	require.Equal(t, 1, mergePlan.CountStarMVOffset)
-	require.Len(t, mergePlan.SourceOutputNames, 8)
 	require.Len(t, mergePlan.AggInfos, 3)
 
 	var hasCountStar, hasCountExpr, hasSum bool
@@ -569,7 +568,6 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
 	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
 	require.Equal(t, 1, mergePlan.CountStarMVOffset)
-	require.Len(t, mergePlan.SourceOutputNames, 6)
 	require.Len(t, mergePlan.AggInfos, 2)
 
 	var hasCountStar, hasSum bool
@@ -778,7 +776,7 @@ func buildMVMergeResultForHandleTest(
 	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.BuildForTest(
+	res, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mvTbl,

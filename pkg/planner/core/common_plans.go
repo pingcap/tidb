@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/mvmerge"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -579,9 +579,6 @@ type MVDeltaMerge struct {
 	//  3. optional handle-only columns (for example _tidb_rowid) after MV columns
 	Source base.PhysicalPlan
 
-	// SourceOutputNames matches the result schema of Source (delta columns first, then MV columns).
-	// Physical plans may not keep output names, so they are carried explicitly for executor-side usage/debug.
-	SourceOutputNames types.NameSlice `plan-cache-clone:"shallow"`
 	// FullUpdateInnerSource is an optional inner template for group-level full recomputation.
 	// It follows IndexJoin-style lookup contract and outputs the MV row shape directly.
 	FullUpdateInnerSource base.PhysicalPlan
@@ -693,10 +690,6 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfInt*4 + size.SizeOfSlice*3
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
-	sum += int64(cap(p.SourceOutputNames)) * size.SizeOfPointer
-	for _, name := range p.SourceOutputNames {
-		sum += name.MemoryUsage()
-	}
 	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
 	sum += int64(cap(p.FullUpdateKeyResultColIdxes)) * size.SizeOfInt
 	sum += int64(cap(p.FullUpdateOutputMVOffsets)) * size.SizeOfInt

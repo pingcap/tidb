@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/mvmerge"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	_ "github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -112,14 +112,14 @@ func TestBuildCountSum(t *testing.T) {
 		},
 		MaterializedView: &model.MaterializedViewInfo{
 			BaseTableIDs: []int64{baseID},
-			SQLContent:   "select a, count(1), count(b), sum(b) from t group by a",
+			SQLContent:   "select a, COUNT(1), CoUnT(b), sUm(b) from t group by a",
 		},
 	}
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.BuildForTest(
+	res, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
@@ -220,7 +220,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.BuildForTest(
+	res, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
@@ -332,7 +332,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.BuildForTest(
+	res, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
@@ -444,7 +444,7 @@ func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.BuildForTest(
+	res, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
@@ -518,7 +518,7 @@ func TestBuildSumWithoutCountExpr(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	_, err := mvmerge.BuildForTest(
+	_, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
@@ -578,7 +578,7 @@ func TestBuildMissingCountStar(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	_, err := mvmerge.BuildForTest(
+	_, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
@@ -634,7 +634,7 @@ func TestBuildMissingOldNew(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	_, err := mvmerge.BuildForTest(
+	_, err := mvmerge.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,

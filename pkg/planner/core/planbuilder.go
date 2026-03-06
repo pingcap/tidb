@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
-	"github.com/pingcap/tidb/pkg/planner/mvmerge"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
@@ -3868,14 +3868,14 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 
 	fromTS := stmt.LastSuccessfulRefreshReadTSO
 
-	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error) {
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
 		nodeW := resolve.NewNodeW(sel)
 		sctx, ok := b.ctx.(sessionctx.Context)
 		if !ok {
-			return nil, nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+			return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
 		}
 		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		// Build/optimize this derived SELECT with a standalone plan builder to avoid mutating the outer builder state.
@@ -3885,26 +3885,20 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
 		p, err := innerBuilder.Build(optCtx, nodeW)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		names := p.OutputNames()
 		logic, ok := p.(base.LogicalPlan)
 		if !ok {
-			return nil, nil, errors.Errorf("mvmerge: expected logical plan from select, got %T", p)
+			return nil, errors.Errorf("mvmerge: expected logical plan from select, got %T", p)
 		}
 		pp, _, err := DoOptimize(optCtx, b.ctx, innerBuilder.GetOptFlag(), logic)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		return pp, names, nil
+		return pp, nil
 	}
 
-	local, err := mvmerge.BuildLocal(b.ctx, b.is, mvInfo)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := mvmerge.BuildFromLocal(local, mvmerge.BuildOptions{FromTS: fromTS}, nil)
+	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3912,7 +3906,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if res.MergeSourceSelect == nil {
 		return nil, errors.New("mvmerge: merge source select is nil")
 	}
-	sourcePlan, sourceOutputNames, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
 	if err != nil {
 		return nil, err
 	}
@@ -3920,13 +3914,6 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, errors.Errorf(
 			"unexpected merge-source schema length: got %d, expected %d",
 			sourcePlan.Schema().Len(),
-			res.SourceColumnCount,
-		)
-	}
-	if len(sourceOutputNames) > 0 && len(sourceOutputNames) != res.SourceColumnCount {
-		return nil, errors.Errorf(
-			"unexpected merge-source output names length: got %d, expected %d",
-			len(sourceOutputNames),
 			res.SourceColumnCount,
 		)
 	}
@@ -3951,7 +3938,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		// so force-enable the switch during this one-shot optimization and restore it afterward.
 		savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
 		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
-		fullUpdateLookupPlan, _, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
+		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
 		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
 		if err != nil {
 			return nil, err
@@ -3980,7 +3967,6 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 
 	plan := MVDeltaMerge{
 		Source:                      sourcePlan,
-		SourceOutputNames:           sourceOutputNames,
 		FullUpdateInnerSource:       fullUpdateInnerSource,
 		FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
 		FullUpdateIndexRanges:       fullUpdateIndexRanges,

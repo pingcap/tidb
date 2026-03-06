@@ -44,6 +44,13 @@ const (
 	mvRowIDName      = "__mvmerge_mv_rowid"
 )
 
+// SQL construction overview:
+//   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
+//   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
+//   3) buildMergeSourceSelect LEFT JOINs stage-1 deltas with current MV rows to produce a fixed output schema:
+//      [all delta payload columns][all MV columns][optional rowid handle].
+// The executor consumes this one merged source stream and applies aggregate-specific update rules by offset.
+
 // BuildOptions defines the commit-ts lower bound (FromTS, +inf) used to read incremental mv-log rows.
 // Upper bound is provided by statement snapshot ts (for_update_ts at execution time).
 type BuildOptions struct {
@@ -158,14 +165,14 @@ type aggColInfo struct {
 	argExpr             ast.ExprNode
 }
 
-// BuildLocalResult contains the parsed MV definition and all metadata derived from it.
+// buildLocalResult contains the parsed MV definition and all metadata derived from it.
 // It is used to decouple MV-definition parsing/analysis from building the merge-source SQL.
 //
 // The caller may further build/optimize the MV definition logical plan based on MVSelect.
-// After that, BuildFromLocal can be used to construct the final merge-source SELECT.
-type BuildLocalResult struct {
+// After that, buildFromLocal can be used to construct the final merge-source SELECT.
+type buildLocalResult struct {
 	// MVSelect is the parsed MV definition SELECT statement.
-	// Note: BuildFromLocal may mutate parts of this AST (e.g. strip column qualifiers in WHERE).
+	// Note: buildFromLocal may mutate parts of this AST (e.g. strip column qualifiers in WHERE).
 	MVSelect *ast.SelectStmt
 	sctx     planctx.PlanContext
 
@@ -183,27 +190,28 @@ type BuildLocalResult struct {
 	countStarMVOffset int
 }
 
-// BuildForTest constructs the merge-source plan and metadata for one MV incremental merge window.
-func BuildForTest(
+// Build constructs the merge-source plan and metadata for one MV incremental merge window.
+// Internally it runs two stages: buildLocal metadata derivation and buildFromLocal SQL assembly.
+func Build(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
 	opt BuildOptions,
 	aggArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
-	local, err := BuildLocal(sctx, is, mv)
+	local, err := buildLocal(sctx, is, mv)
 	if err != nil {
 		return nil, err
 	}
-	return BuildFromLocal(local, opt, aggArgNotNullByOffset)
+	return buildFromLocal(local, opt, aggArgNotNullByOffset)
 }
 
-// BuildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
-func BuildLocal(
+// buildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
+func buildLocal(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
-) (*BuildLocalResult, error) {
+) (*buildLocalResult, error) {
 	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
@@ -305,7 +313,7 @@ func BuildLocal(
 		return nil, errors.New("materialized view definition must include COUNT(*) for mvmerge")
 	}
 
-	return &BuildLocalResult{
+	return &buildLocalResult{
 		MVSelect:          mvSel,
 		sctx:              sctx,
 		mvDBName:          mvDBName,
@@ -322,9 +330,22 @@ func BuildLocal(
 	}, nil
 }
 
-// BuildFromLocal constructs the merge-source SQL and dependency metadata from BuildLocalResult.
-func BuildFromLocal(
-	local *BuildLocalResult,
+// buildFromLocal constructs merge-source SQL and dependency metadata from buildLocalResult.
+//
+// Final SQL shape:
+//
+//	SELECT <delta payload cols>, <mv cols>, [mv._tidb_rowid AS __mvmerge_mv_rowid]
+//	FROM (
+//	  <stage-1 delta aggregation on mlog>
+//	) AS delta
+//	LEFT JOIN <mv table> AS mv
+//	  ON delta.<group_key_1> <=> mv.<group_key_1>
+//	 AND ...
+//
+// Stage-1 delta columns are always contiguous at the beginning of output schema, so aggregate
+// dependency offsets remain stable and can be consumed directly by executor logic.
+func buildFromLocal(
+	local *buildLocalResult,
 	opt BuildOptions,
 	aggArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
@@ -403,6 +424,9 @@ func BuildFromLocal(
 		expectedLen++
 	}
 
+	// TODO: Revisit dependency-check ownership. We currently validate/derive aggregate dependencies
+	// in planner mvmerge, but this may be moved to another stage (for example, MV creation-time checks)
+	// after we evaluate end-to-end guarantees and maintenance cost.
 	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
@@ -464,6 +488,7 @@ func BuildFromLocal(
 		di.Dependencies = deps
 		outAggInfos = append(outAggInfos, di)
 	}
+	// TODO: See the TODO above; dependency validation location may be adjusted in future.
 	if err := validateAggDependencies(
 		outAggInfos,
 		mvColumnOffsetBase,
@@ -568,7 +593,9 @@ func buildMVTablePKHandleCols(
 	}
 }
 
-func inferAggArgNotNullByOffset(local *BuildLocalResult) map[int]bool {
+// inferAggArgNotNullByOffset infers aggregate argument nullability from base-table column flags.
+// If an aggregate argument is known NOT NULL, executor does not need COUNT(expr) dependencies.
+func inferAggArgNotNullByOffset(local *buildLocalResult) map[int]bool {
 	if local == nil || local.baseTable == nil {
 		return nil
 	}
@@ -648,6 +675,8 @@ func restoreExprStrict(expr ast.ExprNode) (string, error) {
 	return sb.String(), nil
 }
 
+// extractGroupKeyOffsetsFromMVSelect maps GROUP BY columns back to their offsets in SELECT output.
+// Those offsets define join keys between stage-1 deltas and MV snapshot rows.
 func extractGroupKeyOffsetsFromMVSelect(sel *ast.SelectStmt) ([]int, error) {
 	if sel.GroupBy == nil || len(sel.GroupBy.Items) == 0 {
 		return nil, errors.New("materialized view definition must have GROUP BY")
@@ -675,6 +704,8 @@ func extractGroupKeyOffsetsFromMVSelect(sel *ast.SelectStmt) ([]int, error) {
 	return groupOffsets, nil
 }
 
+// extractAggInfosFromMVSelect parses supported aggregate expressions in MV SELECT list and
+// prepares per-aggregate stage-1 delta column metadata.
 func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, hasMinMax bool, _ error) {
 	for i, f := range sel.Fields.Fields {
 		agg, ok := f.Expr.(*ast.AggregateFuncExpr)
@@ -775,6 +806,9 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 	return aggCols, hasMinMax, nil
 }
 
+// mapSumToCountExprDependencies finds, for every nullable SUM(expr), the unique matching
+// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve
+// SUM(NULL) semantics when applying incremental updates.
 func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	sumToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
@@ -853,6 +887,8 @@ func mapMinMaxToCountExprDependencies(aggCols []aggColInfo, aggArgNotNullByOffse
 	return minMaxToCountIdx, nil
 }
 
+// validateAggDependencies checks that each aggregate exposes the expected dependency layout and
+// that every dependency offset points to a valid position in the final merge-source schema.
 func validateAggDependencies(
 	aggInfos []AggInfo,
 	mvColumnOffsetBase int,
@@ -1072,6 +1108,26 @@ func stripAllParentheses(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
+// buildMLogDeltaSelect builds the stage-1 delta aggregation SELECT on mlog rows.
+//
+// SQL shape (simplified):
+//
+//	SELECT
+//	  <group keys from MV SELECT list>,
+//	  SUM(old_new) AS __mvmerge_delta_cnt_star,
+//	  SUM(IF(<count arg> IS NOT NULL, old_new, 0)) AS __mvmerge_delta_cnt_<i>,
+//	  SUM(IF(old_new = 1, <sum arg>, -<sum arg>)) AS __mvmerge_delta_sum_<i>,
+//	  MAX(IF(old_new = 1, <arg>, NULL)) AS __mvmerge_max_in_added_<i>,
+//	  MIN(IF(old_new = 1, <arg>, NULL)) AS __mvmerge_min_in_added_<i>,
+//	  SUM(IF(old_new = -1, 1, 0)) AS __mvmerge_removed_rows   -- only when MIN/MAX exists
+//	FROM <db>.<mlog>
+//	WHERE _tidb_commit_ts > FromTS
+//	  AND _tidb_commit_ts <= ToTS
+//	  AND <MV WHERE predicate>
+//	GROUP BY <group keys from MV definition>
+//
+// old_new uses +1 for inserted/new rows and -1 for deleted/old rows.
+// For COUNT/SUM, this sign directly encodes add/remove contribution.
 func buildMLogDeltaSelect(
 	sctx planctx.PlanContext,
 	dbName pmodel.CIStr,
@@ -1225,6 +1281,22 @@ func buildMLogDeltaSelect(
 	}, nil
 }
 
+// buildMergeSourceSelect builds stage-2 SQL by joining stage-1 deltas with current MV rows.
+//
+// SQL shape (simplified):
+//
+//	SELECT
+//	  delta.<all delta payload cols>,
+//	  delta.<group-key mv columns>,   -- projected from delta side to keep changed groups
+//	  mv.<non-group-key mv columns>,
+//	  mv._tidb_rowid AS __mvmerge_mv_rowid  -- only for extra row-id handle tables
+//	FROM (<stage-1 delta select>) AS delta
+//	LEFT JOIN <db>.<mv> AS mv
+//	  ON delta.<group_key_1> <=> mv.<group_key_1>
+//	 AND ...
+//
+// Null-safe equality (<=>) keeps SQL NULL-group semantics consistent with GROUP BY keys.
+// Delta is placed on the left side so every changed group survives even when MV row does not exist yet.
 func buildMergeSourceSelect(
 	dbName pmodel.CIStr,
 	mv *model.TableInfo,
@@ -1610,6 +1682,8 @@ func buildFullUpdateAggExpr(sctx planctx.PlanContext, ac aggColInfo) (ast.ExprNo
 	}
 }
 
+// groupKeyBaseColExprAtOffset returns the underlying base-table column expression for one MV
+// output offset. buildMLogDeltaSelect uses it to keep stage-1 GROUP BY aligned with MV layout.
 func groupKeyBaseColExprAtOffset(mvSel *ast.SelectStmt, mvOffset int) (*ast.ColumnNameExpr, error) {
 	if mvOffset < 0 || mvOffset >= len(mvSel.Fields.Fields) {
 		return nil, errors.Errorf("invalid mv offset %d", mvOffset)
