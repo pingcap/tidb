@@ -186,6 +186,36 @@ func TestSingle(t *testing.T) {
 	require.Equal(t, op, owner.OpNone)
 }
 
+func TestCloseCleanupCampaignKeyWhenContextCanceled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	client := tInfo.client
+	defer tInfo.Close(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ownerMgr := owner.NewOwnerManager(ctx, client, "ddl", "1", "/owner/key")
+	require.NoError(t, ownerMgr.CampaignOwner(3))
+	require.True(t, checkOwner(ownerMgr, true))
+
+	// ensure the campaign key exists
+	resp, err := client.Get(context.Background(), "/owner/key/", clientv3.WithPrefix())
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Kvs)
+
+	// Close after context canceled should still cleanup the campaign key immediately.
+	cancel()
+	ownerMgr.Close()
+
+	require.Eventually(t, func() bool {
+		resp, err := client.Get(context.Background(), "/owner/key/", clientv3.WithPrefix())
+		return err == nil && len(resp.Kvs) == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestSetAndGetOwnerOpValue(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
