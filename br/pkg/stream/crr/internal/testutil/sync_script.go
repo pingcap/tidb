@@ -176,7 +176,7 @@ func (s *SyncScript) RequireSeq(names ...string) {
 			ctx.Wait(prev)
 		})
 	}
-	for i := 0; i < len(names)-1; i++ {
+	for i := range len(names) - 1 {
 		next := names[i+1]
 		s.On(names[i], func(ctx InjectContext) {
 			ctx.Release(next)

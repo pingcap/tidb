@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package crr_test
+package checkpoint_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/stream/crr"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -92,11 +92,11 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 	require.Greater(t, replicated, 0)
 	require.Less(t, replicated, pulled)
 
-	calculator, err := crr.NewCheckpointCalculator(
+	calculator, err := checkpoint.NewCalculator(
 		h.PDSim,
 		h.Upstream,
 		h.Downstream,
-		crr.CheckpointCalculatorConfig{
+		checkpoint.CheckpointCalculatorConfig{
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},

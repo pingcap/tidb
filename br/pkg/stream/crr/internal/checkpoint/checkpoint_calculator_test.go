@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package crr_test
+package checkpoint_test
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/br/pkg/stream/crr"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -41,11 +41,11 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	t.Cleanup(h.Close)
 
 	upstream := &recordingUpstreamStorage{inner: h.Upstream}
-	calculator, err := crr.NewCheckpointCalculator(
+	calculator, err := checkpoint.NewCalculator(
 		h.PDSim,
 		upstream,
 		h.Downstream,
-		crr.CheckpointCalculatorConfig{
+		checkpoint.CheckpointCalculatorConfig{
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},
@@ -105,7 +105,7 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	_, err = h.Replicate(ctx, 0)
 	require.NoError(t, err)
 
-	script := testutil.NewSyncScript(t, "github.com/pingcap/tidb/br/pkg/stream/crr")
+	script := testutil.NewSyncScript(t, "github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint")
 	var started atomic.Int32
 	firstTwoStarted := make(chan struct{})
 	releaseFirstTwo := make(chan struct{})
@@ -120,11 +120,11 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 		}
 	})
 
-	calculator, err := crr.NewCheckpointCalculator(
+	calculator, err := checkpoint.NewCalculator(
 		h.PDSim,
 		h.Upstream,
 		h.Downstream,
-		crr.CheckpointCalculatorConfig{
+		checkpoint.CheckpointCalculatorConfig{
 			TaskName:            "drr_test_task",
 			PollInterval:        5 * time.Millisecond,
 			MetaReadConcurrency: 2,
@@ -170,14 +170,14 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
-	_, err = crr.NewCheckpointCalculator(
+	_, err = checkpoint.NewCalculator(
 		h.PDSim,
 		&recordingUpstreamStorage{
 			inner: h.Upstream,
 			uri:   "azure://bucket/prefix/",
 		},
 		h.Downstream,
-		crr.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "StartAfter-capable upstream storage")
