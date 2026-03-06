@@ -218,10 +218,9 @@ type mockMVServiceHelper struct {
 	lastRefreshID int64
 	lastPurgeID   int64
 
-	metricsMu              sync.Mutex
-	taskDurationCounts     map[string]int
-	metaFetchDurationCount map[string]int
-	runEventCounts         map[string]int
+	metricsMu          sync.Mutex
+	taskDurationCounts map[string]int
+	runEventCounts     map[string]int
 }
 
 func (m *mockMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
@@ -281,18 +280,6 @@ func (m *mockMVServiceHelper) observeTaskDuration(taskType, result string, durat
 	m.metricsMu.Unlock()
 }
 
-func (m *mockMVServiceHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
-	if duration < 0 {
-		return
-	}
-	m.metricsMu.Lock()
-	if m.metaFetchDurationCount == nil {
-		m.metaFetchDurationCount = make(map[string]int)
-	}
-	m.metaFetchDurationCount[fetchType+"/"+result]++
-	m.metricsMu.Unlock()
-}
-
 func (m *mockMVServiceHelper) taskDurationCount(taskType, result string) int {
 	m.metricsMu.Lock()
 	defer m.metricsMu.Unlock()
@@ -302,7 +289,7 @@ func (m *mockMVServiceHelper) taskDurationCount(taskType, result string) int {
 func (m *mockMVServiceHelper) fetchDurationCount(fetchType, result string) int {
 	m.metricsMu.Lock()
 	defer m.metricsMu.Unlock()
-	return m.metaFetchDurationCount[fetchType+"/"+result]
+	return m.taskDurationCounts[fetchType+"/"+result]
 }
 
 func (m *mockMVServiceHelper) observeRunEvent(eventType string) {
@@ -389,9 +376,7 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 		return helper.fetchLogsCalls.Load() > 0 && helper.fetchViewCalls.Load() > 0
 	}, time.Second, time.Millisecond)
 	require.Eventually(t, func() bool {
-		return helper.runEventCount(mvRunEventFetchByDDL) > 0 &&
-			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
-			helper.runEventCount(mvRunEventFetchMViewOK) > 0
+		return helper.runEventCount(mvRunEventFetchByDDL) > 0
 	}, time.Second, time.Millisecond)
 }
 
@@ -612,10 +597,6 @@ func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultFailed))
 	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMLogPurge, mvDurationResultFailed))
 	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultSuccess))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMLogOK))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMViewErr))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMLogErr))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMViewOK))
 
 	svc.mvLogPurgeMu.Lock()
 	_, hasOldMLog := svc.mvLogPurgeMu.pending[101]

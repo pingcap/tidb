@@ -58,14 +58,6 @@ func (h *serviceHelper) observeTaskDuration(taskType, result string, duration ti
 	h.getDurationObserver(taskType, result).Observe(duration.Seconds())
 }
 
-// observeFetchDuration reports one metadata fetch duration sample.
-func (h *serviceHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
-	if duration < 0 {
-		return
-	}
-	h.getDurationObserver(fetchType, result).Observe(duration.Seconds())
-}
-
 // observeRunEvent increments one run-loop event counter.
 func (h *serviceHelper) observeRunEvent(eventType string) {
 	if eventType == "" {

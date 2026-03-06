@@ -24869,6 +24869,310 @@
       ],
       "title": "Global Sort",
       "type": "row"
+    },
+    {
+        "collapse": true,
+        "collapsed": true,
+        "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 23
+        },
+        "id": 23763573020,
+        "panels": [
+            {
+                "aliasColors": {},
+                "bars": false,
+                "dashLength": 10,
+                "dashes": false,
+                "datasource": "${DS_TEST-CLUSTER}",
+                "description": "Current MV service and task executor counts by status type.",
+                "fill": 1,
+                "fillGradient": 0,
+                "gridPos": {
+                    "h": 6,
+                    "w": 12,
+                    "x": 0,
+                    "y": 0
+                },
+                "id": 23763573021,
+                "legend": {
+                    "alignAsTable": false,
+                    "avg": false,
+                    "current": false,
+                    "max": false,
+                    "min": false,
+                    "rightSide": true,
+                    "show": true,
+                    "sideWidth": null,
+                    "total": false,
+                    "values": false
+                },
+                "lines": true,
+                "linewidth": 1,
+                "links": [],
+                "nullPointMode": "null",
+                "percentage": false,
+                "pointradius": 5,
+                "points": false,
+                "renderer": "flot",
+                "repeat": null,
+                "seriesOverrides": [],
+                "spaceLength": 10,
+                "stack": true,
+                "steppedLine": false,
+                "targets": [
+                    {
+                        "expr": "sum(tidb_mv_service_task_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type)",
+                        "format": "time_series",
+                        "intervalFactor": 2,
+                        "legendFormat": "{{type}}",
+                        "refId": "A"
+                    }
+                ],
+                "thresholds": [],
+                "timeFrom": null,
+                "timeShift": null,
+                "title": "MV Service Task Status",
+                "tooltip": {
+                    "shared": true,
+                    "sort": 0,
+                    "value_type": "individual"
+                },
+                "type": "graph",
+                "xaxis": {
+                    "buckets": null,
+                    "mode": "time",
+                    "name": null,
+                    "show": true,
+                    "values": []
+                },
+                "yaxes": [
+                    {
+                        "format": "short",
+                        "label": null,
+                        "logBase": 1,
+                        "max": null,
+                        "min": null,
+                        "show": true
+                    },
+                    {
+                        "format": "short",
+                        "label": null,
+                        "logBase": 1,
+                        "max": null,
+                        "min": null,
+                        "show": true
+                    }
+                ]
+            },
+            {
+                "aliasColors": {},
+                "bars": false,
+                "dashLength": 10,
+                "dashes": false,
+                "datasource": "${DS_TEST-CLUSTER}",
+                "description": "MV service scheduler and task executor events per second by type.",
+                "fill": 1,
+                "fillGradient": 0,
+                "gridPos": {
+                    "h": 6,
+                    "w": 12,
+                    "x": 12,
+                    "y": 0
+                },
+                "id": 23763573022,
+                "legend": {
+                    "alignAsTable": false,
+                    "avg": false,
+                    "current": false,
+                    "max": false,
+                    "min": false,
+                    "rightSide": true,
+                    "show": true,
+                    "sideWidth": null,
+                    "total": false,
+                    "values": false
+                },
+                "lines": true,
+                "linewidth": 1,
+                "links": [],
+                "nullPointMode": "null",
+                "percentage": false,
+                "pointradius": 5,
+                "points": false,
+                "renderer": "flot",
+                "repeat": null,
+                "seriesOverrides": [],
+                "spaceLength": 10,
+                "stack": false,
+                "steppedLine": false,
+                "targets": [
+                    {
+                        "expr": "sum(rate(tidb_mv_service_run_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+                        "format": "time_series",
+                        "intervalFactor": 2,
+                        "legendFormat": "{{type}}",
+                        "refId": "A"
+                    }
+                ],
+                "thresholds": [],
+                "timeFrom": null,
+                "timeShift": null,
+                "title": "MV Service Run Events OPS",
+                "tooltip": {
+                    "shared": true,
+                    "sort": 0,
+                    "value_type": "individual"
+                },
+                "type": "graph",
+                "xaxis": {
+                    "buckets": null,
+                    "mode": "time",
+                    "name": null,
+                    "show": true,
+                    "values": []
+                },
+                "yaxes": [
+                    {
+                        "format": "short",
+                        "label": null,
+                        "logBase": 1,
+                        "max": null,
+                        "min": null,
+                        "show": true
+                    },
+                    {
+                        "format": "short",
+                        "label": null,
+                        "logBase": 1,
+                        "max": null,
+                        "min": null,
+                        "show": true
+                    }
+                ]
+            },
+            {
+                "aliasColors": {},
+                "dashLength": 10,
+                "datasource": "${DS_TEST-CLUSTER}",
+                "description": "MV service operation duration for successful operations by type.",
+                "fill": 1,
+                "gridPos": {
+                    "h": 6,
+                    "w": 12,
+                    "x": 0,
+                    "y": 0
+                },
+                "id": 23763573023,
+                "legend": {
+                    "alignAsTable": false,
+                    "avg": false,
+                    "current": false,
+                    "max": false,
+                    "min": false,
+                    "rightSide": true,
+                    "show": true,
+                    "sideWidth": null,
+                    "total": false,
+                    "values": false
+                },
+                "lines": true,
+                "linewidth": 1,
+                "links": [],
+                "nullPointMode": "null",
+                "pointradius": 5,
+                "renderer": "flot",
+                "seriesOverrides": [],
+                "spaceLength": 10,
+                "targets": [
+                    {
+                        "expr": "histogram_quantile(1, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"success\"}[1m])) by (le, type))",
+                        "legendFormat": "{{type}}-success",
+                        "interval": "",
+                        "exemplar": true,
+                        "format": "time_series",
+                        "intervalFactor": 2,
+                        "refId": "A"
+                    },
+                    {
+                        "expr": "histogram_quantile(1, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"failed\"}[1m])) by (le, type))",
+                        "legendFormat": "{{type}}-failed",
+                        "interval": "",
+                        "exemplar": true,
+                        "format": "time_series",
+                        "intervalFactor": 2,
+                        "refId": "B",
+                        "hide": false
+                    }
+                ],
+                "thresholds": [],
+                "title": "MV Operation Duration",
+                "tooltip": {
+                    "shared": true,
+                    "sort": 0,
+                    "value_type": "individual"
+                },
+                "type": "graph",
+                "xaxis": {
+                    "buckets": null,
+                    "mode": "time",
+                    "name": null,
+                    "show": true,
+                    "values": []
+                },
+                "yaxes": [
+                    {
+                        "format": "s",
+                        "label": null,
+                        "logBase": 1,
+                        "max": null,
+                        "min": null,
+                        "show": true
+                    },
+                    {
+                        "format": "s",
+                        "label": null,
+                        "logBase": 1,
+                        "max": null,
+                        "min": null,
+                        "show": true
+                    }
+                ],
+                "options": {
+                    "alertThreshold": true
+                },
+                "fieldConfig": {
+                    "defaults": {},
+                    "overrides": []
+                },
+                "pluginVersion": "7.5.17",
+                "yaxis": {
+                    "align": false,
+                    "alignLevel": null
+                },
+                "timeRegions": [],
+                "bars": false,
+                "dashes": false,
+                "fillGradient": 0,
+                "percentage": false,
+                "points": false,
+                "repeat": null,
+                "stack": false,
+                "steppedLine": false,
+                "timeFrom": null,
+                "timeShift": null,
+                "hiddenSeries": false
+            }
+        ],
+        "repeat": null,
+        "repeatIteration": null,
+        "repeatRowId": null,
+        "showTitle": true,
+        "title": "Materialized View",
+        "titleSize": "h6",
+        "type": "row"
     }
   ],
   "refresh": "30s",

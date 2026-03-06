@@ -28,14 +28,15 @@ import (
 
 const (
 	mvServiceTaskMaxConcurrencyFormField = "task_max_concurrency"
-	mvServiceTaskTimeoutFormField        = "task_timeout"
+	mvServiceTaskTimeoutFormField        = "task_exec_timeout"
+	mvServiceFetchIntervalFormField      = "meta_fetch_interval"
 
 	mvServiceBackpressureCPUThresholdFormField = "backpressure_cpu_threshold"
 	mvServiceBackpressureMemThresholdFormField = "backpressure_mem_threshold"
-	mvServiceBackpressureDelayFormField        = "backpressure_delay"
+	mvServiceBackpressureDelayFormField        = "backpressure_wait_delay"
 
-	mvServiceTaskFailRetryBaseDelayFormField = "task_fail_retry_base_delay"
-	mvServiceTaskFailRetryMaxDelayFormField  = "task_fail_retry_max_delay"
+	mvServiceTaskFailRetryBaseDelayFormField = "task_retry_base_delay"
+	mvServiceTaskFailRetryMaxDelayFormField  = "task_retry_max_delay"
 	mvServiceHistoryGCIntervalFormField      = "history_gc_interval"
 	mvServiceHistoryGCRetentionFormField     = "history_gc_retention"
 )
@@ -53,6 +54,8 @@ func NewMVServiceSettingsHandler(tool *handler.TikvHandlerTool) *MVServiceSettin
 type mvServiceRuntimeSettingsAccessor interface {
 	GetTaskExecConfig() (maxConcurrency int, timeout time.Duration)
 	SetTaskExecConfig(maxConcurrency int, timeout time.Duration)
+	GetFetchInterval() time.Duration
+	SetFetchInterval(interval time.Duration) error
 
 	GetTaskBackpressureConfig() mvservice.TaskBackpressureConfig
 	SetTaskBackpressureConfig(cfg mvservice.TaskBackpressureConfig) error
@@ -67,6 +70,7 @@ type mvServiceRuntimeSettingsAccessor interface {
 type mvServiceRuntimeSettings struct {
 	maxConcurrency int
 	timeout        time.Duration
+	fetchInterval  time.Duration
 
 	backpressureCfg mvservice.TaskBackpressureConfig
 
@@ -86,6 +90,9 @@ var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 	}),
 	newDurationSettingsFieldUpdater(mvServiceTaskTimeoutFormField, func(v time.Duration) bool { return v >= 0 }, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.timeout = v
+	}),
+	newDurationSettingsFieldUpdater(mvServiceFetchIntervalFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.fetchInterval = v
 	}),
 	newFloat64SettingsFieldUpdater(mvServiceBackpressureCPUThresholdFormField, nil, func(settings *mvServiceRuntimeSettings, v float64) {
 		settings.backpressureCfg.CPUThreshold = v
@@ -113,12 +120,13 @@ var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 // MVServiceSettingsResponse is MV service runtime settings response.
 type MVServiceSettingsResponse struct {
 	TaskMaxConcurrency       int     `json:"task_max_concurrency"`
-	TaskTimeout              string  `json:"task_timeout"`
+	TaskTimeout              string  `json:"task_exec_timeout"`
+	FetchInterval            string  `json:"meta_fetch_interval"`
 	BackpressureCPUThreshold float64 `json:"backpressure_cpu_threshold"`
 	BackpressureMemThreshold float64 `json:"backpressure_mem_threshold"`
-	BackpressureDelay        string  `json:"backpressure_delay"`
-	TaskFailRetryBaseDelay   string  `json:"task_fail_retry_base_delay"`
-	TaskFailRetryMaxDelay    string  `json:"task_fail_retry_max_delay"`
+	BackpressureDelay        string  `json:"backpressure_wait_delay"`
+	TaskFailRetryBaseDelay   string  `json:"task_retry_base_delay"`
+	TaskFailRetryMaxDelay    string  `json:"task_retry_max_delay"`
 	HistoryGCInterval        string  `json:"history_gc_interval"`
 	HistoryGCRetention       string  `json:"history_gc_retention"`
 }
@@ -190,12 +198,14 @@ func (MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Reque
 // loadMVServiceRuntimeSettings reads all mutable runtime settings from the service.
 func loadMVServiceRuntimeSettings(mvService mvServiceRuntimeSettingsAccessor) mvServiceRuntimeSettings {
 	maxConcurrency, timeout := mvService.GetTaskExecConfig()
+	fetchInterval := mvService.GetFetchInterval()
 	backpressureCfg := mvService.GetTaskBackpressureConfig()
 	retryBase, retryMax := mvService.GetRetryDelayConfig()
 	historyGCInterval, historyGCRetention := mvService.GetHistoryGCConfig()
 	return mvServiceRuntimeSettings{
 		maxConcurrency:     maxConcurrency,
 		timeout:            timeout,
+		fetchInterval:      fetchInterval,
 		backpressureCfg:    backpressureCfg,
 		retryBase:          retryBase,
 		retryMax:           retryMax,
@@ -209,6 +219,7 @@ func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRun
 	handler.WriteData(w, MVServiceSettingsResponse{
 		TaskMaxConcurrency:       settings.maxConcurrency,
 		TaskTimeout:              settings.timeout.String(),
+		FetchInterval:            settings.fetchInterval.String(),
 		BackpressureCPUThreshold: settings.backpressureCfg.CPUThreshold,
 		BackpressureMemThreshold: settings.backpressureCfg.MemThreshold,
 		BackpressureDelay:        settings.backpressureCfg.Delay.String(),
@@ -319,6 +330,9 @@ func newIllegalMVServiceSettingsFieldError(field string) error {
 // applyMVServiceSettings writes merged runtime settings back to the service.
 func applyMVServiceSettings(mvService mvServiceRuntimeSettingsAccessor, settings mvServiceRuntimeSettings) error {
 	mvService.SetTaskExecConfig(settings.maxConcurrency, settings.timeout)
+	if err := mvService.SetFetchInterval(settings.fetchInterval); err != nil {
+		return err
+	}
 	if err := mvService.SetTaskBackpressureConfig(settings.backpressureCfg); err != nil {
 		return err
 	}

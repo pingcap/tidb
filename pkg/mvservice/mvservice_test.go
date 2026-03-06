@@ -444,7 +444,7 @@ func TestNewMVServiceConfig(t *testing.T) {
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
 		require.NotNil(t, svc.executor.backpressure.Load())
 
-		require.Equal(t, cfg.FetchInterval, svc.fetchInterval)
+		require.Equal(t, cfg.FetchInterval, svc.GetFetchInterval())
 		require.Equal(t, cfg.BasicInterval, svc.basicInterval)
 		require.Equal(t, cfg.ServerRefreshInterval, svc.serverRefreshInterval)
 		require.Equal(t, cfg.ServerConsistentHashReplicas, svc.sch.chash.replicas)
@@ -492,6 +492,20 @@ func TestNewMVServiceConfig(t *testing.T) {
 }
 
 func TestMVServiceUpdateConfigs(t *testing.T) {
+	t.Run("fetch_interval", func(t *testing.T) {
+		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+
+		err := svc.SetFetchInterval(2 * time.Second)
+		require.NoError(t, err)
+		require.Equal(t, 2*time.Second, svc.GetFetchInterval())
+
+		err = svc.SetFetchInterval(0)
+		require.Error(t, err)
+
+		err = svc.SetFetchInterval(500 * time.Microsecond)
+		require.Error(t, err)
+	})
+
 	t.Run("task_backpressure", func(t *testing.T) {
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
