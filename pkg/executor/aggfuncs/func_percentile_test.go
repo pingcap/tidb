@@ -64,7 +64,7 @@ func TestFix40463(t *testing.T) {
 	types := []byte{mysql.TypeEnum, mysql.TypeSet}
 	for _, tp := range types {
 		test := buildAggTester(ast.AggFuncApproxPercentile, tp, 5, nil, nil)
-		test.dataType.AddFlag(mysql.EnumSetAsIntFlag)
+		test.keyType.AddFlag(mysql.EnumSetAsIntFlag)
 		testAggFunc(t, test)
 	}
 }

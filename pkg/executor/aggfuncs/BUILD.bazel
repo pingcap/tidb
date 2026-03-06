@@ -67,6 +67,7 @@ go_test(
         "func_bitfuncs_test.go",
         "func_count_test.go",
         "func_cume_dist_test.go",
+        "func_distinct_agg_test.go",
         "func_first_row_test.go",
         "func_group_concat_test.go",
         "func_json_arrayagg_test.go",

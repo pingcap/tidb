@@ -212,28 +212,48 @@ func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc
 
 	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
 	// use countOriginalWithDistinct.
-	if aggFuncDesc.HasDistinct &&
-		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
-		if len(base.args) == 1 {
-			// optimize with single column
-			// TODO: because Time and JSON does not have `hashcode()` or similar method
-			// so they're in exception for now.
-			// TODO: add hashCode method for all evaluate types (decimal, Time, Duration, JSON).
-			// https://github.com/pingcap/tidb/issues/15857
-			switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
-			case types.ETInt:
-				return &countOriginalWithDistinct4Int{baseCount{base}}
-			case types.ETReal:
-				return &countOriginalWithDistinct4Real{baseCount{base}}
-			case types.ETDecimal:
-				return &countOriginalWithDistinct4Decimal{baseCount{base}}
-			case types.ETDuration:
-				return &countOriginalWithDistinct4Duration{baseCount{base}}
-			case types.ETString:
-				return &countOriginalWithDistinct4String{baseCount{base}}
+	if aggFuncDesc.HasDistinct {
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
+			if len(base.args) == 1 {
+				// optimize with single column
+				// TODO: because Time and JSON does not have `hashcode()` or similar method
+				// so they're in exception for now.
+				// TODO: add hashCode method for all evaluate types (decimal, Time, Duration, JSON).
+				// https://github.com/pingcap/tidb/issues/15857
+				switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
+				case types.ETInt:
+					return &countOriginalWithDistinct4Int{baseCountDistinct4Int{baseCountDistinct{base}}}
+				case types.ETReal:
+					return &countOriginalWithDistinct4Real{baseCountDistinct4Real{baseCountDistinct{base}}}
+				case types.ETDecimal:
+					return &countOriginalWithDistinct4Decimal{baseCountDistinct4Decimal{baseCountDistinct{base}}}
+				case types.ETDuration:
+					return &countOriginalWithDistinct4Duration{baseCountDistinct4Duration{baseCountDistinct{base}}}
+				case types.ETString:
+					return &countOriginalWithDistinct4String{baseCountDistinct4String{baseCountDistinct{base}}}
+				}
 			}
+			return &countOriginalWithDistinct{baseCountDistinct4MultiArgs{baseCountDistinct{base}}}
+		case aggregation.FinalMode, aggregation.Partial2Mode:
+			if len(base.args) == 1 {
+				switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
+				case types.ETInt:
+					return &countPartialWithDistinct4Int{baseCountDistinct4Int{baseCountDistinct{base}}}
+				case types.ETReal:
+					return &countPartialWithDistinct4Real{baseCountDistinct4Real{baseCountDistinct{base}}}
+				case types.ETDecimal:
+					return &countPartialWithDistinct4Decimal{baseCountDistinct4Decimal{baseCountDistinct{base}}}
+				case types.ETDuration:
+					return &countPartialWithDistinct4Duration{baseCountDistinct4Duration{baseCountDistinct{base}}}
+				case types.ETString:
+					return &countPartialWithDistinct4String{baseCountDistinct4String{baseCountDistinct{base}}}
+				}
+			}
+			return &countPartialWithDistinct{baseCountDistinct4MultiArgs{baseCountDistinct{base}}}
+		default:
+			panic("Not implemented")
 		}
-		return &countOriginalWithDistinct{baseCount{base}}
 	}
 
 	switch aggFuncDesc.Mode {
@@ -265,31 +285,46 @@ func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc
 
 // buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseSumAggFunc{
-		baseAggFunc: baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-			retTp:   aggFuncDesc.RetTp,
-		},
+	baseAggFunc := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
+
+	if aggFuncDesc.HasDistinct {
+		retType := aggFuncDesc.RetTp.EvalType()
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
+			switch retType {
+			case types.ETDecimal:
+				return &sum4OriginalDistinct4Decimal{baseSumDistinct4Decimal{baseSumDistinct{baseAggFunc}}}
+			default:
+				return &sum4OriginalDistinct4Float64{baseSumDistinct4Float64{baseSumDistinct{baseAggFunc}}}
+			}
+		case aggregation.FinalMode, aggregation.Partial2Mode:
+			switch retType {
+			case types.ETDecimal:
+				return &sum4PartialDistinct4Decimal{baseSumDistinct4Decimal{baseSumDistinct{baseAggFunc}}}
+			default:
+				return &sum4PartialDistinctFloat64{baseSumDistinct4Float64{baseSumDistinct{baseAggFunc}}}
+			}
+		default:
+			return nil
+		}
+	}
+
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
 	default:
 		switch aggFuncDesc.RetTp.EvalType() {
 		case types.ETDecimal:
-			if aggFuncDesc.HasDistinct {
-				return &sum4DistinctDecimal{base}
-			}
-			return &sum4Decimal{base}
+			return &sum4Decimal{baseSumAggFunc{baseAggFunc}}
 		default:
-			if aggFuncDesc.HasDistinct {
-				return &sum4DistinctFloat64{base}
-			}
 			if ctx.GetWindowingUseHighPrecision() {
-				return &sum4Float64HighPrecision{baseSum4Float64{base}}
+				return &sum4Float64HighPrecision{baseSum4Float64{baseSumAggFunc{baseAggFunc}}}
 			}
-			return &sum4Float64{baseSum4Float64{base}}
+			return &sum4Float64{baseSum4Float64{baseSumAggFunc{baseAggFunc}}}
 		}
 	}
 }
@@ -313,12 +348,12 @@ func buildAvg(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 		switch aggFuncDesc.RetTp.EvalType() {
 		case types.ETDecimal:
 			if aggFuncDesc.HasDistinct {
-				return &avgOriginal4DistinctDecimal{base}
+				return &avgOriginal4DistinctDecimal{baseAvgDistinct4Decimal{baseAvgDistinct{base}}}
 			}
 			return &avgOriginal4Decimal{baseAvgDecimal{base}}
 		default:
 			if aggFuncDesc.HasDistinct {
-				return &avgOriginal4DistinctFloat64{base}
+				return &avgOriginal4DistinctFloat64{baseAvgDistinct4Float64{baseAvgDistinct{base}}}
 			}
 			if ctx.GetWindowingUseHighPrecision() {
 				return &avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}
@@ -331,8 +366,14 @@ func buildAvg(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.RetTp.GetType() {
 		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &avgPartial4DistinctDecimal{baseAvgDistinct4Decimal{baseAvgDistinct{base}}}
+			}
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
+			if aggFuncDesc.HasDistinct {
+				return &avgPartial4DistinctFloat64{baseAvgDistinct4Float64{baseAvgDistinct{base}}}
+			}
 			return &avgPartial4Float64{baseAvgFloat64{base}}
 		}
 	}
@@ -502,7 +543,14 @@ func buildGroupConcat(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncD
 				}
 				return &groupConcatDistinctOrder{base, ctors, desc}
 			}
-			return &groupConcatDistinct{base}
+			switch aggFuncDesc.Mode {
+			case aggregation.CompleteMode, aggregation.Partial1Mode:
+				return &groupOriginalConcatDistinct{baseGroupConcatDistinct4String{base}}
+			case aggregation.FinalMode, aggregation.Partial2Mode:
+				return &groupPartialConcatDistinct{baseGroupConcatDistinct4String{base}}
+			default:
+				return nil
+			}
 		}
 		if len(aggFuncDesc.OrderByItems) > 0 {
 			desc := make([]bool, len(base.byItems))

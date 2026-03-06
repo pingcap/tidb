@@ -172,10 +172,12 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		})
-		args = append(args, &expression.Column{
-			Index:   ordinal[1],
-			RetType: a.RetTp,
-		})
+		if !a.HasDistinct {
+			args = append(args, &expression.Column{
+				Index:   ordinal[1],
+				RetType: a.RetTp,
+			})
+		}
 		finalAggDesc.Args = args
 	case ast.AggFuncApproxCountDistinct:
 		args := make([]expression.Expression, 0, 1)
@@ -185,14 +187,20 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		})
 		finalAggDesc.Args = args
 	default:
-		args := make([]expression.Expression, 0, 1)
-		args = append(args, &expression.Column{
-			Index:   ordinal[0],
-			RetType: a.RetTp,
-		})
-		finalAggDesc.Args = args
-		if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
-			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+		// TODO refine it
+		if a.HasDistinct {
+			// TODO can we delete it? It seems that it's useless.
+			finalAggDesc.Args = partialAggDesc.Args
+		} else {
+			args := make([]expression.Expression, 0, 1)
+			args = append(args, &expression.Column{
+				Index:   ordinal[0],
+				RetType: a.RetTp,
+			})
+			finalAggDesc.Args = args
+			if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
+				finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+			}
 		}
 	}
 	return
