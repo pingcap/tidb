@@ -69,6 +69,7 @@ type MaskingPolicyInfo struct {
 	CreatedAt   time.Time                    `json:"created_at,omitempty"`
 	UpdatedAt   time.Time                    `json:"updated_at,omitempty"`
 	CreatedBy   string                       `json:"created_by,omitempty"`
+	UpdatedBy   string                       `json:"updated_by,omitempty"`
 	State       SchemaState                  `json:"state"`
 }
 

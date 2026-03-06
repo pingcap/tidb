@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -277,10 +278,7 @@ func validateMaskingPolicyTarget(ctx context.Context, infoCache *infoschema.Info
 	if col == nil || col.ID != policy.ColumnID {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(policy.ColumnName, policy.TableName)
 	}
-	if err = checkMaskingPolicyColumn(col); err != nil {
-		return err
-	}
-	return nil
+	return checkMaskingPolicyColumn(col)
 }
 
 func checkMaskingPolicyTable(schema *model.DBInfo, tblInfo *model.TableInfo) error {
@@ -349,7 +347,8 @@ func buildMaskingPolicyInfo(
 	maskingType := maskingPolicyTypeFromExpr(expr)
 	now := time.Now()
 	createdBy := ""
-	if user := ctx.GetSessionVars().User; user != nil {
+	sessVars := ctx.GetSessionVars() //nolint:forbidigo
+	if user := sessVars.User; user != nil {
 		createdBy = user.String()
 	}
 	return &model.MaskingPolicyInfo{
@@ -475,4 +474,131 @@ func (w *worker) deleteMaskingPolicyFromSysTable(jobCtx *jobContext, policyID in
 	const deleteSQL = "DELETE FROM mysql.tidb_masking_policy WHERE policy_id = %?"
 	_, err := w.sess.Execute(jobCtx.stepCtx, deleteSQL, "drop-masking-policy", policyID)
 	return errors.Trace(err)
+}
+
+func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) error {
+	policies, err := jobCtx.metaMut.ListMaskingPolicies()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		if policy.TableID != tableID {
+			continue
+		}
+		if err := jobCtx.metaMut.DropMaskingPolicy(policy.ID); err != nil {
+			return errors.Trace(err)
+		}
+		if err := w.deleteMaskingPolicyFromSysTable(jobCtx, policy.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, columnID int64) error {
+	policies, err := jobCtx.metaMut.ListMaskingPolicies()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		if policy.TableID != tableID || policy.ColumnID != columnID {
+			continue
+		}
+		if err := jobCtx.metaMut.DropMaskingPolicy(policy.ID); err != nil {
+			return errors.Trace(err)
+		}
+		if err := w.deleteMaskingPolicyFromSysTable(jobCtx, policy.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (w *worker) syncMaskingPolicyForModifiedColumn(
+	jobCtx *jobContext,
+	tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+	newCol *model.ColumnInfo,
+) error {
+	if tblInfo == nil || oldCol == nil || newCol == nil {
+		return nil
+	}
+
+	policies, err := jobCtx.metaMut.ListMaskingPolicies()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		if policy.TableID != tblInfo.ID {
+			continue
+		}
+		if policy.ColumnID != oldCol.ID && policy.ColumnName.L != oldCol.Name.L && policy.ColumnName.L != newCol.Name.L {
+			continue
+		}
+
+		newPolicy := policy.Clone()
+		newPolicy.TableName = tblInfo.Name
+		newPolicy.ColumnID = newCol.ID
+		newPolicy.ColumnName = newCol.Name
+		if policy.ColumnName.L != newCol.Name.L {
+			newExpr, err := rewriteMaskingPolicyExprColumnName(policy.Expression, policy.ColumnName, newCol.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newPolicy.Expression = newExpr
+		}
+		newPolicy.UpdatedAt = time.Now()
+
+		if err := jobCtx.metaMut.UpdateMaskingPolicy(newPolicy); err != nil {
+			return errors.Trace(err)
+		}
+		if err := w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+type renameMaskingExprVisitor struct {
+	oldCol ast.CIStr
+	newCol ast.CIStr
+}
+
+func (v *renameMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
+	colExpr, ok := in.(*ast.ColumnNameExpr)
+	if !ok {
+		return in, false
+	}
+	if colExpr.Name.Name.L != v.oldCol.L {
+		return in, false
+	}
+	colExpr.Name.Name = v.newCol
+	return in, false
+}
+
+func (*renameMaskingExprVisitor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (string, error) {
+	if oldCol.L == newCol.L {
+		return expr, nil
+	}
+	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	selectStmt, ok := stmt.(*ast.SelectStmt)
+	if !ok || selectStmt.Fields == nil || len(selectStmt.Fields.Fields) != 1 {
+		return "", errors.New("invalid masking policy expression")
+	}
+	out, ok := selectStmt.Fields.Fields[0].Expr.Accept(&renameMaskingExprVisitor{oldCol: oldCol, newCol: newCol})
+	if !ok {
+		return "", errors.New("failed to rewrite masking policy expression")
+	}
+	outExpr, ok := out.(ast.ExprNode)
+	if !ok {
+		return "", errors.New("invalid rewritten masking policy expression")
+	}
+	return restoreMaskingExpression(outExpr)
 }

@@ -101,6 +101,10 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if err = w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		metaMut := jobCtx.metaMut
 		if tblInfo.IsSequence() {
 			if err = metaMut.DropSequence(job.SchemaID, job.TableID); err != nil {
