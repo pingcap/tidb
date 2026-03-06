@@ -114,7 +114,7 @@ func TestInternalColumn(t *testing.T) {
 		flag    uint
 	}{
 		{NewExtraHandleColInfo(), mysql.TypeLonglong, 0, 0, mysql.NotNullFlag | mysql.PriKeyFlag},
-		{NewExtraCommitTSColInfo(), mysql.TypeLonglong, 0, 0, 0},
+		{NewExtraCommitTSColInfo(), mysql.TypeLonglong, 0, 0, mysql.UnsignedFlag},
 		{NewExtraOriginTSColInfo(), mysql.TypeLonglong, 0, 0, mysql.UnsignedFlag},
 		{NewExtraSoftDeleteTimeColInfo(), mysql.TypeTimestamp, mysql.MaxDatetimeWidthWithFsp, 6, 0},
 	}

@@ -203,7 +203,7 @@ desc v_aa;
 Field	Type	Null	Key	Default	Extra
 id	int	NO	PRI	NULL	
 name	varchar(50)	YES		NULL	
-_tidb_commit_ts	bigint	YES		NULL	
+_tidb_commit_ts	bigint unsigned	YES		NULL	
 drop view v_aa;
 set @@session.tidb_translate_softdelete_sql=default;
 drop database test_aa;
