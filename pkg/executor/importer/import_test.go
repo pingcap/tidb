@@ -116,7 +116,6 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
-		onDupKeyOption+"='record', "+
 		threadOption+"=100000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+", "+
@@ -140,7 +139,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, OnDupKeyModeRecord, plan.OnDupKey, sql)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
@@ -156,10 +155,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
+	sqlrec := sql + ", " + onDupKeyOption + "='record'"
+	stmt, err = p.ParseOneStmt(sqlrec, "", "")
+	require.NoError(t, err, sqlrec)
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sql)
+	require.NoError(t, err, sqlrec)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlrec)
+	require.Equal(t, OnDupKeyModeRecord, plan.OnDupKey, sql)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
