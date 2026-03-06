@@ -87,6 +87,26 @@ func TestPoolPutChunk(t *testing.T) {
 	require.Equal(t, 0, len(chk.columns))
 }
 
+func TestPoolPutChunkWithRefColumns(t *testing.T) {
+	initCap := 8
+	pool := NewPool(initCap)
+
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	chk := pool.GetChunk(fieldTypes)
+	require.NotSame(t, chk.Column(0), chk.Column(1))
+
+	chk.MakeRef(0, 1)
+	require.Same(t, chk.Column(0), chk.Column(1))
+	pool.PutChunk(fieldTypes, chk)
+
+	chk2 := pool.GetChunk(fieldTypes)
+	require.NotSame(t, chk2.Column(0), chk2.Column(1))
+}
+
 func BenchmarkPoolChunkOperation(b *testing.B) {
 	pool := NewPool(1024)
 

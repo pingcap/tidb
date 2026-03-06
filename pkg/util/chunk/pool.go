@@ -107,6 +107,16 @@ func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 	for i, f := range fields {
 		c := chk.columns[i]
+		// Some chunk columns are references to other columns. Avoid putting the
+		// same Column back into the pool multiple times.
+		if c == nil {
+			continue
+		}
+		for j := i + 1; j < len(fields); j++ {
+			if chk.columns[j] == c {
+				chk.columns[j] = nil
+			}
+		}
 		c.reset()
 		switch elemLen := getFixedLen(f); elemLen {
 		case VarElemLen:
