@@ -438,14 +438,15 @@ c1	c1
 // Expect a Sort operator on CTE. Because it's recursive.
 explain format='plan_tree' with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	task	access object	operator info
-MergeJoin	root		inner join, left key:cte.t1.c1, right key:cte.t1.c1
-├─Sort(Build)	root		cte.t1.c1
-│ └─Selection	root		not(isnull(cte.t1.c1))
-│   └─CTEFullScan	root	CTE:cte1 AS dt2	data:CTE_0
-└─Sort(Probe)	root		cte.t1.c1
-  └─TableReader	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(cte.t1.c1))
-      └─TableFullScan	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+Projection	root		cte.t1.c1, cte.t1.c1
+└─MergeJoin	root		inner join, left key:cte.t1.c1, right key:cte.t1.c1
+  ├─Sort(Build)	root		cte.t1.c1
+  │ └─TableReader	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(cte.t1.c1))
+  │     └─TableFullScan	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+  └─Sort(Probe)	root		cte.t1.c1
+    └─Selection	root		not(isnull(cte.t1.c1))
+      └─CTEFullScan	root	CTE:cte1 AS dt2	data:CTE_0
 CTE_0	root		Recursive CTE
 ├─TableReader(Seed Part)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -461,14 +462,15 @@ c1	c1
 // Expect a Sort operator on CTE. Because it's recursive.
 explain format='plan_tree' with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	task	access object	operator info
-MergeJoin	root		inner join, left key:cte.t1.c1, right key:cte.tpk.c1
-├─Sort(Build)	root		cte.tpk.c1
-│ └─Selection	root		not(isnull(cte.tpk.c1))
-│   └─CTEFullScan	root	CTE:cte1 AS dt2	data:CTE_0
-└─Sort(Probe)	root		cte.t1.c1
-  └─TableReader	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(cte.t1.c1))
-      └─TableFullScan	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+Projection	root		cte.t1.c1, cte.tpk.c1
+└─MergeJoin	root		inner join, left key:cte.tpk.c1, right key:cte.t1.c1
+  ├─Sort(Build)	root		cte.t1.c1
+  │ └─TableReader	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(cte.t1.c1))
+  │     └─TableFullScan	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+  └─Sort(Probe)	root		cte.tpk.c1
+    └─Selection	root		not(isnull(cte.tpk.c1))
+      └─CTEFullScan	root	CTE:cte1 AS dt2	data:CTE_0
 CTE_0	root		Recursive CTE
 ├─TableReader(Seed Part)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:tpk	keep order:false, stats:pseudo
