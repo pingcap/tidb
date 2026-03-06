@@ -1045,6 +1045,8 @@ func TestGetImportIntoJobInfoFromHistory(t *testing.T) {
 		[]byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)
 	indexID := testutil.InsertSubtask(t, gm, taskID, proto.ImportStepWriteAndIngest, "tidb-1",
 		[]byte(`{"kv-group":"index-1"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)
+	invalidDurationID := testutil.InsertSubtask(t, gm, taskID, proto.ImportStepPostProcess, "tidb-1",
+		[]byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)
 
 	updateSubtask := func(id int64, startTime, endTime int64, summary, meta string) {
 		_, err = gm.ExecuteSQLWithNewSession(ctx, `
@@ -1057,6 +1059,7 @@ func TestGetImportIntoJobInfoFromHistory(t *testing.T) {
 	updateSubtask(encodeID, 100, 700, `{"bytes": 1073741824}`, `{"kv-group":"data"}`)
 	updateSubtask(dataID, 700, 2500, `{"bytes": 1073741824}`, `{"kv-group":"data"}`)
 	updateSubtask(indexID, 900, 2100, `{"bytes": 536870912}`, `{"kv-group":"index-1"}`)
+	updateSubtask(invalidDurationID, 0, 0, `{"bytes": 0}`, `{"kv-group":"data"}`)
 
 	task, err := gm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)

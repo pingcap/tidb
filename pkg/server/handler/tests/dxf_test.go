@@ -166,10 +166,12 @@ func TestDXFAPI(t *testing.T) {
 			) values
 				(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', %?, %?, %?),
 				(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', %?, %?, %?),
+				(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', %?, %?, %?),
 				(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', %?, %?, %?)`,
 			proto.ImportStepEncodeAndSort, taskID, "tidb-1", []byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.Type2Int(proto.ImportInto), 8, 1, `{"bytes": 1073741824}`, 100, 700,
 			proto.ImportStepWriteAndIngest, taskID, "tidb-1", []byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.Type2Int(proto.ImportInto), 8, 1, `{"bytes": 1073741824}`, 700, 2500,
 			proto.ImportStepWriteAndIngest, taskID, "tidb-1", []byte(`{"kv-group":"index-1"}`), proto.SubtaskStateSucceed, proto.Type2Int(proto.ImportInto), 8, 2, `{"bytes": 536870912}`, 900, 2100,
+			proto.ImportStepPostProcess, taskID, "tidb-1", []byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.Type2Int(proto.ImportInto), 8, 3, `{"bytes": 0}`, 0, 0,
 		)
 		require.NoError(t, err)
 
@@ -192,6 +194,7 @@ func TestDXFAPI(t *testing.T) {
 		require.Equal(t, "40m0s", out.Duration.Total)
 		require.Equal(t, "10m0s", out.Duration.Encode)
 		require.Equal(t, "30m0s", out.Duration.Ingest)
+		require.Empty(t, out.Duration.PostProcess)
 	})
 
 	t.Run("task max_runtime_slots api", func(t *testing.T) {

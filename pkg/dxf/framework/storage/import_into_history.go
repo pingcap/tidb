@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 )
 
+// ImportIntoJobDuration records the elapsed duration of an IMPORT INTO history job.
 type ImportIntoJobDuration struct {
 	// All fields use Go time.Duration string format, for example "40m0s".
 	Total            string `json:"total"`
@@ -97,7 +98,7 @@ func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
 			(
 				select TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time)))
 				from mysql.tidb_background_subtask_history
-				where task_key = t.id
+				where task_key = t.id and start_time > 0 and state_update_time > 0
 			) as total_duration_seconds,
 			cast(json_extract(cast(cast(t.meta as char) as json), '$.Summary."row-count"') as signed) as row_count
 		from mysql.tidb_global_task_history t
@@ -159,7 +160,7 @@ func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
 	stepRows, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select step, TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time))) as duration_seconds
 		from mysql.tidb_background_subtask_history
-		where task_key = %?
+		where task_key = %? and start_time > 0 and state_update_time > 0
 		group by step`,
 		jobInfo.TaskID)
 	if err != nil {
