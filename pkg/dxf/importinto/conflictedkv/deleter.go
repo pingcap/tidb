@@ -57,6 +57,8 @@ type Deleter struct {
 	store    tidbkv.Storage
 	logger   *zap.Logger
 	snapshot *LazyRefreshedSnapshot
+	// trafficRec records best-effort TiKV traffic for metering.
+	trafficRec TrafficRecorder
 
 	// we delete keys in batch
 	bufferedKeys []tidbkv.Key
@@ -70,19 +72,21 @@ func NewDeleter(
 	store tidbkv.Storage,
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
+	trafficRec TrafficRecorder,
 ) *Deleter {
 	deleter := &Deleter{
-		keysCh:   make(chan []tidbkv.Key),
-		store:    store,
-		logger:   logger,
-		snapshot: NewLazyRefreshedSnapshot(store),
+		keysCh:     make(chan []tidbkv.Key),
+		store:      store,
+		logger:     logger,
+		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
+		trafficRec: trafficRec,
 	}
 	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, logger)
 	var h Handler
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
-		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store), nil)
+		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), nil)
 	}
 	deleter.handler = h
 	return deleter
@@ -142,6 +146,14 @@ func (d *Deleter) deleteKeysWithRetry(ctx context.Context, keys []tidbkv.Key) er
 }
 
 func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) error {
+	if d.trafficRec != nil {
+		var writeBytes uint64
+		for _, k := range keys {
+			writeBytes += uint64(len(k))
+		}
+		d.trafficRec.IncClusterWriteBytes(writeBytes)
+	}
+
 	txn, err := d.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -197,9 +209,6 @@ func (d *Deleter) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []comm
 // existence of the KVs to be deleted to avoid the overhead to refresh the TS
 // every time.
 func (d *Deleter) gatherKeysToDelete(ctx context.Context, pairs []common.KvPair) (err error) {
-	if err = d.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	allKeys := make([]tidbkv.Key, 0, len(pairs))
 	for _, p := range pairs {
 		allKeys = append(allKeys, p.Key)

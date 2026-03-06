@@ -346,9 +346,8 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 		s.EqualValues(sum.Bytes.Load(), 2782604)
 	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
-	// during collect_conflicts step, we will write the subtask meta again to
-	// fill the conflict info.
-	s.EqualValues(4, sum.PutReqCnt.Load())
+	// No conflicts in this case, no need to rewrite the external subtask meta.
+	s.EqualValues(0, sum.PutReqCnt.Load())
 }
 
 func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {
@@ -515,11 +514,11 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 13}")
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 11}")
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
-	s.Regexp(`obj_store{r: 2.\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
+	s.Regexp(`obj_store{r: 2.\d*KiB, w: [123].\d*KiB}`, gotMeterData.Load())
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
 
@@ -538,7 +537,7 @@ func TestNextGenMetering(t *testing.T) {
 	// if we retry write, the bytes may be larger than 288
 	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
 	s.EqualValues(6, sum.GetReqCnt.Load())
-	s.EqualValues(2, sum.PutReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {
 		items := *rowAndSizeMeterItems.Load()
@@ -548,6 +547,85 @@ func TestNextGenMetering(t *testing.T) {
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
 			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
+}
+
+func TestNextGenMeteringWithConflictResolution(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Metering is not supported in classic kernel type")
+	}
+	bak := metering.FlushInterval
+	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("meter-conflict-test")
+	srcStore, err := handle.NewObjStore(ctx, srcDirURI)
+	s.NoError(err)
+	t.Cleanup(func() {
+		srcStore.Close()
+	})
+	// row 2 and row 3 conflict on unique key b, they should be removed.
+	s.NoError(srcStore.WriteFile(ctx, "t.1.csv", []byte("1,10\n2,20\n3,20\n4,40\n")))
+	s.prepareAndUseDB("metering_conflict")
+	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort-conflict")
+	s.tk.MustExec("create table t (a bigint primary key, b bigint, unique key uk_b(b));")
+
+	baseTime := time.Now().Truncate(time.Minute).Unix()
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+		// the metering library requires the timestamp to be at minute boundary, but
+		// during test, we want to reduce the flush interval.
+		*ts = baseTime
+		baseTime += 60
+	})
+	// this failpoint can make sure we only get one gotMeterData
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
+	var gotMeterData atomic.String
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+		gotMeterData.Store(s.String())
+	})
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
+	})
+
+	importSQL := fmt.Sprintf(`import into t FROM '%s' with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("meter-conflict-test/*.csv"), glSortURI)
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 10", "4 40"))
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		return gotMeterData.Load() != ""
+	}, 30*time.Second, 300*time.Millisecond)
+
+	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
+	s.Regexp(`requests\{get: 15, put: 16\}`, gotMeterData.Load())
+	s.Regexp(`obj_store\{r: 3[.\d]*KiB, w: 3[.\d]*KiB\}`, gotMeterData.Load())
+	s.Regexp(`cluster\{r: 174B, w: 250B\}`, gotMeterData.Load())
+
+	collectSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepCollectConflicts)
+	s.Equal(collectSum.GetReqCnt.Load(), uint64(2))
+	s.Equal(collectSum.PutReqCnt.Load(), uint64(1))
+	conflictResolutionSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepConflictResolution)
+	s.Equal(conflictResolutionSum.GetReqCnt.Load(), uint64(2))
+	s.EqualValues(0, conflictResolutionSum.PutReqCnt.Load())
+
+	ingestSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.Equal(ingestSum.PutReqCnt.Load(), uint64(4))
 }
 
 func TestDropTableBeforeCleanup(t *testing.T) {
