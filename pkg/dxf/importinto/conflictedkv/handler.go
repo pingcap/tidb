@@ -343,6 +343,7 @@ func (s *LazyRefreshedSnapshot) refreshAsNeeded() error {
 	return nil
 }
 
+// BatchGet implements Snapshot interface.
 func (s *LazyRefreshedSnapshot) BatchGet(
 	ctx context.Context,
 	keys []tidbkv.Key,

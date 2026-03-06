@@ -585,6 +585,8 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 		*ts = baseTime
 		baseTime += 60
 	})
+	// this failpoint can make sure we only get one gotMeterData
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
 	var gotMeterData atomic.String
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
@@ -611,49 +613,19 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Regexp(`requests\{get: [1-9]\d*, put: [1-9]\d*\}`, gotMeterData.Load())
-	s.NotContains(gotMeterData.Load(), "cluster{r: 0B")
-	s.NotContains(gotMeterData.Load(), ", w: 0B}")
+	s.Regexp(`requests\{get: 15, put: 16\}`, gotMeterData.Load())
+	s.Regexp(`obj_store\{r: 3[.\d]*KiB, w: 3[.\d]*KiB\}`, gotMeterData.Load())
+	s.Regexp(`cluster\{r: 174B, w: 250B\}`, gotMeterData.Load())
 
 	collectSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepCollectConflicts)
-	s.Greater(collectSum.GetReqCnt.Load(), uint64(0))
-	s.Greater(collectSum.PutReqCnt.Load(), uint64(0))
+	s.Equal(collectSum.GetReqCnt.Load(), uint64(2))
+	s.Equal(collectSum.PutReqCnt.Load(), uint64(1))
 	conflictResolutionSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepConflictResolution)
-	s.Greater(conflictResolutionSum.GetReqCnt.Load(), uint64(0))
+	s.Equal(conflictResolutionSum.GetReqCnt.Load(), uint64(2))
 	s.EqualValues(0, conflictResolutionSum.PutReqCnt.Load())
 
 	ingestSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.Greater(ingestSum.PutReqCnt.Load(), uint64(0))
-
-	s.Eventually(func() bool {
-		itemsPtr := rowAndSizeMeterItems.Load()
-		if itemsPtr == nil {
-			return false
-		}
-		items := *itemsPtr
-		rowCnt, ok := items[metering.RowCountField].(int64)
-		if !ok || rowCnt != 2 {
-			return false
-		}
-		dataKVBytes, ok := items[metering.DataKVBytesField].(int64)
-		if !ok || dataKVBytes <= 0 {
-			return false
-		}
-		indexKVBytes, ok := items[metering.IndexKVBytesField].(int64)
-		if !ok || indexKVBytes <= 0 {
-			return false
-		}
-		requiredSlots, ok := items[metering.RequiredSlotsField].(int)
-		if !ok || requiredSlots != task.RequiredSlots {
-			return false
-		}
-		maxNodeCount, ok := items[metering.MaxNodeCountField].(int)
-		if !ok || maxNodeCount != task.MaxNodeCount {
-			return false
-		}
-		durationSeconds, ok := items[metering.DurationSecondsField].(int64)
-		return ok && durationSeconds > 0
-	}, 30*time.Second, 100*time.Millisecond)
+	s.Equal(ingestSum.PutReqCnt.Load(), uint64(4))
 }
 
 func TestDropTableBeforeCleanup(t *testing.T) {
