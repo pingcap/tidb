@@ -1,0 +1,26 @@
+[
+  {
+    "Name": "TestSchemaCannotFindColumnRegression",
+    "Cases": [
+      {
+        "SQL": "SELECT /* issue:66272 */ id AS t0_id FROM t1 JOIN t3 USING (id) WHERE (((t3.right_v = 749) AND (t3.id = 10)) AND (t1.left_v = 93)) AND (t3.right_v = ALL (SELECT t3.right_v AS c0 FROM t3 WHERE t3.right_v = 749))",
+        "Plan": [
+          "HashJoin 0.80 root  CARTESIAN inner join",
+          "├─MergeJoin(Build) 1.00 root  inner join, left key:test.t1.id, right key:test.t3.id",
+          "│ ├─Selection(Build) 1.00 root  eq(test.t3.right_v, 749)",
+          "│ │ └─Point_Get 1.00 root table:t3 handle:10",
+          "│ └─Selection(Probe) 1.00 root  eq(test.t1.left_v, 93)",
+          "│   └─Point_Get 1.00 root table:t1 handle:10",
+          "└─Selection(Probe) 0.80 root  or(and(le(Column#11, 1), and(eq(Column#10, 749), if(ne(Column#12, 0), NULL, 1))), eq(Column#13, 0))",
+          "  └─StreamAgg 1.00 root  funcs:max(test.t3.right_v)->Column#10, funcs:count(distinct test.t3.right_v)->Column#11, funcs:sum(0)->Column#12, funcs:count(1)->Column#13",
+          "    └─TableReader 10.00 root  data:Selection",
+          "      └─Selection 10.00 cop[tikv]  eq(test.t3.right_v, 749)",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "10"
+        ]
+      }
+    ]
+  }
+]
