@@ -16,11 +16,13 @@ package addindextest
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
@@ -136,4 +138,93 @@ func TestAlterJobOnDXF(t *testing.T) {
 	require.EqualValues(t, 1, finishedSubtasks)
 	require.True(t, modified.Load())
 	tk.MustExec("admin check index t1 idx;")
+}
+
+// TestIssue65958ReproCleanupCrashOnCancelDistTask is a regression test for issue #65958.
+// It pauses Lightning local backend right before importing SSTs, cancels the DDL,
+// and ensures the tmp_ddl cleanup loop won't delete the active job directory and crash TiDB.
+func TestIssue65958ReproCleanupCrashOnCancelDistTask(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen always uses DXF; repro currently targeted at classic kernel")
+	}
+	tmpDir := t.TempDir()
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	// Speed up the tmp_ddl cleanup loop so we don't need to wait ~1 minute.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCleanUpTempDirLoopInterval", "return(\"200ms\")")
+	// Must set TempDir before bootstrap. The DDL background loop uses this at init.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = tmpDir
+	})
+
+	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t, realtikvtest.WithAllocPort(true))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint primary key, b bigint)")
+
+	// Need enough rows to generate on-disk Pebble SSTables.
+	for i := 0; i < 2000; i += 1000 {
+		vals := make([]string, 0, 1000)
+		for j := 0; j < 1000 && i+j < 2000; j++ {
+			id := i + j
+			vals = append(vals, fmt.Sprintf("(%d,%d)", id, id))
+		}
+		tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	}
+
+	var jobID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.TableName != "t" || job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		jobID.Store(job.ID)
+	})
+
+	readyForImport := make(chan struct{}, 1)
+	resumeImport := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+		select {
+		case readyForImport <- struct{}{}:
+		default:
+		}
+		<-resumeImport
+	})
+
+	alterDone := make(chan error, 1)
+	go func() {
+		rs, err := tk.Exec("alter table t add index idx(b)")
+		if rs != nil {
+			_ = rs.Close()
+		}
+		alterDone <- err
+	}()
+
+	<-readyForImport
+	for jobID.Load() == 0 {
+		time.Sleep(50 * time.Millisecond)
+	}
+	id := jobID.Load()
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", id))
+
+	// Wait until job row disappears from mysql.tidb_ddl_job (issue precondition).
+	for {
+		tkCheck := testkit.NewTestKit(t, store)
+		rs := tkCheck.MustQuery(fmt.Sprintf("select job_id from mysql.tidb_ddl_job where job_id=%d", id))
+		if len(rs.Rows()) == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Give tmp_ddl cleanup loop time to run. It should not remove the active job dir.
+	time.Sleep(1 * time.Second)
+
+	close(resumeImport)
+	err := <-alterDone
+	require.ErrorContains(t, err, "Cancelled DDL job")
 }
