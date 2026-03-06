@@ -2025,6 +2025,145 @@ func TestIssue9710(t *testing.T) {
 	}
 }
 
+func TestTimeFuncTruncation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@time_zone = 'UTC'`)
+	var res *testkit.Result
+	dateStr := `2023-12-31 23:59:59.9876789`
+	timeStr := "1704067199.9876789"
+	dateStrLow := `2023-12-31 23:59:59.12344321`
+	timeStrLow := "1704067199.12344321"
+	dateStrMid := `2023-12-31 23:59:59.4999996`
+	timeStrMid := "1704067199.4999996"
+	timeT9H := "1704067199.987678900"
+	timeT9M := "1704067199.499999600"
+	timeT9L := "1704067199.123443210"
+	for _, sqlMode := range []string{"TIME_TRUNCATE_FRACTIONAL", ""} {
+		tk.MustExec(`set @@sql_mode = DEFAULT`)
+		frac6H := "2023-12-31 23:59:59.987679"
+		frac6L := "2023-12-31 23:59:59.123443"
+		frac6M := "2023-12-31 23:59:59.500000"
+		frac0H := "2024-01-01 00:00:00"
+		frac0L := "2023-12-31 23:59:59"
+		dateRoundH := "2024-01-01"
+		dateRoundL := "2023-12-31"
+		// Y - Year, D - Day, H - High, L - Low
+		// timeT/unix_timestamp for '2024-01-01'
+		timeTY := "1704067200"
+		timeTH := timeTY
+		timeTL := "1704067199"
+		// timeT/unix_timestamp for '2023-12-31'
+		timeTDL := "1703980800"
+		timeTDH := timeTY
+		timeT6H := "1704067199.987679"
+		timeT6M := "1704067199.500000"
+		timeT6L := "1704067199.123443"
+		if sqlMode != "" {
+			res = tk.MustQuery(`select @@sql_mode`)
+			tk.MustExec(`set sql_mode = 'time_truncate_fractional,` + res.Rows()[0][0].(string) + `'`)
+			tk.MustQuery(`select @@sql_mode`).CheckContain("TIME_TRUNCATE_FRACTIONAL")
+			frac6H = "2023-12-31 23:59:59.987678"
+			frac0H = "2023-12-31 23:59:59"
+			frac6M = "2023-12-31 23:59:59.499999"
+			dateRoundH = "2023-12-31"
+			timeT6H = "1704067199.987678"
+			timeT6M = "1704067199.499999"
+			timeTH = timeTL
+			timeTDH = timeTDL
+		}
+
+		tk.MustExec(`drop table if exists t`)
+		// time_t not treated as time, but just normal int, so rounded!
+		tk.MustExec(`create table t (id int primary key, d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), time_t bigint, dc decimal(20,9))`)
+		tk.MustExec(`insert into t values (1, ?, ?, ?, ?, ?, ?, ?)`,
+			dateStr, dateStr, dateStr, dateStr, dateStr, timeStr, timeStr)
+		tk.MustExec(`insert into t values (2, ?, ?, ?, ?, ?, ?, ?)`,
+			dateStrLow, dateStrLow, dateStrLow, dateStrLow, dateStrLow, timeStrLow, timeStrLow)
+		tk.MustExec(`insert into t values (3, ?, ?, ?, ?, ?, ?, ?)`,
+			dateStrMid, dateStrMid, dateStrMid, dateStrMid, dateStrMid, timeStrMid, timeStrMid)
+
+		res = tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
+		res.Check(testkit.Rows(""+
+			strings.Join([]string{"1", dateRoundH, frac0H, frac6H, frac0H, frac6H, timeTY, timeT9H}, " "),
+			strings.Join([]string{"2", dateRoundL, frac0L, frac6L, frac0L, frac6L, timeTL, timeT9L}, " "),
+			strings.Join([]string{"3", dateRoundL, frac0L, frac6M, frac0L, frac6M, timeTL, timeT9M}, " ")))
+		// Test functions that take datetime as arguments
+		tk.MustQuery(`select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts6) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(
+			// dt/ts is already truncated, so second will be the low one.
+			strings.Join([]string{timeTDH, timeTH, timeT6H, timeTH, timeT6H}, " "),
+			strings.Join([]string{timeTDL, timeTL, timeT6L, timeTL, timeT6L}, " "),
+			strings.Join([]string{timeTDL, timeTL, timeT6M, timeTL, timeT6M}, " ")))
+		// Test functions that take unix_timestamp (time_t) as argument
+		tk.MustQuery(`select from_unixtime(dc) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(frac6H, frac6L, frac6M))
+		tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc)`)
+		res2 := tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
+		rows := res.Sort().Rows()
+		if sqlMode == "" {
+			// See below, TestDatetimeStringUnixTime!
+			rows[0][1] = dateRoundL
+			rows[2][2] = frac0H
+			rows[2][4] = frac0H
+		}
+		res2.Sort().Check(rows)
+		tk.MustQuery(`select from_unixtime(dc) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(frac6H, frac6L, frac6M))
+	}
+}
+
+func TestDatetimeStringUnixTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("create table t (dS date, dU date, dtS datetime, dtU datetime)")
+	tk.MustExec(`insert into t values (` +
+		// convertToMysqlTime will round a datetime string to correct FSP (including FSP+1 digit),
+		// including overflow. It will set the type as DATE,
+		// and truncate the time portion, so date will be 2024-01-01.
+		`'2023-12-31 23:59:59.9876789',` +
+		// from_unixtime() will round the 6th FSP => 2023-12-31 23:59:59.987679,
+		// and returned as DATETIME(6) internally.
+		// It will then be CASTed to DATE, by just changing the type from TypeDateTime to TypeDate,
+		// and not doing any other rounding, since Date has no fsp, see RoundFrac().
+		// And lastly it will rewrite the date to only use the year,month and day.
+		// effectively truncate it.
+		`from_unixtime(1704067199.9876789),` +
+		// This will be parsed and rounded as a string with fsp = 0, (taking fsp+1 into account)
+		// -> rounded DOWN to datetime(0).
+		`'2023-12-31 23:59:59.4999996',` +
+		// from_unixtime() will round to FSP 6, so round UP here => .500000 as fraction part
+		// which is then rounded UP when Casting from DATETIME(6) to DATETIME(0)
+		`from_unixtime(1704067199.4999996))`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2024-01-01 2023-12-31 2023-12-31 23:59:59 2024-01-01 00:00:00"))
+}
+
+func TestDatetimeModifyTruncate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("create table t (d datetime(6))")
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.9876789')`)
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.4321234')`)
+	tk.MustExec(`alter table t modify column d datetime(3)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59.432", "2023-12-31 23:59:59.988"))
+	tk.MustExec(`alter table t modify column d datetime(0)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59", "2024-01-01 00:00:00"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`set sql_mode=concat(@@sql_mode, ',time_truncate_fractional')`)
+	tk.MustExec("create table t (d datetime(6))")
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.9876789')`)
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.4321234')`)
+	tk.MustExec(`alter table t modify column d datetime(3)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59.432", "2023-12-31 23:59:59.987"))
+	tk.MustExec(`alter table t modify column d datetime(0)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59", "2023-12-31 23:59:59"))
+}
+
 func TestShardIndexOnTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
