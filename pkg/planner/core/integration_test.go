@@ -1700,6 +1700,21 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a) order by t1a.a").
 			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
 
+		// Reversed argument order: correlated column on the left side of
+		// the comparison (t1a.a < t1b.a instead of t1b.a > t1a.a) must
+		// also be recognised as an index access condition.
+		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1a.a < t1b.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[4])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "lt(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": reversed-arg LT correlated predicate should be in index access conditions")
+
 		// NULL outer correlated value: col > NULL is NULL (not true), so
 		// the correlated range must not produce false-positive matches.
 		// Use a separate table since t1.a is PK and cannot be NULL.
