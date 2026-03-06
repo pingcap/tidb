@@ -609,6 +609,15 @@ func TestPreparedIssue8153(t *testing.T) {
 		r = tk.MustQuery(`execute stmt using @param;`)
 		r.Check(testkit.Rows("1 3", "2 2", "3 1"))
 
+		// issue #62556: string parameter should not be treated as a positional reference in ORDER BY.
+		tk.MustExec("drop table if exists t_gc")
+		tk.MustExec("create table t_gc (a int)")
+		tk.MustExec("insert into t_gc values (1)")
+		tk.MustExec(`prepare stmt_gc from 'select group_concat(a order by ?) from t_gc'`)
+		tk.MustExec(`set @param = '0'`)
+		r = tk.MustQuery(`execute stmt_gc using @param;`)
+		r.Check(testkit.Rows("1"))
+
 		tk.MustExec("insert into t (a, b) values (1,1), (1,2), (2,1), (2,3), (3,2), (3,3)")
 		tk.MustExec(`prepare stmt from 'select ?, sum(a) from t group by ?'`)
 
@@ -619,6 +628,11 @@ func TestPreparedIssue8153(t *testing.T) {
 		tk.MustExec(`set @a=1,@b=2`)
 		_, err = tk.Exec(`execute stmt using @a,@b;`)
 		require.EqualError(t, err, "[planner:1056]Can't group on 'sum(a)'")
+
+		// issue #62556: string parameter should be treated as a value in GROUP BY.
+		tk.MustExec(`set @a=1,@b='0'`)
+		r = tk.MustQuery(`execute stmt using @a,@b;`)
+		r.Check(testkit.Rows("1 18"))
 	}
 }
 

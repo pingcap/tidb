@@ -2367,48 +2367,6 @@ update tt as ss set x = 3, z = 13;
 Error 3105 (HY000): The value specified for generated column 'z' in table 'tt' is not allowed.
 update tt as s1, tt as s2 set s1.z = default, s2.z = 456;
 Error 3105 (HY000): The value specified for generated column 'z' in table 'tt' is not allowed.
-drop table if exists t;
-create table t(a int not null, b int not null, key(a), key(b));
-insert into t values(1,1),(2,2),(3,3),(4,4),(5,5),(6,6);
-set session tidb_enable_extended_stats = off;
-alter table t add stats_extended s1 correlation(a,b);
-Error 1105 (HY000): Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF
-alter table t drop stats_extended s1;
-Error 1105 (HY000): Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF
-admin reload stats_extended;
-Error 1105 (HY000): Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF
-set session tidb_enable_extended_stats = on;
-alter table t add stats_extended s1 correlation(a,b);
-select stats, status from mysql.stats_extended where name = 's1';
-stats	status
-NULL	0
-set session tidb_enable_extended_stats = off;
-analyze table t;
-select stats, status from mysql.stats_extended where name = 's1';
-stats	status
-NULL	0
-set session tidb_enable_extended_stats = on;
-analyze table t;
-select stats, status from mysql.stats_extended where name = 's1';
-stats	status
-1.000000	1
-explain format='plan_tree' select * from t use index(b) where a > 3 order by b limit 1;
-id	task	access object	operator info
-Limit	root		offset:0, count:1
-└─Projection	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexLookUp	root		
-    ├─IndexFullScan(Build)	cop[tikv]	table:t, index:b(b)	keep order:true
-    └─Selection(Probe)	cop[tikv]		gt(planner__core__integration.t.a, 3)
-      └─TableRowIDScan	cop[tikv]	table:t	keep order:false
-set session tidb_enable_extended_stats = off;
-explain format='plan_tree' select * from t use index(b) where a > 3 order by b limit 1;
-id	task	access object	operator info
-Limit	root		offset:0, count:1
-└─Projection	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexLookUp	root		
-    ├─IndexFullScan(Build)	cop[tikv]	table:t, index:b(b)	keep order:true
-    └─Selection(Probe)	cop[tikv]		gt(planner__core__integration.t.a, 3)
-      └─TableRowIDScan	cop[tikv]	table:t	keep order:false
 drop table if exists ttest;
 create table ttest (v1 int, v2 int);
 insert into ttest values(1, 2), (4,6), (1, 7);

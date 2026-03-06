@@ -2311,6 +2311,16 @@ error = '''
 Unknown resource group '%-.192s'
 '''
 
+["meta:8268"]
+error = '''
+masking policy already exists
+'''
+
+["meta:8269"]
+error = '''
+masking policy doesn't exist
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'

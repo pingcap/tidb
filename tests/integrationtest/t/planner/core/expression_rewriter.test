@@ -277,3 +277,13 @@ drop table if exists tb0;
 create table tb0 (c0 bigint unsigned not null);
 select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
 explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
+
+# TestIssue64333: ensure scalar IN in filter boolean chain can use join keys
+drop table if exists t1, t;
+create table t1(a int default null);
+create table t(a int not null);
+explain format='plan_tree' select * from t1 where t1.a > 1 or t1.a in (select a from t);
+explain format='plan_tree' select * from t1 where t1.a > 1 and t1.a in (select a from t);
+explain format='plan_tree' select t1.a in (select a from t) from t1;
+explain format='plan_tree' select * from t1 where (t1.a in (select a from t)) = 1;
+explain format='plan_tree' select t1.a from t1 group by t1.a having t1.a > 1 or t1.a in (select a from t);

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -222,7 +223,6 @@ func TestPlanDigest4InList(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a int);")
-		tk.MustExec("set global tidb_ignore_inlist_plan_digest=true;")
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		var queriesGroup1, queriesGroup2 []string
 		queriesGroup1 = []string{
@@ -252,6 +252,32 @@ func TestPlanDigest4InList(t *testing.T) {
 				require.Equal(t, digest1, digest2)
 			})
 		}
+
+		// Issue 66623: same plans with different in-list lengths should have the same plan digest
+		t.Run("issue 66623: select * from t where a in (...) with varying lengths", func(t *testing.T) {
+			queries := []string{
+				"select * from t where a in (1, 2);",
+				"select * from t where a in (1, 2, 3);",
+				"select * from t where a in (1, 2, 3, 4);",
+				"select * from t where a in (1, 2, 3, 4, 5);",
+				"select * from t where a in (1, 2, 3, 4, 5, 6);",
+				"select * from t where a in (1, 2, 3, 4, 5, 6, 7);",
+			}
+			var firstDigest *parser.Digest
+			for i, query := range queries {
+				tk.MustExec(query)
+				info := tk.Session().ShowProcess()
+				require.NotNil(t, info)
+				p, ok := info.Plan.(base.Plan)
+				require.True(t, ok)
+				_, digest := core.NormalizePlan(p)
+				if i == 0 {
+					firstDigest = digest
+				} else {
+					require.Equal(t, firstDigest, digest, "query %d: %s", i, query)
+				}
+			}
+		})
 
 		tk.MustExec("drop table if exists t3,t4,t5")
 		tk.MustExec("create table t3(a int, b int, c int);")
@@ -419,13 +445,13 @@ func TestOuterJoinElimination(t *testing.T) {
 		// nullable unique index is not allowed to trigger the outer join elinimation.
 		tk.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a", "Join")
 		tk.MustHavePlan("select count(*) from t1 left join t2_k on t1.a = t2_k.a", "Join")
-		tk.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a", "Join")
+		tk.MustNotHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a", "Join")
 		tk.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a", "Join")
 		tk.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a", "Join")
 
 		tk.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a group by t1.a", "Join")
 		tk.MustHavePlan("select count(*) from t1 left join t2_k on t1.a = t2_k.a group by t1.a", "Join")
-		tk.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a group by t1.a", "Join")
+		tk.MustNotHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a group by t1.a", "Join")
 		tk.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a group by t1.a", "Join")
 		tk.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a group by t1.a", "Join")
 
@@ -444,9 +470,12 @@ func TestOuterJoinElimination(t *testing.T) {
 		// test constant columns with distinct
 		tk.MustHavePlan("select 1 from t1 left join t2 on t1.a = t2.a", "Join")
 		tk.MustHavePlan("select 1 from t1 left join t2_k t2 on t1.a = t2.a", "Join")
-		tk.MustHavePlan("select 1 from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
+		tk.MustNotHavePlan("select 1 from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
 		tk.MustNotHavePlan("select 1 from t1 left join t2_nnuk t2 on t1.a = t2.a", "Join")
 		tk.MustNotHavePlan("select 1 from t1 left join t2_pk t2 on t1.a = t2.a", "Join")
+		tk.MustHavePlan("select count(*) from t1 left join t2_uk t2 on t1.a <=> t2.a", "Join")
+		tk.MustNotHavePlan("select count(*) from t1 left join t2_nnuk t2 on t1.a <=> t2.a", "Join")
+		tk.MustNotHavePlan("select count(*) from t1 left join t2_pk t2 on t1.a <=> t2.a", "Join")
 		// test subqueries
 		tk.MustHavePlan("select 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
 		tk.MustNotHavePlan("select distinct 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")

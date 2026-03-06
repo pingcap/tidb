@@ -1050,6 +1050,34 @@ func (mgr *TaskManager) GetAllTasks(ctx context.Context) ([]*proto.TaskBase, err
 	return tasks, nil
 }
 
+// ActiveTaskSummary is the summary of active tasks in `mysql.tidb_global_task`.
+type ActiveTaskSummary struct {
+	Total       int64            `json:"total"`
+	PerKeyspace map[string]int64 `json:"per_keyspace"`
+}
+
+// GetActiveTaskCountsByKeyspace gets active task summary grouped by keyspace.
+func (mgr *TaskManager) GetActiveTaskCountsByKeyspace(ctx context.Context) (*ActiveTaskSummary, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select keyspace, count(1) from mysql.tidb_global_task group by keyspace`)
+	if err != nil {
+		return nil, err
+	}
+	summary := &ActiveTaskSummary{
+		PerKeyspace: make(map[string]int64, len(rs)),
+	}
+	for _, r := range rs {
+		keyspace := r.GetString(0)
+		cnt := r.GetInt64(1)
+		summary.Total += cnt
+		summary.PerKeyspace[keyspace] = cnt
+	}
+	return summary, nil
+}
+
 // GetAllSubtasks gets all subtasks with basic columns.
 func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {

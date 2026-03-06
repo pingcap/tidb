@@ -1032,5 +1032,5 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 
 	// 3. remove the plan replayer files generated during the test
 	gcHandler := dom.GetDumpFileGCChecker()
-	gcHandler.GCDumpFiles(0, 0)
+	gcHandler.GCDumpFiles(context.Background(), 0, 0)
 }
