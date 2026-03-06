@@ -184,6 +184,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/ppcpuusage",
         "//pkg/util/ranger",
+        "//pkg/util/regionsplit",
         "//pkg/util/rowDecoder",
         "//pkg/util/rowcodec",
         "//pkg/util/set",

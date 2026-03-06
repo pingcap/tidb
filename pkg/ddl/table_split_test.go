@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,17 +16,21 @@ package ddl_test
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -160,4 +164,242 @@ func checkRegionStartWithTableID(t *testing.T, id int64, store kvStore) {
 	// Region cache may be out of date, so we need to drop this expired region and load it again.
 	cache.InvalidateCachedRegion(loc.Region)
 	require.Equal(t, []byte(regionStartKey), loc.StartKey)
+}
+
+func TestTableSplitPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id bigint primary key, name varchar(100))")
+	tk.MustExec("alter table t1 split between (0) and (1000000) regions 4")
+
+	tbl := external.GetTableByName(t, tk, "test", "t1")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+	require.Equal(t, []string{"0"}, tbl.Meta().TableSplitPolicy.Lower)
+	require.Equal(t, []string{"1000000"}, tbl.Meta().TableSplitPolicy.Upper)
+
+	tk.MustExec("alter table t1 add index idx_name (name)")
+	tk.MustExec("alter table t1 split index idx_name between ('a') and ('z') regions 3")
+
+	tbl = external.GetTableByName(t, tk, "test", "t1")
+	var idxInfo *model.IndexInfo
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.L == "idx_name" {
+			idxInfo = idx
+			break
+		}
+	}
+	require.NotNil(t, idxInfo)
+	require.NotNil(t, idxInfo.RegionSplitPolicy)
+	require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+
+	tk.MustExec("admin check table t1")
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec(`create table t2 (
+		id bigint primary key,
+		user_id bigint,
+		index idx_user (user_id)
+	) split between (0) and (1000000) regions 4
+	  split index idx_user between (100) and (100000) regions 3`)
+
+	tbl = external.GetTableByName(t, tk, "test", "t2")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.L == "idx_user" {
+			require.NotNil(t, idx.RegionSplitPolicy)
+			require.Equal(t, int64(3), idx.RegionSplitPolicy.Regions)
+		}
+	}
+
+	tk.MustExec("admin check table t2")
+}
+
+func TestTableSplitPolicyForPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
+
+	tk.MustExec("drop table if exists t_part")
+	tk.MustExec(`create table t_part (
+		id bigint primary key,
+		val bigint,
+		index idx_val (val)
+	) partition by range (id) (
+		partition p0 values less than (1000),
+		partition p1 values less than (2000),
+		partition p2 values less than (maxvalue)
+	) split between (0) and (10000) regions 5
+	  split index idx_val between (0) and (10000) regions 3`)
+
+	tbl := external.GetTableByName(t, tk, "test", "t_part")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(5), tbl.Meta().TableSplitPolicy.Regions)
+
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.L == "idx_val" {
+			require.NotNil(t, idx.RegionSplitPolicy)
+			require.Equal(t, int64(3), idx.RegionSplitPolicy.Regions)
+		}
+	}
+
+	tk.MustExec("admin check table t_part")
+
+	tk.MustExec("drop table if exists t_part2")
+	tk.MustExec(`create table t_part2 (
+		id bigint primary key,
+		val bigint
+	) partition by range (id) (
+		partition p0 values less than (1000),
+		partition p1 values less than (2000)
+	)`)
+
+	tk.MustExec("alter table t_part2 split between (0) and (10000) regions 5")
+	tbl = external.GetTableByName(t, tk, "test", "t_part2")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(5), tbl.Meta().TableSplitPolicy.Regions)
+
+	tk.MustExec("admin check table t_part2")
+}
+
+func TestTableSplitPolicyWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_warn")
+	tk.MustExec("create table t_warn (id bigint primary key, user_id bigint, status varchar(10))")
+	tk.MustExec("alter table t_warn add index idx_user_id (user_id)")
+	tk.MustExec("alter table t_warn split index idx_user_id between (0) and (10000) regions 5")
+
+	tbl := external.GetTableByName(t, tk, "test", "t_warn")
+	var hasPolicy bool
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.L == "idx_user_id" && idx.RegionSplitPolicy != nil {
+			hasPolicy = true
+			break
+		}
+	}
+	require.True(t, hasPolicy)
+
+	time.Sleep(time.Second)
+
+	tk.MustExec("alter table t_warn add index idx_status (status)")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	foundWarning := false
+	for _, warn := range warnings {
+		if warn.Level == "Warning" {
+			foundWarning = true
+			require.Contains(t, warn.Err.Error(), "region split strategy")
+			require.Contains(t, warn.Err.Error(), "idx_status")
+			break
+		}
+	}
+	require.True(t, foundWarning)
+
+	tk.MustExec("admin check table t_warn")
+}
+
+func TestTableSplitPolicyMultipleIndexes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
+
+	tk.MustExec("drop table if exists t_multi")
+	tk.MustExec(`create table t_multi (
+		id bigint primary key,
+		user_id bigint,
+		status varchar(10),
+		created_at bigint,
+		index idx_user (user_id),
+		index idx_status (status),
+		index idx_created (created_at)
+	) split between (0) and (1000000) regions 4
+	  split index idx_user between (100) and (100000) regions 3
+	  split index idx_status between ('a') and ('z') regions 2`)
+
+	tbl := external.GetTableByName(t, tk, "test", "t_multi")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+	indexPolicies := make(map[string]*model.RegionSplitPolicy)
+	for _, idx := range tbl.Meta().Indices {
+		if idx.RegionSplitPolicy != nil {
+			indexPolicies[idx.Name.L] = idx.RegionSplitPolicy
+		}
+	}
+
+	require.NotNil(t, indexPolicies["idx_user"])
+	require.Equal(t, int64(3), indexPolicies["idx_user"].Regions)
+	require.NotNil(t, indexPolicies["idx_status"])
+	require.Equal(t, int64(2), indexPolicies["idx_status"].Regions)
+	require.Nil(t, indexPolicies["idx_created"])
+
+	tk.MustExec("alter table t_multi split index idx_created between (0) and (1000000000) regions 5")
+	tbl = external.GetTableByName(t, tk, "test", "t_multi")
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.L == "idx_created" {
+			require.NotNil(t, idx.RegionSplitPolicy)
+			require.Equal(t, int64(5), idx.RegionSplitPolicy.Regions)
+		}
+	}
+
+	tk.MustExec("admin check table t_multi")
+}
+
+func TestTableSplitPolicyShowCreateRoundTrip(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_src, t_dst")
+	tk.MustExec(`create table t_src (
+		id bigint primary key,
+		user_id bigint,
+		index idx_user_id (user_id)
+	)
+	split between (0) and (1000000) regions 4
+	split index idx_user_id between (1000) and (100000) regions 3`)
+
+	createSQL := tk.MustQuery("show create table t_src").Rows()[0][1].(string)
+	require.Contains(t, createSQL, "/*T![region_split]")
+
+	roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_src`", "CREATE TABLE `t_dst`", 1)
+	tk.MustExec(roundTripSQL)
+
+	tbl := external.GetTableByName(t, tk, "test", "t_dst")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+	idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+	require.NotNil(t, idxInfo)
+	require.NotNil(t, idxInfo.RegionSplitPolicy)
+	require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+}
+
+func TestTableSplitPolicyRejectSplitIndexPrimaryOnClustered(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_clustered_index = ON")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+		id bigint,
+		user_id bigint,
+		primary key (id) clustered,
+		index idx_user_id (user_id)
+	)`)
+	tk.MustGetErrCode("alter table t split index `PRIMARY` between (0) and (1000000) regions 4", errno.ErrForbiddenDDL)
+
+	tk.MustGetErrCode(`create table t_create_fail (
+		id bigint,
+		primary key (id) clustered
+	) split index `+"`PRIMARY`"+` between (0) and (1000000) regions 4`, errno.ErrForbiddenDDL)
 }
