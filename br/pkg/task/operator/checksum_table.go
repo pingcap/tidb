@@ -14,8 +14,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -33,6 +35,8 @@ type checksumTableCtx struct {
 
 	mgr *conn.Mgr
 	dom *domain.Domain
+
+	checksumTS uint64
 }
 
 type tableInDB struct {
@@ -298,6 +302,7 @@ func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Tab
 		return nil, errors.Annotate(err, "failed to get TSO for checksumming")
 	}
 	tso := oracle.ComposeTS(phy, logi)
+	c.checksumTS = tso
 
 	bkupTbls := map[string]map[string]*metautil.Table{}
 	for _, t := range bkup {
@@ -340,7 +345,8 @@ func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Tab
 	return
 }
 
-func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*backup.PitrDBMap, restoreTS uint64) (reqs []request, err error) {
+func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*backup.PitrDBMap, checksumTS uint64) (reqs []request, err error) {
+	c.checksumTS = checksumTS
 	router := make(map[string]map[string]map[int64]int64)
 	for _, dbidmap := range idmaps {
 		tableRouter, exists := router[dbidmap.Name]
@@ -362,7 +368,7 @@ func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*back
 	}
 
 	for _, t := range curr {
-		rb := checksum.NewExecutorBuilder(t.info, restoreTS)
+		rb := checksum.NewExecutorBuilder(t.info, checksumTS)
 		rb.SetConcurrency(c.cfg.ChecksumConcurrency)
 		fakeOldTable := t.info.Clone()
 		tableRouter, exists := router[t.dbName]
@@ -399,6 +405,7 @@ func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*back
 }
 
 func (c *checksumTableCtx) genUpstreamRequests(curr []tableInDB, checksumTS uint64) (reqs []request, err error) {
+	c.checksumTS = checksumTS
 	for _, t := range curr {
 		rb := checksum.NewExecutorBuilder(t.info, checksumTS)
 		rb.SetConcurrency(c.cfg.ChecksumConcurrency)
@@ -427,6 +434,32 @@ type ChecksumResult struct {
 }
 
 func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]ChecksumResult, error) {
+	log.Info("checksum tables", zap.Uint64("checksum ts", c.checksumTS))
+	pdClient := c.mgr.PDClient()
+	sp := utils.BRServiceSafePoint{
+		BackupTS: c.checksumTS,
+		TTL:      utils.DefaultBRGCSafePointTTL,
+		ID:       utils.MakeSafePointID(),
+	}
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	defer func() {
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
+	err := utils.StartServiceSafePointKeeper(cctx, pdClient, sp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	wkPool := util.NewWorkerPool(c.cfg.TableConcurrency, "checksum")
 	eg, ectx := errgroup.WithContext(ctx)
 	results := make([]ChecksumResult, 0, len(reqs))
@@ -484,7 +517,14 @@ func RunPitrChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitr
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reqs, err := c.genRequestsWithIDMap(curr, pitrIdMap, cfg.RestoreTS)
+	if cfg.ChecksumTS == 0 {
+		checksumTS, err := restore.GetTSWithRetry(ctx, c.mgr.GetPDClient())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.ChecksumTS = checksumTS
+	}
+	reqs, err := c.genRequestsWithIDMap(curr, pitrIdMap, cfg.ChecksumTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
