@@ -41,7 +41,7 @@ go_test(
     ],
     embed = [":importsdk"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 21,
     deps = [
         "//pkg/lightning/config",
         "//pkg/lightning/log",

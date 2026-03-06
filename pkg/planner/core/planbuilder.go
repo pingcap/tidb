@@ -750,7 +750,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		if vars.ExtendValue != nil {
 			assign.ExtendValue = &expression.Constant{
 				Value:   vars.ExtendValue.(*driver.ValueExpr).Datum,
-				RetType: &vars.ExtendValue.(*driver.ValueExpr).Type,
+				RetType: vars.ExtendValue.(*driver.ValueExpr).Type.DeepCopy(),
 			}
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
@@ -2214,19 +2214,6 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
 		cols.data[pkCol.ID] = struct{}{}
-	}
-	if b.ctx.GetSessionVars().EnableExtendedStats {
-		// Add the columns related to extended stats.
-		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
-		// if someone inserts data into mysql.stats_extended between the two time points, the new added extended stats may not be computed.
-		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-		extendedStatsColIDs, err := statsHandle.CollectColumnsInExtendedStats(tblInfo.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, colID := range extendedStatsColIDs {
-			cols.data[colID] = struct{}{}
-		}
 	}
 	cols.calculated = true
 	return cols.data, nil
@@ -4364,7 +4351,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalo
 	case *driver.ValueExpr:
 		outExpr = &expression.Constant{
 			Value:   x.Datum,
-			RetType: &x.Type,
+			RetType: x.Type.DeepCopy(),
 		}
 	case *driver.ParamMarkerExpr:
 		outExpr, err = expression.ParamMarkerExpression(b.ctx.GetExprCtx(), x, false)
@@ -5198,7 +5185,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 	case *driver.ValueExpr:
 		expr = &expression.Constant{
 			Value:   x.Datum,
-			RetType: &x.Type,
+			RetType: x.Type.DeepCopy(),
 		}
 	default:
 		expr, _, err = b.rewrite(context.TODO(), valueItem, mockTablePlan, nil, true)
@@ -6197,7 +6184,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
-	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
+	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
 	if pc.HistoricalStatsInfo != nil {

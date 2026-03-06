@@ -86,7 +86,7 @@ go_test(
     ],
     embed = [":objstore"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 45,
     deps = [
         "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
