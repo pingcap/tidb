@@ -168,7 +168,7 @@ select * from golang1;
 
 
 # TestExplainValuesStatement
---error 1051
+--error 3942
 EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1);
 
 

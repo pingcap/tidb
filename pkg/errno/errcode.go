@@ -939,6 +939,7 @@ const (
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
 	ErrConstraintNotFound                                    = 3940
+	ErrValuesClauseNoColumns                                 = 3942
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrDependentByCheckConstraint                            = 3959
 	ErrEngineAttributeNotSupported                           = 3981
