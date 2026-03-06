@@ -1215,19 +1215,17 @@ SwitchIndexState:
 
 		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
+			if job.MultiSchemaInfo != nil {
+				return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
+			}
+
 			// reorg the index data.
 			var done bool
 			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-			if !done {
-				return ver, err
+			if done {
+				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
-			// For multi-schema change, analyze is done by parent job.
-			if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-			} else {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-				checkAndMarkNonRevertible(job)
-			}
+			return ver, err
 		case model.AnalyzeStateRunning:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
@@ -1428,28 +1426,6 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 	default:
 		// analyzeUnknown: caller should proceed to start ANALYZE locally.
 		return false, false, false, true
-	}
-}
-
-// doAnalyzeWithoutReorg performs analyze for the table if needed without the logic of
-// reorg and and returns whether the table info is updated.
-func (w *worker) doAnalyzeWithoutReorg(job *model.Job, tblInfo *model.TableInfo) (finished bool) {
-	switch job.ReorgMeta.AnalyzeState {
-	case model.AnalyzeStateNone:
-		if checkNeedAnalyze(job, tblInfo) {
-			// Start analyze for the next time.
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-		} else {
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-		}
-		return false
-	case model.AnalyzeStateRunning:
-		w.startAnalyzeAndWait(job, tblInfo)
-		return false
-	default:
-		logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
-			zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
-		return true
 	}
 }
 
@@ -1773,13 +1749,11 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 		return model.ReorgTypeTxn, nil
 	}
 	if ingest.LitInitialized {
-		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
-			return model.ReorgTypeIngest, nil
-		}
-		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
-			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
-			return model.ReorgTypeNone, err
+		if !job.ReorgMeta.UseCloudStorage {
+			if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
+				logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
+				return model.ReorgTypeNone, err
+			}
 		}
 		job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
 		return model.ReorgTypeIngest, nil
