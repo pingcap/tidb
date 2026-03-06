@@ -45,10 +45,16 @@ go_test(
     ],
     embed = [":stmtctx"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 14,
+=======
+    shard_count = 17,
+>>>>>>> d59e531fe61 (planner: build multi alternative logical plan from shared AST (#66677))
     deps = [
         "//pkg/errctx",
         "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
