@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -756,8 +757,12 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	lnConfig.TikvImporter.Backend = config.BackendLocal
 	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
+	theVersion := "8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"
+	if kerneltype.IsNextGen() {
+		theVersion = "8.0.11-TiDB-X-CLOUD.202603.1"
+	}
 	mock.ExpectQuery("SELECT version()").
-		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"))
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow(theVersion))
 	err = targetGetter.CheckVersionRequirements(ctx)
 	require.ErrorContains(t, err, "pd HTTP client is required for component version check in local backend")
 	require.NoError(t, mock.ExpectationsWereMet())

@@ -99,3 +99,31 @@ func TestVersionSeparator(t *testing.T) {
 	// DO NOT change the value of VersionSeparator.
 	require.Equal(t, "-TiDB-", VersionSeparator)
 }
+
+func TestBuildTiDBXReleaseVersion(t *testing.T) {
+	tidbXVersion, err := BuildTiDBXReleaseVersion("v26.3.0")
+	require.NoError(t, err)
+	require.Equal(t, "TiDB-X-CLOUD.202603.0", tidbXVersion)
+
+	tidbXVersion, err = BuildTiDBXReleaseVersion("v26.3.0-xxx")
+	require.NoError(t, err)
+	require.Equal(t, "TiDB-X-CLOUD.202603.0-xxx", tidbXVersion)
+
+	serverVersion, err := BuildTiDBXServerVersion("v26.3.0")
+	require.NoError(t, err)
+	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", serverVersion)
+
+	serverVersion, err = BuildTiDBXServerVersion("v26.3.0-xxx")
+	require.NoError(t, err)
+	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0-xxx", serverVersion)
+
+	for _, ver := range []string{"26.1.1", "v26xxxx", "v24.1.1", "v26.0.1", "v26.13.1"} {
+		_, err = BuildTiDBXReleaseVersion(ver)
+		require.ErrorContains(t, err, "invalid TiDB release version")
+	}
+}
+
+func TestNormalizeTiDBReleaseVersionForNextGen(t *testing.T) {
+	require.Equal(t, tidbXPlaceholderReleaseVersion, NormalizeTiDBReleaseVersionForNextGen(legacyTiDBReleaseVersionPlaceholder))
+	require.Equal(t, "v26.3.0", NormalizeTiDBReleaseVersionForNextGen("v26.3.0"))
+}

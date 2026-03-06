@@ -17,7 +17,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
@@ -393,9 +395,35 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select version()` or `select tidb_version()` result for nextgen
+	tidbXVersionRegex = regexp.MustCompile(`TiDB-X-CLOUD\.(\d{4})(\d{2})\.(\d+)`)
 	// `select tidb_version()` result with full release version
-	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|TiDB-X-CLOUD\.\d{6}\.\d+)`)
 )
+
+func parseTiDBXVersionToSemver(versionStr string) string {
+	// NextGen exposes release version as TiDB-X-CLOUD.<YYYYMM>.<patch>[-<pre-release>].
+	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
+	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
+	// BR version checks can keep working on semver-like values.
+	match := tidbXVersionRegex.FindStringSubmatch(versionStr)
+	if len(match) != 4 {
+		return ""
+	}
+	year, err := strconv.Atoi(match[1])
+	if err != nil || year < mysql.TiDBXVerMinYear || year > mysql.TiDBXVerMaxYear {
+		return ""
+	}
+	month, err := strconv.Atoi(match[2])
+	if err != nil || month < 1 || month > 12 {
+		return ""
+	}
+	patch, err := strconv.Atoi(match[3])
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d", year-2000, month, patch)
+}
 
 // ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
@@ -419,11 +447,15 @@ func ParseServerInfo(src string) ServerInfo {
 
 	var versionStr string
 	if serverInfo.ServerType == ServerTypeTiDB {
-		if isReleaseVersion {
-			versionStr = tidbReleaseVersionRegex.FindString(src)
+		if kerneltype.IsNextGen() {
+			versionStr = parseTiDBXVersionToSemver(src)
 		} else {
-			versionStr = tidbVersionRegex.FindString(src)
-			versionStr = strings.TrimPrefix(versionStr, "-")
+			if isReleaseVersion {
+				versionStr = tidbReleaseVersionRegex.FindString(src)
+			} else {
+				versionStr = tidbVersionRegex.FindString(src)
+				versionStr = strings.TrimPrefix(versionStr, "-")
+			}
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {
