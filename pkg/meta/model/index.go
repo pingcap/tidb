@@ -262,7 +262,7 @@ type IndexInfo struct {
 	// 0=legacy, or unique with all NOT NULL columns, or clustered.
 	// 1=v1 with partition ID in key and value.
 	// 2=v2 with partition ID in key only (TODO).
-	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
+	GlobalIndexVersion uint8              `json:"global_index_version,omitempty"`
 	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
 
