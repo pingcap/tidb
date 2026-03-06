@@ -611,3 +611,63 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	schemaTS8 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.True(t, schemaTS8 < schemaTS7 && schemaTS8 > schemaTS2)
 }
+
+func TestGCOldVersionPivotDeletedLeadsToTableNotExists(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ok, _ := infoschema.IsV2(dom.InfoSchema())
+	require.True(t, ok)
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("create table bump (id int)") // Bump schema version so cutVer is between CREATE and ALTER.
+	tkTxn := testkit.NewTestKit(t, store)
+	tkTxn.MustExec("use test")
+	tkTxn.MustExec("prepare s from 'select id from t'")
+	tkTxn.MustExec("begin") // Start txn before DDL; don't touch `t` or MDL may block the DDL job.
+	defer tkTxn.MustExec("rollback")
+	cutVer := tkTxn.Session().GetInfoSchema().SchemaMetaVersion()
+	tk.MustExec("alter table t add column d int")
+	dom.InfoCache().Data.GCOldVersion(cutVer)
+	tkTxn.MustExec("execute s")
+}
+
+func TestGCOldVersionPivotDeletedLeadsToTableNotExistsNormalSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ok, _ := infoschema.IsV2(dom.InfoSchema())
+	require.True(t, ok)
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("create table bump (id int)") // Bump schema version so cutVer is between CREATE and ALTER.
+	tkTxn := testkit.NewTestKit(t, store)
+	tkTxn.MustExec("use test")
+	tkTxn.MustExec("begin") // Start txn before DDL; don't touch `t` or MDL may block the DDL job.
+	defer tkTxn.MustExec("rollback")
+	cutVer := tkTxn.Session().GetInfoSchema().SchemaMetaVersion()
+	tk.MustExec("alter table t add column d int")
+	dom.InfoCache().Data.GCOldVersion(cutVer)
+	tkTxn.MustExec("select id from t")
+}
+
+func TestGCOldVersionPivotDeletedLeadsToReferredFKMissing(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("use test")
+	ok, _ := infoschema.IsV2(dom.InfoSchema())
+	require.True(t, ok)
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child1 (pid int, foreign key fk1(pid) references parent(id))")
+	tk.MustExec("create table bump (id int)") // Bump schema version so cutVer is between CREATE and next FK change.
+	tkTxn := testkit.NewTestKit(t, store)
+	tkTxn.MustExec("use test")
+	tkTxn.MustExec("begin") // Start txn before DDL; don't touch `parent` or MDL may block the DDL job.
+	defer tkTxn.MustExec("rollback")
+	cutVer := tkTxn.Session().GetInfoSchema().SchemaMetaVersion()
+	tk.MustExec("create table child2 (pid int, foreign key fk2(pid) references parent(id))")
+	require.Len(t, dom.InfoSchema().GetTableReferredForeignKeys("test", "parent"), 2)
+	dom.InfoCache().Data.GCOldVersion(cutVer)
+	ref := tkTxn.Session().GetInfoSchema().GetTableReferredForeignKeys("test", "parent")
+	require.Len(t, ref, 1)
+	require.Equal(t, "child1", ref[0].ChildTable.L)
+}

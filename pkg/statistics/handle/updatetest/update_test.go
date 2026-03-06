@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -43,13 +42,10 @@ import (
 )
 
 func TestSingleSessionInsert(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("set @@session.tidb_analyze_version = 2")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 
@@ -130,7 +126,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(0), stats1.RealtimeCount)
 
-	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
+	rs := testKit.MustQuery("select modify_count from mysql.stats_meta").Sort()
 	rs.Check(testkit.Rows("40", "70"))
 
 	rs = testKit.MustQuery("select tot_col_size from mysql.stats_histograms").Sort()
@@ -759,7 +755,7 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
 
-	tk.MustExec(`set global tidb_analyze_version=1`)
+	tk.MustExec(`set global tidb_analyze_version=2`)
 	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
 	tk.MustExec(`set global tidb_enable_historical_stats=1`)
 	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
@@ -770,7 +766,7 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, string(variable.Static), pruneMode)
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
 	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
@@ -1112,13 +1108,10 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 }
 
 func TestStatsLockForDelta(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("set @@session.tidb_analyze_version = 2")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 

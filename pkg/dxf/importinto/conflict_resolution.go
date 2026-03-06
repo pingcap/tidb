@@ -139,7 +139,7 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
 	for i := range concurrency {
 		encoder := encoders[i]
-		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder)
+		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())
 		eg.Go(func() error {
 			return deleter.Run(egCtx, pairCh)
 		})

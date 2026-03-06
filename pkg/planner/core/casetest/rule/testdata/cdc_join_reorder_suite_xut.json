@@ -1214,15 +1214,15 @@
           "└─Selection root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
           "  └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t3.id, right key:test.t4.id",
           "    ├─TableReader(Build) root  data:TableFullScan",
-          "    │ └─TableFullScan cop[tikv] table:t4 keep order:true, stats:pseudo",
+          "    │ └─TableFullScan cop[tikv] table:t4 keep order:true",
           "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t3.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo",
+          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true",
           "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
           "        ├─TableReader(Build) root  data:TableFullScan",
-          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true",
           "        └─TableReader(Probe) root  data:TableFullScan",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
         ]
       },
       {
@@ -1231,15 +1231,15 @@
           "Projection root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
           "└─MergeJoin root  inner join, left key:test.t1.id, right key:test.t2.id",
           "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  │ └─TableFullScan cop[tikv] table:t2 keep order:true",
           "  └─MergeJoin(Probe) root  inner join, left key:test.t3.id, right key:test.t1.id, other cond:or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
           "    ├─TableReader(Build) root  data:TableFullScan",
-          "    │ └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:true",
           "    └─MergeJoin(Probe) root  left outer join, left side:TableReader, left key:test.t3.id, right key:test.t4.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t4 keep order:true, stats:pseudo",
+          "      │ └─TableFullScan cop[tikv] table:t4 keep order:true",
           "      └─TableReader(Probe) root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo"
+          "        └─TableFullScan cop[tikv] table:t3 keep order:true"
         ]
       },
       {
@@ -1249,36 +1249,36 @@
           "└─Selection root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
           "  └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
           "    ├─TableReader(Build) root  data:TableFullScan",
-          "    │ └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo",
+          "    │ └─TableFullScan cop[tikv] table:t3 keep order:true",
           "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "      │ └─TableFullScan cop[tikv] table:t2 keep order:true",
           "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t4.id",
           "        ├─TableReader(Build) root  data:TableFullScan",
-          "        │ └─TableFullScan cop[tikv] table:t4 keep order:true, stats:pseudo",
+          "        │ └─TableFullScan cop[tikv] table:t4 keep order:true",
           "        └─TableReader(Probe) root  data:TableFullScan",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where exists (select 1 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id)",
         "Plan": [
-          "HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.id, test.t2.id)]",
-          "├─TableReader(Build) root  data:TableFullScan",
-          "│ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─Projection(Probe) root  test.t2.id",
-          "  └─Selection root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
-          "    └─HashJoin root  left outer join, left side:MergeJoin, equal:[eq(test.t3.id, test.t4.id)]",
-          "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "      └─MergeJoin(Probe) root  inner join, left key:test.t2.id, right key:test.t5.id",
-          "        ├─TableReader(Build) root  data:TableFullScan",
-          "        │ └─TableFullScan cop[tikv] table:t5 keep order:true, stats:pseudo",
-          "        └─MergeJoin(Probe) root  inner join, left key:test.t2.id, right key:test.t3.id",
-          "          ├─TableReader(Build) root  data:TableFullScan",
-          "          │ └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo",
-          "          └─TableReader(Probe) root  data:TableFullScan",
-          "            └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo"
+          "MergeJoin root  semi join, left side:TableReader, left key:test.t1.id, right key:test.t2.id",
+          "├─Projection(Build) root  test.t2.id",
+          "│ └─Selection root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
+          "│   └─IndexJoin root  left outer join, inner:TableReader, left side:MergeJoin, outer key:test.t3.id, inner key:test.t4.id, equal cond:eq(test.t3.id, test.t4.id)",
+          "│     ├─MergeJoin(Build) root  inner join, left key:test.t2.id, right key:test.t5.id",
+          "│     │ ├─TableReader(Build) root  data:TableFullScan",
+          "│     │ │ └─TableFullScan cop[tikv] table:t5 keep order:true",
+          "│     │ └─MergeJoin(Probe) root  inner join, left key:test.t2.id, right key:test.t3.id",
+          "│     │   ├─TableReader(Build) root  data:TableFullScan",
+          "│     │   │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "│     │   └─TableReader(Probe) root  data:TableFullScan",
+          "│     │     └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "│     └─TableReader(Probe) root  data:TableRangeScan",
+          "│       └─TableRangeScan cop[tikv] table:t4 range: decided by [test.t3.id], keep order:false",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:true"
         ]
       },
       {
@@ -1287,16 +1287,16 @@
           "Projection root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
           "└─HashJoin root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
           "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  │ └─TableFullScan cop[tikv] table:t4 keep order:false",
           "  └─Selection(Probe) root  or(like(test.t2.name, \"test2\", 92), or(like(test.t3.name, \"test3\", 92), lt(rand(), 0.5)))",
           "    └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo",
+          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true",
           "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
           "        ├─TableReader(Build) root  data:TableFullScan",
-          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true",
           "        └─TableReader(Probe) root  data:TableFullScan",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
         ]
       },
       {
@@ -1305,16 +1305,16 @@
           "Projection root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
           "└─HashJoin root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
           "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  │ └─TableFullScan cop[tikv] table:t4 keep order:false",
           "  └─Selection(Probe) root  or(like(test.t2.name, \"test2\", 92), or(like(test.t3.name, \"test3\", 92), eq(sleep(0), 0)))",
           "    └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo",
+          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true",
           "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
           "        ├─TableReader(Build) root  data:TableFullScan",
-          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true",
           "        └─TableReader(Probe) root  data:TableFullScan",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
         ]
       },
       {
@@ -1324,18 +1324,18 @@
           "└─Selection root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
           "  └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
           "    ├─TableReader(Build) root  data:TableFullScan",
-          "    │ └─TableFullScan cop[tikv] table:t3 keep order:true, stats:pseudo",
+          "    │ └─TableFullScan cop[tikv] table:t3 keep order:true",
           "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
-          "      │ └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "      │ └─TableFullScan cop[tikv] table:t2 keep order:true",
           "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t4.id",
           "        ├─TableReader(Build) root  data:TableFullScan",
-          "        │ └─TableFullScan cop[tikv] table:t4 keep order:true, stats:pseudo",
+          "        │ └─TableFullScan cop[tikv] table:t4 keep order:true",
           "        └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t5.id",
           "          ├─TableReader(Build) root  data:TableFullScan",
-          "          │ └─TableFullScan cop[tikv] table:t5 keep order:true, stats:pseudo",
+          "          │ └─TableFullScan cop[tikv] table:t5 keep order:true",
           "          └─TableReader(Probe) root  data:TableFullScan",
-          "            └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "            └─TableFullScan cop[tikv] table:t1 keep order:true"
         ]
       }
     ]
