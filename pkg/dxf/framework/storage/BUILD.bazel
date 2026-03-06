@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "converter.go",
         "history.go",
+        "import_into_history.go",
         "nodes.go",
         "subtask_state.go",
         "task_state.go",
@@ -49,7 +50,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         "//pkg/config",
         "//pkg/dxf/framework/proto",

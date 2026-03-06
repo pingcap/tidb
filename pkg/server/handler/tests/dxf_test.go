@@ -189,9 +189,9 @@ func TestDXFAPI(t *testing.T) {
 		require.Equal(t, 2, out.IndexCount)
 		require.Equal(t, 3, out.ColumnCount)
 		require.EqualValues(t, 1024, out.RowCount)
-		require.Equal(t, "00:40:00", out.Duration.Total)
-		require.Equal(t, "00:10:00", out.Duration.Encode)
-		require.Equal(t, "00:30:00", out.Duration.Ingest)
+		require.Equal(t, "40m0s", out.Duration.Total)
+		require.Equal(t, "10m0s", out.Duration.Encode)
+		require.Equal(t, "30m0s", out.Duration.Ingest)
 	})
 
 	t.Run("task max_runtime_slots api", func(t *testing.T) {
