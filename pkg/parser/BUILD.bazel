@@ -30,6 +30,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/parser/tidb",
         "//pkg/parser/types",
+        "//pkg/parser/util",
         "@com_github_pingcap_errors//:errors",
     ],
 )
