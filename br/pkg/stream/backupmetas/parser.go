@@ -26,7 +26,9 @@ const (
 	legacyBackupMetaPartCount = 4
 	taggedMetaTagValueLen     = 17
 
-	// NameMinBeginTsInDefaultCfTag is the tag byte for the min begin ts of the default CF in the tagged file name format: <32-hex-flush-and-store-id>-<tag><16-hex-value>...
+	// tagged file name format: <32-hex-flush-and-store-id>-[<tag><16-hex-value>]*...
+	// below are tags definition.
+
 	NameMinBeginTsInDefaultCfTag byte = 'd'
 	NameMinTSTag                 byte = 'l'
 	NameMaxTSTag                 byte = 'u'
