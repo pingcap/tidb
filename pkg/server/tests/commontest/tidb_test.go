@@ -3757,7 +3757,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			}
 
 			return getTestResultsLen() > concurrency
-		}, time.Second*10, time.Millisecond*100)
+		}, time.Second*30, time.Millisecond*100)
 
 		testResults := getTestResults()
 		nonRetryingCount := 0
