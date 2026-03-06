@@ -135,7 +135,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			emptyOrgName = true
 		}
 		rf := &resolve.ResultField{
-			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
+			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType, Encryption: schema.Columns[i].Encryption},
 			ColumnAsName: names[i].ColName,
 			EmptyOrgName: emptyOrgName,
 			Table:        &model.TableInfo{Name: names[i].OrigTblName},

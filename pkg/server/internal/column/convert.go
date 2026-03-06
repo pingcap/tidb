@@ -33,6 +33,7 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 		Type:         fld.Column.GetType(),
 		SubType:      fld.Column.FieldType.GetSubType(),
 		DefaultValue: fld.Column.GetDefaultValue(),
+		Encryption:   fld.Column.Encryption,
 	}
 
 	if fld.EmptyOrgName {

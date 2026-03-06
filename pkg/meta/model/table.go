@@ -194,6 +194,8 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	Encryption bool `json:"encryption"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.

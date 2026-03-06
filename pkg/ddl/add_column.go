@@ -570,6 +570,12 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 					}
 					constraints = append(constraints, constraint)
 				}
+			case ast.ColumnOptionEncryption:
+				enableEncryption := strings.ToUpper(v.StrValue) == "Y"
+				if enableEncryption && !variable.EnableEAL.Load() {
+					return nil, nil, errEALIsOff
+				}
+				col.Encryption = enableEncryption
 			}
 		}
 	}

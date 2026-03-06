@@ -912,6 +912,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionEncryption:
+			enableEncryption := strings.ToUpper(op.StrValue) == "Y"
+			if enableEncryption && !variable.EnableEAL.Load() {
+				return errEALIsOff
+			}
+			tbInfo.Encryption = enableEncryption
 		}
 	}
 	shardingBits := shardingBits(tbInfo)

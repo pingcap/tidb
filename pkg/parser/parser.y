@@ -717,8 +717,8 @@ import (
 	withSysTable          "WITH_SYS_TABLE"
 	workload              "WORKLOAD"
 	x509                  "X509"
-	yearType              "YEAR"
 	xml                   "XML"
+	yearType              "YEAR"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -3827,6 +3827,10 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"ENCRYPTION" EqOpt EncryptionOpt
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionEncryption, StrValue: $3}
 	}
 
 AutoRandomOpt:

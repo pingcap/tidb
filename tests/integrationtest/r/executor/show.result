@@ -628,6 +628,7 @@ charset
 coalesce
 coercibility
 collation
+column_decryption
 compress
 concat
 concat_ws

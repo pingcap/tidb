@@ -1143,11 +1143,13 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	if cc, ok := expr.(*expression.CorrelatedColumn); ok {
 		correlatedColUniqueID = cc.UniqueID
 	}
+	encryption := containsEncryptedColumn(expr)
 	// for expr projection, we should record the map relationship <hashcode, uniqueID> down.
 	newCol := &expression.Column{
 		UniqueID:              b.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:               expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 		CorrelatedColUniqueID: correlatedColUniqueID,
+		Encryption:            encryption,
 	}
 	if b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
 		if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
@@ -1157,6 +1159,25 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	}
 	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
+}
+
+// containsEncryptedColumn recursively checks if any column in the expression tree is marked as encrypted.
+// If the expression contains a column_decryption function, that subtree is treated as already decrypted.
+func containsEncryptedColumn(expr expression.Expression) bool {
+	switch e := expr.(type) {
+	case *expression.Column:
+		return e.Encryption
+	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.ColumnDecryption {
+			return false
+		}
+		for _, arg := range e.GetArgs() {
+			if containsEncryptedColumn(arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type userVarTypeProcessor struct {
@@ -4716,11 +4737,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
-			UniqueID: sessionVars.AllocPlanColumnID(),
-			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
-			OrigName: names[i].String(),
-			IsHidden: col.Hidden,
+			UniqueID:   sessionVars.AllocPlanColumnID(),
+			ID:         col.ID,
+			RetType:    col.FieldType.Clone(),
+			OrigName:   names[i].String(),
+			IsHidden:   col.Hidden,
+			Encryption: col.Encryption,
 		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)

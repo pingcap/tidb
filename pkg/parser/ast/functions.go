@@ -272,6 +272,7 @@ const (
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
 	DataOperationAudit   = "data_operation_audit"
+	ColumnDecryption     = "column_decryption"
 
 	// control functions
 	If     = "if"
