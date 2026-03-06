@@ -28,9 +28,10 @@ This file provides guidance to agents working in this repository.
 | RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
- Before finishing | MUST run `make lint` if there are code changes. SHOULD self-review diff quality before finishing. |
+| Before finishing | MUST run `make lint` if there are code changes. SHOULD self-review diff quality before finishing. |
+| Creating issues or PRs | Follow `.agents/skills/github-workflow/SKILL.md`. |
 
-### Skills
+## Skills
 
 - Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
 - Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
@@ -148,7 +149,6 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 - Use explicit placeholders such as `<package_name>`, `<TestName>`, and `<dir>`.
 - Documentation updates SHOULD keep terminology, policy wording, and command conventions consistent across related docs.
 - Keep guidance executable and concrete; avoid ambiguous phrasing.
-- Issues and PRs MUST be written in English (title and description).
 
 ## Issue and PR Rules
 
