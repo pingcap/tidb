@@ -5,14 +5,17 @@ go_library(
     srcs = [
         "aggregator.go",
         "kv_exec_count.go",
+        "rustats.go",
         "stmtstats.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/topsql/stmtstats",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util/topsql/reporter/metrics",
         "//pkg/util/topsql/state",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -28,13 +31,14 @@ go_test(
     ],
     embed = [":stmtstats"],
     flaky = True,
-    shard_count = 12,
+    shard_count = 28,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/topsql/state",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],

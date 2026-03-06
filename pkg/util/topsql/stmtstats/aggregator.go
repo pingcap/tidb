@@ -19,11 +19,16 @@ import (
 	"sync"
 	"time"
 
+	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/pingcap/tidb/pkg/util/topsql/state"
 	"go.uber.org/atomic"
 )
 
 const maxStmtStatsSize = 1000000
+
+// maxRUKeysPerAggregate is the hard cap on distinct RU keys per aggregation cycle.
+// Excess keys are dropped early to protect hot paths.
+const maxRUKeysPerAggregate = 10000
 
 // globalAggregator is global *aggregator.
 var globalAggregator = newAggregator()
@@ -32,13 +37,14 @@ var globalAggregator = newAggregator()
 // It is responsible for collecting data from all StatementStats, aggregating
 // them together, uploading them and regularly cleaning up the closed StatementStats.
 type aggregator struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	running    *atomic.Bool
-	statsSet   sync.Map // map[*StatementStats]struct{}
-	collectors sync.Map // map[Collector]struct{}
-	wg         sync.WaitGroup
-	statsLen   atomic.Uint32
+	ctx          context.Context
+	cancel       context.CancelFunc
+	running      *atomic.Bool
+	statsSet     sync.Map // map[*StatementStats]struct{}
+	collectors   sync.Map // map[Collector]struct{}
+	ruCollectors sync.Map // map[RUCollector]struct{}
+	wg           sync.WaitGroup
+	statsLen     atomic.Uint32
 }
 
 // newAggregator creates an empty aggregator.
@@ -68,14 +74,23 @@ func (m *aggregator) run() {
 		case <-m.ctx.Done():
 			return
 		case <-tick.C:
-			m.aggregate()
+			m.aggregateAll()
 		}
 	}
 }
 
-// aggregate data from all associated StatementStats.
-// If StatementStats has been closed, collect will remove it from the map.
-func (m *aggregator) aggregate() {
+// aggregateAll performs a single tick of data collection. It calls drainAndPushRU
+// first, then drainAndPushStmtStats. The ordering matters: RU must be drained
+// before stmt stats to avoid losing RU deltas from sessions that become Finished()
+// and get unregistered during the stmt stats phase.
+func (m *aggregator) aggregateAll() {
+	m.drainAndPushRU()
+	m.drainAndPushStmtStats()
+}
+
+// drainAndPushStmtStats collects TopSQL data (CPU + stmt stats) from all
+// associated StatementStats. Finished sessions are unregistered here.
+func (m *aggregator) drainAndPushStmtStats() {
 	total := StatementStatsMap{}
 	m.statsSet.Range(func(statsR, _ any) bool {
 		stats := statsR.(*StatementStats)
@@ -85,10 +100,46 @@ func (m *aggregator) aggregate() {
 		total.Merge(stats.Take())
 		return true
 	})
-	// If TopSQL is not enabled, just drop them.
 	if len(total) > 0 && state.TopSQLEnabled() {
 		m.collectors.Range(func(c, _ any) bool {
 			c.(Collector).CollectStmtStatsMap(total)
+			return true
+		})
+	}
+}
+
+// drainAndPushRU drains RU increments from all sessions, applies key caps, and
+// pushes merged data to RUCollectors when TopRU is enabled.
+func (m *aggregator) drainAndPushRU() {
+	total := make(RUIncrementMap, maxRUKeysPerAggregate)
+	var droppedKeys int64
+	var droppedRU float64
+	m.statsSet.Range(func(statsAny, _ any) bool {
+		stats := statsAny.(*StatementStats)
+		sessionRU := stats.MergeRUInto()
+		for key, incr := range sessionRU {
+			if existing, ok := total[key]; ok {
+				existing.Merge(incr)
+				continue
+			}
+			if len(total) >= maxRUKeysPerAggregate {
+				droppedKeys++
+				droppedRU += incr.TotalRU
+			} else {
+				total[key] = incr
+			}
+		}
+		return true
+	})
+
+	if droppedKeys > 0 {
+		reporter_metrics.IgnoreExceedRUKeysCounter.Add(float64(droppedKeys))
+		reporter_metrics.IgnoreExceedRUTotalCounter.Add(droppedRU)
+	}
+
+	if state.TopRUEnabled() && len(total) > 0 {
+		m.ruCollectors.Range(func(c, _ any) bool {
+			c.(RUCollector).CollectRUIncrements(total)
 			return true
 		})
 	}
@@ -121,6 +172,18 @@ func (m *aggregator) registerCollector(collector Collector) {
 // unregisterCollector is thread-safe.
 func (m *aggregator) unregisterCollector(collector Collector) {
 	m.collectors.Delete(collector)
+}
+
+// registerRUCollector binds an RUCollector to aggregator.
+// registerRUCollector is thread-safe.
+func (m *aggregator) registerRUCollector(collector RUCollector) {
+	m.ruCollectors.Store(collector, struct{}{})
+}
+
+// unregisterRUCollector removes RUCollector from aggregator.
+// unregisterRUCollector is thread-safe.
+func (m *aggregator) unregisterRUCollector(collector RUCollector) {
+	m.ruCollectors.Delete(collector)
 }
 
 // close ends the execution of the current aggregator.
@@ -168,4 +231,12 @@ func UnregisterCollector(collector Collector) {
 type Collector interface {
 	// CollectStmtStatsMap is used to collect StatementStatsMap.
 	CollectStmtStatsMap(StatementStatsMap)
+}
+
+// RUCollector collects RU increments for the TopRU pipeline.
+// It is separate from Collector to keep TopSQL and TopRU decoupled.
+type RUCollector interface {
+	// CollectRUIncrements is called by aggregator every 1s with merged RU deltas
+	// from all sessions, aggregated by (user, sql_digest, plan_digest).
+	CollectRUIncrements(RUIncrementMap)
 }
