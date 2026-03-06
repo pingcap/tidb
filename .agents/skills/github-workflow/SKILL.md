@@ -7,6 +7,7 @@ description: Guidelines for creating GitHub issues and PRs in the TiDB repositor
 
 ## Issue Rules
 
+- Issues MUST be written in English (title and body).
 - Follow templates under `.github/ISSUE_TEMPLATE/` and fill all required fields.
 - Bug reports should include minimal reproduction, expected/actual behavior, and TiDB version (for example `SELECT tidb_version()` output).
 - Search existing issues/PRs first (for example `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), then add relevant logs/configuration/SQL plans.
@@ -18,6 +19,7 @@ description: Guidelines for creating GitHub issues and PRs in the TiDB repositor
 
 ## PR Requirements
 
+- PR title and description MUST be written in English.
 - PR title MUST use one of:
   - `pkg [, pkg2, pkg3]: what is changed`
   - `*: what is changed`
