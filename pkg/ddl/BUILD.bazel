@@ -349,6 +349,7 @@ go_test(
         "//pkg/meta/metabuild",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
