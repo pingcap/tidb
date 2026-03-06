@@ -243,5 +243,17 @@
       // Mixed columns: a for one edge, b for another.
       "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.b = t3.b ORDER BY t1.a"
     ]
+  },
+  {
+    "name": "TestJoinReorderPushSelection",
+    "cases": [
+      "explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
+      "explain format = 'plan_tree' select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
+      "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub inner join t4 on sub.id=t4.id",
+      "explain format = 'plan_tree' select * from t1 where exists (select 1 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id)",
+      "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub inner join t4 on sub.id=t4.id",
+      "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub inner join t4 on sub.id=t4.id",
+      "explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1 inner join t4 on sub1.id=t4.id) sub2 inner join t5 on sub2.id=t5.id"
+    ]
   }
 ]

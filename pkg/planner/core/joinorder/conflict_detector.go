@@ -116,13 +116,15 @@ type edge struct {
 	idx      uint64
 	joinType base.JoinType
 	eqConds  []*expression.ScalarFunction
-	// nonEQConds holds otherCond, leftCond, or rightCond — anything that is not
-	// an equi-join predicate.
+	// nonEQConds are used in two situations:
+	// 1. store all non-eq conds for LogicalJoin, like otherCond, leftCond, or rightCond.
+	// 2. store selection conditions for LogicalSelection-derived edge, which are looked through during buildRecursive.
 	nonEQConds expression.CNFExprs
 
 	// TES is the Total Eligibility Set: the set of base relations that must be
 	// present in the candidate subgraph for this edge to be applicable.
 	// For now, TES is totally same with SES, check the TODO in makeEdge().
+	// Note: didn't use pointer for TES because FastIntSet is relatively small and copying it is cheap.
 	tes intset.FastIntSet
 	// rules are conflict rules {from → to} derived during Build. They encode
 	// reordering constraints imposed by non-assoc/l-asscom/r-asscom join-type combinations.
@@ -245,7 +247,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		}
 	}
 
-	if _, _, err := d.buildRecursive(group.root, vertexMap); err != nil {
+	if _, _, err := d.buildRecursive(group, group.root, vertexMap); err != nil {
 		return nil, err
 	}
 	return d.groupVertexes, nil
@@ -257,10 +259,32 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 //  3. Returns the accumulated edges and the union of all vertex sets seen so far.
 //
 // The returned edges list is used by parent calls to generate conflict rules.
-func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
+func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil
+	}
+
+	// Look through Selection nodes that were kept in the original tree
+	// (e.g., Selection between two joins in a nested case).
+	if sel, ok := p.(*logicalop.LogicalSelection); ok {
+		childEdges, childVertexes, err := d.buildRecursive(group, sel.Children()[0], vertexMap)
+		if err != nil {
+			return nil, intset.FastIntSet{}, err
+		}
+		selID := sel.ID()
+		conds, ok := group.selConds[selID]
+		if !ok {
+			return nil, intset.FastIntSet{}, errors.Errorf("unexpected Selection node (ID: %d) found in buildRecursive", selID)
+		}
+		// Create a Selection edge for filter conditions collected from Selection
+		// operators that were looked through during extractJoinGroup.
+		// Selection-derived edge doesn't have child-edges and child-vertexes,
+		// because no need to generate ConflictRule for this edge.
+		// But its TES is its all children vertexes for correctness.
+		selEdge := d.makeEdgeInternal(base.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
+		selEdge.nonEQConds = conds
+		return append(childEdges, selEdge), childVertexes, nil
 	}
 
 	var curVertexes intset.FastIntSet
@@ -270,11 +294,11 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]
 		return nil, intset.FastIntSet{}, errors.New("unexpected plan type in conflict detector")
 	}
 
-	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexMap)
+	leftEdges, leftVertexes, err := d.buildRecursive(group, joinop.Children()[0], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
-	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexMap)
+	rightEdges, rightVertexes, err := d.buildRecursive(group, joinop.Children()[1], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
@@ -367,6 +391,13 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 
 // makeEdge basically implements the pseudocode for CD-C in paper(Figure-11).
 func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
+	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
+	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
+	tes := d.calcSES(conds)
+	return d.makeEdgeInternal(joinType, leftVertexes, rightVertexes, leftEdges, rightEdges, tes)
+}
+
+func (d *ConflictDetector) makeEdgeInternal(joinType base.JoinType, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge, tes intset.FastIntSet) *edge {
 	e := &edge{
 		// Each new edge is appended to either d.innerEdges or d.nonInnerEdges
 		// (see below), so their combined length before the append is the next
@@ -378,11 +409,8 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		leftEdges:     leftEdges,
 		rightEdges:    rightEdges,
 		skipRules:     d.allInnerJoin,
+		tes:           tes.Copy(),
 	}
-
-	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
-	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
-	e.tes = d.calcSES(conds)
 
 	// The following corresponds to the secion 6.2 in the paper(Cross Products and Degenerate Predicates).
 	// For degenerate predicates (only one side referenced), force TES to include
