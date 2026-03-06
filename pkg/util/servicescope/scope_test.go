@@ -38,13 +38,13 @@ func runConcurrentTest(b *testing.B, limiter interface {
 	startCh := make(chan struct{})
 
 	cnt := b.N / goroutines
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
 			<-startCh
-			for i := 0; i < cnt; i++ {
+			for range cnt {
 				limiter.Allow()
 			}
 		}()
