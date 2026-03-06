@@ -617,17 +617,18 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 ) ([][]kv.KeyRange, error) {
 	results := make([][]kv.KeyRange, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
+		curRanges := ranges
 		if pRange, ok := rangeOverrideForPartitionID[physicalID]; ok {
-			ranges = pRange
+			curRanges = pRange
 		}
 		if indexID == -1 {
-			rRanges, err := distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
+			rRanges, err := distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, curRanges)
 			if err != nil {
 				return nil, err
 			}
 			results = append(results, rRanges.FirstPartitionRange())
 		} else {
-			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil)
+			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, curRanges, memTracker, nil)
 			if err != nil {
 				return nil, err
 			}
