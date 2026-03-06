@@ -189,6 +189,10 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.RefreshMaterializedView:
 		return b.buildRefreshMaterializedView(v)
+	case *plannercore.DryRunRefreshMaterializedView:
+		return b.buildDryRunRefreshMaterializedView(v)
+	case *plannercore.ProfileRefreshMaterializedView:
+		return b.buildProfileRefreshMaterializedView(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.MVDeltaMerge:
@@ -1357,6 +1361,22 @@ func (b *executorBuilder) buildRefreshMaterializedView(v *plannercore.RefreshMat
 		stmt:         v.Statement,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildDryRunRefreshMaterializedView(v *plannercore.DryRunRefreshMaterializedView) exec.Executor {
+	return &RefreshMaterializedViewDryRunExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+		is:           b.is,
+	}
+}
+
+func (b *executorBuilder) buildProfileRefreshMaterializedView(v *plannercore.ProfileRefreshMaterializedView) exec.Executor {
+	return &RefreshMaterializedViewProfileExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+		is:           b.is,
+	}
 }
 
 func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMaterializedViewLog) exec.Executor {

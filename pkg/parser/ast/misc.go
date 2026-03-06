@@ -516,6 +516,7 @@ type RefreshMaterializedViewStmt struct {
 	ViewName     *TableName
 	WithSyncMode bool
 	Type         RefreshMaterializedViewType
+	ObserveType  RefreshMaterializedViewObserveType
 }
 
 // RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
@@ -582,6 +583,14 @@ func (t RefreshMaterializedViewType) String() string {
 	}
 }
 
+type RefreshMaterializedViewObserveType int
+
+const (
+	RefreshMaterializedViewObserveNone RefreshMaterializedViewObserveType = iota
+	RefreshMaterializedViewObserveDryRun
+	RefreshMaterializedViewObserveProfile
+)
+
 // Restore implements Node interface.
 func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
@@ -593,6 +602,12 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
+	switch n.ObserveType {
+	case RefreshMaterializedViewObserveDryRun:
+		ctx.WriteKeyWord(" DRY RUN")
+	case RefreshMaterializedViewObserveProfile:
+		ctx.WriteKeyWord(" WITH PROFILE")
+	}
 	return nil
 }
 

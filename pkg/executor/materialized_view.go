@@ -51,8 +51,10 @@ import (
 // RefreshMaterializedViewExec executes "REFRESH MATERIALIZED VIEW" as a utility-style statement.
 type RefreshMaterializedViewExec struct {
 	exec.BaseExecutor
-	stmt *ast.RefreshMaterializedViewStmt
-	done bool
+	stmt                     *ast.RefreshMaterializedViewStmt
+	stepObserver             mvRefreshStepObserver
+	planFormatForObserver    string
+	done                     bool
 }
 
 var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")
@@ -771,6 +773,49 @@ func finalizeMLogPurgeHistWithRetry(
 	return errors.Annotatef(retryErr, "first finalize attempt failed: %v", firstErr)
 }
 
+func observeMVRefreshStep(
+	observer mvRefreshStepObserver,
+	step mvRefreshObserveStep,
+	fn func() error,
+) error {
+	if observer == nil {
+		return fn()
+	}
+	startAt := time.Now()
+	observer.OnStepStart(step, startAt)
+	err := fn()
+	observer.OnStepEnd(step, time.Now(), err)
+	return err
+}
+
+func emitMVRefreshStepPlanRows(
+	observer mvRefreshStepObserver,
+	step mvRefreshObserveStep,
+	sessVars *variable.SessionVars,
+	format string,
+) {
+	if observer == nil || sessVars == nil || sessVars.StmtCtx == nil {
+		return
+	}
+	targetPlanAny := sessVars.StmtCtx.GetPlan()
+	targetPlan, ok := targetPlanAny.(plannercorebase.Plan)
+	if !ok || targetPlan == nil {
+		return
+	}
+
+	explain := &plannercore.Explain{
+		TargetPlan:       targetPlan,
+		Format:           format,
+		Analyze:          true,
+		RuntimeStatsColl: sessVars.StmtCtx.RuntimeStatsColl,
+	}
+	explain.SetSCtx(targetPlan.SCtx())
+	if err := explain.RenderResult(); err != nil {
+		return
+	}
+	observer.OnStepPlanRows(step, clonePlanRows(explain.Rows))
+}
+
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) (err error) {
 	const slowRefreshThreshold = 5 * time.Second
 	refreshStart := time.Now()
@@ -816,6 +861,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}()
 
 	refreshMethod, err := validateRefreshMaterializedViewStmt(s, isInternalSQL)
+	if err != nil {
+		return err
+	}
+	stepSet, err := newMVRefreshStepSet(s.Type)
 	if err != nil {
 		return err
 	}
@@ -877,20 +926,30 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	// Use a pessimistic txn to ensure `FOR UPDATE NOWAIT` works as a mutex.
 	txnCommitStart = time.Now()
-	if _, err := sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
-		return errors.Trace(err)
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.txnBegin, func() error {
+		if _, err := sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
+			return errors.Trace(err)
+		}
+		txnStarted = true
+		txnCommitTimerStarted = true
+		return nil
+	}); err != nil {
+		return err
 	}
-	txnStarted = true
-	txnCommitTimerStarted = true
 
 	failpoint.InjectCall("refreshMaterializedViewAfterBegin")
 	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
 
 	mviewID = tblInfo.ID
-	lockRefreshInfoRowStart := time.Now()
-	lockedReadTSO, lockedReadTSONull, err := lockRefreshInfoRow(kctx, sqlExec, mviewID)
-	lockRefreshInfoRowDur = time.Since(lockRefreshInfoRowStart)
-	if err != nil {
+	var lockedReadTSO uint64
+	var lockedReadTSONull bool
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.lockRefreshInfo, func() error {
+		lockRefreshInfoRowStart := time.Now()
+		var lockErr error
+		lockedReadTSO, lockedReadTSONull, lockErr = lockRefreshInfoRow(kctx, sqlExec, mviewID)
+		lockRefreshInfoRowDur = time.Since(lockRefreshInfoRowStart)
+		return lockErr
+	}); err != nil {
 		return err
 	}
 	txn, err := refreshSctx.Txn(true)
@@ -910,7 +969,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	defer e.ReleaseSysSession(kctx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
 
-	if err := insertRefreshHistRunning(kctx, histSQLExec, refreshJobID, mviewID, refreshMethod); err != nil {
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
+		return insertRefreshHistRunning(kctx, histSQLExec, refreshJobID, mviewID, refreshMethod)
+	}); err != nil {
 		return err
 	}
 
@@ -927,16 +988,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				txnTotalDur = time.Since(txnCommitStart)
 			}
 		}
-		histErr := finalizeRefreshHistWithRetry(
-			finalizeCtx,
-			histSQLExec,
-			refreshJobID,
-			mviewID,
-			refreshHistStatusFailed,
-			nil,
-			nil,
-			&refreshErrMsg,
-		)
+		histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+			return finalizeRefreshHistWithRetry(
+				finalizeCtx,
+				histSQLExec,
+				refreshJobID,
+				mviewID,
+				refreshHistStatusFailed,
+				nil,
+				nil,
+				&refreshErrMsg,
+			)
+		})
 		if histErr != nil {
 			if rollbackErr != nil {
 				return errors.Annotatef(histErr, "refresh materialized view: rollback failed (%v) and failed to finalize refresh history after error %v", rollbackErr, refreshErr)
@@ -970,6 +1033,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		schemaName,
 		tblInfo,
 		lastSuccessfulRefreshReadTSO,
+		stepSet,
+		e.stepObserver,
+		e.planFormatForObserver,
 	); err != nil {
 		executeDataChangesDur = time.Since(executeDataChangesStart)
 		return finalizeFailure(err)
@@ -999,20 +1065,25 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 
-	if err := persistRefreshSuccess(
-		kctx,
-		sqlExec,
-		mviewID,
-		lockedReadTSO,
-		lockedReadTSONull,
-		refreshReadTSO,
-		nextTime,
-		shouldUpdateNextTime,
-	); err != nil {
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
+		return persistRefreshSuccess(
+			kctx,
+			sqlExec,
+			mviewID,
+			lockedReadTSO,
+			lockedReadTSONull,
+			refreshReadTSO,
+			nextTime,
+			shouldUpdateNextTime,
+		)
+	}); err != nil {
 		return finalizeFailure(err)
 	}
 
-	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.txnCommit, func() error {
+		_, commitErr := sqlExec.ExecuteInternal(kctx, "COMMIT")
+		return commitErr
+	}); err != nil {
 		return finalizeFailure(err)
 	}
 	txnFinished = true
@@ -1020,16 +1091,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		txnTotalDur = time.Since(txnCommitStart)
 	}
 
-	if err := finalizeRefreshHistWithRetry(
-		finalizeCtx,
-		histSQLExec,
-		refreshJobID,
-		mviewID,
-		refreshHistStatusSuccess,
-		&refreshReadTSO,
-		refreshRows,
-		nil,
-	); err != nil {
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+		return finalizeRefreshHistWithRetry(
+			finalizeCtx,
+			histSQLExec,
+			refreshJobID,
+			mviewID,
+			refreshHistStatusSuccess,
+			&refreshReadTSO,
+			refreshRows,
+			nil,
+		)
+	}); err != nil {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
 			errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
 		)
@@ -1272,6 +1345,9 @@ func executeRefreshMaterializedViewDataChanges(
 	schemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 	lastSuccessfulRefreshReadTSO uint64,
+	stepSet mvRefreshStepSet,
+	stepObserver mvRefreshStepObserver,
+	explainFormat string,
 ) error {
 	// TiFlash read is blocked for write statements when sql_mode is strict. Refresh prefers TiFlash for the
 	// scan part, so we bypass this guard for MV maintenance statements.
@@ -1287,19 +1363,34 @@ func executeRefreshMaterializedViewDataChanges(
 		insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, s.ViewName.Name.O)
 		/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
 		insertSQL := insertPrefix + tblInfo.MaterializedView.SQLContent
-		if _, err := sqlExec.ExecuteInternal(kctx, deleteSQL); err != nil {
+		if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDelete, func() error {
+			_, deleteErr := sqlExec.ExecuteInternal(kctx, deleteSQL)
+			return deleteErr
+		}); err != nil {
 			return err
 		}
-		if _, err := sqlExec.ExecuteInternal(kctx, insertSQL); err != nil {
+		emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteDelete, sessVars, explainFormat)
+
+		if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteInsert, func() error {
+			_, insertErr := sqlExec.ExecuteInternal(kctx, insertSQL)
+			return insertErr
+		}); err != nil {
 			return err
 		}
+		emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteInsert, sessVars, explainFormat)
 		return nil
 	case ast.RefreshMaterializedViewTypeFast:
 		implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 			RefreshStmt:                  s,
 			LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
 		}
-		return executeFastRefreshImplementStmt(kctx, sqlExec, sessVars, implementStmt)
+		if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeFastMerge, func() error {
+			return executeFastRefreshImplementStmt(kctx, sqlExec, sessVars, implementStmt)
+		}); err != nil {
+			return err
+		}
+		emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeFastMerge, sessVars, explainFormat)
+		return nil
 	default:
 		return errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}

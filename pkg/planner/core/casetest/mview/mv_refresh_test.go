@@ -32,6 +32,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBuildDryRunRefreshMaterializedViewPlan(t *testing.T) {
+	sctx := plannercore.MockContext()
+	sctx.GetSessionVars().CurrentDB = "test"
+	is := infoschema.MockInfoSchema(nil)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("mv"),
+		},
+		Type:        ast.RefreshMaterializedViewTypeFast,
+		ObserveType: ast.RefreshMaterializedViewObserveDryRun,
+	}
+
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+
+	dryRunPlan, ok := p.(*plannercore.DryRunRefreshMaterializedView)
+	require.True(t, ok)
+	require.Equal(t, 1, dryRunPlan.Schema().Len())
+	require.Equal(t, "refresh steps", dryRunPlan.OutputNames()[0].ColName.L)
+}
+
+func TestBuildProfileRefreshMaterializedViewPlan(t *testing.T) {
+	sctx := plannercore.MockContext()
+	sctx.GetSessionVars().CurrentDB = "test"
+	is := infoschema.MockInfoSchema(nil)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("mv"),
+		},
+		Type:        ast.RefreshMaterializedViewTypeFast,
+		ObserveType: ast.RefreshMaterializedViewObserveProfile,
+	}
+
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+
+	profilePlan, ok := p.(*plannercore.ProfileRefreshMaterializedView)
+	require.True(t, ok)
+	require.Equal(t, 1, profilePlan.Schema().Len())
+	require.Equal(t, "refresh steps", profilePlan.OutputNames()[0].ColName.L)
+}
+
 func TestBuildRefreshMVFastPlan(t *testing.T) {
 	sctx := plannercore.MockContext()
 	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.

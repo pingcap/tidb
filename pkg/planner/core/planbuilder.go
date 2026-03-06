@@ -5541,6 +5541,25 @@ func (b *PlanBuilder) buildRefreshMaterializedView(_ context.Context, stmt *ast.
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.ViewName.Name.L, "", authErr)
 
+	switch stmt.ObserveType {
+	case ast.RefreshMaterializedViewObserveNone:
+		// fallthrough to normal refresh
+	case ast.RefreshMaterializedViewObserveDryRun:
+		p := &DryRunRefreshMaterializedView{Statement: stmt}
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+		return p, nil
+	case ast.RefreshMaterializedViewObserveProfile:
+		p := &ProfileRefreshMaterializedView{Statement: stmt}
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+		return p, nil
+	default:
+		return nil, errors.New("REFRESH MATERIALIZED VIEW: invalid observe option")
+	}
+
 	p := &RefreshMaterializedView{Statement: stmt}
 	return p, nil
 }

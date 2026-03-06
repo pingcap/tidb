@@ -891,6 +891,20 @@ type RefreshMaterializedView struct {
 	Statement *ast.RefreshMaterializedViewStmt
 }
 
+// DryRunRefreshMaterializedView represents a "REFRESH MATERIALIZED VIEW ... DRY RUN" plan.
+type DryRunRefreshMaterializedView struct {
+	baseSchemaProducer
+
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
+// ProfileRefreshMaterializedView represents a "REFRESH MATERIALIZED VIEW ... WITH PROFILE" plan.
+type ProfileRefreshMaterializedView struct {
+	baseSchemaProducer
+
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
 // PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG ..." plan.
 type PurgeMaterializedViewLog struct {
 	baseSchemaProducer
