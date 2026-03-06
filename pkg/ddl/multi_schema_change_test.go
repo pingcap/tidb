@@ -577,8 +577,6 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -620,15 +618,14 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 		if job.MultiSchemaInfo == nil {
 			return
 		}
-		// "modify column a tinyint" in write-reorg.
+		// "modify column a tinyint unsigned" in write-reorg, i1 is still visible.
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
 			checked = true
-			rs, err := tk2.Exec("select * from t use index(i1);")
-			assert.NoError(t, err)
-			assert.NoError(t, rs.Close())
+			tk2.MustQuery("select * from t use index(i1);")
 		}
 	})
-	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint, alter index i2 invisible;")
+	// signed->unsigned need reorg
+	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint unsigned, alter index i2 invisible;")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, checked)
 	tk.MustGetErrCode("select * from t use index (i1);", errno.ErrKeyDoesNotExist)

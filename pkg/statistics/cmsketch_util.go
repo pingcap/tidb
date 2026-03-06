@@ -72,3 +72,32 @@ func topNMetaToDatum(val TopNMeta,
 	}
 	return dat, err
 }
+
+// convertEncodedValue converts the value based on the target type.
+func convertEncodedValue(src, tgt []byte) ([]byte, bool) {
+	tgtTp, err := codec.GetEncodeType(tgt)
+	if err != nil {
+		return src, false
+	}
+
+	srcTp, err := codec.GetEncodeType(src)
+	if err != nil {
+		return src, false
+	}
+
+	if srcTp == types.KindInt64 && tgtTp == types.KindUint64 ||
+		srcTp == types.KindUint64 && tgtTp == types.KindInt64 {
+		_, datum, err := codec.DecodeOne(src)
+		if err != nil {
+			return src, false
+		}
+
+		datum, err = types.ConvertBetweenSign(datum, tgtTp == types.KindUint64)
+		src, _ = codec.EncodeKey(nil, nil, datum)
+
+		// If error happens during conversion, it means truncation happens.
+		return src, err != nil
+	}
+
+	return src, false
+}
