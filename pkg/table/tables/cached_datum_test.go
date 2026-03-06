@@ -323,6 +323,44 @@ func TestCachedTablePutCachedResultNoDoubleAccount(t *testing.T) {
 	require.Zero(t, ct.resultCacheMem.Load())
 }
 
+func TestCachedTablePinnedDatumCacheAccessors(t *testing.T) {
+	mb1 := newTestMemBuf()
+	mb2 := newTestMemBuf()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+
+	datumCache1 := &CachedDatumData{FieldTypes: []*types.FieldType{ft}}
+	datumCache2 := &CachedDatumData{FieldTypes: []*types.FieldType{ft}}
+	indexCache1 := &CachedIndexDatumData{Entries: map[string][]types.Datum{"k1": {types.NewIntDatum(1)}}}
+	indexCache2 := &CachedIndexDatumData{Entries: map[string][]types.Datum{"k2": {types.NewIntDatum(2)}}}
+
+	ct := &cachedTable{}
+	ct.cacheData.Store(&cacheData{
+		MemBuffer:        mb1,
+		datumCache:       datumCache1,
+		indexDatumCaches: map[int64]*CachedIndexDatumData{1: indexCache1},
+	})
+
+	require.Same(t, datumCache1, ct.GetCachedDatumDataForMemBuffer(mb1))
+	require.Same(t, indexCache1, ct.GetCachedIndexDatumDataForMemBuffer(mb1, 1))
+	require.Nil(t, ct.GetCachedDatumDataForMemBuffer(mb2))
+	require.Nil(t, ct.GetCachedIndexDatumDataForMemBuffer(mb2, 1))
+
+	ct.cacheData.Store(&cacheData{
+		MemBuffer:        mb2,
+		datumCache:       datumCache2,
+		indexDatumCaches: map[int64]*CachedIndexDatumData{1: indexCache2},
+	})
+
+	// Unpinned accessors expose the latest generation, but the pinned variants must
+	// reject the stale MemBuffer from the earlier generation.
+	require.Same(t, datumCache2, ct.GetCachedDatumData())
+	require.Same(t, indexCache2, ct.GetCachedIndexDatumData(1))
+	require.Nil(t, ct.GetCachedDatumDataForMemBuffer(mb1))
+	require.Nil(t, ct.GetCachedIndexDatumDataForMemBuffer(mb1, 1))
+	require.Same(t, datumCache2, ct.GetCachedDatumDataForMemBuffer(mb2))
+	require.Same(t, indexCache2, ct.GetCachedIndexDatumDataForMemBuffer(mb2, 1))
+}
+
 func TestBuildCachedDatumDataEmpty(t *testing.T) {
 	setup := newTestSetup()
 	mb := newTestMemBuf()
