@@ -188,14 +188,15 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	_, d2 := getNormalizedPlan()
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[]') limit 3")
-	_, d3 := getNormalizedPlan()
+	p3, d3 := getNormalizedPlan()
 
 	// Projection differs, so that normalized plan should differ.
 	tk.MustExec("explain select * from t order by vec_cosine_distance('[1,2,3]', vec) limit 3")
 	_, dx1 := getNormalizedPlan()
 
 	require.Equal(t, d1, d2)
-	require.Equal(t, d1, d3)
+	require.NotEqual(t, d1, d3)
+	require.NotContains(t, strings.Join(p3, "\n"), "annIndex:")
 	require.NotEqual(t, d1, dx1)
 
 	// test for TiFlashReplica's Available
