@@ -1264,7 +1264,11 @@ func TestTiDBIgnoreInlistPlanDigest(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	initValue, err := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.Equal(t, initValue, Off)
+=======
+	require.Equal(t, initValue, vardef.On)
+>>>>>>> ef8d352f243 (planner: enable tidb_ignore_inlist_plan_digest by default to improve user experience and add more test cases (#66624))
 	// Set to On(init at start)
 	err1 := mock.SetGlobalSysVar(context.Background(), TiDBIgnoreInlistPlanDigest, On)
 	require.NoError(t, err1)

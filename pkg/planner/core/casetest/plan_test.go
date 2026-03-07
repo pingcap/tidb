@@ -22,7 +22,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+=======
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> ef8d352f243 (planner: enable tidb_ignore_inlist_plan_digest by default to improve user experience and add more test cases (#66624))
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -159,6 +164,7 @@ func TestNormalizedPlan(t *testing.T) {
 }
 
 func TestPlanDigest4InList(t *testing.T) {
+<<<<<<< HEAD
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -231,6 +237,101 @@ func TestIssue47634(t *testing.T) {
 			require.Equal(t, digest1, digest2)
 		})
 	}
+=======
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int);")
+		tk.Session().GetSessionVars().PlanID.Store(0)
+		var queriesGroup1, queriesGroup2 []string
+		queriesGroup1 = []string{
+			"select * from t where a in (1, 2);",
+			"select a in (1, 2) from t;",
+		}
+		queriesGroup2 = []string{
+			"select * from t where a in (1, 2, 3);",
+			"select a in (1, 2, 3) from t;",
+		}
+		for i := range queriesGroup1 {
+			query1 := queriesGroup1[i]
+			query2 := queriesGroup2[i]
+			t.Run(query1+" vs "+query2, func(t *testing.T) {
+				tk.MustExec(query1)
+				info1 := tk.Session().ShowProcess()
+				require.NotNil(t, info1)
+				p1, ok1 := info1.Plan.(base.Plan)
+				require.True(t, ok1)
+				_, digest1 := core.NormalizePlan(p1)
+				tk.MustExec(query2)
+				info2 := tk.Session().ShowProcess()
+				require.NotNil(t, info2)
+				p2, ok2 := info2.Plan.(base.Plan)
+				require.True(t, ok2)
+				_, digest2 := core.NormalizePlan(p2)
+				require.Equal(t, digest1, digest2)
+			})
+		}
+
+		// Issue 66623: same plans with different in-list lengths should have the same plan digest
+		t.Run("issue 66623: select * from t where a in (...) with varying lengths", func(t *testing.T) {
+			queries := []string{
+				"select * from t where a in (1, 2);",
+				"select * from t where a in (1, 2, 3);",
+				"select * from t where a in (1, 2, 3, 4);",
+				"select * from t where a in (1, 2, 3, 4, 5);",
+				"select * from t where a in (1, 2, 3, 4, 5, 6);",
+				"select * from t where a in (1, 2, 3, 4, 5, 6, 7);",
+			}
+			var firstDigest *parser.Digest
+			for i, query := range queries {
+				tk.MustExec(query)
+				info := tk.Session().ShowProcess()
+				require.NotNil(t, info)
+				p, ok := info.Plan.(base.Plan)
+				require.True(t, ok)
+				_, digest := core.NormalizePlan(p)
+				if i == 0 {
+					firstDigest = digest
+				} else {
+					require.Equal(t, firstDigest, digest, "query %d: %s", i, query)
+				}
+			}
+		})
+
+		tk.MustExec("drop table if exists t3,t4,t5")
+		tk.MustExec("create table t3(a int, b int, c int);")
+		tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered);")
+		tk.MustExec("create table t5(a int, b int, c int, key idx_a_b (a, b));")
+		tk.Session().GetSessionVars().PlanID.Store(0)
+		queriesGroup1 = []string{
+			"explain select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;",
+			"explain select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 1;",
+		}
+		queriesGroup2 = []string{
+			"explain select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
+			"explain select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
+		}
+		for i := range queriesGroup1 {
+			query1 := queriesGroup1[i]
+			query2 := queriesGroup2[i]
+			t.Run(query1+" vs "+query2, func(t *testing.T) {
+				tk.MustExec(query1)
+				info1 := tk.Session().ShowProcess()
+				require.NotNil(t, info1)
+				p1, ok1 := info1.Plan.(base.Plan)
+				require.True(t, ok1)
+				_, digest1 := core.NormalizePlan(p1)
+				tk.MustExec(query2)
+				info2 := tk.Session().ShowProcess()
+				require.NotNil(t, info2)
+				p2, ok2 := info2.Plan.(base.Plan)
+				require.True(t, ok2)
+				_, digest2 := core.NormalizePlan(p2)
+				require.Equal(t, digest1, digest2)
+			})
+		}
+	})
+>>>>>>> ef8d352f243 (planner: enable tidb_ignore_inlist_plan_digest by default to improve user experience and add more test cases (#66624))
 }
 
 func TestNormalizedPlanForDiffStore(t *testing.T) {
