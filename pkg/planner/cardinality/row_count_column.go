@@ -16,6 +16,11 @@ package cardinality
 
 import (
 	"github.com/pingcap/errors"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
+>>>>>>> f4cf761aa1d (planner: skip out of range for full range (#65854))
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -296,8 +301,11 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt *= increaseFactor
 
-		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
