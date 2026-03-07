@@ -17,10 +17,13 @@ package executor_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -864,6 +867,163 @@ func TestOrderedParallelApplyGoroutinePanic(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplyOuterWorkerPanic", "panic"))
 	require.Error(t, tk.QueryToErr(sql))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplyOuterWorkerPanic"))
+}
+
+func TestOrderedParallelApplyKillSignal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=3")
+
+	sql := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+
+	// Verify baseline works before testing kill.
+	checkApplyPlan(t, tk, sql, 3)
+	tk.MustQuery(sql).Check(testkit.Rows("1 10", "2 20", "3 30", "4 30", "5 30"))
+
+	// Enable a failpoint that makes inner workers sleep, giving us time
+	// to send a kill signal while the ordered pipeline is active.
+	fpPath := "github.com/pingcap/tidb/pkg/executor/parallelApplyOrderedSleep"
+	require.NoError(t, failpoint.Enable(fpPath, "return(500)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpPath))
+	}()
+
+	// Kill signal during inner worker processing.
+	// The kill signal is sent after 200ms while inner workers are sleeping
+	// for 500ms each. The exec.Next() kill check after the sleep should
+	// detect the signal and return ErrQueryInterrupted, which propagates
+	// through orderedResultCh → reorder worker → resultChkCh → consumer.
+	tk.Session().GetSessionVars().SQLKiller.Reset()
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(200 * time.Millisecond)
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	}()
+
+	start := time.Now()
+	err := tk.QueryToErr(sql)
+	elapsed := time.Since(start)
+	require.Error(t, err, "query should be interrupted by kill signal")
+	// The query should be interrupted well before all 5 rows × 500ms
+	// sleep would complete (~2.5s). Allow generous headroom but verify
+	// it didn't run to completion.
+	require.Less(t, elapsed, 2*time.Second,
+		"kill signal should abort execution promptly, but took %v", elapsed)
+	wg.Wait()
+}
+
+func TestOrderedParallelApplyNested(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("create table t3 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,10),(2,20),(3,30),(4,40),(5,50)")
+	tk.MustExec("insert into t2 values (1,100),(2,200),(3,300)")
+	tk.MustExec("insert into t3 values (1,1000),(2,2000),(3,3000),(4,4000)")
+	tk.MustExec("set tidb_executor_concurrency=3")
+
+	// ----------------------------------------------------------------
+	// Case 1: Two correlated subqueries in SELECT with ORDER BY.
+	// This produces two stacked Apply operators:
+	//   Apply_outer(outer=Apply_inner(outer=IndexScan, inner=t2_subq), inner=t3_subq)
+	// Both Apply operators are on the outer-child path, so both are
+	// parallelized with KeepOrder=true.
+	// ----------------------------------------------------------------
+	q1 := `select t1.a,
+		(select /*+ NO_DECORRELATE() */ max(t2.b) from t2 where t2.a = t1.a),
+		(select /*+ NO_DECORRELATE() */ max(t3.b) from t3 where t3.a = t1.a)
+	from t1 order by t1.a`
+
+	// Verify both Apply operators are parallel with Concurrency:3.
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	rows := tk.MustQuery("explain analyze " + q1).Rows()
+	applyCount := 0
+	for _, row := range rows {
+		id := fmt.Sprintf("%v", row[0])
+		if strings.Contains(id, "Apply") {
+			applyCount++
+			execInfo := fmt.Sprintf("%v", row[5])
+			require.Contains(t, execInfo, "Concurrency:3",
+				"nested Apply %s should be parallel", id)
+		}
+	}
+	require.Equal(t, 2, applyCount, "should have two Apply operators")
+
+	// Verify ordering: compare parallel vs serial results.
+	expected1 := tk.MustQuery(q1).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serial1 := tk.MustQuery(q1).Rows()
+	require.Equal(t, serial1, expected1, "nested parallel apply should match serial results")
+
+	// ----------------------------------------------------------------
+	// Case 2: Subquery inside subquery (Apply inside inner child).
+	// This produces: Apply_outer(outer=IndexScan, inner=Apply_inner(...))
+	// Per limitation 2, Apply_inner stays serial while Apply_outer is
+	// parallel with KeepOrder=true.
+	// ----------------------------------------------------------------
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	q2 := `select t1.a,
+		(select /*+ NO_DECORRELATE() */ max(t2.b) +
+			(select /*+ NO_DECORRELATE() */ max(t3.b) from t3 where t3.a = t2.a)
+		from t2 where t2.a = t1.a)
+	from t1 order by t1.a`
+
+	rows2 := tk.MustQuery("explain analyze " + q2).Rows()
+	parallelApplyCount := 0
+	serialApplyCount := 0
+	for _, row := range rows2 {
+		id := fmt.Sprintf("%v", row[0])
+		execInfo := fmt.Sprintf("%v", row[5])
+		if !strings.Contains(id, "Apply") {
+			continue
+		}
+		if strings.Contains(execInfo, "concurrency:OFF") {
+			serialApplyCount++
+		} else if strings.Contains(execInfo, "Concurrency:") {
+			parallelApplyCount++
+		}
+	}
+	// Outer Apply is parallel; inner-side Apply stays serial (limitation 2).
+	require.Equal(t, 1, parallelApplyCount, "outer Apply should be parallel")
+	require.Equal(t, 1, serialApplyCount, "inner-side Apply should be serial")
+
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serial2 := tk.MustQuery(q2).Rows()
+	require.Equal(t, serial2, expected2, "nested inner apply should match serial results")
+
+	// ----------------------------------------------------------------
+	// Case 3: Two stacked Apply with LIMIT — verify ordering preserved
+	// through both layers.
+	// ----------------------------------------------------------------
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	q3 := `select t1.a,
+		(select /*+ NO_DECORRELATE() */ max(t2.b) from t2 where t2.a = t1.a),
+		(select /*+ NO_DECORRELATE() */ max(t3.b) from t3 where t3.a = t1.a)
+	from t1 order by t1.a limit 3`
+	tk.MustQuery(q3).Check(testkit.Rows("1 100 1000", "2 200 2000", "3 300 3000"))
+
+	// ----------------------------------------------------------------
+	// Case 4: Varying concurrency with nested apply.
+	// ----------------------------------------------------------------
+	for _, conc := range []int{1, 2, 5} {
+		tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency=%d", conc))
+		result := tk.MustQuery(q1).Rows()
+		require.Equal(t, serial1, result,
+			"nested parallel apply with concurrency=%d should match serial", conc)
+	}
 }
 
 // flattenRows converts [][]interface{} from MustQuery().Rows() into

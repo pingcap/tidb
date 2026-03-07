@@ -19,6 +19,7 @@ import (
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/applycache"
@@ -356,6 +357,15 @@ func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id
 		}
 
 		failpoint.Inject("parallelApplyInnerWorkerOrderedPanic", nil)
+		failpoint.Inject("parallelApplyOrderedSleep", func(val failpoint.Value) {
+			if ms, ok := val.(int); ok {
+				select {
+				case <-time.After(time.Duration(ms) * time.Millisecond):
+				case <-e.exit:
+					failpoint.Return()
+				}
+			}
+		})
 		chks, err := e.processOneOuterRow(ctx, id, or)
 		if err != nil {
 			select {
