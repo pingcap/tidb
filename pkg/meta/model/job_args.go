@@ -279,12 +279,7 @@ func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any {
 
 func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
-	// For backward compatibility, old jobs may only contain TableInfo.
-	if err := job.decodeArgs(a.TableInfo, &a.MLogTableID); err == nil {
-		return nil
-	}
-	a.MLogTableID = 0
-	return errors.Trace(job.decodeArgs(a.TableInfo))
+	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableID))
 }
 
 // GetCreateMaterializedViewArgs gets the create materialized view args.
