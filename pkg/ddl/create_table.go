@@ -521,7 +521,11 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: mvTblInfo})
+	var mlogTableID int64
+	if args, ok := jobCtx.jobArgs.(*model.CreateMaterializedViewArgs); ok && args != nil {
+		mlogTableID = args.MLogTableID
+	}
+	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: mvTblInfo, MLogTableID: mlogTableID})
 	return ver, nil
 }
 
