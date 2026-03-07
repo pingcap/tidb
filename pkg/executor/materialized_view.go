@@ -51,10 +51,10 @@ import (
 // RefreshMaterializedViewExec executes "REFRESH MATERIALIZED VIEW" as a utility-style statement.
 type RefreshMaterializedViewExec struct {
 	exec.BaseExecutor
-	stmt                     *ast.RefreshMaterializedViewStmt
-	stepObserver             mvRefreshStepObserver
-	planFormatForObserver    string
-	done                     bool
+	stmt                  *ast.RefreshMaterializedViewStmt
+	stepObserver          mvRefreshStepObserver
+	planFormatForObserver string
+	done                  bool
 }
 
 var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")

@@ -256,6 +256,57 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestShowMaterializedViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+
+	tk.MustQuery("show materialized views").Check(testkit.Rows(fmt.Sprintf("%d mv", mvID)))
+	tk.MustQuery(fmt.Sprintf("show materialized views where mview_id = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprintf("%d mv", mvID)))
+	tk.MustQuery("show materialized views where mview_name = 'mv'").Check(testkit.Rows(fmt.Sprintf("%d mv", mvID)))
+	tk.MustQuery("show materialized views where mview_name = 'mv_not_exist'").Check(testkit.Rows())
+}
+
+func TestShowMaterializedViewLogs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	mlogID := baseTable.Meta().MaterializedViewBase.MLogID
+	mlogTable, ok := is.TableByID(context.Background(), mlogID)
+	require.True(t, ok)
+	mlogName := mlogTable.Meta().Name.O
+	baseID := baseTable.Meta().ID
+	baseName := baseTable.Meta().Name.O
+
+	expected := fmt.Sprintf("%d %s %d %s", mlogID, mlogName, baseID, baseName)
+	tk.MustQuery("show materialized view logs").Check(testkit.Rows(expected))
+	tk.MustQuery(fmt.Sprintf("show materialized view logs where mlog_id = %d", mlogID)).
+		Check(testkit.Rows(expected))
+	tk.MustQuery(fmt.Sprintf("show materialized view logs where base_table_id = %d", baseID)).
+		Check(testkit.Rows(expected))
+	tk.MustQuery(fmt.Sprintf("show materialized view logs where mlog_name = '%s'", mlogName)).
+		Check(testkit.Rows(expected))
+	tk.MustQuery(fmt.Sprintf("show materialized view logs where base_table_name = '%s'", baseName)).
+		Check(testkit.Rows(expected))
+	tk.MustQuery("show materialized view logs where base_table_name = 't_not_exist'").Check(testkit.Rows())
+}
+
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

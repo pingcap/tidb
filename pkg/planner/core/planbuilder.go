@@ -3549,8 +3549,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
-		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowMaterializedViews, ast.ShowMaterializedViewLogs, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus || show.Tp == ast.ShowMaterializedViews || show.Tp == ast.ShowMaterializedViewLogs) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
 		if extractor := newShowBaseExtractor(*show); extractor.Extract() {
@@ -6303,6 +6303,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		if s.Full {
 			names = append(names, "Table_type")
 		}
+	case ast.ShowMaterializedViews:
+		names = []string{"mview_id", "mview_name"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowMaterializedViewLogs:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowTableStatus:
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",

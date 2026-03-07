@@ -635,6 +635,7 @@ var Keywords = []KeywordsType{
 	{"VARIABLES", false, "unreserved"},
 	{"VECTOR", false, "unreserved"},
 	{"VIEW", false, "unreserved"},
+	{"VIEWS", false, "unreserved"},
 	{"VISIBLE", false, "unreserved"},
 	{"WAIT", false, "unreserved"},
 	{"WAIT_TIFLASH_READY", false, "unreserved"},
