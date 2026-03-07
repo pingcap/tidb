@@ -104,7 +104,11 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
+<<<<<<< HEAD:br/pkg/storage/BUILD.bazel
     shard_count = 50,
+=======
+    shard_count = 45,
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071)):pkg/objstore/BUILD.bazel
     deps = [
         "//br/pkg/mock",
         "//pkg/util/intest",
