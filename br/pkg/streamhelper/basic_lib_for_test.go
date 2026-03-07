@@ -108,6 +108,7 @@ type fakeCluster struct {
 	onGetClient               func(uint64) error
 	onClearCache              func(uint64) error
 	serviceGCSafePoint        uint64
+	serviceGCSafePointSet     bool
 	serviceGCSafePointDeleted bool
 	currentTS                 uint64
 }
@@ -279,6 +280,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
+	f.serviceGCSafePointSet = true
 	return at, nil
 }
 
