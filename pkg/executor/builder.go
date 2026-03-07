@@ -828,6 +828,15 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 	if b.err != nil {
 		return nil
 	}
+	// Propagate the limit count to index join children so they can use
+	// smaller outer batches, allowing the Limit to short-circuit sooner.
+	limitCount := v.Offset + v.Count
+	switch child := childExec.(type) {
+	case *join.IndexNestedLoopHashJoin:
+		child.LimitCount = limitCount
+	case *join.IndexLookUpJoin:
+		child.LimitCount = limitCount
+	}
 	n := int(min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.SetInitCap(n)

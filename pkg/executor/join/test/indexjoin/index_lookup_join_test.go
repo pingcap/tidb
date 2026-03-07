@@ -337,3 +337,35 @@ func TestIssue54055(t *testing.T) {
 	require.NotNil(t, err)
 	rs.Close()
 }
+
+func TestIndexHashJoinLimitBatchSize(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int primary key, b int, index ib(b))")
+	tk.MustExec("create table t2(a int, b int, index ib(b))")
+	// Insert enough rows so the default batch size (25000) would cause a
+	// large over-read without the Limit-aware optimization.
+	var sb strings.Builder
+	for i := 1; i <= 5000; i++ {
+		if i > 1 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec("insert into t1 values " + sb.String())
+	tk.MustExec("insert into t2 values " + sb.String())
+
+	// Semi join (EXISTS) with ORDER BY ... LIMIT via IndexHashJoin.
+	// With the optimization, the outer worker reads batches of ~100 rows
+	// instead of all 5000, allowing the Limit to short-circuit.
+	sql := "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b) order by t1.a limit 100"
+
+	// Verify correctness.
+	rows := tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 100)
+	// First row should be a=1 (ordered by PK).
+	require.Equal(t, "1", rows[0][0].(string))
+	require.Equal(t, "100", rows[99][0].(string))
+}
