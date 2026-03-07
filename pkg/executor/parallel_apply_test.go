@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -504,4 +505,43 @@ func TestParallelApplyCorrectness(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+}
+
+func TestParallelApplyCancelInflight(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency = 3")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	// Insert enough outer rows so that without cancellation, workers would
+	// be busy for a long time (20 rows × 300ms each ≈ 6s with concurrency 3).
+	for i := 1; i <= 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
+	}
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+
+	// The failpoint makes each inner execution sleep 300ms but respects
+	// context cancellation, so cancelled workers return immediately.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner", `return(300)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner"))
+	}()
+
+	// LIMIT 1: once one row is produced, Close() fires and should cancel
+	// in-flight inner workers via context cancellation.
+	sql := "select * from (select t1.a from t1 where exists (select 1 from t2 where t2.a < t1.a)) sub limit 1"
+	start := time.Now()
+	rows := tk.MustQuery(sql).Rows()
+	elapsed := time.Since(start)
+
+	// We got exactly 1 row.
+	require.Len(t, rows, 1)
+	// The query should complete well before all 20 outer rows are processed.
+	// Without cancel-in-flight, this would take ~2s (20/3 * 300ms).
+	// With cancellation, it should finish in roughly 1 batch (~300ms + overhead).
+	require.Less(t, elapsed, 2*time.Second, "query took too long (%v); cancel-in-flight may not be working", elapsed)
 }
