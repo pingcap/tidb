@@ -41,6 +41,7 @@ go_library(
         "//pkg/domain/metrics",
         "//pkg/errno",
         "//pkg/infoschema",
+        "//pkg/infoschema/issyncer",
         "//pkg/infoschema/metrics",
         "//pkg/infoschema/perfschema",
         "//pkg/keyspace",
