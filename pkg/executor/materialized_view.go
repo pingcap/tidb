@@ -614,38 +614,38 @@ func updateMaterializedViewLogPurgeInfoOnSuccess(
 	nextTime *string,
 	shouldUpdateNextTime bool,
 ) error {
-	setClauses := make([]string, 0, 2)
-	args := make([]any, 0, 3)
 	if lastPurgedTSO != nil {
-		setClauses = append(setClauses, "LAST_PURGED_TSO = %?")
-		args = append(args, *lastPurgedTSO)
+		// Keep LAST_PURGED_TSO monotonic even if different purge transactions interleave.
+		updateLastPurgedTSOSQL := `UPDATE mysql.tidb_mlog_purge_info
+SET
+	LAST_PURGED_TSO = %?
+WHERE MLOG_ID = %?
+	AND (LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?)`
+		_, err := sqlExec.ExecuteInternal(kctx, updateLastPurgedTSOSQL, *lastPurgedTSO, mlogID, *lastPurgedTSO)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				return errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
+			}
+			return errors.Trace(err)
+		}
 	}
+
 	if shouldUpdateNextTime {
-		setClauses = append(setClauses, "NEXT_TIME = %?")
 		var nextTimeArg any
 		if nextTime != nil {
 			nextTimeArg = *nextTime
 		}
-		args = append(args, nextTimeArg)
-	}
-	if len(setClauses) == 0 {
-		return nil
-	}
-
-	updateSQL := fmt.Sprintf(
-		`UPDATE mysql.tidb_mlog_purge_info
+		updateNextTimeSQL := `UPDATE mysql.tidb_mlog_purge_info
 SET
-	%s
-WHERE MLOG_ID = %%?`,
-		strings.Join(setClauses, ",\n\t"),
-	)
-	args = append(args, mlogID)
-	_, err := sqlExec.ExecuteInternal(kctx, updateSQL, args...)
-	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
+		NEXT_TIME = %?
+WHERE MLOG_ID = %?`
+		_, err := sqlExec.ExecuteInternal(kctx, updateNextTimeSQL, nextTimeArg, mlogID)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				return errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
+			}
+			return errors.Trace(err)
 		}
-		return errors.Trace(err)
 	}
 	return nil
 }
