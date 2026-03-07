@@ -19,6 +19,7 @@ import (
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/applycache"
@@ -43,6 +44,15 @@ type result struct {
 type outerRow struct {
 	row      *chunk.Row
 	selected bool // if this row is selected by the outer side
+	seq      uint64
+}
+
+// orderedResult carries the join output for a single outer row, tagged with
+// a sequence number so the reorder worker can emit results in outer-row order.
+type orderedResult struct {
+	seq  uint64
+	chks []*chunk.Chunk // result rows for this outer row (may be empty)
+	err  error
 }
 
 // ParallelNestedLoopApplyExec is the executor for apply.
@@ -71,6 +81,7 @@ type ParallelNestedLoopApplyExec struct {
 
 	// fields about concurrency control
 	concurrency int
+	keepOrder   bool // when true, use reorder buffer to preserve outer-side ordering
 	started     uint32
 	drained     uint32 // drained == true indicates there is no more data
 	freeChkCh   chan *chunk.Chunk
@@ -79,6 +90,26 @@ type ParallelNestedLoopApplyExec struct {
 	exit        chan struct{}
 	workerWg    sync.WaitGroup
 	notifyWg    sync.WaitGroup
+
+	// ordered-mode channels (keepOrder == true)
+	orderedResultCh chan orderedResult
+	// outerPaceCh is a backpressure mechanism that prevents unbounded memory
+	// growth in ordered mode.
+	//
+	// Without it the outer worker can race arbitrarily far ahead of the
+	// reorder worker. If an early-sequence row is slow (e.g. seq=0), the
+	// outer worker keeps dispatching seq=1, 2, …, 10 000+. Inner workers
+	// complete those quickly and their results accumulate in the reorder
+	// worker's pending map, waiting for seq=0, causing O(outerRows) memory.
+	//
+	// Example with concurrency=2, outerPaceCh capacity=8:
+	//   1. Outer worker dispatches seq 0–7, filling outerPaceCh (8 tokens).
+	//   2. Outer worker blocks on seq=8 because the channel is full.
+	//   3. Inner workers finish seq 1–7, but reorder worker is stuck on seq=0.
+	//   4. seq=0 finally completes → reorder worker emits seq 0–7, releasing
+	//      8 tokens → outer worker can resume dispatching.
+	//   At most 8 results are buffered in the pending map, not 10 000+.
+	outerPaceCh chan struct{}
 
 	// fields about cache
 	cache              *applycache.ApplyCache
@@ -120,6 +151,20 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.resultChkCh = make(chan result, e.concurrency+1) // innerWorkers + outerWorker
 	e.outerRowCh = make(chan outerRow)
 	e.exit = make(chan struct{})
+
+	if e.keepOrder {
+		// In ordered mode, freeChkCh is consumed by the reorder worker.
+		// Inner workers allocate their own temporary chunks.
+		e.orderedResultCh = make(chan orderedResult, e.concurrency*2)
+		// outerPaceCh bounds the gap between the outer worker's dispatch
+		// sequence and the reorder worker's consumption sequence.  Without
+		// this, a slow early-sequence row lets fast workers race ahead,
+		// growing the pending map to O(outerRows).  The outer worker
+		// acquires a token before dispatching; the reorder worker releases
+		// one each time it advances nextSeq.
+		e.outerPaceCh = make(chan struct{}, e.concurrency*4)
+	}
+
 	for range e.concurrency {
 		e.freeChkCh <- exec.NewFirstChunk(e)
 	}
@@ -143,13 +188,32 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
-		for i := range e.concurrency {
-			e.workerWg.Add(1)
-			workID := i
-			go e.innerWorker(ctx, workID)
+		if e.keepOrder {
+			for i := range e.concurrency {
+				e.workerWg.Add(1)
+				go e.innerWorkerOrdered(ctx, i)
+			}
+			// Bridge goroutine: when all outer+inner workers finish,
+			// close orderedResultCh so the reorder worker can drain and exit.
+			e.notifyWg.Add(1)
+			go func() {
+				defer e.handleWorkerPanic(ctx, &e.notifyWg)
+				e.workerWg.Wait()
+				close(e.orderedResultCh)
+			}()
+			// The reorder worker is tracked by notifyWg so that
+			// Close() waits for it to fully exit before returning.
+			e.notifyWg.Add(1)
+			go e.reorderWorker(ctx)
+		} else {
+			for i := range e.concurrency {
+				e.workerWg.Add(1)
+				workID := i
+				go e.innerWorker(ctx, workID)
+			}
+			e.notifyWg.Add(1)
+			go e.notifyWorker(ctx)
 		}
-		e.notifyWg.Add(1)
-		go e.notifyWorker(ctx)
 	}
 	result := <-e.resultChkCh
 	if result.err != nil {
@@ -196,6 +260,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 
 // notifyWorker waits for all inner/outer-workers finishing and then put an empty
 // chunk into the resultCh to notify the upper executor there is no more data.
+// Used only in unordered mode.
 func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
 	defer e.handleWorkerPanic(ctx, &e.notifyWg)
 	e.workerWg.Wait()
@@ -207,6 +272,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	var selected []bool
 	var err error
+	var seq uint64
 	for {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
 		chk := exec.TryNewCacheChunk(e.outerExec)
@@ -226,9 +292,21 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 			return
 		}
 		for i := range chk.NumRows() {
+			// In ordered mode, acquire a pace token to bound how far
+			// ahead we dispatch relative to the reorder worker's
+			// consumption.  This caps the pending map at O(concurrency).
+			if e.keepOrder {
+				select {
+				case e.outerPaceCh <- struct{}{}:
+				case <-e.exit:
+					return
+				}
+			}
 			row := chk.GetRow(i)
+			or := outerRow{row: &row, selected: selected[i], seq: seq}
+			seq++
 			select {
-			case e.outerRowCh <- outerRow{&row, selected[i]}:
+			case e.outerRowCh <- or:
 			case <-e.exit:
 				return
 			}
@@ -236,6 +314,8 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	}
 }
 
+// innerWorker is used in unordered mode. Workers compete for outer rows from
+// a shared channel and emit result chunks in arbitrary order.
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 	defer trace.StartRegion(ctx, "ParallelApplyInnerWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
@@ -252,6 +332,231 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 			return
 		}
 		if e.putResult(chk, err) {
+			return
+		}
+	}
+}
+
+// innerWorkerOrdered is used in keepOrder mode. Each worker processes one
+// outer row at a time and tags the result with the row's sequence number.
+// Results are sent to orderedResultCh for the reorder worker to sort.
+func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id int) {
+	defer trace.StartRegion(ctx, "ParallelApplyInnerWorkerOrdered").End()
+	defer e.handleWorkerPanic(ctx, &e.workerWg)
+
+	for {
+		var or outerRow
+		var ok bool
+		select {
+		case or, ok = <-e.outerRowCh:
+			if !ok {
+				return // outer channel closed – no more work
+			}
+		case <-e.exit:
+			return
+		}
+
+		failpoint.Inject("parallelApplyInnerWorkerOrderedPanic", nil)
+		failpoint.Inject("parallelApplyOrderedSleep", func(val failpoint.Value) {
+			if ms, ok := val.(int); ok {
+				select {
+				case <-time.After(time.Duration(ms) * time.Millisecond):
+				case <-e.exit:
+					failpoint.Return()
+				}
+			}
+		})
+		chks, err := e.processOneOuterRow(ctx, id, or)
+		if err != nil {
+			select {
+			case e.orderedResultCh <- orderedResult{seq: or.seq, err: err}:
+			case <-e.exit:
+			}
+			return
+		}
+		select {
+		case e.orderedResultCh <- orderedResult{seq: or.seq, chks: chks}:
+		case <-e.exit:
+			return
+		}
+	}
+}
+
+// processOneOuterRow executes the inner side for a single outer row and
+// returns the joined result chunks. For semi-joins this is typically 0–1 rows.
+func (e *ParallelNestedLoopApplyExec) processOneOuterRow(ctx context.Context, id int, or outerRow) ([]*chunk.Chunk, error) {
+	if !or.selected {
+		if e.outer {
+			// OnMissMatch appends at most one row; use capacity 1
+			// instead of the full chunk size to reduce allocation.
+			chk := chunk.New(exec.RetTypes(e), 1, 1)
+			e.joiners[id].OnMissMatch(false, *or.row, chk)
+			return []*chunk.Chunk{chk}, nil
+		}
+		return nil, nil // no allocation needed for filtered-out rows
+	}
+
+	chk := exec.NewFirstChunk(e)
+
+	e.outerRow[id] = or.row
+	e.hasMatch[id] = false
+	e.hasNull[id] = false
+
+	if err := e.fetchAllInners(ctx, id); err != nil {
+		return nil, err
+	}
+
+	e.innerIter[id] = chunk.NewIterator4List(e.innerList[id])
+	e.innerIter[id].Begin()
+
+	var chks []*chunk.Chunk
+	for e.innerIter[id].Current() != e.innerIter[id].End() {
+		matched, isNull, err := e.joiners[id].TryToMatchInners(*e.outerRow[id], e.innerIter[id], chk)
+		e.hasMatch[id] = e.hasMatch[id] || matched
+		e.hasNull[id] = e.hasNull[id] || isNull
+		if err != nil {
+			return nil, err
+		}
+		if chk.IsFull() {
+			chks = append(chks, chk)
+			chk = exec.NewFirstChunk(e)
+		}
+	}
+
+	if !e.hasMatch[id] {
+		e.joiners[id].OnMissMatch(e.hasNull[id], *or.row, chk)
+	}
+	if chk.NumRows() > 0 {
+		chks = append(chks, chk)
+	}
+	return chks, nil
+}
+
+// reorderWorker collects orderedResults from inner workers and emits them to
+// resultChkCh in monotonically increasing sequence order, batching small
+// per-row results into full output chunks. Used only in keepOrder mode.
+func (e *ParallelNestedLoopApplyExec) reorderWorker(ctx context.Context) {
+	defer e.handleWorkerPanic(ctx, &e.notifyWg)
+
+	pending := make(map[uint64]orderedResult)
+	nextSeq := uint64(0)
+
+	// Get the first output chunk from the free pool.
+	var outputChk *chunk.Chunk
+	select {
+	case outputChk = <-e.freeChkCh:
+	case <-e.exit:
+		return
+	}
+
+	flushOutput := func(output *chunk.Chunk) (*chunk.Chunk, bool) {
+		if e.putResult(output, nil) {
+			return nil, true // exit signalled
+		}
+		select {
+		case newOutput := <-e.freeChkCh:
+			// Reset is required because the consumer may reuse the
+			// same req chunk across Next() calls (e.g. writeChunks).
+			// After SwapColumns the recycled chunk can carry leftover
+			// column data; Reset clears it before we append new rows.
+			newOutput.Reset()
+			return newOutput, false
+		case <-e.exit:
+			return nil, true
+		}
+	}
+
+	// appendRow copies a row into the current output chunk, flushing when full.
+	appendRow := func(output *chunk.Chunk, row chunk.Row) (*chunk.Chunk, bool) {
+		output.AppendRow(row)
+		if output.IsFull() {
+			return flushOutput(output)
+		}
+		return output, false
+	}
+
+	// emitResult appends all rows from an orderedResult to the output stream.
+	emitResult := func(output *chunk.Chunk, r orderedResult) (*chunk.Chunk, bool) {
+		for _, chk := range r.chks {
+			for i := range chk.NumRows() {
+				var exit bool
+				output, exit = appendRow(output, chk.GetRow(i))
+				if exit {
+					return nil, true
+				}
+			}
+		}
+		return output, false
+	}
+
+	for {
+		select {
+		case r, ok := <-e.orderedResultCh:
+			if !ok {
+				// Channel closed – all workers done. Flush remaining rows.
+				if outputChk.NumRows() > 0 {
+					e.putResult(outputChk, nil)
+				}
+				e.putResult(nil, nil) // signal EOF
+				return
+			}
+			if r.err != nil {
+				e.putResult(nil, r.err)
+				return
+			}
+			pending[r.seq] = r
+
+			// Drain in-order results and opportunistically batch more
+			// arrivals before flushing, so non-LIMIT queries get full
+			// chunks while LIMIT queries still receive rows promptly
+			// when the pipeline is idle.
+			for {
+				// Drain as many consecutive results as possible.
+				for {
+					pr, exists := pending[nextSeq]
+					if !exists {
+						break
+					}
+					delete(pending, nextSeq)
+					nextSeq++
+					<-e.outerPaceCh
+					var exit bool
+					outputChk, exit = emitResult(outputChk, pr)
+					if exit {
+						return
+					}
+				}
+
+				if outputChk.NumRows() == 0 {
+					break // nothing to flush
+				}
+				// Check if more results are immediately available;
+				// if so, buffer them and re-drain before flushing.
+				select {
+				case next, ok2 := <-e.orderedResultCh:
+					if !ok2 {
+						e.putResult(outputChk, nil)
+						e.putResult(nil, nil)
+						return
+					}
+					if next.err != nil {
+						e.putResult(nil, next.err)
+						return
+					}
+					pending[next.seq] = next
+					continue // re-drain with the new result
+				default:
+					// No more results ready — flush now.
+				}
+				var exit bool
+				outputChk, exit = flushOutput(outputChk)
+				if exit {
+					return
+				}
+				break
+			}
+
+		case <-e.exit:
 			return
 		}
 	}
