@@ -194,15 +194,15 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			}
 			// Bridge goroutine: when all outer+inner workers finish,
 			// close orderedResultCh so the reorder worker can drain and exit.
-			// It is tracked by notifyWg so that Close() waits for all
-			// outer/inner workers to finish even if reorderWorker exits
-			// early (e.g. on e.exit signal).
 			e.notifyWg.Add(1)
 			go func() {
 				defer e.handleWorkerPanic(ctx, &e.notifyWg)
 				e.workerWg.Wait()
 				close(e.orderedResultCh)
 			}()
+			// The reorder worker is tracked by notifyWg so that
+			// Close() waits for it to fully exit before returning.
+			e.notifyWg.Add(1)
 			go e.reorderWorker(ctx)
 		} else {
 			for i := range e.concurrency {
@@ -355,6 +355,7 @@ func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id
 			return
 		}
 
+		failpoint.Inject("parallelApplyInnerWorkerOrderedPanic", nil)
 		chks, err := e.processOneOuterRow(ctx, id, or)
 		if err != nil {
 			select {
@@ -376,7 +377,9 @@ func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id
 func (e *ParallelNestedLoopApplyExec) processOneOuterRow(ctx context.Context, id int, or outerRow) ([]*chunk.Chunk, error) {
 	if !or.selected {
 		if e.outer {
-			chk := exec.NewFirstChunk(e)
+			// OnMissMatch appends at most one row; use capacity 1
+			// instead of the full chunk size to reduce allocation.
+			chk := chunk.New(exec.RetTypes(e), 1, 1)
 			e.joiners[id].OnMissMatch(false, *or.row, chk)
 			return []*chunk.Chunk{chk}, nil
 		}
@@ -413,7 +416,9 @@ func (e *ParallelNestedLoopApplyExec) processOneOuterRow(ctx context.Context, id
 	if !e.hasMatch[id] {
 		e.joiners[id].OnMissMatch(e.hasNull[id], *or.row, chk)
 	}
-	chks = append(chks, chk)
+	if chk.NumRows() > 0 {
+		chks = append(chks, chk)
+	}
 	return chks, nil
 }
 
@@ -421,9 +426,7 @@ func (e *ParallelNestedLoopApplyExec) processOneOuterRow(ctx context.Context, id
 // resultChkCh in monotonically increasing sequence order, batching small
 // per-row results into full output chunks. Used only in keepOrder mode.
 func (e *ParallelNestedLoopApplyExec) reorderWorker(ctx context.Context) {
-	// Panic recovery only; lifecycle is not tracked by notifyWg because
-	// the bridge goroutine (which waits on workerWg) owns that role.
-	defer e.handleWorkerPanic(ctx, nil)
+	defer e.handleWorkerPanic(ctx, &e.notifyWg)
 
 	pending := make(map[uint64]orderedResult)
 	nextSeq := uint64(0)
@@ -493,35 +496,54 @@ func (e *ParallelNestedLoopApplyExec) reorderWorker(ctx context.Context) {
 			}
 			pending[r.seq] = r
 
-			// Drain as many in-order results as possible.
+			// Drain in-order results and opportunistically batch more
+			// arrivals before flushing, so non-LIMIT queries get full
+			// chunks while LIMIT queries still receive rows promptly
+			// when the pipeline is idle.
 			for {
-				pr, exists := pending[nextSeq]
-				if !exists {
-					break
+				// Drain as many consecutive results as possible.
+				for {
+					pr, exists := pending[nextSeq]
+					if !exists {
+						break
+					}
+					delete(pending, nextSeq)
+					nextSeq++
+					<-e.outerPaceCh
+					var exit bool
+					outputChk, exit = emitResult(outputChk, pr)
+					if exit {
+						return
+					}
 				}
-				delete(pending, nextSeq)
-				nextSeq++
-				// Release a pace token so the outer worker can
-				// dispatch the next row, bounding the pending map.
-				<-e.outerPaceCh
-				var exit bool
-				outputChk, exit = emitResult(outputChk, pr)
-				if exit {
-					return
-				}
-			}
 
-			// Flush partial output so the consumer (e.g. Limit) can
-			// receive rows as soon as they are ready in order, rather
-			// than waiting for a full chunk.  This allows early
-			// termination: the Limit stops calling Next() and Close()
-			// propagates the exit signal to all workers.
-			if outputChk.NumRows() > 0 {
+				if outputChk.NumRows() == 0 {
+					break // nothing to flush
+				}
+				// Check if more results are immediately available;
+				// if so, buffer them and re-drain before flushing.
+				select {
+				case next, ok2 := <-e.orderedResultCh:
+					if !ok2 {
+						e.putResult(outputChk, nil)
+						e.putResult(nil, nil)
+						return
+					}
+					if next.err != nil {
+						e.putResult(nil, next.err)
+						return
+					}
+					pending[next.seq] = next
+					continue // re-drain with the new result
+				default:
+					// No more results ready — flush now.
+				}
 				var exit bool
 				outputChk, exit = flushOutput(outputChk)
 				if exit {
 					return
 				}
+				break
 			}
 
 		case <-e.exit:

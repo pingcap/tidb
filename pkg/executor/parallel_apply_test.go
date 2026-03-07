@@ -686,6 +686,137 @@ func TestOrderedParallelApplyEdgeCases(t *testing.T) {
 	tk.MustQuery(q7).Check(testkit.RowsWithSep(" ", flattenRows(expected7)...))
 }
 
+func TestOrderedParallelApplyLargeInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=4")
+
+	// ----------------------------------------------------------------
+	// Each outer row joins with many inner rows, forcing the chunk to
+	// fill to capacity in processOneOuterRow (chk.IsFull path) and
+	// the reorder worker's appendRow→flushOutput path.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1),(2),(3)")
+	// Insert enough rows to exceed chunk capacity for each outer row.
+	vals := ""
+	for i := 1; i <= 2000; i++ {
+		if i > 1 {
+			vals += ","
+		}
+		vals += fmt.Sprintf("(%d, %d)", i%3+1, i)
+	}
+	tk.MustExec("insert into t2 values " + vals)
+
+	q := "select t1.a, (select /*+ NO_DECORRELATE() */ count(*) from t2 where t2.a = t1.a) from t1 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected := tk.MustQuery(q).Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	checkApplyPlan(t, tk, q, 4)
+	tk.MustQuery(q).Check(testkit.RowsWithSep(" ", flattenRows(expected)...))
+
+	// ----------------------------------------------------------------
+	// Cartesian-style: every outer row pairs with every inner row to
+	// produce a large result set (exercises multi-chunk flush in the
+	// reorder worker).
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3 (a int, index idx_a(a))")
+	tk.MustExec("create table t4 (b int)")
+	tk.MustExec("insert into t3 values (1),(2),(3)")
+	vals = ""
+	for i := 1; i <= 500; i++ {
+		if i > 1 {
+			vals += ","
+		}
+		vals += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec("insert into t4 values " + vals)
+
+	q2 := "select t3.a, (select /*+ NO_DECORRELATE() */ sum(t4.b) from t4 where t4.b <= t3.a * 100) from t3 order by t3.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(expected2)...))
+}
+
+func TestOrderedParallelApplyLeftOuterSemiJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=4")
+
+	// ----------------------------------------------------------------
+	// Left outer semi-join with outer filter: some outer rows are
+	// not selected, exercising the e.outer && !or.selected path in
+	// processOneOuterRow. Also exercises OnMissMatch in ordered mode.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,10),(2,20),(3,30),(4,40),(5,50)")
+	tk.MustExec("insert into t2 values (2,2),(4,4)")
+
+	// IN subquery → left outer semi join; the NOT IN variant produces
+	// anti-semi join with OnMissMatch for non-matching rows.
+	q1 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t2 where t2.a = t1.a) from t1 order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected1 := tk.MustQuery(q1).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q1).Check(testkit.RowsWithSep(" ", flattenRows(expected1)...))
+
+	// NOT IN subquery — anti-semi-join path
+	q2 := "select a from t1 where a not in (select /*+ NO_DECORRELATE() */ a from t2 where t2.b < t1.b) order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(expected2)...))
+
+	// Left outer join with ORDER BY — the subquery returns a value for
+	// every outer row, exercising both matched and unmatched paths.
+	q3 := "select t1.a, (select t2.b from t2 where t2.a = t1.a) from t1 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected3 := tk.MustQuery(q3).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(expected3)...))
+}
+
+func TestOrderedParallelApplyGoroutinePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=3")
+
+	sql := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+	// Verify baseline works.
+	checkApplyPlan(t, tk, sql, 3)
+	tk.MustQuery(sql).Check(testkit.Rows("1 10", "2 20", "3 30", "4 30", "5 30"))
+
+	// Panic in ordered inner worker — error should propagate through
+	// reorder worker to the consumer.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplyInnerWorkerOrderedPanic", "panic"))
+	require.Error(t, tk.QueryToErr(sql))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplyInnerWorkerOrderedPanic"))
+
+	// Panic in outer worker (shared with unordered, but verify it
+	// works with the reorder worker present).
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplyOuterWorkerPanic", "panic"))
+	require.Error(t, tk.QueryToErr(sql))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplyOuterWorkerPanic"))
+}
+
 // flattenRows converts [][]interface{} from MustQuery().Rows() into
 // []string suitable for testkit.RowsWithSep(" ", ...).
 func flattenRows(rows [][]any) []string {
