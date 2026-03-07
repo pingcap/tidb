@@ -209,11 +209,16 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 	}
 	zoneHelper := taskZoneInfoHelper{}
 	zoneHelper.init(allTiFlashZoneInfo)
+	_, stmtDigest := c.sessionCtx.GetSessionVars().StmtCtx.SQLDigest()
+	sqlDigest := ""
+	if stmtDigest != nil {
+		sqlDigest = stmtDigest.String()
+	}
 	for _, mppTask := range pf.Sink.GetSelfTasks() {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
-			// If isDisaggregatedTiFlashStaticPrune is true, it means this TableScan is under PartitionUnoin,
+			// If isDisaggregatedTiFlashStaticPrune is true, it means this TableScan is under PartitionUnion,
 			// tableID in TableScan is already the physical table id of this partition, no need to update again.
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
 		}
@@ -244,6 +249,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
 			zap.Uint64("GatherID", c.gatherID),
 			zap.String("resource_group", rgName),
+			zap.String("sql_digest", sqlDigest),
 		)
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
@@ -262,6 +268,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 			ResourceGroupName:      rgName,
 			ConnectionID:           c.sessionCtx.GetSessionVars().ConnectionID,
 			ConnectionAlias:        c.sessionCtx.ShowProcess().SessionAlias,
+			SQLDigest:              sqlDigest,
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
@@ -606,14 +613,14 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 			})
 		if retry {
 			// TODO: If we want to retry, we might need to redo the plan fragment cutting and task scheduling. https://github.com/pingcap/tidb/issues/31015
-			logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+			logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()), zap.String("sql_digest", req.SQLDigest))
 			continue
 		}
 		break
 	}
 
 	if err != nil {
-		logutil.BgLogger().Warn("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+		logutil.BgLogger().Warn("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()), zap.String("sql_digest", req.SQLDigest))
 		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
@@ -624,7 +631,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 	}
 
 	if rpcResp.Error != nil {
-		logutil.BgLogger().Warn("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()))
+		logutil.BgLogger().Warn("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()), zap.String("sql_digest", req.SQLDigest))
 		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		c.sendError(errors.New(rpcResp.Error.Msg))
 		return
@@ -645,6 +652,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 		Address:           req.Meta.GetAddress(),
 		MppVersion:        req.MppVersion.ToInt64(),
 		ResourceGroupName: req.ResourceGroupName,
+		SqlDigest:         req.SQLDigest,
 	}
 	c.receiveResults(req, taskMeta, bo)
 }
