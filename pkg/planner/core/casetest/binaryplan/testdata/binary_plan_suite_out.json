@@ -136,7 +136,7 @@
                 "act_rows": 8,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8"
+                "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#10"
               }
             ],
             "cost": 1997129896.2117057,
@@ -144,7 +144,7 @@
             "act_rows": 1,
             "task_type": 1,
             "store_type": 1,
-            "operator_info": "funcs:sum(Column#8)->Column#7"
+            "operator_info": "funcs:sum(Column#10)->Column#9"
           },
           "with_runtime_stats": true
         }

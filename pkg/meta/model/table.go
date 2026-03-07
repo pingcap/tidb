@@ -91,6 +91,9 @@ var ExtraHandleName = model.NewCIStr("_tidb_rowid")
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
 
+// ExtraCommitTSName is the name of ExtraCommitTSID Column.
+var ExtraCommitTSName = model.NewCIStr("_tidb_commit_ts")
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
