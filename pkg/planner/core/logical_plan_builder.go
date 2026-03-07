@@ -4791,12 +4791,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
+<<<<<<< HEAD
 		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+=======
+		ds.CommonHandleCols, ds.CommonHandleLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
+<<<<<<< HEAD
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+=======
+			path.FullIdxCols, path.FullIdxColLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)

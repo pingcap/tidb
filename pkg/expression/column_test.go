@@ -132,6 +132,7 @@ func TestColInfo2Col(t *testing.T) {
 	require.Nil(t, res)
 }
 
+<<<<<<< HEAD
 func TestIndexInfo2Cols(t *testing.T) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
@@ -162,6 +163,8 @@ func TestIndexInfo2Cols(t *testing.T) {
 	require.True(t, resCols[1].EqualColumn(col1))
 }
 
+=======
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 func TestColHybird(t *testing.T) {
 	ctx := mock.NewContext()
 

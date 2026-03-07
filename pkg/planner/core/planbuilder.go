@@ -1729,9 +1729,15 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName p
 	commonInfos, commonCols, hasCommonCols := tryGetCommonHandleCols(tbl, fullExprCols)
 	idxColInfos := getIndexColumnInfos(tblInfo, idx)
 	idxColSchema := getIndexColsSchema(tblInfo, idx, fullExprCols)
+<<<<<<< HEAD
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
 
 	is := PhysicalIndexScan{
+=======
+	idxCols, idxColLens := util.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
+	pseudoHistColl := statistics.PseudoHistColl(physicalID, false)
+	is := physicalop.PhysicalIndexScan{
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
 		DBName:           dbName,
@@ -1860,7 +1866,11 @@ func tryGetCommonHandleCols(t table.Table, allColSchema *expression.Schema) ([]*
 		return nil, nil, false
 	}
 	pk := tables.FindPrimaryIndex(tblInfo)
+<<<<<<< HEAD
 	commonHandleCols, _ := expression.IndexInfo2Cols(tblInfo.Columns, allColSchema.Columns, pk)
+=======
+	commonHandleCols, _ := util.IndexInfo2FullCols(tblInfo.Columns, allColSchema.Columns, pk)
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 	commonHandelColInfos := tables.TryGetCommonPkColumns(t)
 	return commonHandelColInfos, commonHandleCols, true
 }

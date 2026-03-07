@@ -747,6 +747,7 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
+<<<<<<< HEAD
 // IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
 func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
@@ -827,6 +828,8 @@ idLoop:
 	return retCols
 }
 
+=======
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(ctx, row)

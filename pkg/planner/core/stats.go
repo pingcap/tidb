@@ -99,8 +99,13 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 	if len(is.AccessConds) == 0 {
 		is.Ranges = ranger.FullRange()
 	}
+<<<<<<< HEAD
 	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
 	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+=======
+	is.IdxCols, is.IdxColLens, is.FullIdxCols, is.FullIdxColLens =
+		util.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
 		handleCol := is.GetPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -175,8 +180,15 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+<<<<<<< HEAD
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+=======
+	path.MinCountAfterAccess = 0
+	path.MaxCountAfterAccess = 0
+	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -345,8 +357,13 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
+<<<<<<< HEAD
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+=======
+	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
 	if len(conds) == 0 {
 		return nil
 	}
