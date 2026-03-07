@@ -690,6 +690,7 @@ import (
 	variables             "VARIABLES"
 	vectorType            "VECTOR"
 	view                  "VIEW"
+	views                 "VIEWS"
 	visible               "VISIBLE"
 	wait                  "WAIT"
 	waitTiflashReady      "WAIT_TIFLASH_READY"
@@ -7334,6 +7335,7 @@ UnReservedKeyword:
 |	"BINLOG"
 |	"FUNCTION"
 |	"VIEW"
+|	"VIEWS"
 |	"BINDING"
 |	"BINDINGS"
 |	"MODIFY"
@@ -11945,6 +11947,22 @@ ShowStmt:
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
 			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEWS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViews}
+		if $4 != nil {
+			stmt.Where = $4.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOGS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViewLogs}
+		if $5 != nil {
+			stmt.Where = $5.(ast.ExprNode)
 		}
 		$$ = stmt
 	}

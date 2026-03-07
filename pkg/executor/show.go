@@ -220,6 +220,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowStatus()
 	case ast.ShowTables:
 		return e.fetchShowTables(ctx)
+	case ast.ShowMaterializedViews:
+		return e.fetchShowMaterializedViews(ctx)
+	case ast.ShowMaterializedViewLogs:
+		return e.fetchShowMaterializedViewLogs(ctx)
 	case ast.ShowOpenTables:
 		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
@@ -625,6 +629,106 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		} else {
 			e.appendRow([]any{v})
 		}
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViews(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	type mvRow struct {
+		id   int64
+		name string
+	}
+	rows := make([]mvRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedView == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tbl.Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
+		rows = append(rows, mvRow{id: tbl.ID, name: tbl.Name.O})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	type mlogRow struct {
+		id       int64
+		name     string
+		baseID   int64
+		baseName string
+	}
+	rows := make([]mlogRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedViewLog == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tbl.Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
+		baseID := tbl.MaterializedViewLog.BaseTableID
+		baseName := ""
+		if baseID != 0 {
+			if baseTbl, ok := e.is.TableByID(ctx, baseID); ok {
+				baseName = baseTbl.Meta().Name.O
+			}
+		}
+		rows = append(rows, mlogRow{
+			id:       tbl.ID,
+			name:     tbl.Name.O,
+			baseID:   baseID,
+			baseName: baseName,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name, row.baseID, row.baseName})
 	}
 	return nil
 }

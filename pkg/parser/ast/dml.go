@@ -2994,6 +2994,8 @@ const (
 	ShowEngines
 	ShowDatabases
 	ShowTables
+	ShowMaterializedViews
+	ShowMaterializedViewLogs
 	ShowTableStatus
 	ShowColumns
 	ShowWarnings
@@ -3358,6 +3360,10 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			restoreOptFull()
 			ctx.WriteKeyWord("TABLES")
 			restoreShowDatabaseNameOpt()
+		case ShowMaterializedViews:
+			ctx.WriteKeyWord("MATERIALIZED VIEWS")
+		case ShowMaterializedViewLogs:
+			ctx.WriteKeyWord("MATERIALIZED VIEW LOGS")
 		case ShowOpenTables:
 			ctx.WriteKeyWord("OPEN TABLES")
 			restoreShowDatabaseNameOpt()
@@ -3525,7 +3531,7 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 func (n *ShowStmt) NeedLimitRSRow() bool {
 	switch n.Tp {
 	// Show statements need to have consistence behavior with MySQL Does
-	case ShowEngines, ShowDatabases, ShowTables, ShowColumns, ShowTableStatus, ShowWarnings,
+	case ShowEngines, ShowDatabases, ShowTables, ShowMaterializedViews, ShowMaterializedViewLogs, ShowColumns, ShowTableStatus, ShowWarnings,
 		ShowCharset, ShowVariables, ShowStatus, ShowCollation, ShowIndex, ShowPlugins:
 		return true
 	default:
