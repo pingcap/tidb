@@ -719,7 +719,7 @@ func TestPurgeMaterializedViewLogFinalizeFailureAfterCommitIsWarning(t *testing.
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_finalize_warn (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_finalize_warn (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_finalize_warn (id, v) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("insert into t_purge_finalize_warn values (1, 10), (2, 20), (3, 30)")
 
 	is := dom.InfoSchema()
@@ -744,7 +744,7 @@ func TestPurgeMaterializedViewLogFinalizeRetrySucceeds(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_finalize_retry (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_finalize_retry (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_finalize_retry (id, v) purge next date_add(now(), interval 1 hour)")
 
 	is := dom.InfoSchema()
 	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_finalize_retry"))
@@ -769,7 +769,7 @@ func TestPurgeMaterializedViewLogFinalizeFailureUsesWithoutCancel(t *testing.T) 
 	tkObserver.MustExec("use test")
 
 	tk.MustExec("create table t_purge_cancel_finalize (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_cancel_finalize (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_cancel_finalize (id, v) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("insert into t_purge_cancel_finalize values (1, 10)")
 
 	is := dom.InfoSchema()
