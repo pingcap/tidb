@@ -887,7 +887,7 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetS
 	}, nil
 }
 
-func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
+func (p *mockPDClient) GetAllStores(ctx context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	// only used for GetRegionCache once in resolve lock
 	return []*metapb.Store{
 		{
