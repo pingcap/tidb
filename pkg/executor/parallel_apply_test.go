@@ -546,6 +546,33 @@ func TestOrderedParallelApply(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	checkApplyPlan(t, tk, q2, 5)
+	// The planner should use a streamable Limit (not TopN) because the
+	// ordered parallel apply preserves the outer scan order.
+	// Verify the outer plan uses a streamable Limit (not TopN).
+	// TopN may legitimately appear inside the inner (Probe) side
+	// (e.g. for min/max optimization), so only check operators at
+	// or above the Apply level.
+	planRows := tk.MustQuery("explain " + q2).Rows()
+	hasLimit := false
+	hasOuterTopN := false
+	seenApply := false
+	for _, row := range planRows {
+		line := fmt.Sprintf("%v", row)
+		if strings.Contains(line, "Apply") {
+			seenApply = true
+		}
+		if !seenApply {
+			// Operators above Apply — check for Limit vs TopN.
+			if strings.Contains(line, "Limit") {
+				hasLimit = true
+			}
+			if strings.Contains(line, "TopN") {
+				hasOuterTopN = true
+			}
+		}
+	}
+	require.True(t, hasLimit, "plan should contain Limit above Apply for ORDER BY + LIMIT with ordered apply")
+	require.False(t, hasOuterTopN, "plan should not contain TopN above Apply when ordered apply preserves order")
 	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(serialRows2)...))
 
 	// ----------------------------------------------------------------
@@ -785,6 +812,28 @@ func TestOrderedParallelApplyLeftOuterSemiJoin(t *testing.T) {
 	expected3 := tk.MustQuery(q3).Rows()
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(expected3)...))
+
+	// ----------------------------------------------------------------
+	// Left outer semi-join with outer-side WHERE conditions.
+	// Note: the planner pushes outer-side filters below the Apply
+	// into the outer child (e.g. IndexRangeScan), so the outerFilter
+	// field on the Apply is empty and selected=true for all rows
+	// reaching processOneOuterRow.  These tests verify correctness
+	// of the left outer semi join with reduced outer row sets and
+	// nullable columns.
+	// ----------------------------------------------------------------
+	tk.MustExec("insert into t1 values (null, null), (6, null)")
+	q4 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t2 where t2.a = t1.a) from t1 where t1.b is not null order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected4 := tk.MustQuery(q4).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q4).Check(testkit.RowsWithSep(" ", flattenRows(expected4)...))
+
+	q5 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t2 where t2.a = t1.a) from t1 where t1.a > 2 order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected5 := tk.MustQuery(q5).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(expected5)...))
 }
 
 func TestOrderedParallelApplyGoroutinePanic(t *testing.T) {
