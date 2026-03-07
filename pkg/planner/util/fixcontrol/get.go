@@ -75,6 +75,11 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
+	// Fix65465 controls whether to add seek cost to V2 index scan costing and generate pruned-range
+	// alternatives during physical plan selection. When enabled, the optimizer accounts for the cost
+	// of seeking across multiple index ranges (e.g. from IN-lists) and considers alternatives that
+	// use fewer index columns for range construction.
+	Fix65465 uint64 = 65465
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
