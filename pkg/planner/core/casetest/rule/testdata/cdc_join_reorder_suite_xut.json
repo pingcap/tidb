@@ -1203,5 +1203,141 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestJoinReorderPushSelection",
+    "Cases": [
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
+        "Plan": [
+          "Projection root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
+          "└─Selection root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
+          "  └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t3.id, right key:test.t4.id",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t4 keep order:true",
+          "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t3.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "        └─TableReader(Probe) root  data:TableFullScan",
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
+        "Plan": [
+          "Projection root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
+          "└─MergeJoin root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "  └─MergeJoin(Probe) root  inner join, left key:test.t3.id, right key:test.t1.id, other cond:or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:true",
+          "    └─MergeJoin(Probe) root  left outer join, left side:TableReader, left key:test.t3.id, right key:test.t4.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t4 keep order:true",
+          "      └─TableReader(Probe) root  data:TableFullScan",
+          "        └─TableFullScan cop[tikv] table:t3 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub inner join t4 on sub.id=t4.id",
+        "Plan": [
+          "Projection root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
+          "└─Selection root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
+          "  └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t4.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t4 keep order:true",
+          "        └─TableReader(Probe) root  data:TableFullScan",
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists (select 1 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id)",
+        "Plan": [
+          "MergeJoin root  semi join, left side:TableReader, left key:test.t1.id, right key:test.t2.id",
+          "├─Projection(Build) root  test.t2.id",
+          "│ └─Selection root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
+          "│   └─IndexJoin root  left outer join, inner:TableReader, left side:MergeJoin, outer key:test.t3.id, inner key:test.t4.id, equal cond:eq(test.t3.id, test.t4.id)",
+          "│     ├─MergeJoin(Build) root  inner join, left key:test.t2.id, right key:test.t5.id",
+          "│     │ ├─TableReader(Build) root  data:TableFullScan",
+          "│     │ │ └─TableFullScan cop[tikv] table:t5 keep order:true",
+          "│     │ └─MergeJoin(Probe) root  inner join, left key:test.t2.id, right key:test.t3.id",
+          "│     │   ├─TableReader(Build) root  data:TableFullScan",
+          "│     │   │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "│     │   └─TableReader(Probe) root  data:TableFullScan",
+          "│     │     └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "│     └─TableReader(Probe) root  data:TableRangeScan",
+          "│       └─TableRangeScan cop[tikv] table:t4 range: decided by [test.t3.id], keep order:false",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub inner join t4 on sub.id=t4.id",
+        "Plan": [
+          "Projection root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
+          "└─HashJoin root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t4 keep order:false",
+          "  └─Selection(Probe) root  or(like(test.t2.name, \"test2\", 92), or(like(test.t3.name, \"test3\", 92), lt(rand(), 0.5)))",
+          "    └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "        └─TableReader(Probe) root  data:TableFullScan",
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub inner join t4 on sub.id=t4.id",
+        "Plan": [
+          "Projection root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
+          "└─HashJoin root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t4 keep order:false",
+          "  └─Selection(Probe) root  or(like(test.t2.name, \"test2\", 92), or(like(test.t3.name, \"test3\", 92), eq(sleep(0), 0)))",
+          "    └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "        └─TableReader(Probe) root  data:TableFullScan",
+          "          └─TableFullScan cop[tikv] table:t1 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1 inner join t4 on sub1.id=t4.id) sub2 inner join t5 on sub2.id=t5.id",
+        "Plan": [
+          "Projection root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.name, test.t5.id, test.t5.name",
+          "└─Selection root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
+          "  └─MergeJoin root  left outer join, left side:MergeJoin, left key:test.t2.id, right key:test.t3.id",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t3 keep order:true",
+          "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t2 keep order:true",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t4.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t4 keep order:true",
+          "        └─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t5.id",
+          "          ├─TableReader(Build) root  data:TableFullScan",
+          "          │ └─TableFullScan cop[tikv] table:t5 keep order:true",
+          "          └─TableReader(Probe) root  data:TableFullScan",
+          "            └─TableFullScan cop[tikv] table:t1 keep order:true"
+        ]
+      }
+    ]
   }
 ]

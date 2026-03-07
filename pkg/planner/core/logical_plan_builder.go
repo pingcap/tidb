@@ -3689,7 +3689,7 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 }
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
-	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
+	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel, b.hintState)
 	sessionVars := b.ctx.GetSessionVars()
 	currentDB := sessionVars.CurrentDB
 	warnHandler := sessionVars.StmtCtx
@@ -4499,7 +4499,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
 				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
 				currentViewHints[qbName] = b.hintProcessor.ViewQBNameToHints[qbName]
-				b.hintProcessor.ViewQBNameUsed[qbName] = struct{}{}
+				b.hintProcessor.MarkViewQBNameUsed(qbName, b.hintState)
 			}
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
@@ -4999,18 +4999,21 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 
 	hintProcessor.ViewQBNameToTable = qbNameMap4View
 	hintProcessor.ViewQBNameToHints = viewHints
-	hintProcessor.ViewQBNameUsed = make(map[string]struct{})
-	hintProcessor.QBOffsetToHints = currentQbHints
 	hintProcessor.QBNameToSelOffset = currentQbNameMap
+	hintState := hintProcessor.NewBuildState()
+	hintState.QBOffsetToHints = currentQbHints
 
 	originHintProcessor := b.hintProcessor
+	originHintState := b.hintState
 	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	b.hintProcessor = hintProcessor
+	b.hintState = hintState
 	newPlannerSelectBlockAsName := make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
 	defer func() {
-		b.hintProcessor.HandleUnusedViewHints()
+		b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 		b.hintProcessor = originHintProcessor
+		b.hintState = originHintState
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	}()
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)

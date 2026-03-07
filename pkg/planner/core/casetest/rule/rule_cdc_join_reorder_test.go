@@ -15,6 +15,7 @@
 package rule
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -78,5 +79,69 @@ func TestCDCJoinReorder(tt *testing.T) {
 			require.Equalf(t, expectedResults[i], cdcResult,
 				"CD-C result differs from old algorithm for case[%d]: %s", i, sql)
 		}
+	})
+}
+
+func TestJoinReorderPushSelection(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
+		tk.MustExec("create table t1(id int not null primary key, name varchar(100))")
+		tk.MustExec("create table t2(id int not null primary key, name varchar(100))")
+		tk.MustExec("create table t3(id int not null primary key, name varchar(100))")
+		tk.MustExec("create table t4(id int not null primary key, name varchar(100))")
+		tk.MustExec("create table t5(id int not null primary key, name varchar(100))")
+		tk.MustExec("set @@tidb_opt_join_reorder_through_sel = 1")
+
+		tk.MustExec("insert into t1 values (1,'a'),(2,'b'),(3,'c')")
+		tk.MustExec("insert into t2 values (1,'a'),(2,'b'),(4,'d')")
+		tk.MustExec("insert into t3 values (1,'a'),(3,'c'),(5,'e')")
+		tk.MustExec("insert into t4 values (1,'a'),(4,'d'),(6,'f')")
+		tk.MustExec("insert into t5 values (2,'b'),(5,'e'),(7,'g')")
+		tk.MustExec("analyze table t1 all columns")
+		tk.MustExec("analyze table t2 all columns")
+		tk.MustExec("analyze table t3 all columns")
+		tk.MustExec("analyze table t4 all columns")
+		tk.MustExec("analyze table t5 all columns")
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		suite := GetCDCJoinReorderSuiteData()
+		suite.LoadTestCasesByName("TestJoinReorderPushSelection", t, &input, &output, cascades, caller)
+
+		planCaseIdx := 0
+		for _, sql := range input {
+			normalized := strings.ToLower(strings.TrimSpace(sql))
+			if strings.HasPrefix(normalized, "set ") {
+				tk.MustExec(sql)
+				continue
+			}
+
+			plan := tk.MustQuery(sql)
+			testdata.OnRecord(func() {
+				if planCaseIdx >= len(output) {
+					output = append(output, struct {
+						SQL  string
+						Plan []string
+					}{})
+				}
+				output[planCaseIdx].SQL = sql
+				output[planCaseIdx].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+
+			require.Lessf(t, planCaseIdx, len(output),
+				"missing expected output for plan case[%d], sql: %s", planCaseIdx, sql)
+			require.Equalf(t, sql, output[planCaseIdx].SQL,
+				"input/output SQL mismatch at plan case[%d]", planCaseIdx)
+			plan.Check(testkit.Rows(output[planCaseIdx].Plan...))
+			planCaseIdx++
+		}
+		require.Equalf(t, len(output), planCaseIdx,
+			"unexpected output case count, output=%d, actual explain cases=%d", len(output), planCaseIdx)
 	})
 }

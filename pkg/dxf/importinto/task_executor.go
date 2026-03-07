@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -164,6 +165,10 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
 	var (
@@ -390,6 +395,10 @@ func (m *mergeSortStepExecutor) Init(context.Context) error {
 }
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	sm := &MergeSortStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -431,7 +440,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if sm.KVGroup != external.DataKVGroup {
 		partSize = m.indexKVPartSize
 	}
-	onDup, err := getOnDupForKVGroup(m.indicesGenKV, sm.KVGroup)
+	onDup, err := getOnDupForKVGroup(
+		m.indicesGenKV,
+		sm.KVGroup,
+		m.taskMeta.Plan.GetOnDupKeyMode(),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -506,9 +519,30 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 	m.summary.Reset()
 }
 
-func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup string) (engineapi.OnDuplicateKey, error) {
+func getOnDupForConflictedKV(onDupKeyMode importer.OnDupKeyMode) engineapi.OnDuplicateKey {
+	if onDupKeyMode == importer.OnDupKeyModeCapture {
+		return engineapi.OnDuplicateKeyRecord
+	}
+	return engineapi.OnDuplicateKeyError
+}
+
+func normalizeSubtaskErr(err error) error {
+	if err == nil {
+		return err
+	}
+	if !common.ErrFoundDuplicateKeys.Equal(err) {
+		return err
+	}
+	return exeerrors.ErrLoadDataDuplicateKeyConflict.FastGenByArgs()
+}
+
+func getOnDupForKVGroup(
+	indicesGenKV map[int64]importer.GenKVIndex,
+	kvGroup string,
+	onDupKeyMode importer.OnDupKeyMode,
+) (engineapi.OnDuplicateKey, error) {
 	if kvGroup == external.DataKVGroup {
-		return engineapi.OnDuplicateKeyRecord, nil
+		return getOnDupForConflictedKV(onDupKeyMode), nil
 	}
 
 	indexID, err2 := external.KVGroup2IndexID(kvGroup)
@@ -516,17 +550,25 @@ func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup stri
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
-	return getOnDupForIndex(indicesGenKV, indexID)
+	return getOnDupForIndex(indicesGenKV, indexID, onDupKeyMode)
 }
 
-func getOnDupForIndex(indicesGenKV map[int64]importer.GenKVIndex, indexID int64) (engineapi.OnDuplicateKey, error) {
+func getOnDupForIndex(
+	indicesGenKV map[int64]importer.GenKVIndex,
+	indexID int64,
+	onDupKeyMode importer.OnDupKeyMode,
+) (engineapi.OnDuplicateKey, error) {
 	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Errorf("unknown index %d", indexID)
 	}
+	if onDupKeyMode == importer.OnDupKeyModeError {
+		return engineapi.OnDuplicateKeyError, nil
+	}
+
 	if info.Unique {
-		return engineapi.OnDuplicateKeyRecord, nil
+		return getOnDupForConflictedKV(onDupKeyMode), nil
 	}
 	return engineapi.OnDuplicateKeyRemove, nil
 }
@@ -574,6 +616,10 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 }
 
 func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	sm := &WriteIngestStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -611,7 +657,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	onDup, err := getOnDupForKVGroup(e.indicesGenKV, sm.KVGroup)
+	onDup, err := getOnDupForKVGroup(
+		e.indicesGenKV,
+		sm.KVGroup,
+		e.taskMeta.Plan.GetOnDupKeyMode(),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -669,12 +719,20 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 	// only data kv group has loaded row count
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
-	subtaskMeta.RecordedConflictKVCount = subtaskMeta.ConflictInfo.Count
+	conflictInfo := localBackend.GetExternalEngineConflictInfo(engineUUID)
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
+
+	// If no conflict KV is recorded, we skip rewriting the external subtask meta
+	// file to avoid unnecessary PUT requests.
+	if conflictInfo.Count == 0 {
+		return nil
+	}
+
+	subtaskMeta.ConflictInfo = conflictInfo
+	subtaskMeta.RecordedConflictKVCount = conflictInfo.Count
 	subtaskMeta.ExternalPath = external.SubtaskMetaPath(e.taskID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, objStore, subtaskMeta); err != nil {
 		return errors.Trace(err)

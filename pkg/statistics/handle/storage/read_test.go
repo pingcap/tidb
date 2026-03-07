@@ -34,7 +34,7 @@ func TestLoadStats(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
@@ -54,20 +54,18 @@ func TestLoadStats(t *testing.T) {
 	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
 
-	// Index/column stats are not be loaded after analyze.
+	// Index/column stats are not loaded after analyze.
 	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, stat.GetCol(colAID).IsAllEvicted())
 	c := stat.GetCol(colAID)
 	require.True(t, c == nil || c.Histogram.Len() == 0)
-	require.True(t, c == nil || c.CMSketch == nil)
 	require.True(t, stat.GetIdx(idxBID).IsAllEvicted())
 	idx := stat.GetIdx(idxBID)
 	require.True(t, idx == nil || idx.Histogram.Len() == 0)
-	require.True(t, idx == nil || (idx.CMSketch.TotalCount()+idx.TopN.TotalCount() == 0))
+	require.True(t, idx == nil || idx.TopN.TotalCount() == 0)
 	require.True(t, stat.GetCol(colCID).IsAllEvicted())
 	c = stat.GetCol(colCID)
 	require.True(t, c == nil || c.Histogram.Len() == 0)
-	require.True(t, c == nil || c.CMSketch == nil)
 
 	// Column stats are loaded after they are needed.
 	pctx := testKit.Session().GetPlanCtx()
@@ -75,31 +73,25 @@ func TestLoadStats(t *testing.T) {
 	statistics.ColumnStatsIsInvalid(stat.GetCol(colCID), pctx, &stat.HistColl, colCID)
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.True(t, stat.GetCol(colAID).IsFullLoad())
-	hg := stat.GetCol(colAID).Histogram
-	require.Greater(t, hg.Len(), 0)
-	// We don't maintain cmsketch for pk.
-	cms := stat.GetCol(colAID).CMSketch
-	require.Nil(t, cms)
-	require.True(t, stat.GetCol(colCID).IsFullLoad())
-	hg = stat.GetCol(colCID).Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms = stat.GetCol(colCID).CMSketch
-	require.NotNil(t, cms)
+	colA := stat.GetCol(colAID)
+	require.True(t, colA.IsFullLoad())
+	require.Greater(t, colA.TotalRowCount(), float64(0))
+	colC := stat.GetCol(colCID)
+	require.True(t, colC.IsFullLoad())
+	require.Greater(t, colC.TotalRowCount(), float64(0))
 
 	// Index stats are loaded after they are needed.
 	idx = stat.GetIdx(idxBID)
-	require.True(t, idx == nil || (float64(idx.CMSketch.TotalCount())+float64(idx.TopN.TotalCount())+idx.Histogram.TotalRowCount() == 0))
+	require.True(t, idx == nil || (float64(idx.TopN.TotalCount())+idx.Histogram.TotalRowCount() == 0))
 	require.False(t, idx != nil && idx.IsEssentialStatsLoaded())
 	// IsInvalid adds the index to AsyncLoadHistogramNeededItems.
 	statistics.IndexStatsIsInvalid(testKit.Session().GetPlanCtx(), idx, &stat.HistColl, idxBID)
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	idx = stat.GetIdx(tableInfo.Indices[0].ID)
-	hg = idx.Histogram
-	cms = idx.CMSketch
+	hg := idx.Histogram
 	topN := idx.TopN
-	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.Greater(t, float64(topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
 }
 
