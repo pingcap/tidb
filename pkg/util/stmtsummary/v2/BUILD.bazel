@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
@@ -48,7 +49,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 14,
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/ast",
