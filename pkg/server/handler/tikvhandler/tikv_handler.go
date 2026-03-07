@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
@@ -78,7 +79,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const requestDefaultTimeout = 10 * time.Second
+const (
+	requestDefaultTimeout       = 10 * time.Second
+	adminCheckIndexDefaultLimit = 1000
+	adminCheckIndexMaxLimit     = 10000
+)
 
 // SettingsHandler is the handler for list tidb server settings.
 type SettingsHandler struct {
@@ -170,6 +175,7 @@ type DDLResignOwnerHandler struct {
 // DDLCheckHandler is the handler for triggering admin check index.
 type DDLCheckHandler struct {
 	*handler.TikvHandlerTool
+	adminCheckIndexFn func(ctx context.Context, dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error)
 }
 
 // NewDDLResignOwnerHandler creates a new DDLResignOwnerHandler.
@@ -179,7 +185,7 @@ func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 
 // NewDDLCheckHandler creates a new DDLCheckHandler.
 func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
-	return &DDLCheckHandler{tool}
+	return &DDLCheckHandler{TikvHandlerTool: tool}
 }
 
 // ServerInfoHandler is the handler for getting statistics.
@@ -1186,8 +1192,9 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	handler.WriteData(w, "success!")
 }
 
-// ServeHTTP handles request of triggering admin check index.
-// This endpoint is used for online diagnosis and relies on fast check table mode.
+// ServeHTTP handles both:
+// 1. /ddl/check/{db}/{table}/{index} (legacy DDL check endpoint)
+// 2. /admin/check/index (inconsistency summary endpoint)
 func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
@@ -1198,6 +1205,14 @@ func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbName := params[handler.DBName]
 	tableName := params[handler.TableName]
 	indexName := params[handler.IndexName]
+	if dbName != "" || tableName != "" || indexName != "" {
+		h.serveDDLCheckByPath(w, req, dbName, tableName, indexName)
+		return
+	}
+	h.serveAdminCheckIndexSummary(w, req)
+}
+
+func (h DDLCheckHandler) serveDDLCheckByPath(w http.ResponseWriter, req *http.Request, dbName, tableName, indexName string) {
 	if dbName == "" || tableName == "" || indexName == "" {
 		handler.WriteError(w, errors.Errorf("db, table and index are required"))
 		return
@@ -1247,6 +1262,39 @@ func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	handler.WriteData(w, result)
 }
 
+func (h DDLCheckHandler) serveAdminCheckIndexSummary(w http.ResponseWriter, req *http.Request) {
+	dbName := req.FormValue(handler.DBName)
+	tableName := req.FormValue(handler.TableName)
+	indexName := req.FormValue(handler.IndexName)
+	if dbName == "" || tableName == "" || indexName == "" {
+		handler.WriteError(w, errors.Errorf("db, table and index are required"))
+		return
+	}
+
+	limit, err := parseAdminCheckIndexLimit(req)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	checkIndexByNameFn := h.checkIndexByName
+	if h.adminCheckIndexFn != nil {
+		checkIndexByNameFn = h.adminCheckIndexFn
+	}
+	summary, err := checkIndexByNameFn(req.Context(), dbName, tableName, indexName, limit)
+	if err != nil && (!consistency.ErrAdminCheckInconsistent.Equal(err) || summary == nil) {
+		handler.WriteError(w, err)
+		return
+	}
+	if summary == nil {
+		summary = &executor.AdminCheckIndexInconsistentSummary{}
+	}
+
+	// For inconsistency errors from `admin check index`, summary already contains
+	// mismatched handles and mismatch types required by this API.
+	handler.WriteData(w, summary)
+}
+
 func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqlexec.RecordSet) ([][]string, error) {
 	rows := make([][]string, 0)
 	for _, one := range rss {
@@ -1261,6 +1309,79 @@ func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqle
 		rows = append(rows, sRows...)
 	}
 	return rows, nil
+}
+
+func (h DDLCheckHandler) checkIndexByName(ctx context.Context, dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error) {
+	se, err := session.CreateSession(h.Store)
+	if err != nil {
+		return nil, err
+	}
+	defer se.Close()
+
+	if err = se.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		return nil, err
+	}
+	if err = se.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTableCollectInconsistent, vardef.On); err != nil {
+		return nil, err
+	}
+
+	sessVars := se.GetSessionVars()
+	sessVars.FastCheckTableInconsistentLimit = limit
+	sessVars.FastCheckTableInconsistentSummary = nil
+	defer func() {
+		sessVars.FastCheckTableInconsistentLimit = 0
+		sessVars.FastCheckTableInconsistentSummary = nil
+	}()
+
+	checkSQL := fmt.Sprintf("admin check index %s %s", quoteTable(dbName, tableName), quoteName(indexName))
+
+	rs, execErr := se.Execute(ctx, checkSQL)
+	for _, one := range rs {
+		if one != nil {
+			terror.Call(one.Close)
+		}
+	}
+
+	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	if summary == nil {
+		summary = &executor.AdminCheckIndexInconsistentSummary{}
+	}
+	// Return SQL error only when no inconsistency rows were collected.
+	// If rows are collected, ServeHTTP still returns the summary payload.
+	if execErr != nil && !consistency.ErrAdminCheckInconsistent.Equal(execErr) {
+		return nil, execErr
+	}
+	if execErr != nil && summary.InconsistentRowCount == 0 {
+		return nil, execErr
+	}
+	return summary, execErr
+}
+
+func parseAdminCheckIndexLimit(req *http.Request) (int, error) {
+	limitValue := req.FormValue(handler.Limit)
+	if len(limitValue) == 0 {
+		return adminCheckIndexDefaultLimit, nil
+	}
+
+	limit, err := strconv.Atoi(limitValue)
+	if err != nil {
+		return 0, errors.Annotatef(err, "invalid limit %q", limitValue)
+	}
+	if limit <= 0 {
+		return 0, errors.New("limit must be greater than 0")
+	}
+	if limit > adminCheckIndexMaxLimit {
+		return adminCheckIndexMaxLimit, nil
+	}
+	return limit, nil
+}
+
+func quoteName(name string) string {
+	return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
+}
+
+func quoteTable(schema, table string) string {
+	return fmt.Sprintf("%s.%s", quoteName(schema), quoteName(table))
 }
 
 func (h *TableHandler) getPDAddr() ([]string, error) {

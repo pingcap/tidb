@@ -2005,3 +2005,25 @@ func TestSkipInitIsUsed(t *testing.T) {
 		}
 	}
 }
+
+func TestTiDBFastCheckTableCollectInconsistentVar(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBFastCheckTableCollectInconsistent)
+	require.NotNil(t, sv)
+	require.Equal(t, vardef.ScopeSession, sv.Scope)
+	require.Equal(t, BoolToOnOff(vardef.DefTiDBFastCheckTableCollectInconsistent), sv.Value)
+
+	vars := NewSessionVars(nil)
+	require.False(t, vars.FastCheckTableCollectInconsistent)
+
+	val, err := sv.Validate(vars, vardef.On, vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.True(t, vars.FastCheckTableCollectInconsistent)
+
+	val, err = sv.Validate(vars, vardef.Off, vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, val)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.False(t, vars.FastCheckTableCollectInconsistent)
+}
