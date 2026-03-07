@@ -137,6 +137,9 @@ const (
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
+	// TiDBMLogPurgeBatchSize is used to split PURGE MATERIALIZED VIEW LOG into multiple delete batches.
+	TiDBMLogPurgeBatchSize = "tidb_mlog_purge_batch_size"
+
 	// The following session variables controls the memory quota during query execution.
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
@@ -1334,6 +1337,7 @@ const (
 	DefMaxPagingSize                        = int(paging.MaxPagingSize)
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
+	DefTiDBMLogPurgeBatchSize               = 100000
 	DefMaxPreparedStmtCount                 = -1
 	DefWaitTimeout                          = 28800
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
@@ -1555,6 +1559,8 @@ const (
 	DefTiDBTTLDeleteBatchSize                         = 100
 	DefTiDBTTLDeleteBatchMaxSize                      = 10240
 	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBMLogPurgeBatchMaxSize                      = 1000000
+	DefTiDBMLogPurgeBatchMinSize                      = 1
 	DefTiDBTTLDeleteRateLimit                         = 0
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0

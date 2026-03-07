@@ -347,11 +347,12 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:    baseTable.ID,
-		Columns:        s.Cols,
-		PurgeMethod:    purgeMethod,
-		PurgeStartWith: purgeStartWith,
-		PurgeNext:      purgeNext,
+		BaseTableID:       baseTable.ID,
+		Columns:           s.Cols,
+		PurgeMethod:       purgeMethod,
+		PurgeStartWith:    purgeStartWith,
+		PurgeNext:         purgeNext,
+		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
 		return err
