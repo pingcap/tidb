@@ -249,7 +249,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
 			zap.Uint64("GatherID", c.gatherID),
 			zap.String("resource_group", rgName),
-			zap.String("sql_digest", sqlDigest),
+			zap.String("sqlDigest", sqlDigest),
 		)
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
@@ -613,14 +613,14 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 			})
 		if retry {
 			// TODO: If we want to retry, we might need to redo the plan fragment cutting and task scheduling. https://github.com/pingcap/tidb/issues/31015
-			logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()), zap.String("sql_digest", req.SQLDigest))
+			logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()), zap.String("sqlDigest", req.SQLDigest))
 			continue
 		}
 		break
 	}
 
 	if err != nil {
-		logutil.BgLogger().Warn("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()), zap.String("sql_digest", req.SQLDigest))
+		logutil.BgLogger().Warn("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()), zap.String("sqlDigest", req.SQLDigest))
 		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
@@ -631,7 +631,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 	}
 
 	if rpcResp.Error != nil {
-		logutil.BgLogger().Warn("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()), zap.String("sql_digest", req.SQLDigest))
+		logutil.BgLogger().Warn("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()), zap.String("sqlDigest", req.SQLDigest))
 		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		c.sendError(errors.New(rpcResp.Error.Msg))
 		return
