@@ -106,7 +106,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return err
 	}
 	finalizeCtx := context.WithoutCancel(kctx)
-	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
 	batchSize := int64(e.Ctx().GetSessionVars().MLogPurgeBatchSize)
 	if batchSize <= 0 {
 		batchSize = int64(variable.DefTiDBMLogPurgeBatchSize)
