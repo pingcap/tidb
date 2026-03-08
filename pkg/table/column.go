@@ -867,12 +867,15 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 		return nil
 	}
 
-	// If any virtual column depends on a TIMESTAMP column, evaluate in UTC
+	// If any generated column depends on a TIMESTAMP column, evaluate in UTC
 	// to ensure consistent index entries regardless of session timezone.
+	// We check all columns (not just those in virtualColumnIndex) because
+	// a virtual column may transitively depend on a stored generated column
+	// that references TIMESTAMP.
 	// See https://github.com/pingcap/tidb/issues/66753
 	needUTC := false
-	for _, idx := range virtualColumnIndex {
-		if GeneratedColumnDependsOnTimestamp(colInfos[idx], colInfos) {
+	for _, col := range colInfos {
+		if col != nil && col.IsGenerated() && GeneratedColumnDependsOnTimestamp(col, colInfos) {
 			needUTC = true
 			break
 		}

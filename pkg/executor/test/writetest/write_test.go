@@ -608,4 +608,27 @@ func TestGeneratedColumnTimestampTZConsistency(t *testing.T) {
 
 	// Both should return the same value (computed in UTC)
 	require.Equal(t, utcHour, otherHour)
+
+	// Test 4: Chained generated columns with indirect TIMESTAMP dependency
+	// g1 is a DATETIME generated from ts (loses TZ info), g2 extracts HOUR from g1.
+	// Both should be evaluated consistently in UTC.
+	tk.MustExec(`CREATE TABLE t_chained (
+		id INT PRIMARY KEY,
+		ts TIMESTAMP,
+		g1 DATETIME GENERATED ALWAYS AS (ts) STORED,
+		g2 INT GENERATED ALWAYS AS (HOUR(g1)) STORED,
+		INDEX idx_g2(g2)
+	)`)
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("INSERT INTO t_chained VALUES (1, '2026-03-06 05:00:00', DEFAULT, DEFAULT)")
+	tk.MustQuery("SELECT g1, g2 FROM t_chained WHERE id = 1").Check(testkit.Rows("2026-03-06 05:00:00 5"))
+
+	// Update from a different timezone
+	tk.MustExec("SET time_zone = '-08:00'")
+	tk.MustExec("UPDATE t_chained SET ts = '2026-03-06 06:00:00' WHERE id = 1")
+
+	// ADMIN CHECK should pass regardless of session timezone
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("ADMIN CHECK TABLE t_chained")
+	tk.MustExec("ADMIN CHECK INDEX t_chained idx_g2")
 }
