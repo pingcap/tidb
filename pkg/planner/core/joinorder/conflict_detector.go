@@ -222,6 +222,14 @@ func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	return p.StatsInfo().RowCount + cost1 + cost2
 }
 
+func calcCumCostByChildren(p base.LogicalPlan) float64 {
+	cost := p.StatsInfo().RowCount
+	for _, child := range p.Children() {
+		cost += child.StatsInfo().RowCount
+	}
+	return cost
+}
+
 func (n *Node) checkUsedEdges(edgeIdx uint64) bool {
 	_, used := n.usedEdges[edgeIdx]
 	return used
@@ -247,7 +255,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCost(v, nil, nil),
+			cumCost: calcCumCostByChildren(v),
 		}
 	}
 
