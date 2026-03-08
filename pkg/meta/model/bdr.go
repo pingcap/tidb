@@ -48,6 +48,8 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionModifyColumn, // add or update comments for column, change default values of one particular column
 		ActionSetDefaultValue,
 		ActionModifyTableComment,
+		ActionAlterMaterializedViewRefresh,
+		ActionAlterMaterializedViewLogPurge,
 		ActionRenameIndex,
 		ActionAddTablePartition,
 		ActionDropPrimaryKey,

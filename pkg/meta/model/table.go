@@ -771,6 +771,9 @@ type MaterializedViewLogInfo struct {
 
 	// PurgeNext is the expression string after "NEXT", stored in canonical SQL format.
 	PurgeNext string `json:"purge_next,omitempty"`
+
+	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW LOG session.
+	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
 }
 
 const (

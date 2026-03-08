@@ -268,15 +268,18 @@ func GetCreateMaterializedViewLogArgs(job *Job) (*CreateMaterializedViewLogArgs,
 // CreateMaterializedViewArgs is the arguments for create materialized view job.
 type CreateMaterializedViewArgs struct {
 	TableInfo *TableInfo `json:"table_info,omitempty"`
+	// MLogTableID is the table ID of the materialized view log that this MV depends on.
+	// It's used for DDL job discoverability/filtering (e.g. mysql.tidb_ddl_job.table_ids).
+	MLogTableID int64 `json:"mlog_table_id,omitempty"`
 }
 
 func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any {
-	return []any{a.TableInfo}
+	return []any{a.TableInfo, a.MLogTableID}
 }
 
 func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
-	return errors.Trace(job.decodeArgs(a.TableInfo))
+	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableID))
 }
 
 // GetCreateMaterializedViewArgs gets the create materialized view args.
@@ -717,6 +720,46 @@ func (a *ModifyTableCommentArgs) decodeV1(job *Job) error {
 // GetModifyTableCommentArgs gets the args for ActionModifyTableComment.
 func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 	return getOrDecodeArgs[*ModifyTableCommentArgs](&ModifyTableCommentArgs{}, job)
+}
+
+// AlterMaterializedViewRefreshArgs is the arguments for ActionAlterMaterializedViewRefresh ddl.
+type AlterMaterializedViewRefreshArgs struct {
+	RefreshMethod    string `json:"refresh_method,omitempty"`
+	RefreshStartWith string `json:"refresh_start_with,omitempty"`
+	RefreshNext      string `json:"refresh_next,omitempty"`
+}
+
+func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext}
+}
+
+func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext))
+}
+
+// GetAlterMaterializedViewRefreshArgs gets the args for ActionAlterMaterializedViewRefresh.
+func GetAlterMaterializedViewRefreshArgs(job *Job) (*AlterMaterializedViewRefreshArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewRefreshArgs](&AlterMaterializedViewRefreshArgs{}, job)
+}
+
+// AlterMaterializedViewLogPurgeArgs is the arguments for ActionAlterMaterializedViewLogPurge ddl.
+type AlterMaterializedViewLogPurgeArgs struct {
+	PurgeMethod    string `json:"purge_method,omitempty"`
+	PurgeStartWith string `json:"purge_start_with,omitempty"`
+	PurgeNext      string `json:"purge_next,omitempty"`
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext}
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext))
+}
+
+// GetAlterMaterializedViewLogPurgeArgs gets the args for ActionAlterMaterializedViewLogPurge.
+func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPurgeArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
 }
 
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.

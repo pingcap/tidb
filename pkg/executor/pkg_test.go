@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
@@ -124,4 +125,28 @@ func TestMoveInfoSchemaToFront(t *testing.T) {
 			require.Equal(t, db, dbss[i][j])
 		}
 	}
+}
+
+func TestRestoreStmtTextForSlowLogWhenEmptySQL(t *testing.T) {
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 123456789,
+	}
+
+	sqlText := restoreStmtTextForSlowLogWhenEmptySQL(implementStmt)
+	require.Contains(t, sqlText, "IMPLEMENT FOR")
+	require.Contains(t, sqlText, "REFRESH MATERIALIZED VIEW")
+	require.Contains(t, sqlText, "`test`.`mv`")
+	require.Contains(t, sqlText, "FAST")
+	require.Contains(t, sqlText, "USING TIMESTAMP")
+	require.NotContains(t, sqlText, "123456789")
+
+	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.RefreshMaterializedViewImplementStmt{}))
+	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.SelectStmt{}))
 }

@@ -60,6 +60,7 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &PurgeMaterializedViewLogStmt{}
 	_ StmtNode = &RefreshMaterializedViewStmt{}
 	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
@@ -478,6 +479,36 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// PurgeMaterializedViewLogStmt is a statement to purge a materialized view log on a base table.
+type PurgeMaterializedViewLogStmt struct {
+	stmtNode
+
+	Table *TableName
+}
+
+// Restore implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE MATERIALIZED VIEW LOG ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node Accept interface.
+func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PurgeMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
 // RefreshMaterializedViewStmt is a statement to trigger a refresh on a materialized view.
 type RefreshMaterializedViewStmt struct {
 	stmtNode
@@ -485,6 +516,7 @@ type RefreshMaterializedViewStmt struct {
 	ViewName     *TableName
 	WithSyncMode bool
 	Type         RefreshMaterializedViewType
+	ObserveType  RefreshMaterializedViewObserveType
 }
 
 // RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
@@ -499,7 +531,7 @@ type RefreshMaterializedViewImplementStmt struct {
 	stmtNode
 
 	RefreshStmt                  *RefreshMaterializedViewStmt
-	LastSuccessfulRefreshReadTSO int64
+	LastSuccessfulRefreshReadTSO uint64
 }
 
 // Restore implements Node interface.
@@ -512,7 +544,7 @@ func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) e
 		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewImplementStmt.RefreshStmt")
 	}
 	ctx.WriteKeyWord(" USING TIMESTAMP ")
-	ctx.WritePlain(strconv.FormatInt(n.LastSuccessfulRefreshReadTSO, 10))
+	ctx.WritePlain(strconv.FormatUint(n.LastSuccessfulRefreshReadTSO, 10))
 	return nil
 }
 
@@ -551,6 +583,14 @@ func (t RefreshMaterializedViewType) String() string {
 	}
 }
 
+type RefreshMaterializedViewObserveType int
+
+const (
+	RefreshMaterializedViewObserveNone RefreshMaterializedViewObserveType = iota
+	RefreshMaterializedViewObserveDryRun
+	RefreshMaterializedViewObserveProfile
+)
+
 // Restore implements Node interface.
 func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
@@ -562,6 +602,12 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
+	switch n.ObserveType {
+	case RefreshMaterializedViewObserveDryRun:
+		ctx.WriteKeyWord(" DRY RUN")
+	case RefreshMaterializedViewObserveProfile:
+		ctx.WriteKeyWord(" WITH PROFILE")
+	}
 	return nil
 }
 

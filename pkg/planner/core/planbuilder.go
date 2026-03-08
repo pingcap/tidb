@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
@@ -570,6 +571,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case *ast.RefreshMaterializedViewStmt:
 		return b.buildRefreshMaterializedView(ctx, x)
+	case *ast.PurgeMaterializedViewLogStmt:
+		return b.buildPurgeMaterializedViewLog(ctx, x)
 	case *ast.RefreshMaterializedViewImplementStmt:
 		return b.buildRefreshMaterializedViewImplement(ctx, x)
 	case ast.DDLNode:
@@ -3546,15 +3549,15 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
-		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowMaterializedViews, ast.ShowMaterializedViewLogs, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus || show.Tp == ast.ShowMaterializedViews || show.Tp == ast.ShowMaterializedViewLogs) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
 		if extractor := newShowBaseExtractor(*show); extractor.Extract() {
 			p.Extractor = extractor
 			buildPattern = false
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowCreateMaterializedViewLog, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
@@ -3576,6 +3579,17 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	case ast.ShowCreateView:
+		var err error
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowCreateMaterializedView:
 		var err error
 		user := b.ctx.GetSessionVars().User
 		if user != nil {
@@ -3825,7 +3839,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
@@ -3833,7 +3847,365 @@ func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stm
 	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
 	}
-	return nil, plannererrors.ErrUnsupportedType.GenWithStack("FAST refresh is not yet supported, please use COMPLETE refresh")
+
+	viewName := stmt.RefreshStmt.ViewName
+	dbName := viewName.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	mvTbl, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
+	if err != nil {
+		return nil, err
+	}
+	mvInfo := mvTbl.Meta()
+	if mvInfo == nil || mvInfo.MaterializedView == nil {
+		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
+	}
+
+	fromTS := stmt.LastSuccessfulRefreshReadTSO
+
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
+		nodeW := resolve.NewNodeW(sel)
+		sctx, ok := b.ctx.(sessionctx.Context)
+		if !ok {
+			return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+		}
+		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
+			return nil, err
+		}
+
+		// Build/optimize this derived SELECT with a standalone plan builder to avoid mutating the outer builder state.
+		savedBlockNames := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
+		defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(savedBlockNames)
+
+		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+		p, err := innerBuilder.Build(optCtx, nodeW)
+		if err != nil {
+			return nil, err
+		}
+		logic, ok := p.(base.LogicalPlan)
+		if !ok {
+			return nil, errors.Errorf("mvmerge: expected logical plan from select, got %T", p)
+		}
+		pp, _, err := DoOptimize(optCtx, b.ctx, innerBuilder.GetOptFlag(), logic)
+		if err != nil {
+			return nil, err
+		}
+		return pp, nil
+	}
+
+	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.MergeSourceSelect == nil {
+		return nil, errors.New("mvmerge: merge source select is nil")
+	}
+	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	if err != nil {
+		return nil, err
+	}
+	if sourcePlan.Schema().Len() != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source schema length: got %d, expected %d",
+			sourcePlan.Schema().Len(),
+			res.SourceColumnCount,
+		)
+	}
+	var fullUpdateInnerSource base.PhysicalPlan
+	var fullUpdateInnerColumnCount int
+	var fullUpdateIndexRanges ranger.MutableRanges
+	var fullUpdateKeyOff2IdxOff []int
+	var fullUpdateKeyResultColIdxes []int
+	var fullUpdateOutputMVOffsets []int
+	if res.FullUpdateLookupTemplateSelect != nil {
+		if res.FullUpdateLookupColumnCount <= 0 {
+			return nil, errors.New("mvmerge full-update lookup template: invalid output column count")
+		}
+		if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+			return nil, errors.Errorf(
+				"mvmerge full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
+				len(res.FullUpdateLookupMVOffsets),
+				res.FullUpdateLookupColumnCount,
+			)
+		}
+		// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
+		// so force-enable the switch during this one-shot optimization and restore it afterward.
+		savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
+		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
+		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
+		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
+		if err != nil {
+			return nil, err
+		}
+		if fullUpdateLookupPlan.Schema().Len() != res.FullUpdateLookupColumnCount {
+			return nil, errors.Errorf("mvmerge full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
+		}
+		var template *mvFullUpdateLookupTemplate
+		template, err = extractMVFullUpdateLookupTemplate(
+			fullUpdateLookupPlan,
+			res.FullUpdateLookupColumnCount,
+			len(res.GroupKeyMVOffsets),
+			res.FullUpdateLookupMVOffsets,
+			res.GroupKeyMVOffsets,
+		)
+		if err != nil {
+			return nil, err
+		}
+		fullUpdateInnerSource = template.InnerSource
+		fullUpdateInnerColumnCount = template.InnerColumnCount
+		fullUpdateIndexRanges = template.IndexRanges
+		fullUpdateKeyOff2IdxOff = template.KeyOff2IdxOff
+		fullUpdateKeyResultColIdxes = template.KeyResultColIdxes
+		fullUpdateOutputMVOffsets = append([]int(nil), template.OutputMVOffsets...)
+	}
+
+	plan := MVDeltaMerge{
+		Source:                      sourcePlan,
+		FullUpdateInnerSource:       fullUpdateInnerSource,
+		FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
+		FullUpdateIndexRanges:       fullUpdateIndexRanges,
+		FullUpdateKeyOff2IdxOff:     fullUpdateKeyOff2IdxOff,
+		FullUpdateKeyResultColIdxes: fullUpdateKeyResultColIdxes,
+		FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
+		MVTableID:                   res.MVTableID,
+		BaseTableID:                 res.BaseTableID,
+		MLogTableID:                 res.MLogTableID,
+		MVColumnCount:               res.MVColumnCount,
+		DeltaColumnCount:            res.DeltaColumnCount,
+		MVTablePKCols:               res.MVTablePKCols,
+		GroupKeyMVOffsets:           res.GroupKeyMVOffsets,
+		CountStarMVOffset:           res.CountStarMVOffset,
+		AggInfos:                    res.AggInfos,
+	}.Init(b.ctx)
+	return plan, nil
+}
+
+type mvFullUpdateLookupTemplate struct {
+	InnerSource       base.PhysicalPlan
+	InnerColumnCount  int
+	IndexRanges       ranger.MutableRanges
+	KeyOff2IdxOff     []int
+	KeyResultColIdxes []int
+	OutputMVOffsets   []int
+}
+
+func extractMVFullUpdateLookupTemplate(
+	lookupPlan base.PhysicalPlan,
+	expectedInnerColumnCount int,
+	expectedGroupKeyCount int,
+	expectedOutputMVOffsets []int,
+	groupKeyMVOffsets []int,
+) (*mvFullUpdateLookupTemplate, error) {
+	if lookupPlan == nil {
+		return nil, errors.New("mvmerge full-update lookup template: lookup plan is nil")
+	}
+	if len(expectedOutputMVOffsets) != expectedInnerColumnCount {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: unexpected output mv-offset mapping length: got %d, expected %d",
+			len(expectedOutputMVOffsets),
+			expectedInnerColumnCount,
+		)
+	}
+	if len(groupKeyMVOffsets) != expectedGroupKeyCount {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: unexpected group key mv-offset length: got %d, expected %d",
+			len(groupKeyMVOffsets),
+			expectedGroupKeyCount,
+		)
+	}
+
+	indexJoin := findMVFullUpdateIndexJoinTemplatePlan(lookupPlan)
+	if indexJoin == nil {
+		return nil, errors.New("mvmerge full-update lookup template: expected index join plan but not found")
+	}
+	if indexJoin.innerPlan == nil {
+		return nil, errors.New("mvmerge full-update lookup template: index join inner plan is nil")
+	}
+	if indexJoin.innerPlan.Schema().Len() != expectedInnerColumnCount {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: unexpected inner schema length: got %d, expected %d",
+			indexJoin.innerPlan.Schema().Len(),
+			expectedInnerColumnCount,
+		)
+	}
+	if indexJoin.Ranges == nil || len(indexJoin.Ranges.Range()) == 0 {
+		return nil, errors.New("mvmerge full-update lookup template: index join ranges are empty")
+	}
+	// The fallback template is built from pure group-key equality join without range-comparison predicates.
+	intest.Assert(indexJoin.CompareFilters == nil, "mvmerge full-update lookup template should not have compare filters")
+
+	// Keep key mapping in MV group-key order; executor side will refill each key into the corresponding index position.
+	keyOff2IdxOff := append([]int(nil), indexJoin.KeyOff2IdxOff...)
+	if len(keyOff2IdxOff) != expectedGroupKeyCount {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: unexpected keyOff2IdxOff length: got %d, expected %d",
+			len(keyOff2IdxOff),
+			expectedGroupKeyCount,
+		)
+	}
+	rangeWidth := indexJoin.Ranges.Range()[0].Width()
+	for i, idxOff := range keyOff2IdxOff {
+		if idxOff < 0 || idxOff >= rangeWidth {
+			return nil, errors.Errorf(
+				"mvmerge full-update lookup template: invalid keyOff2IdxOff[%d]=%d for range width %d",
+				i,
+				idxOff,
+				rangeWidth,
+			)
+		}
+	}
+	if len(indexJoin.InnerJoinKeys) != expectedGroupKeyCount {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: unexpected inner join key count: got %d, expected %d",
+			len(indexJoin.InnerJoinKeys),
+			expectedGroupKeyCount,
+		)
+	}
+	keyResultColIdxes := make([]int, expectedGroupKeyCount)
+	for i := range indexJoin.InnerJoinKeys {
+		keyResultColIdx := indexJoin.InnerJoinKeys[i].Index
+		if keyResultColIdx < 0 || keyResultColIdx >= indexJoin.innerPlan.Schema().Len() {
+			return nil, errors.Errorf(
+				"mvmerge full-update lookup template: invalid inner join key index %d at position %d for inner schema len %d",
+				keyResultColIdx,
+				i,
+				indexJoin.innerPlan.Schema().Len(),
+			)
+		}
+		keyResultColIdxes[i] = keyResultColIdx
+	}
+	outputMVOffsets, err := deriveMVFullUpdateOutputMVOffsetsByInnerSchema(
+		expectedOutputMVOffsets,
+		groupKeyMVOffsets,
+		keyResultColIdxes,
+		indexJoin.innerPlan.Schema().Len(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &mvFullUpdateLookupTemplate{
+		InnerSource:      indexJoin.innerPlan,
+		InnerColumnCount: indexJoin.innerPlan.Schema().Len(),
+		// Clone mutable ranges for plan-cache style rebuild behavior; never share optimizer-owned instances.
+		IndexRanges:       indexJoin.Ranges.CloneForPlanCache(),
+		KeyOff2IdxOff:     keyOff2IdxOff,
+		KeyResultColIdxes: keyResultColIdxes,
+		OutputMVOffsets:   outputMVOffsets,
+	}, nil
+}
+
+func deriveMVFullUpdateOutputMVOffsetsByInnerSchema(
+	lookupOutputMVOffsets []int,
+	groupKeyMVOffsets []int,
+	keyResultColIdxes []int,
+	innerColumnCount int,
+) ([]int, error) {
+	if len(lookupOutputMVOffsets) != innerColumnCount {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: unexpected lookup output mv-offset length: got %d, expected %d",
+			len(lookupOutputMVOffsets),
+			innerColumnCount,
+		)
+	}
+	if len(groupKeyMVOffsets) != len(keyResultColIdxes) {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: group key mapping length mismatch: group key mv offsets=%d, key result indexes=%d",
+			len(groupKeyMVOffsets),
+			len(keyResultColIdxes),
+		)
+	}
+
+	outputMVOffsets := make([]int, innerColumnCount)
+	for i := range outputMVOffsets {
+		outputMVOffsets[i] = -1
+	}
+
+	groupKeySet := make(map[int]struct{}, len(groupKeyMVOffsets))
+	for keyPos, mvOffset := range groupKeyMVOffsets {
+		if mvOffset < 0 {
+			return nil, errors.Errorf(
+				"mvmerge full-update lookup template: invalid group key mv offset %d at position %d",
+				mvOffset,
+				keyPos,
+			)
+		}
+		if _, dup := groupKeySet[mvOffset]; dup {
+			return nil, errors.Errorf("mvmerge full-update lookup template: duplicate group key mv offset %d", mvOffset)
+		}
+		groupKeySet[mvOffset] = struct{}{}
+
+		keyResultColIdx := keyResultColIdxes[keyPos]
+		if keyResultColIdx < 0 || keyResultColIdx >= innerColumnCount {
+			return nil, errors.Errorf(
+				"mvmerge full-update lookup template: key result col idx %d at position %d out of range [0,%d)",
+				keyResultColIdx,
+				keyPos,
+				innerColumnCount,
+			)
+		}
+		if outputMVOffsets[keyResultColIdx] >= 0 {
+			return nil, errors.Errorf("mvmerge full-update lookup template: duplicate key result col idx %d", keyResultColIdx)
+		}
+		outputMVOffsets[keyResultColIdx] = mvOffset
+	}
+
+	nonKeyMVOffsets := make([]int, 0, len(lookupOutputMVOffsets)-len(groupKeyMVOffsets))
+	for _, mvOffset := range lookupOutputMVOffsets {
+		if mvOffset < 0 {
+			return nil, errors.Errorf("mvmerge full-update lookup template: invalid output mv offset %d", mvOffset)
+		}
+		if _, isKey := groupKeySet[mvOffset]; isKey {
+			continue
+		}
+		nonKeyMVOffsets = append(nonKeyMVOffsets, mvOffset)
+	}
+	unassignedResultColIdxes := make([]int, 0, len(nonKeyMVOffsets))
+	for resultColIdx, mvOffset := range outputMVOffsets {
+		if mvOffset < 0 {
+			unassignedResultColIdxes = append(unassignedResultColIdxes, resultColIdx)
+		}
+	}
+	if len(unassignedResultColIdxes) != len(nonKeyMVOffsets) {
+		return nil, errors.Errorf(
+			"mvmerge full-update lookup template: non-key column mapping mismatch: unassigned result columns=%d, non-key mv offsets=%d",
+			len(unassignedResultColIdxes),
+			len(nonKeyMVOffsets),
+		)
+	}
+	for i, resultColIdx := range unassignedResultColIdxes {
+		outputMVOffsets[resultColIdx] = nonKeyMVOffsets[i]
+	}
+	return outputMVOffsets, nil
+}
+
+func findMVFullUpdateIndexJoinTemplatePlan(plan base.PhysicalPlan) *PhysicalIndexJoin {
+	if plan == nil {
+		return nil
+	}
+	switch x := plan.(type) {
+	case *PhysicalIndexJoin:
+		return x
+	case *PhysicalIndexHashJoin:
+		return &x.PhysicalIndexJoin
+	case *PhysicalIndexMergeJoin:
+		return &x.PhysicalIndexJoin
+	}
+	for _, child := range plan.Children() {
+		if child == nil {
+			continue
+		}
+		if found := findMVFullUpdateIndexJoinTemplatePlan(child); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
@@ -4059,13 +4431,11 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
-
 	op := "INSERT"
 	if insert.IsReplace {
 		op = "REPLACE"
 	}
-	sessionVars := b.ctx.GetSessionVars()
-	if err := CheckMViewUpdatable(sessionVars, tableInfo, tableInfo.Name.O, op); err != nil {
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tableInfo, tn.Name.O, op); err != nil {
 		return nil, err
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
@@ -5184,7 +5554,50 @@ func (b *PlanBuilder) buildRefreshMaterializedView(_ context.Context, stmt *ast.
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.ViewName.Name.L, "", authErr)
 
+	switch stmt.ObserveType {
+	case ast.RefreshMaterializedViewObserveNone:
+		// fallthrough to normal refresh
+	case ast.RefreshMaterializedViewObserveDryRun:
+		p := &DryRunRefreshMaterializedView{Statement: stmt}
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+		return p, nil
+	case ast.RefreshMaterializedViewObserveProfile:
+		p := &ProfileRefreshMaterializedView{Statement: stmt}
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+		return p, nil
+	default:
+		return nil, errors.New("REFRESH MATERIALIZED VIEW: invalid observe option")
+	}
+
 	p := &RefreshMaterializedView{Statement: stmt}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast.PurgeMaterializedViewLogStmt) (base.Plan, error) {
+	dbName := stmt.Table.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"ALTER",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.Table.Name.L,
+		)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.Table.Name.L, "", authErr)
+
+	p := &PurgeMaterializedViewLog{Statement: stmt}
 	return p, nil
 }
 
@@ -5903,6 +6316,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		if s.Full {
 			names = append(names, "Table_type")
 		}
+	case ast.ShowMaterializedViews:
+		names = []string{"mview_id", "mview_name"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowMaterializedViewLogs:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowTableStatus:
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
@@ -5942,6 +6361,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		}
 	case ast.ShowCreateView:
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedView:
+		names = []string{"Materialized View", "Create Materialized View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedViewLog:
+		names = []string{"Materialized View Log", "Create Materialized View Log"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:

@@ -280,6 +280,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
 		}
 		ft := baseCol.FieldType
+		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: c},
 			Tp:   &ft,
@@ -327,31 +328,31 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	var purgeNext string
 	if s.Purge != nil {
 		if s.Purge.Immediate {
-			purgeMethod = "IMMEDIATE"
-		} else {
-			purgeMethod = "DEFERRED"
-			if s.Purge.StartWith != nil {
-				purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
-				if err != nil {
-					return err
-				}
-			}
-			if s.Purge.Next == nil {
-				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
-			}
-			purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
+			return errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeMethod = "DEFERRED"
+		if s.Purge.StartWith != nil {
+			purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
 			if err != nil {
 				return err
 			}
 		}
+		if s.Purge.Next == nil {
+			return errors.New("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
+		if err != nil {
+			return err
+		}
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:    baseTable.ID,
-		Columns:        s.Cols,
-		PurgeMethod:    purgeMethod,
-		PurgeStartWith: purgeStartWith,
-		PurgeNext:      purgeNext,
+		BaseTableID:       baseTable.ID,
+		Columns:           s.Cols,
+		PurgeMethod:       purgeMethod,
+		PurgeStartWith:    purgeStartWith,
+		PurgeNext:         purgeNext,
+		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
 		return err

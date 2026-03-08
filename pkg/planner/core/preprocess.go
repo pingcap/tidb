@@ -321,6 +321,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 	case *ast.AlterMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
+	case *ast.PurgeMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
 	case *ast.RefreshMaterializedViewStmt:
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
@@ -540,8 +542,8 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	sName := pmodel.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 
-	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+	// for 'SHOW CREATE VIEW/MATERIALIZED VIEW/SEQUENCE ...' statement, ignore local temporary tables.
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateSequence) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 

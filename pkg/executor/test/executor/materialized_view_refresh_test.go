@@ -18,10 +18,12 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,13 +32,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
+	rs, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+	require.Nil(t, rs)
+}
+
+func requireRowsContainPrefix(t *testing.T, rows [][]any, prefix string) {
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		if strings.HasPrefix(fmt.Sprintf("%v", row[0]), prefix) {
+			return
+		}
+	}
+	require.Failf(t, "prefix not found", "prefix=%s rows=%v", prefix, rows)
+}
+
 func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -70,22 +91,193 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
-	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("success complete manually 1 1 1 1"))
 }
 
-func TestMaterializedViewRefreshFastNotSupported(t *testing.T) {
+func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_explain_analyze (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_explain_analyze values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_explain_analyze (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_explain_analyze (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_explain_analyze group by a")
+
+	tk.MustExec("insert into t_mv_explain_analyze values (2, 3), (3, 4)")
+	fastRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze fast with profile").Rows()
+	requireRowsContainPrefix(t, fastRows, "[S01 TXN_BEGIN]")
+	requireRowsContainPrefix(t, fastRows, "[S04 DATA_CHANGE_FAST_MERGE]")
+	requireRowsContainPrefix(t, fastRows, "  MVDeltaMerge")
+	requireRowsContainPrefix(t, fastRows, "[S07 FINALIZE_HIST]")
+
+	tk.MustExec("insert into t_mv_explain_analyze values (4, 8)")
+	completeRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete with profile").Rows()
+	requireRowsContainPrefix(t, completeRows, "[S04 DATA_CHANGE_COMPLETE_DELETE]")
+	requireRowsContainPrefix(t, completeRows, "[S05 DATA_CHANGE_COMPLETE_INSERT]")
+	requireRowsContainPrefix(t, completeRows, "[S08 FINALIZE_HIST]")
+}
+
+func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_quota_refresh (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_quota_refresh values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_quota_refresh (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_quota_refresh (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_quota_refresh group by a")
+	tk.MustExec("set @@session.tidb_mem_quota_query = 1073741824")
+	tk.MustExec("set @@global.tidb_mv_maintain_mem_quota = 536870912")
+	tk.MustExec("set @@session.tidb_mv_maintain_mem_quota = 268435456")
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_mv_maintain_mem_quota = %d", 2*1024*1024*1024))
+
+	applied := false
+	lastAppliedMemQuotaQuery := int64(0)
+	lastAppliedMaintainQuota := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnRefreshSession", func(memQuotaQuery int64, maintainMemQuota int64) {
+		applied = true
+		lastAppliedMemQuotaQuery = memQuotaQuery
+		lastAppliedMaintainQuota = maintainMemQuota
+	})
+
+	tk.MustExec("refresh materialized view mv_mv_quota_refresh complete")
+	require.True(t, applied)
+	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
+	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+
+	applied = false
+	lastAppliedMemQuotaQuery = 0
+	lastAppliedMaintainQuota = 0
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_quota_refresh complete")
+	require.True(t, applied)
+	require.Equal(t, int64(536870912), lastAppliedMaintainQuota)
+	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+}
+
+func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_internal_next (a int not null, b int not null)")
+	tk.MustExec("insert into t_internal_next values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_internal_next (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_internal_next (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_next group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_internal_next"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = null where MVIEW_ID = %d", mviewID))
+
+	// User SQL refresh should not update NEXT_TIME.
+	tk.MustExec("refresh materialized view mv_internal_next complete")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete manually"))
+
+	// Internal SQL refresh should update NEXT_TIME by evaluating RefreshNext.
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_next complete")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete automatically"))
+}
+
+func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_internal_start_only (a int not null, b int not null)")
+	tk.MustExec("insert into t_internal_start_only values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_internal_start_only (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_internal_start_only (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_start_only group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_internal_start_only"))
+	require.NoError(t, err)
+	require.NotNil(t, mvTable.Meta().MaterializedView)
+	// Simulate scheduler metadata state: START WITH is set but NEXT is empty.
+	mvTable.Meta().MaterializedView.RefreshStartWith = "DATE_ADD(NOW(), INTERVAL 2 HOUR)"
+	mvTable.Meta().MaterializedView.RefreshNext = ""
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MVIEW_ID = %d", mviewID))
+
+	// User SQL refresh should keep NEXT_TIME unchanged.
+	tk.MustExec("refresh materialized view mv_internal_start_only complete")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete manually"))
+
+	// Internal SQL refresh should explicitly set NEXT_TIME = NULL when START WITH exists and NEXT is empty.
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_start_only complete")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete automatically"))
+}
+
+/*
+func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
-	err := tk.ExecToErr("refresh materialized view mv fast")
-	require.Error(t, err)
-	require.ErrorContains(t, err, "FAST refresh is not yet supported, please use COMPLETE refresh")
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+	tk.MustExec("refresh materialized view mv fast")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	tk.MustQuery("select REFRESH_METHOD, REFRESH_ROWS > 0 from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
+		Check(testkit.Rows("fast manually 1"))
+
+	tk.MustExec("insert into t values (4, 8)")
+	mustExecInternal(t, tk, "refresh materialized view mv fast")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1", "4 8 1"))
+	tk.MustQuery("select REFRESH_METHOD, REFRESH_ROWS > 0 from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
+		Check(testkit.Rows("fast automatically 1"))
+}
+*/
+
+func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mv_fast_minmax (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_fast_minmax (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_minmax (a, cnt, mx, mn) refresh fast next now() as select a, count(1), max(b), min(b) from t_mv_fast_minmax group by a")
+
+	tk.MustExec("insert into t_mv_fast_minmax values (1, 10), (1, 20), (1, 30), (2, 5), (2, 8)")
+	tk.MustExec("refresh materialized view mv_fast_minmax complete")
+	tk.MustQuery("select * from mv_fast_minmax order by a").Check(testkit.Rows(
+		"1 3 30 10",
+		"2 2 8 5",
+	))
+
+	tk.MustExec("delete from t_mv_fast_minmax where a = 1 and b = 30")
+	tk.MustExec("delete from t_mv_fast_minmax where a = 2 and b = 5")
+	tk.MustExec("insert into t_mv_fast_minmax values (2, 12)")
+	tk.MustExec("refresh materialized view mv_fast_minmax fast")
+	tk.MustQuery("select * from mv_fast_minmax order by a").Check(testkit.Rows(
+		"1 2 20 10",
+		"2 2 12 8",
+	))
 }
 
 func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
@@ -96,7 +288,7 @@ func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testin
 	tk.MustExec("set @@session.time_zone = '+00:00'")
 	tk.MustExec("create table t (a int not null, b int not null, ts timestamp not null)")
 	tk.MustExec("insert into t values (1, 10, '2020-01-01 00:30:00'), (2, 20, '2019-12-31 23:30:00')")
-	tk.MustExec("create materialized view log on t (a, b, ts) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b, ts) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec(`create materialized view mv (a, s, cnt) refresh fast next now() as
 select a, sum(b), count(1) from t
 where ts >= '2020-01-01 00:00:00'
@@ -128,7 +320,7 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -147,7 +339,7 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 	tk.MustExec("refresh materialized view mv complete")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
 		Check(testkit.Rows("0"))
 }
@@ -158,7 +350,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -202,7 +394,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	}
 
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("running complete 1 1 1"))
+		Check(testkit.Rows("running complete manually 1 1 1"))
 
 	close(pauseCh)
 
@@ -214,7 +406,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	}
 
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 }
 
 func TestMaterializedViewRefreshCompleteReadTSOSnapshotMatchesMV(t *testing.T) {
@@ -232,7 +424,7 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2"))
 
@@ -310,7 +502,7 @@ func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUp
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -390,7 +582,7 @@ func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUp
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", newTS, mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", newTS, mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 }
 
 func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
@@ -399,7 +591,7 @@ func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -430,7 +622,7 @@ func TestMaterializedViewRefreshCompleteMissingRefreshInfoRow(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -450,7 +642,7 @@ func TestMaterializedViewRefreshWithSyncModeComplete(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
@@ -464,7 +656,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -501,7 +693,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("failed complete 1 1 1"))
+		Check(testkit.Rows("failed complete manually 1 1 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
 		Check(testkit.Rows("0"))
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
@@ -515,7 +707,7 @@ func TestMaterializedViewRefreshCompleteWithConstraintCheckInPlacePessimisticOff
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	// Turn off in-place constraint check for pessimistic txn.
@@ -533,7 +725,7 @@ func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustExec("create user 'mv_refresh_u'@'%' identified by ''")
 	defer tk.MustExec("drop user 'mv_refresh_u'@'%'")

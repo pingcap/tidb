@@ -196,6 +196,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateUser(ctx)
 	case ast.ShowCreateView:
 		return e.fetchShowCreateView()
+	case ast.ShowCreateMaterializedView:
+		return e.fetchShowCreateMaterializedView()
+	case ast.ShowCreateMaterializedViewLog:
+		return e.fetchShowCreateMaterializedViewLog()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
@@ -216,6 +220,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowStatus()
 	case ast.ShowTables:
 		return e.fetchShowTables(ctx)
+	case ast.ShowMaterializedViews:
+		return e.fetchShowMaterializedViews(ctx)
+	case ast.ShowMaterializedViewLogs:
+		return e.fetchShowMaterializedViewLogs(ctx)
 	case ast.ShowOpenTables:
 		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
@@ -621,6 +629,106 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		} else {
 			e.appendRow([]any{v})
 		}
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViews(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	type mvRow struct {
+		id   int64
+		name string
+	}
+	rows := make([]mvRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedView == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tbl.Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
+		rows = append(rows, mvRow{id: tbl.ID, name: tbl.Name.O})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	type mlogRow struct {
+		id       int64
+		name     string
+		baseID   int64
+		baseName string
+	}
+	rows := make([]mlogRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedViewLog == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tbl.Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
+		baseID := tbl.MaterializedViewLog.BaseTableID
+		baseName := ""
+		if baseID != 0 {
+			if baseTbl, ok := e.is.TableByID(ctx, baseID); ok {
+				baseName = baseTbl.Meta().Name.O
+			}
+		}
+		rows = append(rows, mlogRow{
+			id:       tbl.ID,
+			name:     tbl.Name.O,
+			baseID:   baseID,
+			baseName: baseName,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name, row.baseID, row.baseName})
 	}
 	return nil
 }
@@ -1564,6 +1672,68 @@ func (e *ShowExec) fetchShowCreateView() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowCreateMaterializedView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if tb.Meta().MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "MATERIALIZED VIEW")
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedView(e.Ctx(), tb.Meta(), &buf)
+	e.appendRow([]any{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateMaterializedViewLog() error {
+	if _, ok := e.is.SchemaByName(e.DBName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	baseTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE")
+	}
+
+	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	mlogID := baseMeta.MaterializedViewBase.MLogID
+	mlogTable, ok := e.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	mlogName := mlogTable.Meta().Name
+
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if mlogInfo == nil || mlogInfo.BaseTableID != baseMeta.ID {
+		return errors.Errorf(
+			"table %s.%s is not a materialized view log for base table %s.%s",
+			e.DBName.O,
+			mlogName.O,
+			e.DBName.O,
+			baseMeta.Name.O,
+		)
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedViewLog(e.Ctx(), baseMeta, mlogTable.Meta(), &buf)
+	e.appendRow([]any{baseMeta.Name.O, buf.String()})
+	return nil
+}
+
 func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
@@ -1581,6 +1751,96 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 		}
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mvInfo := tb.MaterializedView
+	if mvInfo == nil {
+		return
+	}
+
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
+	needComma := false
+	for _, col := range tb.Cols() {
+		if col == nil || col.Hidden {
+			continue
+		}
+		if needComma {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.Name.O, sqlMode))
+		needComma = true
+	}
+	buf.WriteString(")")
+	if len(tb.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT = '%s'", format.OutputFormat(tb.Comment))
+	}
+
+	refreshMethod := mvInfo.RefreshMethod
+	if refreshMethod == "" {
+		refreshMethod = "FAST"
+	}
+	fmt.Fprintf(buf, " REFRESH %s", refreshMethod)
+	if strings.EqualFold(refreshMethod, "FAST") {
+		if mvInfo.RefreshStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mvInfo.RefreshStartWith)
+		}
+		if mvInfo.RefreshNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mvInfo.RefreshNext)
+		}
+	}
+
+	if tb.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", tb.ShardRowIDBits)
+	}
+	if tb.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
+	}
+	fmt.Fprintf(buf, " AS %s", mvInfo.SQLContent)
+}
+
+func fetchShowCreateTable4MaterializedViewLog(
+	ctx sessionctx.Context,
+	baseTable *model.TableInfo,
+	mlogTable *model.TableInfo,
+	buf *bytes.Buffer,
+) {
+	if baseTable == nil || mlogTable == nil || mlogTable.MaterializedViewLog == nil {
+		return
+	}
+
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mlogInfo := mlogTable.MaterializedViewLog
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW LOG ON %s (", stringutil.Escape(baseTable.Name.O, sqlMode))
+	for i, col := range mlogInfo.Columns {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.O, sqlMode))
+	}
+	buf.WriteString(")")
+
+	if mlogTable.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", mlogTable.ShardRowIDBits)
+	}
+	if mlogTable.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", mlogTable.PreSplitRegions)
+	}
+
+	if mlogInfo.PurgeMethod != "" || mlogInfo.PurgeStartWith != "" || mlogInfo.PurgeNext != "" {
+		buf.WriteString(" PURGE")
+		if strings.EqualFold(mlogInfo.PurgeMethod, "IMMEDIATE") {
+			buf.WriteString(" IMMEDIATE")
+			return
+		}
+		if mlogInfo.PurgeStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mlogInfo.PurgeStartWith)
+		}
+		if mlogInfo.PurgeNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mlogInfo.PurgeNext)
+		}
+	}
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.

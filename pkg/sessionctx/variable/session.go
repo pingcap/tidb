@@ -765,7 +765,9 @@ type SessionVars struct {
 	BatchSize
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
+	DMLBatchSize int
+	// MLogPurgeBatchSize indicates the max rows deleted by one purge batch transaction.
+	MLogPurgeBatchSize  int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	*UserVars
@@ -2288,6 +2290,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      DefTiDBMemQuotaQuery,
+		MVMaintainMemQuota: DefTiDBMVMaintainMemQuota,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{
@@ -2299,6 +2302,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
+	vars.MLogPurgeBatchSize = DefTiDBMLogPurgeBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
@@ -3233,6 +3237,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+	// MVMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MVMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }

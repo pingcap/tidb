@@ -2223,6 +2223,9 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 	if _, ok := stmtToValidate.(*ast.RefreshMaterializedViewStmt); ok && vars.InTxn() {
 		return errors.New("cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
 	}
+	if _, ok := stmtToValidate.(*ast.PurgeMaterializedViewLogStmt); ok && vars.InTxn() {
+		return errors.New("cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction")
+	}
 	return nil
 }
 
@@ -3716,6 +3719,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 
 	err = dom.InitDistTaskLoop()
+	if err != nil {
+		return nil, err
+	}
+
+	err = dom.StartMVService()
 	if err != nil {
 		return nil, err
 	}

@@ -231,7 +231,7 @@ func (decoder *ChunkDecoder) decodeToChunk(rowData []byte, commitTS uint64, hand
 		}
 		if col.ID == model.ExtraCommitTSID {
 			if withCommitTS {
-				chk.AppendInt64(colIdx, int64(commitTS))
+				chk.AppendUint64(colIdx, commitTS)
 			} else {
 				chk.AppendNull(colIdx)
 			}

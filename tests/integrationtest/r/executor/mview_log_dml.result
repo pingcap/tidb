@@ -108,12 +108,16 @@ drop table if exists `$mlog$t`;
 create table t (id int primary key, tracked int, untracked int);
 create materialized view log on t (id, tracked);
 alter table t drop column tracked;
-insert into t values (1, 100);
-Error 1105 (HY000): wrap table with mlog: base column tracked not found
-update t set untracked = 101 where id = 1;
-Error 1105 (HY000): wrap table with mlog: base column tracked not found
+Error 8200 (HY000): Unsupported ALTER TABLE on base table column tracked referenced by materialized view log
+insert into t values (1, 10, 100);
+update t set tracked = 11 where id = 1;
 delete from t where id = 1;
-Error 1105 (HY000): wrap table with mlog: base column tracked not found
+select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
+id	tracked	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
+1	10	I	1
+1	10	U	-1
+1	11	D	-1
+1	11	U	1
 drop table if exists t, `$mlog$t`;
 create table t(a int);
 create materialized view log on t (a);

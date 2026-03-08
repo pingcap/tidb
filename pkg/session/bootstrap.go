@@ -765,7 +765,7 @@ const (
 	// CreateTiDBMViewRefreshInfoTable is a table to store current refresh scheduling info for each materialized view.
 	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
 		MVIEW_ID bigint NOT NULL,
-		LAST_SUCCESS_READ_TSO bigint DEFAULT NULL,
+		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))`
 
@@ -773,25 +773,25 @@ const (
 	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 		MLOG_ID bigint NOT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
-		LAST_PURGED_TSO bigint DEFAULT NULL,
+		LAST_PURGED_TSO bigint unsigned DEFAULT NULL,
 		PRIMARY KEY(MLOG_ID))`
 
 	// CreateTiDBMViewRefreshHistTable is a table to store mview refresh history.
 	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
-		REFRESH_JOB_ID bigint NOT NULL,
+		REFRESH_JOB_ID bigint unsigned NOT NULL,
 		MVIEW_ID bigint NOT NULL,
 		REFRESH_METHOD varchar(32) NOT NULL,
 		REFRESH_TIME datetime(6) DEFAULT NULL,
 		REFRESH_ENDTIME datetime(6) DEFAULT NULL,
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
 		REFRESH_ROWS bigint DEFAULT NULL,
-		REFRESH_READ_TSO bigint DEFAULT NULL,
+		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
 		REFRESH_FAILED_REASON text DEFAULT NULL,
 		PRIMARY KEY(REFRESH_JOB_ID))`
 
 	// CreateTiDBMLogPurgeHistTable is a table to store mlog purge history.
 	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
-		PURGE_JOB_ID bigint NOT NULL,
+		PURGE_JOB_ID bigint unsigned NOT NULL,
 		MLOG_ID bigint NOT NULL,
 		PURGE_METHOD varchar(32) NOT NULL,
 		PURGE_TIME datetime(6) DEFAULT NULL,

@@ -103,4 +103,8 @@ func TestDefaultValue(t *testing.T) {
 	extraPhysTblIDCol := NewExtraPhysTblIDColInfo()
 	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.GetFlag())
 	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
+
+	extraCommitTSCol := NewExtraCommitTSColInfo()
+	require.True(t, mysql.HasUnsignedFlag(extraCommitTSCol.GetFlag()))
+	require.Equal(t, mysql.TypeLonglong, extraCommitTSCol.GetType())
 }

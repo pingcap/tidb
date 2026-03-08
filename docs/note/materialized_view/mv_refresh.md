@@ -5,7 +5,17 @@ This document describes the current implementation and the next evolution steps 
 At the moment:
 
 - `COMPLETE` refresh is implemented with transactional semantics.
-- `FAST` refresh already has the internal statement framework path (it can go through compile/optimize/executor), but the real incremental refresh logic is not implemented yet (planner still returns a placeholder "not supported" error).
+- `FAST` refresh is implemented and uses the same transactional framework as `COMPLETE`.
+
+## Runtime `NEXT_TIME` Update (Internal SQL Success Path)
+
+- For **internal SQL** triggered refresh (identified by `SessionVars.InRestrictedSQL`), after a successful refresh commit, `mysql.tidb_mview_refresh_info.NEXT_TIME` should be updated together with success metadata.
+- Runtime `NEXT_TIME` derivation in this path is intentionally different from create-time derivation:
+  - evaluate and use only `RefreshNext` expression;
+  - do not apply create-time `START WITH` priority / near-now rules;
+  - if `RefreshStartWith` is non-empty and `RefreshNext` is empty, explicitly set `NEXT_TIME = NULL`;
+  - if both are empty, keep `NEXT_TIME` unchanged.
+- For non-internal (user) SQL refresh, keep existing behavior (do not update `NEXT_TIME` on success path).
 
 > Note: refresh metadata and refresh history are now split:
 > - `mysql.tidb_mview_refresh_info` stores per-MV metadata for next refresh (for example `LAST_SUCCESS_READ_TSO`).
@@ -25,12 +35,11 @@ At the moment:
    - `REFRESH_JOB_ID` uses this refresh's `start_tso`.
 5. **Finalize history after refresh commit**: after refresh transaction commit outcome is known, update the same history row to `success` or `failed`.
 6. **Usable COMPLETE refresh**: do full data replacement with transactional `DELETE + INSERT`.
-7. **FAST framework first**: build an internal-only AST and run it via `ExecuteInternalStmt`, so real incremental execution can be plugged in later (currently planner/build still returns "not supported").
+7. **Usable FAST refresh**: run fast refresh through an internal statement path and incremental merge execution.
 8. **Privilege semantics scoped to MVP**: for outer SQL semantics, only check `ALTER` on MV; run refresh with internal sessions so system-table privileges on `mysql.tidb_mview_refresh_info` / `mysql.tidb_mview_refresh_hist` do not leak to business users.
 
 ## Non-goals (not included yet)
 
-- Real incremental execution for `FAST` refresh (including MLOG consumption, merge/upsert, etc.).
 - Separate semantics for `WITH SYNC MODE`.
   Refresh is synchronous today, so `WITH SYNC MODE` is parsed/executed but behaves the same as without it.
   If async refresh is introduced later, semantics can be redefined.
@@ -49,9 +58,31 @@ At the moment:
 
 `MVIEW_ID` directly uses MV physical table `TableInfo.ID`.
 
+## Create-time `NEXT_TIME` Initialization (`CREATE MATERIALIZED VIEW`)
+
+`REFRESH MATERIALIZED VIEW` relies on an existing row in `mysql.tidb_mview_refresh_info`.
+
+When `CREATE MATERIALIZED VIEW` succeeds, DDL worker initializes (or upserts) that row with:
+
+- `MVIEW_ID`
+- initial `LAST_SUCCESS_READ_TSO` (from create-time initial build read tso)
+- `NEXT_TIME` (derived from create-time schedule expressions)
+
+Create-time `NEXT_TIME` derivation rules (for `RefreshStartWith` / `RefreshNext`) are:
+
+1. If both are empty, do not update `NEXT_TIME` (row keeps default `NULL`).
+2. Evaluate expressions in prepared eval session (`UTC` timezone + DDL job SQL mode).
+3. `START WITH` has higher priority, unless it is near-now (`START WITH < now + 10s`) and `NEXT` exists; in that case use `NEXT`.
+4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_TIME = NULL`.
+
+This create-time rule set is intentionally different from runtime internal-refresh reschedule rule:
+
+- runtime internal refresh uses `RefreshNext` only;
+- runtime internal refresh does not apply create-time `START WITH`/near-now priority.
+
 ## SQL behavior (user view)
 
-Supported syntax (all use one common transactional framework today; `FAST` execution is still placeholder):
+Supported syntax (all use one common transactional framework today):
 
 ```sql
 REFRESH MATERIALIZED VIEW db.mv COMPLETE;
@@ -62,7 +93,7 @@ REFRESH MATERIALIZED VIEW mv FAST;
 REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST; -- same behavior today (refresh is already synchronous)
 ```
 
-Current limitation: `FAST` returns "not supported" at planner/build stage (placeholder), but internal statement + `ExecuteInternalStmt` execution path is already wired.
+Current note: `FAST` requires `mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO` to be non-`NULL`; otherwise refresh fails.
 
 Current privilege semantics (MVP):
 
@@ -82,10 +113,11 @@ The most direct implementation is: transaction + row-lock mutex + history lifecy
 4. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `REFRESH_STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
 5. Run refresh implementation by refresh type:
    - `COMPLETE`: `DELETE FROM <mv_table>` + `INSERT INTO <mv_table> <mv_select_sql>`.
-   - `FAST`: construct internal statement and run via `ExecuteInternalStmt` (currently planner/build returns "not supported" placeholder).
+   - `FAST`: construct internal statement and run via `ExecuteInternalStmt` to apply incremental changes.
 6. Success path: read `refresh_read_tso` from transaction context (`TxnCtx.GetForUpdateTS()`).
 7. Before commit, persist success metadata with CAS-style SQL:
    - `UPDATE ... SET LAST_SUCCESS_READ_TSO = <refresh_read_tso> WHERE MVIEW_ID = <mview_id> AND LAST_SUCCESS_READ_TSO <=> <locked_tso>`.
+   - runtime internal-SQL rule: update `NEXT_TIME` by evaluating only `RefreshNext`; if `RefreshStartWith != ''` and `RefreshNext == ''`, set `NEXT_TIME = NULL`.
 8. Do double check by reading back `LAST_SUCCESS_READ_TSO` from `mysql.tidb_mview_refresh_info`:
    - if value is `NULL` or not equal to `<refresh_read_tso>`, treat as unknown inconsistency and fail refresh.
 9. Commit refresh transaction.
@@ -140,6 +172,11 @@ INSERT INTO <db>.<mv> <SQLContent>;
 -- (C2) success-only metadata update in the same refresh transaction (CAS style)
 UPDATE mysql.tidb_mview_refresh_info
    SET LAST_SUCCESS_READ_TSO = <refresh_read_tso>
+   -- internal SQL path only:
+   --   1) if RefreshNext is non-empty: NEXT_TIME = eval(RefreshNext)
+   --   2) else if RefreshStartWith is non-empty: NEXT_TIME = NULL
+   --   3) else: NEXT_TIME unchanged
+   NEXT_TIME = <runtime_derived_or_unchanged>
  WHERE MVIEW_ID = <mview_id>
    AND LAST_SUCCESS_READ_TSO <=> <locked_last_success_read_tso>;
 
@@ -196,7 +233,7 @@ So MV data snapshot corresponds to `for_update_ts`.
 If only `start_ts` is stored, users may observe that MV data includes rows newer than `LAST_SUCCESS_READ_TSO`,
 which also misleads later incremental-refresh/check logic.
 
-`FAST` real incremental logic is not implemented yet (planner still returns placeholder), so only COMPLETE read-tso behavior is effective in practice right now.
+The same success-path read-tso persistence rule is used for both `COMPLETE` and `FAST`.
 
 Current code path always reads refresh success tso from transaction context:
 
@@ -226,8 +263,12 @@ Core execution semantics:
 - On success path, updates `LAST_SUCCESS_READ_TSO` with CAS condition (`LAST_SUCCESS_READ_TSO <=> <locked_tso>`) and verifies readback equals `TxnCtx.GetForUpdateTS()`.
 - On refresh execution failure, rolls back the whole refresh transaction to guarantee all-or-nothing MV data replacement.
 - `COMPLETE` rebuilds data with `DELETE FROM mv` + `INSERT INTO mv SELECT ...`.
-- `FAST` uses internal-only statement `RefreshMaterializedViewImplementStmt` as framework entry
-  (planner still returns placeholder "not supported").
+- `FAST` uses internal-only statement `RefreshMaterializedViewImplementStmt` and a dedicated incremental merge plan.
+- For `FAST`, executor constructs `RefreshMaterializedViewImplementStmt` with:
+  - original `RefreshMaterializedViewStmt` (must be `Type=FAST`)
+  - `LAST_SUCCESS_READ_TSO` value (must be non-`NULL` int64)
+- `FAST` execution goes through `ExecuteInternalStmt(ctx, stmtNode)`.
+- If `ExecuteInternalStmt` returns non-nil `RecordSet`, refresh drains it before `Close()` to guarantee full executor-tree execution.
 - `RefreshMaterializedViewStmt` is a normal `StmtNode` with no DDL-statement semantics
   (for example it does not set `LastExecuteDDL` flag).
 - Statement is forbidden inside explicit user transactions (`BEGIN` / `START TRANSACTION`),
@@ -235,15 +276,7 @@ Core execution semantics:
 
 ## Next phases
 
-### Phase-3: Implement real FAST refresh execution (incremental path)
-
-Phase-3 turns current FAST framework (internal statement + planner placeholder) into a real executable incremental path:
-
-1. Build incremental input set from MLOG and `LAST_SUCCESS_READ_TSO`.
-2. Generate executable plan tree / executor for `RefreshMaterializedViewImplementStmt` instead of returning "not supported".
-3. Define success/failure metadata updates and replay semantics for FAST, with observability/recovery parity with COMPLETE.
-
-### Phase-4: Support out-of-place COMPLETE refresh (decouple build and cutover)
+### Support out-of-place COMPLETE refresh (decouple build and cutover)
 
 For out-of-place COMPLETE refresh, the recommended model is "utility main flow + DDL sub-steps":
 
@@ -283,33 +316,10 @@ Add executor UT coverage in `pkg/executor/test/executor/` (refresh-focused) and 
 
 ## Known limitations and future direction
 
-- FAST refresh currently has framework path only; real incremental logic is not implemented:
-  - Introduced internal-only AST `RefreshMaterializedViewImplementStmt`.
-    It is constructed inside executor and is not parsed from SQL text.
-  - This AST carries:
-    1. original `RefreshMaterializedViewStmt` (must be `Type=FAST`)
-    2. `LAST_SUCCESS_READ_TSO` value
-       (FAST assumes this must be non-NULL `int64`, else fail immediately)
-  - Execution uses `ExecuteInternalStmt(ctx, stmtNode)` to enable future integration with regular
-    compile/optimize/executor pipeline, instead of simple SQL-text execution path.
-  - Planner already routes `RefreshMaterializedViewImplementStmt` through a dedicated build branch,
-    but currently returns "not supported" as placeholder.
-  - `RefreshMaterializedViewImplementStmt.Restore()` renders
-    `IMPLEMENT FOR <RefreshStmt> USING TIMESTAMP <LAST_SUCCESS_READ_TSO>` for log/toString.
-    Since parser grammar does not expose this syntax, restore output is not required to be parse-roundtrippable.
-  - If `ExecuteInternalStmt` returns non-nil `RecordSet`, call `Next()` to drain before `Close()`;
-    this guarantees full executor-tree execution for future plans (for example `INSERT ... SELECT ...`).
 - `DELETE FROM mv` + `INSERT INTO mv SELECT ...` in one transaction can create very large transactions for big MVs
   (txn size limits, write amplification, GC pressure).
   A future "build new object + atomic cutover" strategy is possible but needs careful atomicity-boundary design,
   because it introduces DDL semantics.
-- For future advanced refresh flows (FAST/incremental, MLOG merge/upsert, or operators not easily represented by SQL text),
-  dependency on "build SQL text + ExecuteInternal" should be reduced gradually:
-  - current `RefreshMaterializedViewImplementStmt` is step 1: use structured internal AST to carry
-    executor-only parameters (for example `LAST_SUCCESS_READ_TSO`) through compile/optimize/executor.
-  - next, planner should generate dedicated plan tree / executor for this statement
-    (possibly `INSERT INTO mv SELECT ...` or more advanced merge/upsert plans),
-    so SQL-text execution can be fully replaced.
 - History finalization is intentionally after refresh transaction commit, because only then final status is definitive.
   If process crash happens between refresh commit and history finalize update, recovery/reconciliation for
   stale `running` rows is still a future enhancement.
