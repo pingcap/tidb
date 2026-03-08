@@ -49,12 +49,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// AnalyzeColumnsExecV2 is used to maintain v2 analyze process
-type AnalyzeColumnsExecV2 struct {
-	*AnalyzeColumnsExec
-}
-
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(gp *gp.Pool) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -133,7 +128,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 }
 
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the decoded normal columns.
-func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
+func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	collector statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
@@ -197,7 +192,7 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 	}
 }
 
-func (e *AnalyzeColumnsExecV2) buildSamplingStats(
+func (e *AnalyzeColumnsExec) buildSamplingStats(
 	gp *gp.Pool,
 	ranges []*ranger.Range,
 	indexesWithVirtualColOffsets []int,
@@ -277,7 +272,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			newRootCollectorCount := rootRowCollector.Base().Count
 			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
 				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
-				"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
+				"merge subMergeWorker in AnalyzeColumnsExec", -1)
 			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 			mergeResult.collector.DestroyAndPutToPool()
 		}
@@ -414,7 +409,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 }
 
 // handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
-func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
+func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -471,7 +466,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 }
 
 // subIndexWorker receive the task for each index and return the result for them.
-func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
+func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	defer func() {
@@ -505,7 +500,7 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, re
 
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
-func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
+func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -534,7 +529,8 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 		idxExec.opts[ast.AnalyzeOptNumSamples] = 0
 		idxExec.opts[ast.AnalyzeOptNumBuckets] = 1
 		statsVersion := new(int32)
-		*statsVersion = statistics.Version1
+		*statsVersion = int32(e.StatsVersion)
+		intest.Assert(*statsVersion == statistics.Version2, "the stats version should be 2 when analyzing index with virtual column")
 		// No Top-N
 		topnSize := int32(0)
 		idxExec.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
@@ -568,7 +564,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	return tasks
 }
 
-func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
 	defer func() {
@@ -635,7 +631,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		newRetCollectorCount := retCollector.Base().Count
 		printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
 			e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
-			"merge subCollector in concurrency in AnalyzeColumnsExecV2", index)
+			"merge subMergeWorker in AnalyzeColumnsExec", index)
 
 		// Consume the memory of the result.
 		newRetCollectorSize := retCollector.Base().MemSize
@@ -648,7 +644,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -857,7 +853,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {
-		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
+		failpoint.Inject("mockKillRunningAnalyzeJob", func() {
 			dom := domain.GetDomain(ctx)
 			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 				dom.SysProcTracker().KillSysProcess(id)
@@ -866,7 +862,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
-		failpoint.Inject("mockSlowAnalyzeV2", func() {
+		failpoint.Inject("mockSlowAnalyze", func() {
 			time.Sleep(1000 * time.Second)
 		})
 
