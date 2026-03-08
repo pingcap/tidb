@@ -17,6 +17,7 @@ package querywatch_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -167,6 +168,12 @@ func TestQueryWatch(t *testing.T) {
 	require.Nil(t, rs)
 	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg1'")
 	require.Equal(t, 0, len(r.Rows()))
+	// verify done records: rg1 watches (IDs 3,4,5) should be moved to done table with all fields
+	tk.MustQuery("select SQL_NO_CACHE record_id, resource_group_name, end_time, watch, watch_text, source, action, switch_group_name, rule from mysql.tidb_runaway_watch_done where resource_group_name = 'rg1' order by record_id").Check(
+		testkit.Rows(
+			"3 rg1 <nil> 1 select * from test.t1 manual 3  None",
+			"4 rg1 <nil> 2 02576c15e1f35a8aa3eb7e3b1f977c9f9f9921a22421b3e9f42bad5ab632b4f6 manual 3  None",
+			"5 rg1 <nil> 3 d08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57 manual 1  None"))
 	// test user variable
 	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg2'")
 	require.Equal(t, 1, len(r.Rows()))
@@ -178,10 +185,20 @@ func TestQueryWatch(t *testing.T) {
 	require.Nil(t, rs)
 	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg2'")
 	require.Equal(t, 0, len(r.Rows()))
+	// verify done record: rg2 watch (ID 9) should be moved to done table with all fields
+	tk.MustQuery("select SQL_NO_CACHE record_id, resource_group_name, end_time, watch, watch_text, source, action, switch_group_name, rule from mysql.tidb_runaway_watch_done where resource_group_name = 'rg2'").Check(
+		testkit.Rows("9 rg2 <nil> 3 d08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57 manual 3  None"))
 	// test remove by id
 	rs, err = tk.Exec("query watch remove 1")
 	require.NoError(t, err)
 	require.Nil(t, rs)
+	// verify done record: watch ID 1 should be moved to done table with all fields
+	tk.MustQuery("select SQL_NO_CACHE record_id, resource_group_name, end_time, watch, watch_text, source, action, switch_group_name, rule from mysql.tidb_runaway_watch_done where record_id = 1").Check(
+		testkit.Rows("1 default <nil> 1 select * from test.t1 manual 1  None"))
+	// verify total: exactly 5 done records (3 from rg1 + 1 from rg2 + 1 from id=1), no duplicates
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch_done").Check(testkit.Rows("5"))
+	// verify start_time and done_time are populated for all done records
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch_done where start_time IS NULL or done_time IS NULL").Check(testkit.Rows("0"))
 	var lastObservedErr any
 	require.Eventuallyf(t, func() bool {
 		err := tk.ExecToErr("select * from test.t1")
@@ -202,6 +219,98 @@ func TestQueryWatch(t *testing.T) {
 		}
 		return true
 	}, 10*time.Second, tryInterval, "expected quarantine error (%d), last observed: %v", mysql.ErrResourceGroupQueryRunawayQuarantine, lastObservedErr)
+}
+
+func TestConcurrentQueryWatchRemove(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Set up resource group with runaway settings.
+	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+
+	// Add a watch record (ID = 1).
+	tk.MustQuery("query watch add sql text exact to 'select 1'").Check(testkit.Rows("1"))
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch where id = 1").Check(testkit.Rows("1"))
+
+	// Concurrently remove the same watch from multiple sessions.
+	const concurrency = 5
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for range concurrency {
+		go func() {
+			defer wg.Done()
+			tkc := testkit.NewTestKit(t, store)
+			// Ignore error: concurrent removes will race; some may find the record already deleted.
+			_, _ = tkc.Exec("query watch remove 1")
+		}()
+	}
+	wg.Wait()
+
+	// The watch record should be deleted.
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch where id = 1").Check(testkit.Rows("0"))
+	// Verify: exactly 1 done record for record_id = 1 (no duplicates from concurrent removes).
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch_done where record_id = 1").Check(testkit.Rows("1"))
+}
+
+func TestNonManualWatchRuleField(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(20000)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(1)")
+
+	// Create resource group with WATCH in QUERY_LIMIT to trigger automatic watch creation.
+	tk.MustExec("create resource group rg_auto RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL WATCH EXACT DURATION '10m')")
+
+	// Simulate a slow query that exceeds the 50ms threshold.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
+	err := tk.QueryToErr("select /*+ resource_group(rg_auto) */ * from t1")
+	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
+
+	tryInterval := time.Millisecond * 200
+	maxWaitDuration := time.Second * 10
+
+	// Wait for the automatic watch to be flushed to the system table.
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch where resource_group_name = 'rg_auto'",
+		nil,
+		testkit.Rows("rg_auto select /*+ resource_group(rg_auto) */ * from t1 3 1"),
+		maxWaitDuration, tryInterval)
+
+	// Verify the auto-created watch has non-manual source and ElapsedTime rule.
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch" +
+		" where resource_group_name = 'rg_auto'" +
+		" AND source != 'manual'" +
+		" AND rule LIKE 'ElapsedTime = %'" +
+		" AND end_time IS NOT NULL").Check(testkit.Rows("1"))
+
+	// Remove the watch and verify done record preserves all fields correctly.
+	rs, err := tk.Exec("query watch remove resource group rg_auto")
+	require.NoError(t, err)
+	require.Nil(t, rs)
+
+	// Verify the done record has the correct non-manual rule and all fields.
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch_done" +
+		" where resource_group_name = 'rg_auto'" +
+		" AND rule LIKE 'ElapsedTime = %'" +
+		" AND source != 'manual'" +
+		" AND watch_text = 'select /*+ resource_group(rg_auto) */ * from t1'" +
+		" AND watch = 1" +
+		" AND action = 3" +
+		" AND switch_group_name = ''" +
+		" AND end_time IS NOT NULL" +
+		" AND start_time IS NOT NULL" +
+		" AND done_time IS NOT NULL").Check(testkit.Rows("1"))
 }
 
 func TestQueryWatchIssue56897(t *testing.T) {
