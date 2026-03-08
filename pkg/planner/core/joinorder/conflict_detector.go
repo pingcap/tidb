@@ -225,7 +225,7 @@ func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 func calcCumCostByChildren(p base.LogicalPlan) float64 {
 	cost := p.StatsInfo().RowCount
 	for _, child := range p.Children() {
-		cost += child.StatsInfo().RowCount
+		cost += calcCumCostByChildren(child)
 	}
 	return cost
 }
