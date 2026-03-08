@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -211,6 +212,17 @@ func updateRecord(
 
 	// Step 4: fill auto generated columns
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+
+	// If any generated column depends on a TIMESTAMP column, evaluate all generated
+	// columns in UTC to ensure consistent results regardless of session timezone.
+	// See https://github.com/pingcap/tidb/issues/66753
+	if table.HasGeneratedColumnDependingOnTimestamp(t.Meta()) {
+		sessionLoc := evalCtx.Location()
+		restore := table.ConvertTimestampMutRowToUTC(evalBuffer, t.Meta().Columns, offset, sessionLoc)
+		defer restore()
+		evalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
+	}
+
 	for _, assign := range assignments {
 		// Insert statements may have LazyErr, handle it first.
 		if assign.LazyErr != nil {

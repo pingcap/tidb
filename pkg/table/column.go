@@ -765,6 +765,100 @@ func OptionalFsp(fieldType *types.FieldType) string {
 	return "(" + strconv.Itoa(fsp) + ")"
 }
 
+// GeneratedColumnDependsOnTimestamp checks if a generated column depends on any TIMESTAMP column.
+// When a generated column references a TIMESTAMP column, its expression must be evaluated in UTC
+// to produce consistent results regardless of session timezone.
+func GeneratedColumnDependsOnTimestamp(genCol *model.ColumnInfo, allCols []*model.ColumnInfo) bool {
+	if !genCol.IsGenerated() || len(genCol.Dependences) == 0 {
+		return false
+	}
+	for _, col := range allCols {
+		if _, ok := genCol.Dependences[col.Name.L]; ok {
+			if col.FieldType.GetType() == mysql.TypeTimestamp {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasGeneratedColumnDependingOnTimestamp returns true if any generated column
+// in the table depends on a TIMESTAMP column.
+func HasGeneratedColumnDependingOnTimestamp(tblInfo *model.TableInfo) bool {
+	for _, col := range tblInfo.Columns {
+		if col.IsGenerated() && GeneratedColumnDependsOnTimestamp(col, tblInfo.Columns) {
+			return true
+		}
+	}
+	return false
+}
+
+// ConvertTimestampDatumsToUTC converts all TIMESTAMP column values in the row from
+// session timezone to UTC. It returns a restore function that converts them back.
+// This is used to ensure generated column expressions are evaluated in UTC context.
+func ConvertTimestampDatumsToUTC(row []types.Datum, cols []*model.ColumnInfo, from *time.Location) func() {
+	if from == time.UTC {
+		return func() {}
+	}
+	var converted []int
+	for _, col := range cols {
+		if col.FieldType.GetType() == mysql.TypeTimestamp && col.Offset < len(row) && !row[col.Offset].IsNull() &&
+			row[col.Offset].Kind() == types.KindMysqlTime {
+			t := row[col.Offset].GetMysqlTime()
+			if err := t.ConvertTimeZone(from, time.UTC); err == nil {
+				row[col.Offset].SetMysqlTime(t)
+				converted = append(converted, col.Offset)
+			}
+		}
+	}
+	return func() {
+		for _, offset := range converted {
+			t := row[offset].GetMysqlTime()
+			if err := t.ConvertTimeZone(time.UTC, from); err == nil {
+				row[offset].SetMysqlTime(t)
+			}
+		}
+	}
+}
+
+// ConvertTimestampMutRowToUTC converts TIMESTAMP column values in a chunk.MutRow from
+// session timezone to UTC. It returns a restore function that converts them back.
+// The colOffset is added to each column's Offset to get the position in the MutRow.
+func ConvertTimestampMutRowToUTC(evalBuffer chunk.MutRow, cols []*model.ColumnInfo, colOffset int, from *time.Location) func() {
+	if from == time.UTC {
+		return func() {}
+	}
+	type converted struct {
+		pos     int
+		origVal types.Time
+	}
+	var convertedCols []converted
+	row := evalBuffer.ToRow()
+	for _, col := range cols {
+		if col.FieldType.GetType() == mysql.TypeTimestamp {
+			bufIdx := col.Offset + colOffset
+			if row.IsNull(bufIdx) {
+				continue
+			}
+			origTime := row.GetTime(bufIdx)
+			newTime := origTime
+			if err := newTime.ConvertTimeZone(from, time.UTC); err == nil {
+				convertedCols = append(convertedCols, converted{pos: bufIdx, origVal: origTime})
+				d := types.NewDatum(nil)
+				d.SetMysqlTime(newTime)
+				evalBuffer.SetDatum(bufIdx, d)
+			}
+		}
+	}
+	return func() {
+		for _, c := range convertedCols {
+			d := types.NewDatum(nil)
+			d.SetMysqlTime(c.origVal)
+			evalBuffer.SetDatum(c.pos, d)
+		}
+	}
+}
+
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
 // expression using rows from a chunk, and then fill this value into the chunk.
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
@@ -773,19 +867,72 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 		return nil
 	}
 
+	// If any virtual column depends on a TIMESTAMP column, evaluate in UTC
+	// to ensure consistent index entries regardless of session timezone.
+	// See https://github.com/pingcap/tidb/issues/66753
+	needUTC := false
+	for _, idx := range virtualColumnIndex {
+		if GeneratedColumnDependsOnTimestamp(colInfos[idx], colInfos) {
+			needUTC = true
+			break
+		}
+	}
+
+	// Save the original session location before potentially overriding to UTC.
+	origLoc := ectx.GetEvalCtx().Location()
+	utcCastCtx := ectx
+	utcEvalCtx := ectx.GetEvalCtx()
+	var tsColIndices []int
+	if needUTC && origLoc != time.UTC {
+		utcCastCtx = exprctx.CtxWithUTCLocation(ectx)
+		utcEvalCtx = utcCastCtx.GetEvalCtx()
+		for ci, col := range colInfos {
+			if col != nil && col.FieldType.GetType() == mysql.TypeTimestamp {
+				tsColIndices = append(tsColIndices, ci)
+			}
+		}
+	}
+
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	evalCtx := ectx.GetEvalCtx()
 	tc := evalCtx.TypeCtx()
+	nCols := req.NumCols()
 	for i, idx := range virtualColumnIndex {
+		isUTCCol := needUTC && len(tsColIndices) > 0 && GeneratedColumnDependsOnTimestamp(colInfos[idx], colInfos)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(evalCtx, row)
+			var datum types.Datum
+			var err error
+			if isUTCCol {
+				// Extract datums, convert TIMESTAMP columns from session TZ to UTC,
+				// evaluate in UTC context to get consistent results.
+				datums := make([]types.Datum, nCols)
+				for ci := 0; ci < nCols; ci++ {
+					datums[ci] = row.GetDatum(ci, &colInfos[ci].FieldType)
+				}
+				for _, ci := range tsColIndices {
+					if !datums[ci].IsNull() && datums[ci].Kind() == types.KindMysqlTime {
+						t := datums[ci].GetMysqlTime()
+						if convErr := t.ConvertTimeZone(origLoc, time.UTC); convErr == nil {
+							datums[ci].SetMysqlTime(t)
+						}
+					}
+				}
+				mutRow := chunk.MutRowFromDatums(datums)
+				datum, err = expCols[idx].EvalVirtualColumn(utcEvalCtx, mutRow.ToRow())
+			} else {
+				datum, err = expCols[idx].EvalVirtualColumn(evalCtx, row)
+			}
 			if err != nil {
 				return err
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := CastColumnValue(ectx, datum, colInfos[idx], false, true)
+			castCtx := ectx
+			if isUTCCol {
+				castCtx = utcCastCtx
+			}
+			castDatum, err := CastColumnValue(castCtx, datum, colInfos[idx], false, true)
 			if err != nil {
 				return err
 			}

@@ -189,6 +189,11 @@ func (ctx *innerOverrideEvalContext) ErrCtx() errctx.Context {
 	return ctx.errCtx
 }
 
+// Location implements EvalContext.Location
+func (ctx *innerOverrideEvalContext) Location() *time.Location {
+	return ctx.typeCtx.Location()
+}
+
 type innerOverrideBuildContext struct {
 	BuildContext
 	evalCtx EvalContext
@@ -228,6 +233,25 @@ func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildCo
 			EvalContext: evalCtx,
 			typeCtx:     tc.WithFlags(flags),
 			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
+		},
+	}
+}
+
+// CtxWithUTCLocation returns a new BuildContext with the location overridden to UTC.
+// This is used to evaluate generated column expressions that depend on TIMESTAMP columns
+// to ensure consistent results regardless of session timezone.
+func CtxWithUTCLocation(ctx BuildContext) BuildContext {
+	evalCtx := ctx.GetEvalCtx()
+	tc := evalCtx.TypeCtx()
+	if tc.Location() == time.UTC {
+		return ctx
+	}
+	return &innerOverrideBuildContext{
+		BuildContext: ctx,
+		evalCtx: &innerOverrideEvalContext{
+			EvalContext: evalCtx,
+			typeCtx:     tc.WithLocation(time.UTC),
+			errCtx:      evalCtx.ErrCtx(),
 		},
 	}
 }

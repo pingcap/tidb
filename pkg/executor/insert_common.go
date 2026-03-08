@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -715,6 +716,18 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
+
+	// If any generated column depends on a TIMESTAMP column, evaluate all generated
+	// columns in UTC to ensure consistent results regardless of session timezone.
+	// See https://github.com/pingcap/tidb/issues/66753
+	needUTC := table.HasGeneratedColumnDependingOnTimestamp(tbl)
+	if needUTC {
+		sessionLoc := evalCtx.Location()
+		restore := table.ConvertTimestampDatumsToUTC(row, tbl.Columns, sessionLoc)
+		defer restore()
+		evalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
+	}
+
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset

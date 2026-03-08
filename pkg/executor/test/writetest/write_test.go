@@ -551,3 +551,61 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 	session2.MustExec("commit;")
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
 }
+
+// TestGeneratedColumnTimestampTZConsistency tests that generated columns
+// referencing TIMESTAMP columns produce consistent index entries regardless
+// of session timezone. See https://github.com/pingcap/tidb/issues/66753
+func TestGeneratedColumnTimestampTZConsistency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test 1: STORED generated column (INT result from HOUR())
+	tk.MustExec(`CREATE TABLE t_stored (
+		id INT PRIMARY KEY,
+		ts TIMESTAMP,
+		gen_hour INT GENERATED ALWAYS AS (HOUR(ts)) STORED,
+		INDEX idx_gen(gen_hour)
+	)`)
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("INSERT INTO t_stored VALUES (1, '2026-03-06 05:00:00', DEFAULT)")
+	tk.MustQuery("SELECT gen_hour FROM t_stored WHERE id = 1").Check(testkit.Rows("5"))
+
+	// Update from a different timezone
+	tk.MustExec("SET time_zone = '-08:00'")
+	tk.MustExec("UPDATE t_stored SET ts = '2026-03-06 06:00:00' WHERE id = 1")
+
+	// Check from UTC — the gen_hour should be consistent and ADMIN CHECK TABLE should pass
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("ADMIN CHECK TABLE t_stored")
+	tk.MustExec("ADMIN CHECK INDEX t_stored idx_gen")
+
+	// Test 2: VIRTUAL generated column with index
+	tk.MustExec(`CREATE TABLE t_virtual (
+		id INT PRIMARY KEY,
+		ts TIMESTAMP,
+		gen_hour INT GENERATED ALWAYS AS (HOUR(ts)) VIRTUAL,
+		INDEX idx_gen(gen_hour)
+	)`)
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("INSERT INTO t_virtual VALUES (1, '2026-03-06 05:00:00', DEFAULT)")
+
+	// Update from a different timezone
+	tk.MustExec("SET time_zone = '-08:00'")
+	tk.MustExec("UPDATE t_virtual SET ts = '2026-03-06 06:00:00' WHERE id = 1")
+
+	// ADMIN CHECK should pass regardless of session timezone
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("ADMIN CHECK TABLE t_virtual")
+	tk.MustExec("ADMIN CHECK INDEX t_virtual idx_gen")
+
+	// Test 3: Verify gen_hour value is always based on UTC
+	tk.MustExec("SET time_zone = '+00:00'")
+	utcHour := tk.MustQuery("SELECT gen_hour FROM t_stored WHERE id = 1").Rows()[0][0]
+
+	tk.MustExec("SET time_zone = '-08:00'")
+	otherHour := tk.MustQuery("SELECT gen_hour FROM t_stored WHERE id = 1").Rows()[0][0]
+
+	// Both should return the same value (computed in UTC)
+	require.Equal(t, utcHour, otherHour)
+}

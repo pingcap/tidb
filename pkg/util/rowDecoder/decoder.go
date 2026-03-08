@@ -182,13 +182,26 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx exprctx.BuildContext, row ma
 		ids[col.Col.Offset] = int(k)
 	}
 	slices.Sort(keys)
+
+	// If any generated column depends on a TIMESTAMP column, evaluate in UTC
+	// to ensure consistent results regardless of session timezone.
+	// See https://github.com/pingcap/tidb/issues/66753
+	evalCtx := ctx.GetEvalCtx()
+	if rd.tbl != nil && table.HasGeneratedColumnDependingOnTimestamp(rd.tbl.Meta()) {
+		sessionLoc := evalCtx.Location()
+		restore := table.ConvertTimestampMutRowToUTC(rd.mutRow, rd.tbl.Meta().Columns, 0, sessionLoc)
+		defer restore()
+		ctx = exprctx.CtxWithUTCLocation(ctx)
+		evalCtx = ctx.GetEvalCtx()
+	}
+
 	for _, id := range keys {
 		col := rd.colMap[int64(ids[id])]
 		if col.GenExpr == nil {
 			continue
 		}
 		// Eval the column value
-		val, err := col.GenExpr.Eval(ctx.GetEvalCtx(), rd.mutRow.ToRow())
+		val, err := col.GenExpr.Eval(evalCtx, rd.mutRow.ToRow())
 		if err != nil {
 			return nil, err
 		}

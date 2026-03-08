@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -367,13 +368,39 @@ func (e *BaseKVEncoder) TruncateWarns() {
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
 	genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
+	evalCtx := se.GetExprCtx().GetEvalCtx()
+	var castCtx exprctx.BuildContext = se.GetExprCtx()
+
+	// If any generated column depends on a TIMESTAMP column, evaluate in UTC
+	// to ensure consistent results regardless of session timezone.
+	// See https://github.com/pingcap/tidb/issues/66753
+	colInfos := make([]*model.ColumnInfo, len(cols))
+	for i, c := range cols {
+		colInfos[i] = c.ToInfo()
+	}
+	needUTC := false
 	for _, gc := range genCols {
-		col := cols[gc.Index].ToInfo()
-		evaluated, err := gc.Expr.Eval(se.GetExprCtx().GetEvalCtx(), mutRow.ToRow())
+		if table.GeneratedColumnDependsOnTimestamp(colInfos[gc.Index], colInfos) {
+			needUTC = true
+			break
+		}
+	}
+	if needUTC {
+		sessionLoc := evalCtx.Location()
+		restore := table.ConvertTimestampDatumsToUTC(record, colInfos, sessionLoc)
+		defer restore()
+		mutRow = chunk.MutRowFromDatums(record)
+		castCtx = exprctx.CtxWithUTCLocation(castCtx)
+		evalCtx = castCtx.GetEvalCtx()
+	}
+
+	for _, gc := range genCols {
+		col := colInfos[gc.Index]
+		evaluated, err := gc.Expr.Eval(evalCtx, mutRow.ToRow())
 		if err != nil {
 			return col, err
 		}
-		value, err := table.CastColumnValue(se.GetExprCtx(), evaluated, col, false, false)
+		value, err := table.CastColumnValue(castCtx, evaluated, col, false, false)
 		if err != nil {
 			return col, err
 		}
