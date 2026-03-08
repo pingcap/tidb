@@ -495,6 +495,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			zap.String("missingDetail", missingDetail),
 			zap.String("nodeSets", nodeSets),
 			zap.Bool("allInnerJoin", group.allInnerJoin))
+		if intest.InTest {
+			return nil, errors.New("got remaining edges during join reorder")
+		}
 		return group.root, nil
 	}
 	if len(nodes) <= 0 {
@@ -573,7 +576,7 @@ func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, n
 		usedEdges = make(map[uint64]struct{})
 	}
 	addEdge := func(e *edge, missingList *[]string) {
-		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 && len(e.selConds) == 0 {
+		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 {
 			return
 		}
 		total++

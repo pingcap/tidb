@@ -131,19 +131,18 @@ where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id
 );
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t2.id)]
-├─Projection(Build)	root		planner__core__join_reorder2.t2.id
-│ └─Selection	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
-│   └─HashJoin	root		left outer join, left side:MergeJoin, equal:[eq(planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t4.id)]
+├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t5.id)]
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t5	keep order:false, stats:pseudo
+│ └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
+│   └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
 │     ├─TableReader(Build)	root		data:TableFullScan
-│     │ └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-│     └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t5.id
+│     │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+│     └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t3.id
 │       ├─TableReader(Build)	root		data:TableFullScan
-│       │ └─TableFullScan	cop[tikv]	table:t5	keep order:true, stats:pseudo
-│       └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t3.id
-│         ├─TableReader(Build)	root		data:TableFullScan
-│         │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-│         └─TableReader(Probe)	root		data:TableFullScan
-│           └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│       │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+│       └─TableReader(Probe)	root		data:TableFullScan
+│         └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_join_reorder_through_sel = 0;
