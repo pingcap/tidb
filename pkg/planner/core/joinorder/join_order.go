@@ -495,6 +495,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			zap.String("missingDetail", missingDetail),
 			zap.String("nodeSets", nodeSets),
 			zap.Bool("allInnerJoin", group.allInnerJoin))
+		if intest.InTest {
+			return nil, errors.New("got remaining edges during join reorder")
+		}
 		return group.root, nil
 	}
 	if len(nodes) <= 0 {

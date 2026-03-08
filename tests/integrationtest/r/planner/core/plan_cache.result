@@ -686,11 +686,11 @@ TableReader_8	8000.00	root		data:Selection_7
   └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_cache' select * from t t1, t t2;
 id	estRows	task	access object	operator info
-HashJoin_21	100000000.00	root		CARTESIAN inner join
-├─TableReader_26(Build)	10000.00	root		data:TableFullScan_25
-│ └─TableFullScan_25	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_24(Probe)	10000.00	root		data:TableFullScan_23
-  └─TableFullScan_23	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_22	100000000.00	root		CARTESIAN inner join
+├─TableReader_27(Build)	10000.00	root		data:TableFullScan_26
+│ └─TableFullScan_26	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_25(Probe)	10000.00	root		data:TableFullScan_24
+  └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_cache' select * from t where a in (select a from t);
 id	estRows	task	access object	operator info
 HashJoin_27	9990.00	root		inner join, equal:[eq(planner__core__plan_cache.t.a, planner__core__plan_cache.t.a)]

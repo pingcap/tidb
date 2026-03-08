@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -210,12 +211,15 @@ type Node struct {
 	usedEdges map[uint64]struct{}
 }
 
-func calcCumCost(p base.LogicalPlan) float64 {
-	cost := p.StatsInfo().RowCount
-	for _, child := range p.Children() {
-		cost += calcCumCost(child)
+func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
+	var cost1, cost2 float64
+	if node1 != nil {
+		cost1 = node1.cumCost
 	}
-	return cost
+	if node2 != nil {
+		cost2 = node2.cumCost
+	}
+	return p.StatsInfo().RowCount + cost1 + cost2
 }
 
 func (n *Node) checkUsedEdges(edgeIdx uint64) bool {
@@ -243,7 +247,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCost(v),
+			cumCost: calcCumCost(v, nil, nil),
 		}
 	}
 
@@ -672,7 +676,7 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	return &Node{
 		bitSet:    node1.bitSet.Union(node2.bitSet),
 		p:         p,
-		cumCost:   calcCumCost(p),
+		cumCost:   calcCumCost(p, node1, node2),
 		usedEdges: usedEdges,
 	}, nil
 }
@@ -735,8 +739,10 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	if err != nil {
 		return nil, err
 	}
+	alignedEQConds = alignScalarFuncsNotNullWithSchema(alignedEQConds, join.Schema())
+	alignedNonEQConds := alignExprsNotNullWithSchema(e.nonEQConds, join.Schema())
 	join.EqualConditions = alignedEQConds
-	for _, cond := range e.nonEQConds {
+	for _, cond := range alignedNonEQConds {
 		fromLeft := expression.ExprFromSchema(cond, left.Schema())
 		fromRight := expression.ExprFromSchema(cond, right.Schema())
 		if fromLeft && !fromRight {
@@ -748,6 +754,86 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 		}
 	}
 	return join, nil
+}
+
+func alignScalarFuncsNotNullWithSchema(conds []*expression.ScalarFunction, schema *expression.Schema) []*expression.ScalarFunction {
+	if len(conds) == 0 {
+		return conds
+	}
+	aligned := make([]*expression.ScalarFunction, len(conds))
+	for i, cond := range conds {
+		expr := alignExprNotNullWithSchema(cond, schema)
+		if sf, ok := expr.(*expression.ScalarFunction); ok {
+			aligned[i] = sf
+			continue
+		}
+		aligned[i] = cond
+	}
+	return aligned
+}
+
+func alignExprsNotNullWithSchema(conds []expression.Expression, schema *expression.Schema) []expression.Expression {
+	if len(conds) == 0 {
+		return conds
+	}
+	aligned := make([]expression.Expression, len(conds))
+	for i, cond := range conds {
+		aligned[i] = alignExprNotNullWithSchema(cond, schema)
+	}
+	return aligned
+}
+
+func alignExprNotNullWithSchema(expr expression.Expression, schema *expression.Schema) expression.Expression {
+	switch e := expr.(type) {
+	case *expression.Column:
+		schemaCol := schema.RetrieveColumn(e)
+		if schemaCol == nil {
+			return e
+		}
+		schemaNotNull := mysql.HasNotNullFlag(schemaCol.RetType.GetFlag())
+		colNotNull := mysql.HasNotNullFlag(e.RetType.GetFlag())
+		if schemaNotNull == colNotNull {
+			return e
+		}
+		newCol := e.Clone().(*expression.Column)
+		newRetType := *newCol.RetType
+		if schemaNotNull {
+			newRetType.AddFlag(mysql.NotNullFlag)
+		} else {
+			newRetType.DelFlag(mysql.NotNullFlag)
+		}
+		newCol.RetType = &newRetType
+		return newCol
+	case *expression.CorrelatedColumn:
+		newColExpr := alignExprNotNullWithSchema(&e.Column, schema)
+		newCol, ok := newColExpr.(*expression.Column)
+		if !ok || newCol == &e.Column {
+			return e
+		}
+		newCorCol := e.Clone().(*expression.CorrelatedColumn)
+		newCorCol.Column = *newCol
+		return newCorCol
+	case *expression.ScalarFunction:
+		args := e.GetArgs()
+		changed := false
+		newArgs := make([]expression.Expression, len(args))
+		for i := range args {
+			newArgs[i] = alignExprNotNullWithSchema(args[i], schema)
+			if newArgs[i] != args[i] {
+				changed = true
+			}
+		}
+		if !changed {
+			return e
+		}
+		newFunc := e.Clone().(*expression.ScalarFunction)
+		for i := range newArgs {
+			newFunc.GetArgs()[i] = newArgs[i]
+		}
+		return newFunc
+	default:
+		return expr
+	}
 }
 
 func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
@@ -807,6 +893,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	}.Init(ctx, offset)
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
+	join.MergeSchema()
 	SetNewJoinWithHint(join, vertexHints)
 	return join, nil
 }
@@ -968,7 +1055,7 @@ var rightAsscomRuleTable = [][]ruleTableEntry{
 	{
 		0, // INNER
 		1, // LEFT OUTER
-		0, // RIGHT OUTER
+		1, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},

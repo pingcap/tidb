@@ -1921,9 +1921,7 @@
           "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table has join conditions with other tables"
-        ]
+        "Warn": null
       }
     ]
   },

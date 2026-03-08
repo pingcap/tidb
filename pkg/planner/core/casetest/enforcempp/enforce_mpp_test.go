@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,11 +87,21 @@ func TestEnforceMPP(t *testing.T) {
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 			})
-			require.Eventually(t,
+			var lastPlan []string
+			ok := assert.Eventually(t,
 				func() bool {
 					res := testKit.MustQuery(tt)
+					lastPlan = testdata.ConvertRowsToStrings(res.Rows())
 					return res.Equal(testkit.Rows(output[i].Plan...))
 				}, 1*time.Second, 100*time.Millisecond)
+			if !ok {
+				t.Fatalf("plan mismatch (cascades=%s)\nSQL:\n%s\nExpected:\n%s\nActual:\n%s",
+					cascades,
+					tt,
+					strings.Join(output[i].Plan, "\n"),
+					strings.Join(lastPlan, "\n"),
+				)
+			}
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())))
 		}
 	})

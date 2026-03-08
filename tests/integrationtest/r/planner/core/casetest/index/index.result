@@ -554,7 +554,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(isnull(planner__core__casetest__index__index.t1.b))
-  │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10)) gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f)], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f) lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
