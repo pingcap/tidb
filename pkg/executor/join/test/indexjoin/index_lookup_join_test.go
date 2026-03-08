@@ -337,3 +337,71 @@ func TestIssue54055(t *testing.T) {
 	require.NotNil(t, err)
 	rs.Close()
 }
+
+func TestIndexHashJoinSemiJoinEarlyTermination(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int primary key, b int, index ib(b))")
+	tk.MustExec("create table t2(a int, b int, index ib(b))")
+
+	// Insert rows where each b value has many duplicates in t2,
+	// simulating the scenario where EXISTS over-reads inner rows.
+	var sb strings.Builder
+	for i := 1; i <= 500; i++ {
+		if i > 1 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "(%d, %d)", i, i%100)
+	}
+	tk.MustExec("insert into t1 values " + sb.String())
+
+	sb.Reset()
+	// Insert many rows per b value in t2 to trigger heavy inner reads.
+	for i := 1; i <= 5000; i++ {
+		if i > 1 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "(%d, %d)", i, i%100)
+	}
+	tk.MustExec("insert into t2 values " + sb.String())
+
+	// Semi join with ORDER BY + LIMIT triggers KeepOuterOrder path.
+	sql := "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b) order by t1.a limit 50"
+	rows := tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 50)
+	// Verify correct ordering.
+	require.Equal(t, "1", rows[0][0].(string))
+	require.Equal(t, "50", rows[49][0].(string))
+
+	// Also test without LIMIT to ensure full result correctness.
+	sql = "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b) order by t1.a"
+	rows = tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 500)
+	require.Equal(t, "1", rows[0][0].(string))
+	require.Equal(t, "500", rows[499][0].(string))
+
+	// Test semi join WITH other conditions (condition references both sides).
+	// Add a column for the cross-table condition.
+	tk.MustExec("alter table t1 add column c int")
+	tk.MustExec("alter table t2 add column c int")
+	tk.MustExec("update t1 set c = a")
+	tk.MustExec("update t2 set c = a")
+
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b and t2.c > t1.c) order by t1.a limit 50"
+	rows = tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 50)
+	require.Equal(t, "1", rows[0][0].(string))
+	require.Equal(t, "50", rows[49][0].(string))
+
+	// Without LIMIT, all rows with a matching t2.c > t1.c should be returned.
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b and t2.c > t1.c) order by t1.a"
+	rows = tk.MustQuery(sql).Rows()
+	require.Greater(t, len(rows), 0)
+	// Verify ordering.
+	require.Equal(t, "1", rows[0][0].(string))
+}

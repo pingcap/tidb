@@ -733,6 +733,16 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		},
 	)
 	lookUpContents, err := iw.constructLookupContent(task.lookUpJoinTask)
+
+	// For semi join, enable incremental inner fetch so we can terminate
+	// early once all outer rows have been matched. This avoids reading the
+	// entire inner side when only existence checks are needed (e.g. EXISTS
+	// subqueries). Works with or without other join conditions.
+	isSemiJoin := JoinerType(iw.joiner) == base.SemiJoin
+	if isSemiJoin && iw.innerWorker.maxFetchSize == 0 {
+		iw.innerWorker.maxFetchSize = maxRowsPerFetch
+	}
+
 	if err == nil {
 		err = iw.innerWorker.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents)
 	}
@@ -763,6 +773,11 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 			}
 			// innerExec not finished, we need to fetch inner results and do join again.
 			if task.innerExec != nil {
+				if isSemiJoin && iw.allOuterRowsMatched(task) {
+					terror.Log(exec.Close(task.innerExec))
+					task.innerExec = nil
+					break
+				}
 				err = iw.innerWorker.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents)
 				if err != nil {
 					return err
@@ -773,6 +788,49 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		}
 		return nil
 	}
+
+	// KeepOuterOrder: for semi join, probe incrementally with early
+	// termination, then emit matched rows in outer order.
+	if isSemiJoin {
+		joinStartTime = time.Now()
+		// For semi join with other conditions, we need a scratch chunk for
+		// TryToMatchOuters (condition evaluation) and persistent storage for
+		// matched inner rows (needed by TryToMatchInners during emit).
+		var scratchChk *chunk.Chunk
+		var matchedInners *chunk.List
+		var matchedInnerPtrs [][]chunk.RowPtr
+		hasConditions := !iw.joiner.isSemiJoinWithoutCondition()
+		if hasConditions {
+			scratchChk = chunk.New(iw.lookup.RetFieldTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+			matchedInners = chunk.NewList(iw.InnerCtx.RowTypes, iw.ctx.GetSessionVars().InitChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+			matchedInnerPtrs = make([][]chunk.RowPtr, task.outerResult.NumChunks())
+			for i := range matchedInnerPtrs {
+				matchedInnerPtrs[i] = make([]chunk.RowPtr, task.outerResult.GetChunk(i).NumRows())
+			}
+		}
+		for {
+			if err = iw.probeAndMarkOuterRows(task, h, scratchChk, matchedInners, matchedInnerPtrs); err != nil {
+				if task.lookUpJoinTask.innerExec != nil {
+					terror.Log(exec.Close(task.lookUpJoinTask.innerExec))
+					task.lookUpJoinTask.innerExec = nil
+				}
+				return err
+			}
+			if iw.allOuterRowsMatched(task) || task.lookUpJoinTask.innerExec == nil {
+				if task.lookUpJoinTask.innerExec != nil {
+					terror.Log(exec.Close(task.lookUpJoinTask.innerExec))
+					task.lookUpJoinTask.innerExec = nil
+				}
+				break
+			}
+			err = iw.innerWorker.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents)
+			if err != nil {
+				return err
+			}
+		}
+		return iw.emitSemiJoinResultInOrder(ctx, task, joinResult, resultCh, matchedInners, matchedInnerPtrs)
+	}
+
 	joinStartTime = time.Now()
 	return iw.doJoinInOrder(ctx, task, joinResult, h, resultCh)
 }
@@ -974,6 +1032,139 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			}
 			if !hasMatched {
 				iw.joiner.OnMissMatch(hasNull, outerRow, joinResult.chk)
+			}
+		}
+	}
+	return nil
+}
+
+// probeAndMarkOuterRows iterates the current batch of inner results and
+// marks matching outer rows in task.outerRowStatus. It reuses the existing
+// getMatchedOuterRows hash-table probe which already skips outer rows that
+// are already marked as matched for semi joins.
+//
+// When the joiner has other conditions (scratchChk != nil), TryToMatchOuters
+// is used to evaluate them. Matched inner rows are saved in matchedInners
+// so the emit phase can call TryToMatchInners with a valid inner row.
+func (iw *indexHashJoinInnerWorker) probeAndMarkOuterRows(task *indexHashJoinTask, h hash.Hash64,
+	scratchChk *chunk.Chunk, matchedInners *chunk.List, matchedInnerPtrs [][]chunk.RowPtr) error {
+	hasConditions := scratchChk != nil
+	for i, numChunks := 0, task.innerResult.NumChunks(); i < numChunks; i++ {
+		chk := task.innerResult.GetChunk(i)
+		for j := range chk.NumRows() {
+			innerRow := chk.GetRow(j)
+			matchedOuterRows, matchedPtrs, err := iw.getMatchedOuterRows(innerRow, task, h, iw.joinKeyBuf)
+			if err != nil {
+				return err
+			}
+			if len(matchedOuterRows) == 0 {
+				continue
+			}
+			if !hasConditions {
+				for _, ptr := range matchedPtrs {
+					task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] = outerRowMatched
+				}
+				continue
+			}
+			// Evaluate other conditions via TryToMatchOuters.
+			iw.rowIter.Reset(matchedOuterRows)
+			iw.rowIter.Begin()
+			iw.outerRowStatus, err = iw.joiner.TryToMatchOuters(iw.rowIter, innerRow, scratchChk, iw.outerRowStatus)
+			if err != nil {
+				return err
+			}
+			for idx, status := range iw.outerRowStatus {
+				ptr := matchedPtrs[idx]
+				if status == outerRowMatched && task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] != outerRowMatched {
+					task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] = outerRowMatched
+					// Save the inner row (copied into persistent storage) for emit.
+					matchedInners.AppendRow(innerRow)
+					lastChk := matchedInners.GetChunk(matchedInners.NumChunks() - 1)
+					matchedInnerPtrs[ptr.ChkIdx][ptr.RowIdx] = chunk.RowPtr{
+						ChkIdx: uint32(matchedInners.NumChunks() - 1),
+						RowIdx: uint32(lastChk.NumRows() - 1),
+					}
+				} else if task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] == outerRowUnmatched {
+					task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] = status
+				}
+			}
+			scratchChk.Reset()
+		}
+	}
+	return nil
+}
+
+// allOuterRowsMatched returns true when every outer row that was inserted
+// into the hash table has been marked as matched. Outer rows with NULL
+// join keys (not in the hash table) are excluded from the count.
+func (*indexHashJoinInnerWorker) allOuterRowsMatched(task *indexHashJoinTask) bool {
+	matchable := task.lookupMap.Len()
+	if matchable == 0 {
+		return true
+	}
+	var matched uint64
+	for _, chkStatus := range task.outerRowStatus {
+		for _, status := range chkStatus {
+			if status == outerRowMatched {
+				matched++
+			}
+		}
+	}
+	return matched >= matchable
+}
+
+// emitSemiJoinResultInOrder emits matched outer rows in their original order.
+// When matchedInners is non-nil (join has other conditions), the saved inner
+// row is used so TryToMatchInners can evaluate conditions. Otherwise a dummy
+// inner row is used since the joiner only checks inners.Len() > 0.
+// Unmatched rows are discarded (OnMissMatch is a no-op for semi join).
+func (iw *indexHashJoinInnerWorker) emitSemiJoinResultInOrder(ctx context.Context, task *indexHashJoinTask,
+	joinResult *indexHashJoinResult, resultCh chan *indexHashJoinResult,
+	matchedInners *chunk.List, matchedInnerPtrs [][]chunk.RowPtr) (err error) {
+	defer func() {
+		if err == nil && joinResult.chk != nil {
+			if joinResult.chk.NumRows() > 0 {
+				select {
+				case resultCh <- joinResult:
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				joinResult.src <- joinResult.chk
+			}
+		}
+	}()
+
+	innerRows := make([]chunk.Row, 1)
+	var ok bool
+	for chkIdx, outerRowStatus := range task.outerRowStatus {
+		chk := task.outerResult.GetChunk(chkIdx)
+		for rowIdx, status := range outerRowStatus {
+			if status != outerRowMatched {
+				continue
+			}
+			outerRow := chk.GetRow(rowIdx)
+			if matchedInners != nil {
+				innerRows[0] = matchedInners.GetRow(matchedInnerPtrs[chkIdx][rowIdx])
+			} else {
+				innerRows[0] = outerRow // dummy; content doesn't matter
+			}
+			iw.rowIter.Reset(innerRows)
+			iw.rowIter.Begin()
+			_, _, err = iw.joiner.TryToMatchInners(outerRow, iw.rowIter, joinResult.chk)
+			if err != nil {
+				return err
+			}
+			if joinResult.chk.IsFull() {
+				select {
+				case resultCh <- joinResult:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				joinResult, ok = iw.getNewJoinResult(ctx)
+				if !ok {
+					return errors.New("indexHashJoinInnerWorker.emitSemiJoinResultInOrder failed")
+				}
 			}
 		}
 	}
