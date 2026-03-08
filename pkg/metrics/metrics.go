@@ -281,6 +281,18 @@ func RegisterMetrics() {
 
 	prometheus.MustRegister(DistTaskUsedSlotsGauge)
 	prometheus.MustRegister(RunawayCheckerCounter)
+<<<<<<< HEAD
+=======
+	prometheus.MustRegister(RunawayFlusherCounter)
+	prometheus.MustRegister(RunawayFlusherAddCounter)
+	prometheus.MustRegister(RunawayFlusherBatchSizeHistogram)
+	prometheus.MustRegister(RunawayFlusherDurationHistogram)
+	prometheus.MustRegister(RunawayFlusherIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerDurationHistogram)
+	prometheus.MustRegister(RunawaySyncerIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerCheckpointGauge)
+	prometheus.MustRegister(RunawaySyncerCounter)
+>>>>>>> 927159a65fb (feat(metrics/runaway): add syncer observability (#66182))
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
 	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)

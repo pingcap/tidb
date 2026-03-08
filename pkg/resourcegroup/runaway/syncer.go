@@ -21,12 +21,45 @@ import (
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> 927159a65fb (feat(metrics/runaway): add syncer observability (#66182))
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
+<<<<<<< HEAD
 // watchSyncInterval is the interval to sync the watch record.
 const watchSyncInterval = time.Second
+=======
+const (
+	// Label values for syncer metrics.
+	lblSync      = "sync"
+	lblWatch     = "watch"
+	lblWatchDone = "watch_done"
+
+	// watchSyncInterval is the interval to sync the watch record.
+	watchSyncInterval = time.Second
+	// watchSyncBatchLimit is the max number of rows fetched per sync query.
+	watchSyncBatchLimit = 256
+	// watchTableName is the name of system table which save runaway watch items.
+	runawayWatchTableName = "tidb_runaway_watch"
+	// watchDoneTableName is the name of system table which save done runaway watch items.
+	runawayWatchDoneTableName = "tidb_runaway_watch_done"
+)
+
+func getRunawayWatchTableName() string {
+	return fmt.Sprintf("mysql.%s", runawayWatchTableName)
+}
+
+func getRunawayWatchDoneTableName() string {
+	return fmt.Sprintf("mysql.%s", runawayWatchDoneTableName)
+}
+>>>>>>> 927159a65fb (feat(metrics/runaway): add syncer observability (#66182))
 
 // Syncer is used to sync the runaway records.
 type syncer struct {
@@ -35,6 +68,14 @@ type syncer struct {
 	sysSessionPool      util.SessionPool
 
 	mu sync.Mutex
+
+	lastSyncTime   time.Time
+	syncInterval   prometheus.Observer
+	syncDuration   prometheus.Observer
+	watchCPGauge   prometheus.Gauge
+	doneCPGauge    prometheus.Gauge
+	syncOKCounter  prometheus.Counter
+	syncErrCounter prometheus.Counter
 }
 
 func newSyncer(sysSessionPool util.SessionPool) *syncer {
@@ -45,9 +86,21 @@ func newSyncer(sysSessionPool util.SessionPool) *syncer {
 			"start_time",
 			NullTime},
 		deletionWatchReader: &systemTableReader{
+<<<<<<< HEAD
 			watchDoneTableName,
 			"done_time",
 			NullTime},
+=======
+			getRunawayWatchDoneTableName(),
+			"id",
+			0},
+		syncInterval:   metrics.RunawaySyncerIntervalHistogram.WithLabelValues(lblSync),
+		syncDuration:   metrics.RunawaySyncerDurationHistogram.WithLabelValues(lblSync),
+		watchCPGauge:   metrics.RunawaySyncerCheckpointGauge.WithLabelValues(lblWatch),
+		doneCPGauge:    metrics.RunawaySyncerCheckpointGauge.WithLabelValues(lblWatchDone),
+		syncOKCounter:  metrics.RunawaySyncerCounter.WithLabelValues(lblSync, metrics.LblOK),
+		syncErrCounter: metrics.RunawaySyncerCounter.WithLabelValues(lblSync, metrics.LblError),
+>>>>>>> 927159a65fb (feat(metrics/runaway): add syncer observability (#66182))
 	}
 }
 
