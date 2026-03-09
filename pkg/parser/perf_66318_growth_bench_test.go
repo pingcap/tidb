@@ -153,6 +153,28 @@ func genCTEChainSQL(ctes int) string {
 	return sb.String()
 }
 
+func genSubqueryDepthSQL(depth int) string {
+	// SELECT * FROM (SELECT * FROM (...(SELECT * FROM t)... ) AS dN) AS d0
+	//
+	// This covers nested subquery / derived-table depth as a boundary/extreme case.
+	base := "SELECT * FROM t"
+	if depth <= 0 {
+		return base
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(base) + depth*32)
+	for i := 0; i < depth; i++ {
+		sb.WriteString("SELECT * FROM (")
+	}
+	sb.WriteString(base)
+	for i := depth - 1; i >= 0; i-- {
+		sb.WriteString(") AS d")
+		sb.WriteString(strconv.Itoa(i))
+	}
+	return sb.String()
+}
+
 func BenchmarkPerf66318GrowthINList(b *testing.B) {
 	sizes := []int{10, 100, 1000, 10000}
 	for _, n := range sizes {
@@ -209,7 +231,7 @@ func BenchmarkPerf66318GrowthSQLLength(b *testing.B) {
 }
 
 func BenchmarkPerf66318GrowthWhereAndChain(b *testing.B) {
-	sizes := []int{10, 100, 1000, 5000}
+	sizes := []int{10, 100, 1000, 10000}
 	for _, n := range sizes {
 		sql := genWhereAndChainSQL(n)
 		b.Run(fmt.Sprintf("preds=%d", n), func(b *testing.B) {
@@ -220,7 +242,7 @@ func BenchmarkPerf66318GrowthWhereAndChain(b *testing.B) {
 }
 
 func BenchmarkPerf66318GrowthJoinChain(b *testing.B) {
-	sizes := []int{2, 5, 10, 20, 50}
+	sizes := []int{2, 5, 10, 20, 50, 100}
 	for _, n := range sizes {
 		sql := genJoinChainSQL(n)
 		b.Run(fmt.Sprintf("joins=%d", n), func(b *testing.B) {
@@ -231,10 +253,21 @@ func BenchmarkPerf66318GrowthJoinChain(b *testing.B) {
 }
 
 func BenchmarkPerf66318GrowthCTECount(b *testing.B) {
-	sizes := []int{1, 5, 10, 50, 200}
+	sizes := []int{1, 5, 10, 50, 200, 500}
 	for _, n := range sizes {
 		sql := genCTEChainSQL(n)
 		b.Run(fmt.Sprintf("ctes=%d", n), func(b *testing.B) {
+			b.SetBytes(int64(len(sql)))
+			benchParseSQL(b, sql)
+		})
+	}
+}
+
+func BenchmarkPerf66318GrowthSubqueryDepth(b *testing.B) {
+	sizes := []int{1, 5, 10, 50, 200, 500}
+	for _, n := range sizes {
+		sql := genSubqueryDepthSQL(n)
+		b.Run(fmt.Sprintf("depth=%d", n), func(b *testing.B) {
 			b.SetBytes(int64(len(sql)))
 			benchParseSQL(b, sql)
 		})
