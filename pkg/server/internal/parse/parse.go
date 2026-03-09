@@ -189,10 +189,6 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 	truncated := false
 	hasDeprecatedUnderscoreAttr := false
 	limit := vardef.ConnectAttrsSize.Load()
-	if limit == 0 {
-		// Disabled: do not collect, truncate, or emit metadata.
-		return attrs, "", nil
-	}
 
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
@@ -221,7 +217,7 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 		totalSize += kvSize
 
 		// In MySQL, -1 means autosizing. We map it to a maximum of 64KB (65536)
-		// to prevent unconstrained slow log bloating. 0 means disabled.
+		// to prevent unconstrained slow log bloating.
 		effectiveLimit := limit
 		if effectiveLimit < 0 {
 			effectiveLimit = 65536

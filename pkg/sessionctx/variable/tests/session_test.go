@@ -340,6 +340,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
+	require.NotContains(t, logString, variable.SlowLogSessionConnectAttrs)
 
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
@@ -372,6 +373,14 @@ func TestSlowLogFormat(t *testing.T) {
 		require.Less(t, attrsIdx, prevStmtIdx, "Session_connect_attrs should appear before Prev_stmt")
 	}
 	require.Less(t, attrsIdx, sqlIdx, "Session_connect_attrs should appear before the SQL statement")
+
+	// Verify reserved truncation metadata key is serialized as expected.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_truncated": "4",
+		"app_name":   "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, `# Session_connect_attrs: {"_truncated":"4","app_name":"test_svc"}`)
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
