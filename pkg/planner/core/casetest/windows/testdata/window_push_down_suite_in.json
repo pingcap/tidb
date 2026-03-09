@@ -41,5 +41,12 @@
       "explain format = 'brief' select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a",
       "explain format = 'brief' select row_number() over w2, row_number() over w1 from employee window w2 as (order by deptid), w1 as (partition by deptid);"
     ]
+  },
+  {
+    "name": "TestWindowSubqueryOuterRef",
+    "cases": [
+      "select count((select /* issue:56532 */ ref_1.c2 from t1 limit 1)) over (partition by ref_1.c1) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+      "select coalesce(count(*) over (partition by ref_1.c1), (select /* issue:56532 */ ref_1.c2 from t1)) from t2 as ref_1 order by ref_1.c1, ref_1.c2"
+    ]
   }
 ]

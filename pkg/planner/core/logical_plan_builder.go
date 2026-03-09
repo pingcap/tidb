@@ -2506,6 +2506,74 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
+type subqueryExprExtractor struct {
+	subqueries []*ast.SubqueryExpr
+}
+
+// Enter implements Visitor interface.
+func (e *subqueryExprExtractor) Enter(n ast.Node) (ast.Node, bool) {
+	if subq, ok := n.(*ast.SubqueryExpr); ok {
+		e.subqueries = append(e.subqueries, subq)
+		return n, true
+	}
+	return n, false
+}
+
+// Leave implements Visitor interface.
+func (*subqueryExprExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
+}
+
+func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p base.LogicalPlan, selectFields []*ast.SelectField, nodes ...ast.Node) ([]*ast.SelectField, error) {
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		extractor := &subqueryExprExtractor{}
+		node.Accept(extractor)
+		for _, subq := range extractor.subqueries {
+			// Correlated aggregates are handled separately; here we only need the outer columns
+			// so subqueries inside deferred window expressions can still resolve against this query block.
+			_, np, err := b.rewrite(ctx, subq, p, nil, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(np)
+			for _, corCol := range correlatedCols {
+				var colName *ast.ColumnName
+				for idx, pCol := range p.Schema().Columns {
+					if corCol.UniqueID == pCol.UniqueID {
+						pName := p.OutputNames()[idx]
+						colName = &ast.ColumnName{
+							Schema: pName.DBName,
+							Table:  pName.TblName,
+							Name:   pName.ColName,
+						}
+						break
+					}
+				}
+				if colName == nil {
+					continue
+				}
+				columnNameExpr := &ast.ColumnNameExpr{Name: colName}
+				for _, field := range selectFields {
+					if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && c.Name.Match(columnNameExpr.Name) && field.AsName.L == "" {
+						columnNameExpr = nil
+						break
+					}
+				}
+				if columnNameExpr != nil {
+					selectFields = append(selectFields, &ast.SelectField{
+						Auxiliary: true,
+						Expr:      columnNameExpr,
+					})
+				}
+			}
+		}
+	}
+	return selectFields, nil
+}
+
 func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, expr := range exprs {
@@ -2572,7 +2640,7 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 }
 
 // resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
-func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p base.LogicalPlan) (
+func (b *PlanBuilder) resolveWindowFunction(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, error) {
 	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
@@ -2613,6 +2681,35 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p base.LogicalP
 		}
 	}
 	sel.Fields.Fields = extractor.selectFields
+	for _, field := range sel.Fields.Fields {
+		if !ast.HasWindowFlag(field.Expr) {
+			continue
+		}
+		var err error
+		sel.Fields.Fields, err = b.appendAuxiliaryFieldsForSubqueries(ctx, p, sel.Fields.Fields, field.Expr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i := range sel.WindowSpecs {
+		var err error
+		sel.Fields.Fields, err = b.appendAuxiliaryFieldsForSubqueries(ctx, p, sel.Fields.Fields, &sel.WindowSpecs[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if !ast.HasWindowFlag(item.Expr) {
+				continue
+			}
+			var err error
+			sel.Fields.Fields, err = b.appendAuxiliaryFieldsForSubqueries(ctx, p, sel.Fields.Fields, item.Expr)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return extractor.aggMapper, nil
 }
 
@@ -2684,7 +2781,7 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 
 	hasWindowFuncField := r.b.detectSelectWindow(sel)
 	if hasWindowFuncField {
-		_, err = r.b.resolveWindowFunction(sel, p)
+		_, err = r.b.resolveWindowFunction(r.ctx, sel, p)
 		if err != nil {
 			return err
 		}
@@ -3860,7 +3957,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, plannererrors.ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 
-		windowAggMap, err = b.resolveWindowFunction(sel, p)
+		windowAggMap, err = b.resolveWindowFunction(ctx, sel, p)
 		if err != nil {
 			return nil, err
 		}
@@ -6105,9 +6202,20 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 			return nil, nil, nil, nil, err
 		}
 		p = np
-		switch newArg.(type) {
-		case *expression.Column, *expression.Constant:
+		switch v := newArg.(type) {
+		case *expression.Constant:
 			newArgList = append(newArgList, newArg.Clone())
+			continue
+		case *expression.Column:
+			// Expression rewrite may have introduced a new plan node, e.g. an Apply for a scalar
+			// subquery. Keep the new output column in the projection so window args can still
+			// resolve against the child schema after pruning.
+			if !proj.Schema().Contains(v) {
+				proj.Exprs = append(proj.Exprs, v)
+				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
+				proj.Schema().Append(v)
+			}
+			newArgList = append(newArgList, v.Clone())
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)

@@ -400,5 +400,58 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestWindowSubqueryOuterRef",
+    "Cases": [
+      {
+        "SQL": "select count((select /* issue:56532 */ ref_1.c2 from t1 limit 1)) over (partition by ref_1.c1) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:5, data sources:[Apply]",
+          "    └─Window root  count(Column)->Column#17 over(partition by test.t2.c1)",
+          "      └─Sort root  test.t2.c1",
+          "        └─ShuffleReceiver root  ",
+          "          └─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "            ├─TableReader(Build) root  data:TableFullScan",
+          "            │ └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "            └─Projection(Probe) root  test.t2.c2->Column",
+          "              └─Limit root  offset:0, count:1",
+          "                └─TableReader root  data:Limit",
+          "                  └─Limit cop[tikv]  offset:0, count:1",
+          "                    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select coalesce(count(*) over (partition by ref_1.c1), (select /* issue:56532 */ ref_1.c2 from t1)) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Projection root  coalesce(cast(Column, var_string(20)), Column)->Column, test.t2.c1, test.t2.c2",
+          "    └─Apply root  CARTESIAN left outer join, left side:Shuffle",
+          "      ├─Shuffle(Build) root  execution info: concurrency:5, data sources:[TableReader]",
+          "      │ └─Window root  count(1)->Column#11 over(partition by test.t2.c1)",
+          "      │   └─Sort root  test.t2.c1",
+          "      │     └─ShuffleReceiver root  ",
+          "      │       └─TableReader root  data:TableFullScan",
+          "      │         └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "      └─MaxOneRow(Probe) root  ",
+          "        └─Projection root  test.t2.c2->Column",
+          "          └─TableReader root  data:TableFullScan",
+          "            └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      }
+    ]
   }
 ]
