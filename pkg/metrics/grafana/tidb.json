@@ -4645,7 +4645,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The number of distinct statement digests currently tracked in the statement summary LRU cache (V2 persistent mode only).",
+          "description": "The number of statement summary records in the current statement summary window (V2 persistent mode only).",
           "fieldConfig": {
             "defaults": {},
             "overrides": []

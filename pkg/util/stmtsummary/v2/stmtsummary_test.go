@@ -16,6 +16,7 @@ package stmtsummary
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -126,7 +127,7 @@ func TestStmtSummaryFlush(t *testing.T) {
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := &Config{
-		Filename: "test.log",
+		Filename: filepath.Join(t.TempDir(), "test.log"),
 	}
 	ss, err := NewStmtSummary(cfg)
 	require.NoError(t, err)
