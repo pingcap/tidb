@@ -250,7 +250,10 @@ type PlanBuilder struct {
 	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
+	// read-only meta derived from ast node.
 	hintProcessor *hint.QBHintHandler
+	// mutable state of QBHint when building.
+	hintState *hint.QBHintBuildState
 	// qbOffset is the offsets of current processing select stmts.
 	qbOffset []int
 
@@ -389,6 +392,11 @@ func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	return tables
 }
 
+// GetHintState gets the HintState from the PlanBuilder.
+func (b *PlanBuilder) GetHintState() *hint.QBHintBuildState {
+	return b.hintState
+}
+
 // GetOptFlag gets the OptFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	if b.isSampling {
@@ -466,6 +474,9 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
+	if processor != nil {
+		b.hintState = processor.NewBuildState()
+	}
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
 	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
 	if savedBlockNames == nil {
@@ -505,6 +516,14 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	// Add more fields if they are safe to be reused.
 
 	return b
+}
+
+// HandleUnusedViewHints appends warnings for unused view hints in the current build.
+func (b *PlanBuilder) HandleUnusedViewHints() {
+	if b.hintProcessor == nil {
+		return
+	}
+	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 }
 
 // Build builds the ast node to a Plan.

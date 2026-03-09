@@ -922,10 +922,11 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 	require.Nil(t, addIndexEvent)
 }
 
-func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
+func TestAddIndexTriggerAutoAnalyze(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@global.tidb_analyze_version=1;")
+	testKit.MustExec("set @@global.tidb_analyze_version=2;")
+	defer testKit.MustExec("set @@global.tidb_analyze_version=default;")
 	testKit.MustExec("use test")
 	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
@@ -970,12 +971,13 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
 }
 
-func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testing.T) {
+func TestAddIndexTriggerAutoAnalyzeWithStaticPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Enable the static partition mode.
 	testKit.MustExec("set @@global.tidb_partition_prune_mode='static'")
-	testKit.MustExec("set @@global.tidb_analyze_version=1;")
+	testKit.MustExec("set @@global.tidb_analyze_version=2;")
+	defer testKit.MustExec("set @@global.tidb_analyze_version=default;")
 	testKit.MustExec("use test")
 	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
