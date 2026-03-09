@@ -408,9 +408,28 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) (retErr error) {
 	dbName := db.Name.L
 	tableName := ti.Name.L
+	if rc.txnTotalSizeLimit > 0 {
+		originMemQuota := rc.db.Session().GetSessionCtx().GetSessionVars().MemQuotaQuery
+		setMemQuotaSQL := fmt.Sprintf("SET @@session.tidb_mem_quota_query = %d", rc.txnTotalSizeLimit)
+		if err := rc.db.Session().Execute(ctx, setMemQuotaSQL); err != nil {
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to execute %s", setMemQuotaSQL)
+		}
+		defer func() {
+			restoreMemQuotaSQL := fmt.Sprintf("SET @@session.tidb_mem_quota_query = %d", originMemQuota)
+			if err := rc.db.Session().Execute(ctx, restoreMemQuotaSQL); err != nil {
+				log.Warn("failed to restore session variable",
+					zap.String("var", "tidb_mem_quota_query"),
+					zap.String("sql", restoreMemQuotaSQL),
+					zap.Error(err),
+				)
+				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to execute %s", restoreMemQuotaSQL))
+			}
+		}()
+	}
+
 	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
