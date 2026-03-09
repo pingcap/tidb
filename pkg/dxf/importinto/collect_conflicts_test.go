@@ -18,11 +18,50 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func expectedCollectConflictsChecksum(t *testing.T, hdlCtx *conflictedKVHandleContext) *importinto.Checksum {
+	t.Helper()
+
+	encodeCfg := &encode.EncodingConfig{
+		Table:                hdlCtx.tbl,
+		UseIdentityAutoRowID: true,
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   hdlCtx.tbl,
+	}
+	encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, encoder.Close())
+	}()
+
+	checksum := verification.NewKVChecksumWithKeyspace(hdlCtx.store.GetCodec().GetKeyspace())
+	for i := range 3 {
+		rowID := i + 1
+		row := []types.Datum{types.NewDatum(rowID), types.NewDatum(rowID), types.NewDatum(rowID)}
+		pairs, err := encoder.Encode(row, int64(rowID))
+		require.NoError(t, err)
+		for range 3 {
+			checksum.Update(pairs.Pairs)
+		}
+		pairs.Clear()
+	}
+	return &importinto.Checksum{
+		Sum:  checksum.Sum(),
+		KVs:  checksum.SumKVS(),
+		Size: checksum.SumSize(),
+	}
+}
 
 func TestCollectConflictsStepExecutor(t *testing.T) {
 	hdlCtx := prepareConflictedKVHandleContext(t)
@@ -34,17 +73,7 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	expectedSum := &importinto.Checksum{
-		Sum:  6734985763851266693,
-		KVs:  27,
-		Size: 909,
-	}
-	expectedSum.Size += expectedSum.KVs * uint64(len(hdlCtx.store.GetCodec().GetKeyspace()))
-	if kerneltype.IsNextGen() {
-		// table ID in next-gen is different with classic, so we cannot directly
-		// calculate the checksum from the classic one.
-		expectedSum.Sum = 6636364898488969870
-	}
+	expectedSum := expectedCollectConflictsChecksum(t, hdlCtx)
 	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
 	// we are running them concurrently, so the number of filenames may vary.

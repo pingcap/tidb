@@ -115,6 +115,7 @@ type conflictedKVHandleContext struct {
 	store            tidbkv.Storage
 	logger           *zap.Logger
 	taskMeta         *importinto.TaskMeta
+	tbl              table.Table
 	tk               *testkit.TestKit
 	conflictedKVInfo importinto.KVGroupConflictInfos
 }
@@ -154,6 +155,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 		store:            store,
 		logger:           logger,
 		taskMeta:         taskMeta,
+		tbl:              tbl,
 		tk:               tk,
 		conflictedKVInfo: conflictedKVInfo,
 	}
