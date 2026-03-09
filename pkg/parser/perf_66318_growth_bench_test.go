@@ -105,6 +105,54 @@ func genLongSQL(targetBytes int) string {
 	return base + " /*" + strings.Repeat("a", pad) + "*/"
 }
 
+func genWhereAndChainSQL(preds int) string {
+	// SELECT * FROM t WHERE c0=0 AND c1=1 AND ...
+	var sb strings.Builder
+	// Rough estimate; values depend on digit count.
+	sb.Grow(32 + preds*16)
+	sb.WriteString("SELECT * FROM t WHERE ")
+	for i := 0; i < preds; i++ {
+		if i > 0 {
+			sb.WriteString(" AND ")
+		}
+		sb.WriteByte('c')
+		sb.WriteString(strconv.Itoa(i))
+		sb.WriteByte('=')
+		sb.WriteString(strconv.Itoa(i))
+	}
+	return sb.String()
+}
+
+func genJoinChainSQL(joins int) string {
+	// SELECT * FROM t0 JOIN t1 ON 1=1 JOIN t2 ON 1=1 ...
+	var sb strings.Builder
+	sb.Grow(32 + joins*24)
+	sb.WriteString("SELECT * FROM t0")
+	for i := 1; i <= joins; i++ {
+		sb.WriteString(" JOIN t")
+		sb.WriteString(strconv.Itoa(i))
+		sb.WriteString(" ON 1=1")
+	}
+	return sb.String()
+}
+
+func genCTEChainSQL(ctes int) string {
+	// WITH c0 AS (SELECT 1), c1 AS (SELECT 1), ... SELECT * FROM c0
+	var sb strings.Builder
+	sb.Grow(64 + ctes*32)
+	sb.WriteString("WITH ")
+	for i := 0; i < ctes; i++ {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteByte('c')
+		sb.WriteString(strconv.Itoa(i))
+		sb.WriteString(" AS (SELECT 1)")
+	}
+	sb.WriteString(" SELECT * FROM c0")
+	return sb.String()
+}
+
 func BenchmarkPerf66318GrowthINList(b *testing.B) {
 	sizes := []int{10, 100, 1000, 10000}
 	for _, n := range sizes {
@@ -154,6 +202,39 @@ func BenchmarkPerf66318GrowthSQLLength(b *testing.B) {
 	for _, n := range sizes {
 		sql := genLongSQL(n)
 		b.Run(fmt.Sprintf("bytes=%d", n), func(b *testing.B) {
+			b.SetBytes(int64(len(sql)))
+			benchParseSQL(b, sql)
+		})
+	}
+}
+
+func BenchmarkPerf66318GrowthWhereAndChain(b *testing.B) {
+	sizes := []int{10, 100, 1000, 5000}
+	for _, n := range sizes {
+		sql := genWhereAndChainSQL(n)
+		b.Run(fmt.Sprintf("preds=%d", n), func(b *testing.B) {
+			b.SetBytes(int64(len(sql)))
+			benchParseSQL(b, sql)
+		})
+	}
+}
+
+func BenchmarkPerf66318GrowthJoinChain(b *testing.B) {
+	sizes := []int{2, 5, 10, 20, 50}
+	for _, n := range sizes {
+		sql := genJoinChainSQL(n)
+		b.Run(fmt.Sprintf("joins=%d", n), func(b *testing.B) {
+			b.SetBytes(int64(len(sql)))
+			benchParseSQL(b, sql)
+		})
+	}
+}
+
+func BenchmarkPerf66318GrowthCTECount(b *testing.B) {
+	sizes := []int{1, 5, 10, 50, 200}
+	for _, n := range sizes {
+		sql := genCTEChainSQL(n)
+		b.Run(fmt.Sprintf("ctes=%d", n), func(b *testing.B) {
 			b.SetBytes(int64(len(sql)))
 			benchParseSQL(b, sql)
 		})
