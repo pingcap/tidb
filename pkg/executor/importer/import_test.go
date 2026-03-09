@@ -69,6 +69,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey)
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
@@ -138,6 +139,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
@@ -153,10 +155,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
+	sqlCapture := sql + ", " + onDupKeyOption + "='capture'"
+	stmt, err = p.ParseOneStmt(sqlCapture, "", "")
+	require.NoError(t, err, sqlCapture)
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sql)
+	require.NoError(t, err, sqlCapture)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlCapture)
+	require.Equal(t, OnDupKeyModeCapture, plan.OnDupKey, sqlCapture)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
@@ -184,6 +190,37 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
 }
 
+func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	sql := "import into t from '/file.csv' with on_duplicate_key='capture'"
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	vardef.CloudStorageURI.Store("")
+	plan := &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+	require.ErrorContains(t, err, onDupKeyOption)
+	require.ErrorContains(t, err, "local sort")
+}
+
 func TestAdjustOptions(t *testing.T) {
 	plan := &Plan{
 		DiskQuota:      1,
@@ -205,6 +242,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.CloudStorageURI = "s3://bucket/path"
 	plan.adjustOptions(16)
 	require.True(t, plan.DisableTiKVImportMode)
+}
+
+func TestGetConflictHandlingMode(t *testing.T) {
+	plan := &Plan{}
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
+
+	plan.OnDupKey = OnDupKeyModeCapture
+	require.Equal(t, OnDupKeyModeCapture, plan.GetOnDupKeyMode())
+
+	plan.OnDupKey = OnDupKeyModeError
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 }
 
 func TestAdjustDiskQuota(t *testing.T) {

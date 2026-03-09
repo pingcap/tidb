@@ -1268,22 +1268,32 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 // foreign key info contain null and [] two situations
 var checkForeignKeyAttributesNil = `"fk_info":null`
 var checkForeignKeyAttributesZero = `"fk_info":[]`
-var checkAttributesInOrder = []string{
-	`"partition":null`,
-	`"Lock":null`,
-	`"tiflash_replica":null`,
-	`"temp_table_type":0`,
-	`"policy_ref_info":null`,
-	`"ttl_info":null`,
+
+// MustLoadFilterAttr defines filters for IsTableInfoMustLoad.
+// LoadIfMissing controls whether the absence or presence of the attribute
+// should trigger loading: when true, load if the attribute is missing;
+// when false, load if the attribute is present.
+type MustLoadFilterAttr struct {
+	Attr          string
+	LoadIfMissing bool
+}
+
+var checkAttributesInOrder = []MustLoadFilterAttr{
+	{Attr: `"partition":null`, LoadIfMissing: true},
+	{Attr: `"Lock":null`, LoadIfMissing: true},
+	{Attr: `"tiflash_replica":null`, LoadIfMissing: true},
+	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
+	{Attr: `"policy_ref_info":null`, LoadIfMissing: true},
+	{Attr: `"ttl_info":null`, LoadIfMissing: true},
+	{Attr: `"affinity":{`, LoadIfMissing: false},
 }
 
 // isTableInfoMustLoad checks whether the table info needs to be loaded.
-// If the byte representation contains all the given attributes,
-// then it does not need to be loaded and this function will return false.
-// Otherwise, it will return true, indicating that the table info should be loaded.
+// If the byte representation follows filterAttrs, it returns true.
+// Otherwise, it returns false meaning that table is not needed to load.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
 // isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
-func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...string) bool {
+func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...MustLoadFilterAttr) bool {
 	idx := 0
 	if isCheckForeignKeyAttrsInOrder {
 		idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesNil))
@@ -1295,9 +1305,15 @@ func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filter
 		}
 		json = json[idx:]
 	}
-	for _, substr := range filterAttrs {
-		idx = bytes.Index(json, hack.Slice(substr))
+	for _, filter := range filterAttrs {
+		idx = bytes.Index(json, hack.Slice(filter.Attr))
 		if idx == -1 {
+			if filter.LoadIfMissing {
+				return true
+			}
+			continue
+		}
+		if !filter.LoadIfMissing {
 			return true
 		}
 		json = json[idx:]
@@ -1369,8 +1385,13 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
-// The filterAttrs are used to filter out any table that is not needed.
-func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+// filterAttrs is a list of MustLoadFilterAttr rules that decide which tables must be loaded:
+//   - Each rule describes an attribute marker to search for in the serialized table info.
+//   - If a rule has LoadIfMissing == true, the table is loaded when that marker is NOT present
+//     (e.g. when a default/null marker is missing and the table should be treated specially).
+//   - If a rule has LoadIfMissing == false, the table is loaded only when that marker IS present
+//     (e.g. when a special attribute flag is explicitly set on the table).
+func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...MustLoadFilterAttr) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)

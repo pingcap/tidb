@@ -42,7 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -159,6 +161,39 @@ func TestRewriterPool(t *testing.T) {
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
+}
+
+func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+
+	valueExpr, ok := ast.NewValueExpr(1, "", "").(*driver.ValueExpr)
+	require.True(t, ok)
+	valueExpr.Type.AddFlag(mysql.NotNullFlag)
+
+	col := &table.Column{
+		ColumnInfo: &model.ColumnInfo{
+			Name:      ast.NewCIStr("a"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	expr, err := builder.getInsertColExpr(context.TODO(), &physicalop.Insert{}, nil, col, valueExpr, nil)
+	require.NoError(t, err)
+
+	constExpr, ok := expr.(*expression.Constant)
+	require.True(t, ok)
+	require.NotSame(t, valueExpr.GetType(), constExpr.RetType)
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
+
+	constExpr.RetType.SetType(mysql.TypeString)
+	constExpr.RetType.DelFlag(mysql.NotNullFlag)
+
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
 }
 
 func TestDisableFold(t *testing.T) {
