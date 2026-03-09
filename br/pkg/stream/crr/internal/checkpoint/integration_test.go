@@ -100,6 +100,7 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},
+		nil,
 	)
 	require.NoError(t, err)
 

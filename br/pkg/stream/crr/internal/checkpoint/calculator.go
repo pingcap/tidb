@@ -29,6 +29,42 @@ const (
 	defaultMetaReadConcurrency = 16
 )
 
+// EventType identifies a checkpoint calculation progress event.
+type EventType string
+
+const (
+	EventWaitingUpstream    EventType = "waiting_upstream"
+	EventUpstreamAdvanced   EventType = "upstream_advanced"
+	EventRoundPlanned       EventType = "round_planned"
+	EventWaitingDownstream  EventType = "waiting_downstream"
+	EventCheckpointAdvanced EventType = "checkpoint_advanced"
+	EventCalculationFailed  EventType = "calculation_failed"
+)
+
+// CheckpointEvent describes a calculator progress event.
+type CheckpointEvent struct {
+	Type EventType
+	Time time.Time
+
+	TaskName string
+
+	LoopIteration      uint64
+	UpstreamCheckpoint uint64
+	SafeCheckpoint     uint64
+	SyncedTS           uint64
+
+	AliveStoreCount  int
+	PendingFileCount int
+
+	Err error
+}
+
+// Observer receives progress events emitted by the calculator.
+// Implementations must not block or mutate the calculator.
+type Observer interface {
+	OnCheckpointEvent(event CheckpointEvent)
+}
+
 // PDMetaReader defines the upstream metadata APIs used by checkpoint calculation.
 type PDMetaReader interface {
 	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
@@ -61,9 +97,10 @@ type CheckpointCalculatorConfig struct {
 //
 // It is stateful and expected to be reused across rounds.
 type Calculator struct {
-	deps  CalculatorDeps
-	cfg   CheckpointCalculatorConfig
-	state calculatorState
+	deps     CalculatorDeps
+	cfg      CheckpointCalculatorConfig
+	observer Observer
+	state    calculatorState
 }
 
 // CalculatorDeps groups the external dependencies used by checkpoint calculation.
@@ -83,6 +120,7 @@ type calculatorState struct {
 func NewCalculator(
 	deps CalculatorDeps,
 	cfg CheckpointCalculatorConfig,
+	observer Observer,
 ) (*Calculator, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
@@ -98,8 +136,9 @@ func NewCalculator(
 	}
 
 	return &Calculator{
-		deps: deps,
-		cfg:  cfg,
+		deps:     deps,
+		cfg:      cfg,
+		observer: observer,
 		state: calculatorState{
 			syncedByStore: map[uint64]uint64{},
 		},
@@ -108,8 +147,17 @@ func NewCalculator(
 
 // ComputeNextCheckpoint waits for upstream checkpoint progress, confirms the
 // required files are synced to downstream, and returns the safe checkpoint.
-func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (uint64, error) {
+func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint64, err error) {
 	failpoint.InjectCall("begin-calculate-checkpoint")
+	defer func() {
+		if err != nil {
+			c.observe(CheckpointEvent{
+				Type:     EventCalculationFailed,
+				TaskName: c.cfg.TaskName,
+				Err:      err,
+			})
+		}
+	}()
 
 	upstreamCheckpoint, err := c.waitUpstreamCheckpointAdvance(ctx)
 	if err != nil {
@@ -125,12 +173,27 @@ func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (uint64, error) 
 	if err != nil {
 		return 0, err
 	}
+	c.observe(CheckpointEvent{
+		Type:               EventRoundPlanned,
+		TaskName:           c.cfg.TaskName,
+		UpstreamCheckpoint: upstreamCheckpoint,
+		AliveStoreCount:    len(aliveStores),
+		PendingFileCount:   len(round.pendingPaths),
+	})
 	if err := c.waitDownstreamSync(ctx, round.pendingPaths); err != nil {
 		return 0, err
 	}
 
 	c.advanceSyncedState(aliveStores, round.maxFlushTSByStore)
 	c.state.lastCheckpoint = upstreamCheckpoint
+	c.observe(CheckpointEvent{
+		Type:               EventCheckpointAdvanced,
+		TaskName:           c.cfg.TaskName,
+		UpstreamCheckpoint: upstreamCheckpoint,
+		SafeCheckpoint:     upstreamCheckpoint,
+		SyncedTS:           c.state.syncedTS,
+		AliveStoreCount:    len(aliveStores),
+	})
 	return upstreamCheckpoint, nil
 }
 
@@ -155,4 +218,14 @@ func (d CalculatorDeps) validate() error {
 		return fmt.Errorf("downstream checker must not be nil")
 	}
 	return validateIncrementalMetaScanStorage(d.Upstream.URI())
+}
+
+func (c *Calculator) observe(event CheckpointEvent) {
+	if c.observer == nil {
+		return
+	}
+	if event.Time.IsZero() {
+		event.Time = time.Now()
+	}
+	c.observer.OnCheckpointEvent(event)
 }
