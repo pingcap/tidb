@@ -800,12 +800,12 @@ workLoop:
 			}
 			releaseCollectorMemory := func() {
 				collectorMemSize := collector.MemSize
-				failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", task.isColumn, collectorMemSize, e.memTracker.BytesConsumed())
+				failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 				if collectorMemSize > 0 {
 					e.memTracker.Release(collectorMemSize)
 				}
 				collector.Destroy()
-				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", task.isColumn, collectorMemSize, e.memTracker.BytesConsumed())
+				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			if task.isColumn {

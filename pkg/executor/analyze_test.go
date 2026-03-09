@@ -271,6 +271,9 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 
 func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
 	const valueLen = 8 * 1024
+	// Ensure sample values are small enough to be retained in the collector;
+	// values exceeding MaxSampleValueLength are truncated, which would make
+	// the memory-release assertions unreliable.
 	require.Greater(t, statistics.MaxSampleValueLength, valueLen)
 
 	store := testkit.CreateMockStore(t)
@@ -290,18 +293,12 @@ func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
 	var afterBytes atomic.Int64
 	var beforeCollectorMem atomic.Int64
 	var afterCollectorMem atomic.Int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory", func(isColumn bool, collectorMemSize, bytesConsumed int64) {
-		if !isColumn {
-			return
-		}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
 		if beforeBytes.CompareAndSwap(0, bytesConsumed) {
 			beforeCollectorMem.Store(collectorMemSize)
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory", func(isColumn bool, collectorMemSize, bytesConsumed int64) {
-		if !isColumn {
-			return
-		}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
 		if afterBytes.CompareAndSwap(0, bytesConsumed) {
 			afterCollectorMem.Store(collectorMemSize)
 		}
