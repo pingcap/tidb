@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -247,6 +249,90 @@ func TestReorganizePartitionRollback(t *testing.T) {
 
 	// test then add index should success
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
+}
+
+func TestAddDropPartitionWithTiCIIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+
+	dbInfo, err := testSchemaInfo(store, "test_partition_tici")
+	require.NoError(t, err)
+	de := domain.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
+
+	tblInfo, _ := buildTableInfoWithPartition(t, store)
+	tblInfo.Name = ast.NewCIStr("t_tici")
+
+	idxIDs, err := genGlobalIDs(store, 1)
+	require.NoError(t, err)
+	tblInfo.Indices = []*model.IndexInfo{{
+		ID:      idxIDs[0],
+		Name:    ast.NewCIStr("idx_tici"),
+		Columns: []*model.IndexColumn{{Name: ast.NewCIStr("c"), Offset: 0}},
+		State:   model.StatePublic,
+		Global:  true,
+		// Mark it as a TiCI index (HYBRID) for this test; TiCI indexes do not write KV index data.
+		HybridInfo: &model.HybridIndexInfo{},
+	}}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	ctx := testkit.NewTestKit(t, store).Session()
+	testCreateTable(t, ctx, de, dbInfo, tblInfo)
+
+	// ADD PARTITION should call TiCI AddPartition when the logical table has TiCI global indexes.
+	tici.ResetMockTiCIAddPartitionRequest()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockAddTiCIPartitionRequest", `return(1)`)
+
+	newPartIDs, err := genGlobalIDs(store, 1)
+	require.NoError(t, err)
+	addArgs := &model.TablePartitionArgs{
+		PartInfo: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{{
+				ID:       newPartIDs[0],
+				Name:     ast.NewCIStr("p5"),
+				LessThan: []string{"600"},
+			}},
+		},
+	}
+	addJob := &model.Job{
+		Version:     model.GetJobVerInUse(),
+		SchemaID:    dbInfo.ID,
+		SchemaName:  dbInfo.Name.L,
+		TableID:     tblInfo.ID,
+		TableName:   tblInfo.Name.L,
+		SchemaState: model.StateNone,
+		Type:        model.ActionAddTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(addJob, addArgs, true))
+	require.NoError(t, err)
+
+	rawAdd := tici.GetMockTiCIAddPartitionRequest()
+	require.NotEmpty(t, rawAdd)
+	var addReq tici.AddPartitionRequest
+	require.NoError(t, addReq.Unmarshal(rawAdd))
+	require.Equal(t, dbInfo.Name.L, addReq.DatabaseName)
+	require.Equal(t, []int64{idxIDs[0]}, addReq.IndexIds)
+
+	var addReqTbl model.TableInfo
+	require.NoError(t, json.Unmarshal(addReq.TableInfo, &addReqTbl))
+	require.NotNil(t, addReqTbl.Partition)
+	require.Len(t, addReqTbl.Partition.AddingDefinitions, 1)
+	require.Equal(t, newPartIDs[0], addReqTbl.Partition.AddingDefinitions[0].ID)
+
+	// DROP PARTITION should call TiCI DropPartition for the dropped physical table id.
+	tici.ResetMockTiCIDropPartitionRequest()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIPartitionRequest", `return(1)`)
+	_, err = domain.InfoSchema().TableByName(context.Background(), dbInfo.Name, tblInfo.Name)
+	require.NoError(t, err)
+	testDropPartition(t, ctx, de, dbInfo, tblInfo, []string{"p5"})
+
+	rawDrop := tici.GetMockTiCIDropPartitionRequest()
+	require.NotEmpty(t, rawDrop)
+	var dropReq tici.DropPartitionRequest
+	require.NoError(t, dropReq.Unmarshal(rawDrop))
+	require.Equal(t, newPartIDs[0], dropReq.TableId)
+	require.Equal(t, []int64{idxIDs[0]}, dropReq.IndexIds)
 }
 
 func TestUpdateDuringAddColumn(t *testing.T) {

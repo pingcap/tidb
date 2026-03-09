@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -217,6 +218,16 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 						zap.Int64("partitionID", d.ID),
 					)
 				}
+			}
+		}
+
+		if indexIDs := getTiCIGlobalIndexIDs(tblInfo); len(indexIDs) > 0 {
+			ctx := jobCtx.stepCtx
+			if ctx == nil {
+				ctx = jobCtx.ctx
+			}
+			if err := tici.AddPartition(ctx, jobCtx.store, tblInfo, job.SchemaName, indexIDs, nil); err != nil {
+				return ver, errors.Trace(err)
 			}
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
@@ -2101,6 +2112,19 @@ func hasGlobalIndex(tblInfo *model.TableInfo) bool {
 	return false
 }
 
+func getTiCIGlobalIndexIDs(tblInfo *model.TableInfo) []int64 {
+	if tblInfo == nil {
+		return nil
+	}
+	ids := make([]int64, 0, len(tblInfo.Indices))
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.IsTiCIIndex() && idxInfo.Global {
+			ids = append(ids, idxInfo.ID)
+		}
+	}
+	return ids
+}
+
 // getTableInfoWithDroppingPartitions builds oldTableInfo including dropping partitions, only used by onDropTablePartition.
 func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	p := t.Partition
@@ -2327,6 +2351,23 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, job, oldTblInfo, physicalTableIDs)
 			if err != nil || !done {
 				return ver, errors.Trace(err)
+			}
+		}
+		if indexIDs := getTiCIGlobalIndexIDs(tblInfo); len(indexIDs) > 0 {
+			ctx := jobCtx.stepCtx
+			if ctx == nil {
+				ctx = jobCtx.ctx
+			}
+			for _, pid := range physicalTableIDs {
+				if err := tici.DropPartition(ctx, jobCtx.store, pid, indexIDs); err != nil {
+					logutil.DDLLogger().Warn("drop TiCI partition failed",
+						zap.Error(err),
+						zap.Int64("table_id", tblInfo.ID),
+						zap.String("table", tblInfo.Name.L),
+						zap.Int64("partition_id", pid),
+						zap.Int64s("index_ids", indexIDs),
+					)
+				}
 			}
 		}
 		removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)

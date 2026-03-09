@@ -42,6 +42,14 @@ func (m *MockMetaServiceClient) CreateIndex(ctx context.Context, in *CreateIndex
 	args := m.Called(ctx, in)
 	return args.Get(0).(*CreateIndexResponse), args.Error(1)
 }
+func (m *MockMetaServiceClient) AddPartition(ctx context.Context, in *AddPartitionRequest, opts ...grpc.CallOption) (*AddPartitionResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*AddPartitionResponse), args.Error(1)
+}
+func (m *MockMetaServiceClient) DropPartition(ctx context.Context, in *DropPartitionRequest, opts ...grpc.CallOption) (*DropPartitionResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*DropPartitionResponse), args.Error(1)
+}
 func (m *MockMetaServiceClient) GetImportStoragePrefix(ctx context.Context, in *GetImportStoragePrefixRequest, opts ...grpc.CallOption) (*GetImportStoragePrefixResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*GetImportStoragePrefixResponse), args.Error(1)
@@ -95,34 +103,97 @@ func matchKeyspace[T interface{ GetKeyspaceId() uint32 }](expect uint32) func(T)
 }
 
 func TestCreateFulltextIndex(t *testing.T) {
-	mockClient := new(MockMetaServiceClient)
-	ctx := newTestTiCIManagerCtx(mockClient)
-	keyspaceID := uint32(123)
-	ctx.SetKeyspaceID(keyspaceID)
-	tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
-	indexInfo := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}
-	schemaName := "testdb"
+	t.Run("CreateFulltextIndex", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		ctx := newTestTiCIManagerCtx(mockClient)
+		keyspaceID := uint32(123)
+		ctx.SetKeyspaceID(keyspaceID)
+		tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
+		indexInfo := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}
+		schemaName := "testdb"
 
-	mockClient.
-		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
-		Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
-		Once()
-	err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
-	assert.NoError(t, err)
+		mockClient.
+			On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
+			Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
+			Once()
+		err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
+		assert.NoError(t, err)
 
-	mockClient.
-		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
-		Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
-		Once()
-	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
-	require.ErrorContains(t, err, "fail")
+		mockClient.
+			On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
+			Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
+			Once()
+		err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
+		require.ErrorContains(t, err, "fail")
 
-	mockClient.
-		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
-		Return(&CreateIndexResponse{}, errors.New("rpc error")).
-		Once()
-	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
-	require.ErrorContains(t, err, "rpc error")
+		mockClient.
+			On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
+			Return(&CreateIndexResponse{}, errors.New("rpc error")).
+			Once()
+		err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
+		require.ErrorContains(t, err, "rpc error")
+	})
+
+	t.Run("AddPartition", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		ctx := newTestTiCIManagerCtx(mockClient)
+		keyspaceID := uint32(123)
+		ctx.SetKeyspaceID(keyspaceID)
+		tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
+		schemaName := "testdb"
+		indexIDs := []int64{2, 3}
+
+		mockClient.
+			On("AddPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*AddPartitionRequest](keyspaceID))).
+			Return(&AddPartitionResponse{Status: ErrorCode_SUCCESS, IndexIds: indexIDs}, nil).
+			Once()
+		err := ctx.AddPartition(context.Background(), tblInfo, indexIDs, schemaName, nil)
+		assert.NoError(t, err)
+
+		mockClient.
+			On("AddPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*AddPartitionRequest](keyspaceID))).
+			Return(&AddPartitionResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
+			Once()
+		err = ctx.AddPartition(context.Background(), tblInfo, indexIDs, schemaName, nil)
+		require.ErrorContains(t, err, "fail")
+
+		mockClient.
+			On("AddPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*AddPartitionRequest](keyspaceID))).
+			Return(&AddPartitionResponse{}, errors.New("rpc error")).
+			Once()
+		err = ctx.AddPartition(context.Background(), tblInfo, indexIDs, schemaName, nil)
+		require.ErrorContains(t, err, "rpc error")
+	})
+
+	t.Run("DropPartition", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		ctx := newTestTiCIManagerCtx(mockClient)
+		keyspaceID := uint32(123)
+		ctx.SetKeyspaceID(keyspaceID)
+		tableID := int64(1)
+		indexIDs := []int64{2, 3}
+
+		mockClient.
+			On("DropPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*DropPartitionRequest](keyspaceID))).
+			Return(&DropPartitionResponse{Status: ErrorCode_SUCCESS}, nil).
+			Once()
+		err := ctx.DropPartition(context.Background(), tableID, indexIDs)
+		assert.NoError(t, err)
+
+		mockClient.
+			On("DropPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*DropPartitionRequest](keyspaceID))).
+			Return(&DropPartitionResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
+			Once()
+		err = ctx.DropPartition(context.Background(), tableID, indexIDs)
+		require.ErrorContains(t, err, "fail")
+
+		mockClient.
+			On("DropPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*DropPartitionRequest](keyspaceID))).
+			Return(&DropPartitionResponse{}, errors.New("rpc error")).
+			Once()
+		err = ctx.DropPartition(context.Background(), tableID, indexIDs)
+		require.ErrorContains(t, err, "rpc error")
+	})
 }
 
 func TestGetImportStoragePrefix(t *testing.T) {
