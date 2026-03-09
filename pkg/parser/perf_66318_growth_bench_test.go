@@ -47,6 +47,40 @@ func genInsertValuesSQL(rows int) string {
 	return sb.String()
 }
 
+func genInsertValuesSQLToBytes(targetBytes int) string {
+	// INSERT INTO t(a,b,c) VALUES (1,2,3),(1,2,3)...
+	//
+	// This generates a *pure SQL* long statement whose length grows mainly with AST size,
+	// by increasing the number of VALUES tuples (instead of padding with comments).
+	prefix := "INSERT INTO t(a,b,c) VALUES "
+	tuple := "(1,2,3)"
+	minBytes := len(prefix) + len(tuple)
+	if targetBytes < minBytes {
+		targetBytes = minBytes
+	}
+
+	// Determine the number of rows needed to reach (or slightly exceed) targetBytes.
+	// The first tuple has no leading comma; each extra tuple adds "," + tuple.
+	remain := targetBytes - len(prefix)
+	rows := 1
+	if remain > len(tuple) {
+		remainAfterFirst := remain - len(tuple)
+		perExtraRow := len(tuple) + 1
+		rows += (remainAfterFirst + perExtraRow - 1) / perExtraRow
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(prefix) + rows*(len(tuple)+1))
+	sb.WriteString(prefix)
+	for i := 0; i < rows; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(tuple)
+	}
+	return sb.String()
+}
+
 func genUnionChainSQL(n int) string {
 	// SELECT 1 UNION ALL SELECT 2 ...
 	var sb strings.Builder
@@ -153,6 +187,19 @@ func BenchmarkPerf66318GrowthSQLLength(b *testing.B) {
 	sizes := []int{1 << 10, 10 << 10, 100 << 10, 1 << 20}
 	for _, n := range sizes {
 		sql := genLongSQL(n)
+		b.Run(fmt.Sprintf("bytes=%d", n), func(b *testing.B) {
+			b.SetBytes(int64(len(sql)))
+			benchParseSQL(b, sql)
+		})
+	}
+}
+
+func BenchmarkPerf66318GrowthSQLLengthASTInsertValues(b *testing.B) {
+	// Keep the SQL syntax purely semantic (no comment padding) and make it longer by
+	// increasing the number of VALUES tuples, which also grows the AST.
+	sizes := []int{1 << 10, 10 << 10, 100 << 10}
+	for _, n := range sizes {
+		sql := genInsertValuesSQLToBytes(n)
 		b.Run(fmt.Sprintf("bytes=%d", n), func(b *testing.B) {
 			b.SetBytes(int64(len(sql)))
 			benchParseSQL(b, sql)
