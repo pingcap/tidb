@@ -2,16 +2,15 @@ package parser
 
 import (
 	"bufio"
-	"context"
+	stdctx "context"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"os"
-	"runtime"
 )
 
 func perf66318StabilityCorpus() []string {
@@ -114,7 +113,7 @@ func TestPerf66318Stability(t *testing.T) {
 		t.Fatal("empty corpus")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), duration)
 	defer cancel()
 
 	var ops atomic.Uint64
@@ -147,6 +146,7 @@ func TestPerf66318Stability(t *testing.T) {
 					case errCh <- err:
 					default:
 					}
+					cancel()
 					return
 				}
 				ops.Add(1)
@@ -154,10 +154,10 @@ func TestPerf66318Stability(t *testing.T) {
 		}()
 	}
 
-	doneCh := make(chan struct{})
+	doneCh := make(chan struct{}, 1)
 	go func() {
 		wg.Wait()
-		close(doneCh)
+		doneCh <- struct{}{}
 	}()
 
 	ticker := time.NewTicker(reportEvery)
@@ -207,6 +207,12 @@ func TestPerf66318Stability(t *testing.T) {
 			lastAt = now
 			lastOps = curOps
 		case <-doneCh:
+			select {
+			case err := <-errCh:
+				t.Fatalf("parse error: %v", err)
+			default:
+			}
+
 			elapsed := time.Since(start)
 			curOps := ops.Load()
 			var ms runtime.MemStats
