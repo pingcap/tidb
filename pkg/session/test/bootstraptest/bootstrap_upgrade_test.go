@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -1033,6 +1034,9 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 }
 
 func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	const fromVersion = 254
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -1049,10 +1053,22 @@ func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
 	revertVersionAndVariables(t, seV254, fromVersion)
 	require.NoError(t, err)
 
-	session.MustExec(t, seV254, "DROP TABLE IF EXISTS mysql.tidb_masking_policy")
-	session.MustExec(t, seV254, "commit")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").Check(testkit.Rows("0"))
+	is := dom.InfoSchema()
+	policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+	require.NoError(t, err)
+	policyDBID := policyTbl.Meta().DBID
+	policyTblID := policyTbl.Meta().ID
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	err = m.DropTableOrView(policyDBID, policyTblID)
+	require.NoError(t, err)
+	exists, err := m.CheckTableExists(policyDBID, policyTblID)
+	require.NoError(t, err)
+	require.False(t, exists)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
 
 	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV254)
@@ -1069,7 +1085,7 @@ func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-	tk = testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
 	checkTiDBMaskingPolicyTableSchema(t, tk)
 }
 
