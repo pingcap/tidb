@@ -59,7 +59,13 @@ func (n *node) SetText(enc charset.Encoding, text string) {
 // when this node was parsed, so backslash is not treated as an escape character
 // in string literals
 func (n *node) SetNoBackslashEscapes(val bool) {
+	if n.noBackslashEscapes == val {
+		return
+	}
 	n.noBackslashEscapes = val
+	if n.once != nil {
+		n.once = &sync.Once{}
+	}
 }
 
 // Text implements Node interface.
@@ -139,8 +145,12 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 			}
 		}
 
+		if !terminated {
+			continue
+		}
+
 		decoded, err := enc.Transform(nil, src[quoteStart+1:i-1], charset.OpDecode)
-		if (!terminated) || (err == nil && isPrintable(decoded)) {
+		if err == nil && isPrintable(decoded) {
 			continue
 		}
 
@@ -175,9 +185,6 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 		// Flush everything from lastCopied to quoteStart through Transform
 		flushTo(buf, &tmp, src[lastCopied:quoteStart], enc)
 
-		// Strip _<charset> prefix if present
-		stripCharsetIntroducer(buf)
-
 		buf.WriteString("0x")
 		for _, b := range content {
 			buf.WriteByte(hexDigits[b>>4])
@@ -207,41 +214,6 @@ func flushTo(buf, tmp *bytes.Buffer, src []byte, enc charset.Encoding) {
 	}
 	utf8Lit, _ := enc.Transform(tmp, src, charset.OpDecodeReplace)
 	buf.Write(utf8Lit)
-}
-
-// stripCharsetIntroducer removes a trailing _<charset> introducer
-// (e.g. "_binary ", "_utf8mb4 ") from the buffer if present
-func stripCharsetIntroducer(buf *bytes.Buffer) {
-	b := buf.Bytes()
-	end := len(b)
-	// Trim trailing whitespace between introducer and the quote
-	for end > 0 && unicode.IsSpace(rune(b[end-1])) {
-		end--
-	}
-	if end == 0 {
-		return
-	}
-	// Scan backwards past alphanumeric characters (potential charset name)
-	nameEnd := end
-	for end > 0 && (b[end-1] >= 'a' && b[end-1] <= 'z' || b[end-1] >= 'A' && b[end-1] <= 'Z' || b[end-1] >= '0' && b[end-1] <= '9') {
-		end--
-	}
-	if end == 0 || b[end-1] != '_' {
-		return
-	}
-	// The underscore must be a token boundary, not part of an identifier like col_binary
-	if end >= 2 {
-		prev := b[end-2]
-		if prev >= 'a' && prev <= 'z' || prev >= 'A' && prev <= 'Z' || prev >= '0' && prev <= '9' || prev == '_' {
-			return
-		}
-	}
-	// Validate that this is a known charset name
-	name := string(b[end:nameEnd])
-	if _, err := charset.GetCharsetInfo(name); err != nil {
-		return
-	}
-	buf.Truncate(end - 1)
 }
 
 // stmtNode implements StmtNode interface.

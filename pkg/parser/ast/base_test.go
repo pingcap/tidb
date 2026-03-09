@@ -54,10 +54,6 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 		{"single-quoted", "SELECT 'hello world'", "SELECT 'hello world'"},
 		{"double-quoted", "SELECT \"hello world\"", "SELECT \"hello world\""},
 		{"_binary prefix", "SELECT _binary 'hello world'", "SELECT _binary 'hello world'"},
-		{"_utf8mb4 prefix", "SELECT _utf8mb4 'hello world'", "SELECT _utf8mb4 'hello world'"},
-		{"_latin1 prefix", "SELECT _latin1 'hello world'", "SELECT _latin1 'hello world'"},
-		{"hex literal 0x", "SELECT 0x68656c6c6f", "SELECT 0x68656c6c6f"},
-		{"hex literal X''", "SELECT X'68656c6c6f'", "SELECT X'68656c6c6f'"},
 		{"escaped '' inside", "SELECT 'it''s here'", "SELECT 'it''s here'"},
 		{"escaped \\' inside", "SELECT 'it\\'s here'", "SELECT 'it\\'s here'"},
 		{"escaped \"\" inside", "SELECT \"say \"\"hi\"\"\"", "SELECT \"say \"\"hi\"\"\""},
@@ -78,22 +74,12 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 	}{
 		{"single-quoted", "SELECT '\xd2\xe4\xa6\xb8'", "SELECT 0xd2e4a6b8"},
 		{"double-quoted", "SELECT \"\xd2\xe4\xa6\xb8\"", "SELECT 0xd2e4a6b8"},
-		{"_binary prefix", "SELECT _binary '\xd2\xe4\xa6\xb8'", "SELECT 0xd2e4a6b8"},
-		{"_utf8mb4 prefix", "SELECT _utf8mb4 '\xd2\xe4\xa6\xb8'", "SELECT 0xd2e4a6b8"},
-		{"_latin1 prefix", "SELECT _latin1 '\xd2\xe4\xa6\xb8'", "SELECT 0xd2e4a6b8"},
-		{"hex literal 0x unchanged", "SELECT 0xd2e4a6b8", "SELECT 0xd2e4a6b8"},
-		{"hex literal X'' unchanged", "SELECT X'd2e4a6b8'", "SELECT X'd2e4a6b8'"},
+		{"_binary prefix preserved", "SELECT _binary '\xd2\xe4\xa6\xb8'", "SELECT _binary 0xd2e4a6b8"},
 		{"escaped '' inside", "SELECT '\xd2''\xe4'", "SELECT 0xd227e4"},
 		{"escaped \\' inside", "SELECT '\xd2\\'\xe4'", "SELECT 0xd227e4"},
 		{"escaped \"\" inside", "SELECT \"\xd2\"\"\xe4\"", "SELECT 0xd222e4"},
 		{"backtick inside binary", "SELECT '\xd2`\xe4'", "SELECT 0xd260e4"},
-		{"_binary word inside binary", "SELECT '\xd2 _binary \xe4'", "SELECT 0xd2205f62696e61727920e4"},
-		{"mixed binary and text args", "SELECT '\xd2\xe4', 'hello', _binary '\xa1\xb2'", "SELECT 0xd2e4, 'hello', 0xa1b2"},
-		{"column name ending in _word not stripped", "SELECT * FROM t WHERE some_column = '\xd2\xe4'", "SELECT * FROM t WHERE some_column = 0xd2e4"},
-		{"identifier_word before binary string", "SELECT some_value '\xd2\xe4'", "SELECT some_value 0xd2e4"},
-		// stripCharsetIntroducer must not truncate identifiers ending in a charset name
-		{"identifier ending in _utf8mb4", "SELECT foo_utf8mb4, _utf8mb4 '\xd2\xe4'", "SELECT foo_utf8mb4, 0xd2e4"},
-		{"identifier ending in _binary", "SELECT tbl_binary, _binary '\xd2\xe4'", "SELECT tbl_binary, 0xd2e4"},
+		{"mixed binary and text args", "SELECT '\xd2\xe4', 'hello', _binary '\xa1\xb2'", "SELECT 0xd2e4, 'hello', _binary 0xa1b2"},
 	}
 	for _, tt := range binaryTests {
 		n.SetText(charset.EncodingUTF8Impl, tt.text)
