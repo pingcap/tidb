@@ -307,6 +307,83 @@ func TestParseHandshakeResponse(t *testing.T) {
 	require.Equal(t, "test", p.DBName)
 }
 
+func encodeLengthEncodedIntForHandshake(v uint64) []byte {
+	switch {
+	case v < 251:
+		return []byte{byte(v)}
+	case v < 1<<16:
+		return []byte{0xfc, byte(v), byte(v >> 8)}
+	case v < 1<<24:
+		return []byte{0xfd, byte(v), byte(v >> 8), byte(v >> 16)}
+	default:
+		return []byte{0xfe, byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24), byte(v >> 32), byte(v >> 40), byte(v >> 48), byte(v >> 56)}
+	}
+}
+
+func buildHandshakeResponsePacket(capability uint32, attrsPayload []byte, attrsLenOverride *uint64) []byte {
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.LittleEndian, capability)
+	binary.Write(&buf, binary.LittleEndian, uint32(0)) // max packet size
+	buf.WriteByte(0)                                   // collation
+	buf.Write(make([]byte, 23))                        // reserved
+
+	buf.WriteString("root")
+	buf.WriteByte(0) // user null-terminated
+	buf.WriteByte(0) // auth null-terminated (legacy path)
+
+	if capability&mysql.ClientConnectAtts > 0 {
+		attrsLen := uint64(len(attrsPayload))
+		if attrsLenOverride != nil {
+			attrsLen = *attrsLenOverride
+		}
+		buf.Write(encodeLengthEncodedIntForHandshake(attrsLen))
+		buf.Write(attrsPayload)
+	}
+
+	return buf.Bytes()
+}
+
+func TestHandshakeResponseCompatibilityAndFailurePaths(t *testing.T) {
+	t.Run("legacy client without connect attrs capability", func(t *testing.T) {
+		data := buildHandshakeResponsePacket(mysql.ClientProtocol41, nil, nil)
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.NoError(t, err)
+		require.Equal(t, "root", p.User)
+		require.Empty(t, p.Attrs)
+	})
+
+	t.Run("malformed connect attrs length declaration", func(t *testing.T) {
+		attrsPayload := []byte{2, 'a', 'b', 2, 'c', 'd'}
+		declaredLen := uint64(len(attrsPayload) + 3)
+		data := buildHandshakeResponsePacket(mysql.ClientProtocol41|mysql.ClientConnectAtts, attrsPayload, &declaredLen)
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.ErrorIs(t, err, mysql.ErrMalformPacket)
+	})
+
+	t.Run("oversize connect attrs declaration rejected", func(t *testing.T) {
+		declaredLen := uint64(1<<20 + 1)
+		data := buildHandshakeResponsePacket(mysql.ClientProtocol41|mysql.ClientConnectAtts, nil, &declaredLen)
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "connection refused: session connection attributes exceed the 1 MiB hard limit")
+	})
+}
+
 func TestIssue1768(t *testing.T) {
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set

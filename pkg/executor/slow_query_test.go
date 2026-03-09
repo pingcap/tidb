@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -293,7 +294,7 @@ func TestParseSlowLogSessionConnectAttrs(t *testing.T) {
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Is_internal: false
 # Succ: true
-# Session_connect_attrs: {"_client_name":"Go-MySQL-Driver","_os":"linux","app_name":"test_app"}
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
 # Prev_stmt: begin;
 select * from t;
 `
@@ -332,12 +333,7 @@ select * from t;
 	// Verify the parsed JSON contains the expected keys.
 	bj := rows[0][colIdx].GetMysqlJSON()
 	bjStr := bj.String()
-	require.Contains(t, bjStr, `"_client_name"`)
-	require.Contains(t, bjStr, `"Go-MySQL-Driver"`)
-	require.Contains(t, bjStr, `"_os"`)
-	require.Contains(t, bjStr, `"linux"`)
-	require.Contains(t, bjStr, `"app_name"`)
-	require.Contains(t, bjStr, `"test_app"`)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, bjStr)
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.

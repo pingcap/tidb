@@ -959,7 +959,7 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }
 
-func TestPerfSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
+func TestPerformanceSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

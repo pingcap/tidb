@@ -681,7 +681,7 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
-	{Scope: vardef.ScopeGlobal, Name: vardef.PerfSchemaSessionConnectAttrsSize,
+	{Scope: vardef.ScopeGlobal, Name: vardef.PerformanceSchemaSessionConnectAttrsSize,
 		Value: strconv.FormatInt(vardef.DefConnectAttrsSize, 10),
 		Type:  vardef.TypeInt, MinValue: -1, MaxValue: 65536,
 		GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
