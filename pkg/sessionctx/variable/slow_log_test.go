@@ -171,12 +171,10 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
 		// ExecDetail != nil && d.CommitDetail == nil && d.ScanDetail == nil
-		execDetail := &execdetails.ExecDetails{
-			CopExecDetails: execdetails.CopExecDetails{
-				BackoffTime: time.Millisecond,
-			},
+		copExecDetail := execdetails.CopExecDetails{
+			BackoffTime: time.Millisecond,
 		}
-		seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execDetail.CopExecDetails, 0)
+		seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&copExecDetail, 0)
 		accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)]
 		accessor.Setter(context.Background(), seVar, items)
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
@@ -259,7 +257,7 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 	items := &variable.SlowQueryLogItems{
 		MemMax:            123,                     // int64
 		DiskMax:           456,                     // int64
-		ExecRetryCount:    uint64(789),             // uint64
+		ExecRetryCount:    uint(789),               // uint
 		ResourceGroupName: "rg1",                   // string
 		Succ:              true,                    // bool
 		TimeTotal:         3140 * time.Millisecond, // time.Duration
