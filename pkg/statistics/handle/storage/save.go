@@ -16,7 +16,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -307,29 +305,6 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 					return 0, err
 				}
 			}
-		}
-	}
-	// 3. Save extended statistics.
-	extStats := results.ExtStats
-	if extStats == nil || len(extStats.Stats) == 0 {
-		return
-	}
-	var bytes []byte
-	var statsStr string
-	for name, item := range extStats.Stats {
-		bytes, err = json.Marshal(item.ColIDs)
-		if err != nil {
-			return 0, err
-		}
-		strColIDs := string(bytes)
-		switch item.Tp {
-		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
-			statsStr = fmt.Sprintf("%f", item.ScalarVals)
-		case ast.StatsTypeDependency:
-			statsStr = item.StringVals
-		}
-		if _, err = util.Exec(sctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, statistics.ExtendedStatsAnalyzed); err != nil {
-			return 0, err
 		}
 	}
 	return

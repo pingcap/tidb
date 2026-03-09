@@ -150,3 +150,86 @@ func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
 		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
 	})
 }
+
+// TestLeadingHintWithNonEqJoinUnderOuterJoin tests that the leading hint works
+// correctly when combining a non-equijoin (OR condition) with an outer join.
+// The query has an outer join so the greedy solver is used (useGreedy=true).
+// The leading hint is processed through connectJoinNodes, then the greedy
+// solver's checkConnectionAndMakeJoin handles remaining tables.
+// Regression test for https://github.com/pingcap/tidb/issues/56513
+func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
+		testKit.MustExec("drop table if exists t1_56513, t2_56513, t3_56513;")
+		testKit.MustExec("create table t1_56513(a int, b int, c int);")
+		testKit.MustExec("create table t2_56513(a int, b int, c int);")
+		testKit.MustExec("create table t3_56513(a int, b int, c int);")
+
+		orCond := "or(eq(test.t1_56513.a, test.t2_56513.a), eq(test.t1_56513.a, test.t2_56513.b))"
+
+		// No leading hint: greedy solver (checkConnectionAndMakeJoin) picks the
+		// join order autonomously. The OR condition must be preserved.
+		testKit.MustQuery("explain format = 'brief' " +
+			"select * from t1_56513 " +
+			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
+			"left join t3_56513 on t1_56513.a = t3_56513.b;").
+			CheckContain(orCond)
+
+		// With leading(t1, t3, t2): the leading hint path (connectJoinNodes)
+		// joins t1 with t3 first via the left join eq edge, then the greedy
+		// solver joins the result with t2 via the OR condition.
+		plan132 := testKit.MustQuery("explain format = 'brief' " +
+			"select /*+ leading(t1_56513, t3_56513, t2_56513) */ * from t1_56513 " +
+			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
+			"left join t3_56513 on t1_56513.a = t3_56513.b;")
+		plan132.CheckContain(orCond)
+		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
+
+		// With leading(t1, t2, t3): connectJoinNodes joins t1 with t2 via the
+		// OR condition (non-equijoin bypass), then joins with t3 via the eq edge.
+		plan123 := testKit.MustQuery("explain format = 'brief' " +
+			"select /*+ leading(t1_56513, t2_56513, t3_56513) */ * from t1_56513 " +
+			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
+			"left join t3_56513 on t1_56513.a = t3_56513.b;")
+		plan123.CheckContain(orCond)
+		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
+
+		// The two plans should be different since different join orders are specified
+		require.NotEqual(t, plan132.Rows(), plan123.Rows(), caller)
+	})
+}
+
+func TestOuterJoinReorderNullExtendedNonEqSafety(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1_66213, t2_66213, t3_66213;")
+		testKit.MustExec("create table t1_66213(a int);")
+		testKit.MustExec("create table t2_66213(a int, b int);")
+		testKit.MustExec("create table t3_66213(b int);")
+		testKit.MustExec("insert into t1_66213 values (1), (2);")
+		testKit.MustExec("insert into t2_66213 values (1, 5);")
+		testKit.MustExec("insert into t3_66213 values (5);")
+		testKit.MustExec("analyze table t1_66213, t2_66213, t3_66213;")
+
+		query := "select t1_66213.a, t2_66213.b, t3_66213.b from t1_66213 " +
+			"left join t2_66213 on t1_66213.a = t2_66213.a " +
+			"join t3_66213 on (t2_66213.b is null or t2_66213.b = t3_66213.b) " +
+			"order by t1_66213.a, t2_66213.b, t3_66213.b"
+		expectRows := testkit.Rows("1 5 5", "2 <nil> 5")
+
+		// Greedy reorder path must preserve semantics for non-eq predicates on null-extended columns.
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=off")
+		testKit.MustQuery(query).Check(expectRows)
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=on")
+		testKit.MustQuery(query).Check(expectRows)
+
+		// LEADING should not force an invalid reassociation across the null-extended side.
+		testKit.MustQuery("select /*+ leading(t2_66213, t3_66213, t1_66213) */ " +
+			"t1_66213.a, t2_66213.b, t3_66213.b from t1_66213 " +
+			"left join t2_66213 on t1_66213.a = t2_66213.a " +
+			"join t3_66213 on (t2_66213.b is null or t2_66213.b = t3_66213.b) " +
+			"order by t1_66213.a, t2_66213.b, t3_66213.b").Check(expectRows)
+		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
+	})
+}
