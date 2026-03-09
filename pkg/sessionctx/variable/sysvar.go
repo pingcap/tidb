@@ -63,6 +63,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -3621,6 +3622,30 @@ var defaultSysVars = []*SysVar{
 		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return GlobalSlowLogRules.Load().RawRules, nil
+		},
+	},
+	{
+		Scope:    ScopeGlobal,
+		Name:     TiDBSlowLogMaxPerSec,
+		Value:    "0",
+		Type:     TypeInt,
+		MinValue: 0, MaxValue: 1000000,
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			d := TidbOptInt(s, 0)
+			if d == int(GlobalSlowLogRateLimiter.Limit()) {
+				return nil
+			}
+
+			if d == 0 {
+				GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
+				return nil
+			}
+			GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			GlobalSlowLogRateLimiter.SetBurst(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
 }
