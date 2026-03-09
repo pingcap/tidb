@@ -4,6 +4,7 @@ go_library(
     name = "checkpoint",
     srcs = [
         "calculator.go",
+        "doc.go",
         "progress.go",
         "storage.go",
     ],

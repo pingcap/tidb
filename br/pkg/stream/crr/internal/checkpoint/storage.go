@@ -73,7 +73,7 @@ func (c *Calculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFil
 	}
 
 	return func(yield func(parsedMetaFile, error) bool) {
-		for entry, err := range walkDirSeq(ctx, c.deps.upstream, walkOpt) {
+		for entry, err := range walkDirSeq(ctx, c.deps.Upstream, walkOpt) {
 			if err != nil {
 				var zero parsedMetaFile
 				yield(zero, err)

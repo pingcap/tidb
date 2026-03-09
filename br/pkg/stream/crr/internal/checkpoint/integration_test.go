@@ -93,9 +93,11 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 	require.Less(t, replicated, pulled)
 
 	calculator, err := checkpoint.NewCalculator(
-		h.PDSim,
-		h.Upstream,
-		h.Downstream,
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
 		checkpoint.CheckpointCalculatorConfig{
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,

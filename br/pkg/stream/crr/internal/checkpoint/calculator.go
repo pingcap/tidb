@@ -61,15 +61,16 @@ type CheckpointCalculatorConfig struct {
 //
 // It is stateful and expected to be reused across rounds.
 type Calculator struct {
-	deps  calculatorDeps
+	deps  CalculatorDeps
 	cfg   CheckpointCalculatorConfig
 	state calculatorState
 }
 
-type calculatorDeps struct {
-	pd         PDMetaReader
-	upstream   UpstreamStorageReader
-	downstream DownstreamObjectChecker
+// CalculatorDeps groups the external dependencies used by checkpoint calculation.
+type CalculatorDeps struct {
+	PD         PDMetaReader
+	Upstream   UpstreamStorageReader
+	Downstream DownstreamObjectChecker
 }
 
 type calculatorState struct {
@@ -80,19 +81,11 @@ type calculatorState struct {
 
 // NewCalculator creates a stateful calculator for CRR checkpoint advancing.
 func NewCalculator(
-	pd PDMetaReader,
-	upstream UpstreamStorageReader,
-	downstream DownstreamObjectChecker,
+	deps CalculatorDeps,
 	cfg CheckpointCalculatorConfig,
 ) (*Calculator, error) {
-	if pd == nil {
-		return nil, fmt.Errorf("pd reader must not be nil")
-	}
-	if upstream == nil {
-		return nil, fmt.Errorf("upstream storage must not be nil")
-	}
-	if downstream == nil {
-		return nil, fmt.Errorf("downstream checker must not be nil")
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
 	if cfg.TaskName == "" {
 		return nil, fmt.Errorf("task name must not be empty")
@@ -103,17 +96,10 @@ func NewCalculator(
 	if cfg.MetaReadConcurrency <= 0 {
 		cfg.MetaReadConcurrency = defaultMetaReadConcurrency
 	}
-	if err := validateIncrementalMetaScanStorage(upstream.URI()); err != nil {
-		return nil, err
-	}
 
 	return &Calculator{
-		deps: calculatorDeps{
-			pd:         pd,
-			upstream:   upstream,
-			downstream: downstream,
-		},
-		cfg: cfg,
+		deps: deps,
+		cfg:  cfg,
 		state: calculatorState{
 			syncedByStore: map[uint64]uint64{},
 		},
@@ -156,4 +142,17 @@ func (c *Calculator) SyncedTS() uint64 {
 // LastCheckpoint returns the most recent returned checkpoint.
 func (c *Calculator) LastCheckpoint() uint64 {
 	return c.state.lastCheckpoint
+}
+
+func (d CalculatorDeps) validate() error {
+	if d.PD == nil {
+		return fmt.Errorf("pd reader must not be nil")
+	}
+	if d.Upstream == nil {
+		return fmt.Errorf("upstream storage must not be nil")
+	}
+	if d.Downstream == nil {
+		return fmt.Errorf("downstream checker must not be nil")
+	}
+	return validateIncrementalMetaScanStorage(d.Upstream.URI())
 }

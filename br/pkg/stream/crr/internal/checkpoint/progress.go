@@ -34,7 +34,7 @@ type roundPlan struct {
 
 func (c *Calculator) waitUpstreamCheckpointAdvance(ctx context.Context) (uint64, error) {
 	for {
-		checkpoint, err := c.deps.pd.GetGlobalCheckpointForTask(ctx, c.cfg.TaskName)
+		checkpoint, err := c.deps.PD.GetGlobalCheckpointForTask(ctx, c.cfg.TaskName)
 		if err != nil {
 			return 0, fmt.Errorf("get global checkpoint for task %s: %w", c.cfg.TaskName, err)
 		}
@@ -48,7 +48,7 @@ func (c *Calculator) waitUpstreamCheckpointAdvance(ctx context.Context) (uint64,
 }
 
 func (c *Calculator) loadAliveStores(ctx context.Context) (map[uint64]struct{}, error) {
-	stores, err := c.deps.pd.Stores(ctx)
+	stores, err := c.deps.PD.Stores(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load alive stores from pd: %w", err)
 	}
@@ -94,7 +94,7 @@ func (c *Calculator) planRound(
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
 
-			metaBytes, err := c.deps.upstream.ReadFile(egCtx, metaFile.path)
+			metaBytes, err := c.deps.Upstream.ReadFile(egCtx, metaFile.path)
 			if err != nil {
 				return fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
 			}
@@ -174,7 +174,7 @@ func extractDataFilePaths(meta *backuppb.Metadata) []string {
 func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[string]struct{}) error {
 	for len(pendingPaths) > 0 {
 		for filePath := range pendingPaths {
-			exists, err := c.deps.downstream.FileExists(ctx, filePath)
+			exists, err := c.deps.Downstream.FileExists(ctx, filePath)
 			if err != nil {
 				return fmt.Errorf("check downstream file %s: %w", filePath, err)
 			}

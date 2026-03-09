@@ -42,9 +42,11 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 
 	upstream := &recordingUpstreamStorage{inner: h.Upstream}
 	calculator, err := checkpoint.NewCalculator(
-		h.PDSim,
-		upstream,
-		h.Downstream,
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   upstream,
+			Downstream: h.Downstream,
+		},
 		checkpoint.CheckpointCalculatorConfig{
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
@@ -121,9 +123,11 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	})
 
 	calculator, err := checkpoint.NewCalculator(
-		h.PDSim,
-		h.Upstream,
-		h.Downstream,
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
 		checkpoint.CheckpointCalculatorConfig{
 			TaskName:            "drr_test_task",
 			PollInterval:        5 * time.Millisecond,
@@ -171,12 +175,14 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 	t.Cleanup(h.Close)
 
 	_, err = checkpoint.NewCalculator(
-		h.PDSim,
-		&recordingUpstreamStorage{
-			inner: h.Upstream,
-			uri:   "azure://bucket/prefix/",
+		checkpoint.CalculatorDeps{
+			PD: h.PDSim,
+			Upstream: &recordingUpstreamStorage{
+				inner: h.Upstream,
+				uri:   "azure://bucket/prefix/",
+			},
+			Downstream: h.Downstream,
 		},
-		h.Downstream,
 		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
 	)
 	require.Error(t, err)
