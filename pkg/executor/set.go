@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -236,18 +237,27 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 		}
 	}
+	isolationChangedInTxn := false
 	if sessionVars.InTxn() {
-		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS {
+		if name == variable.TiDBTxnReadTS {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
 		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
+		if name == variable.TxnIsolationOneShot {
+			if !variable.EnableEAL.Load() {
+				return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
+			}
+			isolationChangedInTxn = true
+		}
 	}
 	err = sessionVars.SetSystemVar(name, valStr)
 	if err != nil {
 		return err
+	}
+	if isolationChangedInTxn {
+		sessiontxn.GetTxnManager(e.Ctx()).ChangeIsolationInTxn()
 	}
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS

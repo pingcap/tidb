@@ -16,6 +16,12 @@ const (
 	TiDBXEnableTiKVLocalCall = "tidbx_enable_tikv_local_call"
 	// TiDBXEnablePDLocalCall indicates whether to use Inter-Process Call for PD.
 	TiDBXEnablePDLocalCall = "tidbx_enable_pd_local_call"
+	// PKDBEnableWhitelist indicates whether to enable the whitelist feature.
+	PKDBEnableWhitelist = "pkdb_whitelist"
+	// PKDBExtraDataType indicates whether to enable extra data types.
+	PKDBExtraDataType = "pkdb_extra_data_type"
+	// PKDBEnableEAL indicates whether to enable the EAL feature.
+	PKDBEnableEAL = "pkdb_eal"
 )
 
 // Default TiDB system variable values.
@@ -31,6 +37,9 @@ const (
 	DefTiDBEnableUDVSubstitute         = false
 	DefTiDBEnableSPParamSubstitute     = false
 	DefTiDBCreateFromSelectUsingImport = false
+	DefPKDBEnableWhitelist             = false
+	DefPKDBExtraDataType               = false
+	DefPKDBEnableEAL                   = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
@@ -49,4 +58,6 @@ var (
 	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
 	AutomaticSPPrivileges      = atomic.NewBool(true)
 	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
+	EnableWhitelist            = atomic.NewBool(DefPKDBEnableWhitelist)
+	EnableEAL                  = atomic.NewBool(DefPKDBEnableEAL)
 )

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 )
 
 func TestSetVarForPKDB(t *testing.T) {
@@ -36,4 +37,22 @@ func TestSetVarForPKDB(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_create_from_select_using_import;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@session.tidb_create_from_select_using_import=1;`)
 	tk.MustQuery(`select @@session.tidb_create_from_select_using_import;`).Check(testkit.Rows("1"))
+}
+
+func TestSetTxnIsolationLevel(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global pkdb_eal = on")
+	t.Cleanup(func() {
+		tk.MustExec("set global pkdb_eal = off")
+	})
+
+	tk.MustExec("BEGIN")
+	tk.MustExec("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustExec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	tk.MustExec("set global pkdb_eal = off")
+	tk.MustGetDBError("SET TRANSACTION ISOLATION LEVEL READ COMMITTED", exeerrors.ErrCantChangeTxCharacteristics)
+	tk.MustExec("COMMIT")
+	tk.MustExec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
 }

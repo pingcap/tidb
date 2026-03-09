@@ -718,6 +718,7 @@ import (
 	withSysTable          "WITH_SYS_TABLE"
 	workload              "WORKLOAD"
 	x509                  "X509"
+	xml                   "XML"
 	yearType              "YEAR"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
@@ -3827,6 +3828,10 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"ENCRYPTION" EqOpt EncryptionOpt
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionEncryption, StrValue: $3}
 	}
 
 AutoRandomOpt:
@@ -7061,6 +7066,7 @@ UnReservedKeyword:
 |	"SUBJECT"
 |	"ISSUER"
 |	"X509"
+|	"XML"
 |	"NEVER"
 |	"EXPIRE"
 |	"ACCOUNT"
@@ -8837,6 +8843,14 @@ TimeUnit:
 |	"YEAR_MONTH"
 	{
 		$$ = ast.TimeUnitYearMonth
+	}
+|	"YEAR" "TO" "MONTH"
+	{
+		$$ = ast.TimeUnitYearMonth
+	}
+|	"DAY" "TO" "SECOND"
+	{
+		$$ = ast.TimeUnitDaySecond
 	}
 
 TimestampUnit:
@@ -13485,6 +13499,57 @@ StringType:
 		tp.SetDecimal(0)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	"ARRAY"
+	{
+		tp := types.NewFieldType(mysql.TypeJSON)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeArray)
+		$$ = tp
+	}
+|	"XML"
+	{
+		tp := types.NewFieldType(mysql.TypeLongBlob)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeXML)
+		$$ = tp
+	}
+|	"INTERVAL" "YEAR" OptFieldLen "TO" "MONTH"
+	{
+		p := $3.(int)
+		if p == types.UnspecifiedLength {
+			p = 2
+		}
+		if p < 1 || p > 9 {
+			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(p, "INTERVAL YEAR", 9))
+			return -1
+		}
+		tp := types.NewFieldType(mysql.TypeLong)
+		tp.SetFlen(p)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeIntervalYearToMonth)
+		$$ = tp
+	}
+|	"INTERVAL" "DAY" OptFieldLen "TO" "SECOND"
+	{
+		p := $3.(int)
+		if p == types.UnspecifiedLength {
+			p = 2
+		}
+		if p < 1 || p > 9 {
+			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(p, "INTERVAL DAY", 9))
+			return -1
+		}
+		tp := types.NewFieldType(mysql.TypeLong)
+		tp.SetFlen(p)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeIntervalDayToSecond)
 		$$ = tp
 	}
 |	"LONG" Varchar OptCharsetWithOptBinary

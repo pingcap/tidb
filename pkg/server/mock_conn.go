@@ -18,10 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"github.com/pingcap/failpoint"
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -109,9 +109,6 @@ func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = false
-	failpoint.Inject("mock-whitelist-config-enabled", func() {
-		cfg.Security.EnableWhiteListPlugin = true
-	})
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
 	dom, err := session.GetDomain(store)
