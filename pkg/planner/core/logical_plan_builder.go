@@ -2470,18 +2470,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 				}
 				correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(np)
 				for _, cone := range correlatedCols {
-					var colName *ast.ColumnName
-					for idx, pone := range p.Schema().Columns {
-						if cone.UniqueID == pone.UniqueID {
-							pname := p.OutputNames()[idx]
-							colName = &ast.ColumnName{
-								Schema: pname.DBName,
-								Table:  pname.TblName,
-								Name:   pname.ColName,
-							}
-							break
-						}
-					}
+					colName := findColumnNameByUniqueID(p, cone.UniqueID)
 					if colName != nil {
 						columnNameExpr := &ast.ColumnNameExpr{Name: colName}
 						for _, field := range sel.Fields.Fields {
@@ -2507,12 +2496,16 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 }
 
 type subqueryExprExtractor struct {
-	subqueries []*ast.SubqueryExpr
+	subqueries []ast.ExprNode
 }
 
 // Enter implements Visitor interface.
 func (e *subqueryExprExtractor) Enter(n ast.Node) (ast.Node, bool) {
-	if subq, ok := n.(*ast.SubqueryExpr); ok {
+	switch subq := n.(type) {
+	case *ast.SubqueryExpr:
+		e.subqueries = append(e.subqueries, subq)
+		return n, true
+	case *ast.ExistsSubqueryExpr:
 		e.subqueries = append(e.subqueries, subq)
 		return n, true
 	}
@@ -2522,6 +2515,35 @@ func (e *subqueryExprExtractor) Enter(n ast.Node) (ast.Node, bool) {
 // Leave implements Visitor interface.
 func (*subqueryExprExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
+}
+
+func findColumnNameByUniqueID(p base.LogicalPlan, uniqueID int64) *ast.ColumnName {
+	for idx, pCol := range p.Schema().Columns {
+		if uniqueID != pCol.UniqueID {
+			continue
+		}
+		pName := p.OutputNames()[idx]
+		return &ast.ColumnName{
+			Schema: pName.DBName,
+			Table:  pName.TblName,
+			Name:   pName.ColName,
+		}
+	}
+	// USING/NATURAL JOIN can keep table-qualified outer references only in FullSchema/FullNames.
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil && len(join.FullNames) != 0 {
+		for idx, pCol := range join.FullSchema.Columns {
+			if uniqueID != pCol.UniqueID {
+				continue
+			}
+			pName := join.FullNames[idx]
+			return &ast.ColumnName{
+				Schema: pName.DBName,
+				Table:  pName.TblName,
+				Name:   pName.ColName,
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p base.LogicalPlan, selectFields []*ast.SelectField, nodes ...ast.Node) ([]*ast.SelectField, error) {
@@ -2540,18 +2562,7 @@ func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p 
 			}
 			correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(np)
 			for _, corCol := range correlatedCols {
-				var colName *ast.ColumnName
-				for idx, pCol := range p.Schema().Columns {
-					if corCol.UniqueID == pCol.UniqueID {
-						pName := p.OutputNames()[idx]
-						colName = &ast.ColumnName{
-							Schema: pName.DBName,
-							Table:  pName.TblName,
-							Name:   pName.ColName,
-						}
-						break
-					}
-				}
+				colName := findColumnNameByUniqueID(p, corCol.UniqueID)
 				if colName == nil {
 					continue
 				}

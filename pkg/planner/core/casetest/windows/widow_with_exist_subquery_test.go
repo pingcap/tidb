@@ -73,18 +73,19 @@ func TestWindowWithCorrelatedSubQuery(t *testing.T) {
  `)
 
 		result.Check(testkit.Rows("1"))
-
 	})
 }
 
 func TestWindowSubqueryOuterRef(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("drop table if exists t1, t2, t3")
 		tk.MustExec("create table t1 (c1 int primary key)")
 		tk.MustExec("create table t2 (c1 int, c2 text)")
+		tk.MustExec("create table t3 (c1 int, c3 int)")
 		tk.MustExec("insert into t1 values (10)")
 		tk.MustExec("insert into t2 values (1, 'alpha'), (1, 'beta'), (2, 'gamma')")
+		tk.MustExec("insert into t3 values (1, 100), (2, 200)")
 
 		var input []string
 		var output []struct {
