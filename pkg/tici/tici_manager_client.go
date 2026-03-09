@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -819,6 +820,15 @@ func (t *ManagerCtx) AbortIndexUpload(
 	return nil
 }
 
+func isRetryableGetShardLocalCacheStatus(status int32) bool {
+	switch ErrorCode(status) {
+	case ErrorCode_TRY_AGAIN, ErrorCode_WORKER_NOT_FOUND, ErrorCode_SHARD_NOT_SCHEDULED:
+		return true
+	default:
+		return false
+	}
+}
+
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
 func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardLocalCacheInfo, error) {
 	ticiKeyRanges := make([]*KeyRange, 0, len(keyRanges))
@@ -836,29 +846,61 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 		KeyRanges:  ticiKeyRanges,
 		Limit:      int32(limit),
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if err := t.checkMetaClient(); err != nil {
-		return nil, err
-	}
-	resp, err := t.metaClient.client.GetShardLocalCacheInfo(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Status != 0 {
-		return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %d", resp.Status)
-	}
 
-	var s = "ShardLocalCacheInfos:["
-	for _, info := range resp.ShardLocalCacheInfos {
-		if info != nil {
-			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
-				info.Shard.ShardId, hex.EncodeToString(info.Shard.StartKey), hex.EncodeToString(info.Shard.EndKey), info.Shard.Epoch, info.LocalCacheAddrs)
+	var (
+		backoff    = 100 * time.Millisecond
+		maxBackoff = time.Second
+	)
+	for attempt := 0; ; attempt++ {
+		resp, err := func() (*GetShardLocalCacheResponse, error) {
+			t.mu.RLock()
+			defer t.mu.RUnlock()
+			if err := t.checkMetaClient(); err != nil {
+				return nil, err
+			}
+			return t.metaClient.client.GetShardLocalCacheInfo(ctx, request)
+		}()
+		if err != nil {
+			return nil, err
+		}
+		if resp.Status == 0 {
+			var s = "ShardLocalCacheInfos:["
+			for _, info := range resp.ShardLocalCacheInfos {
+				if info != nil {
+					s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
+						info.Shard.ShardId, hex.EncodeToString(info.Shard.StartKey), hex.EncodeToString(info.Shard.EndKey), info.Shard.Epoch, info.LocalCacheAddrs)
+				}
+			}
+			s += "]"
+			logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
+			return resp.ShardLocalCacheInfos, nil
+		}
+
+		code := ErrorCode(resp.Status)
+		if attempt >= 9 || !isRetryableGetShardLocalCacheStatus(resp.Status) {
+			return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %s(%d)", code.String(), resp.Status)
+		}
+		logutil.BgLogger().Debug("GetShardLocalCacheInfo retryable error",
+			zap.Int("attempt", attempt+1),
+			zap.String("status", code.String()),
+			zap.Int32("status_code", resp.Status),
+		)
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 	}
-	s += "]"
-	logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
-	return resp.ShardLocalCacheInfos, nil
 }
 
 // ModelTableToTiCITableInfo converts a model.TableInfo to a TableInfo.
