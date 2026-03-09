@@ -60,7 +60,7 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
-    shard_count = 29,
+    shard_count = 27,
     deps = [
         ":storage",
         "//pkg/config/kerneltype",
@@ -72,7 +72,6 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/asyncload",
         "//pkg/statistics/handle/ddl/testutil",
-        "//pkg/statistics/handle/internal",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/statistics/util",

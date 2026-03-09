@@ -10,65 +10,65 @@ PARTITION BY HASH (`a`) PARTITIONS 5;
 insert into t values (1, 2), (2, 3), (3, 4), (4, 5);
 begin;
 insert into t values (5, 1);
-explain select b from t use index(idx1) where b > 2;
-id	estRows	task	access object	operator info
-Projection_5	3333.33	root		globalindex__mem_index_reader.t.b
-└─UnionScan_8	3333.33	root		gt(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_11	3333.33	root	partition:all	index:IndexRangeScan_9
-    └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
+explain format='plan_tree' select b from t use index(idx1) where b > 2;
+id	task	access object	operator info
+Projection	root		globalindex__mem_index_reader.t.b
+└─UnionScan	root		gt(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader	root	partition:all	index:IndexRangeScan
+    └─IndexRangeScan	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
 select b from t use index(idx1) where b > 2;
 b
 3
 4
 5
-explain select b from t partition(p0) use index(idx1) where b <= 2;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.b
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_12	3323.33	root	partition:p0	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
+explain format='plan_tree' select b from t partition(p0) use index(idx1) where b <= 2;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.b
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader	root	partition:p0	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
 select b from t partition(p0) use index(idx1) where b <= 2;
 b
 1
-explain select b from t partition(p0, p1) use index(idx1) where b <= 2;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.b
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_12	3323.33	root	partition:p0,p1	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
+explain format='plan_tree' select b from t partition(p0, p1) use index(idx1) where b <= 2;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.b
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader	root	partition:p0,p1	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
 select b from t partition(p0, p1) use index(idx1) where b <= 2;
 b
 1
 2
-explain select a from t use index(idx) where a > 2;
-id	estRows	task	access object	operator info
-Projection_5	3333.33	root		globalindex__mem_index_reader.t.a
-└─UnionScan_8	3333.33	root		gt(globalindex__mem_index_reader.t.a, 2)
-  └─IndexReader_11	3333.33	root	partition:all	index:IndexRangeScan_9
-    └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:idx(a)	range:(2,+inf], keep order:false, stats:pseudo
+explain format='plan_tree' select a from t use index(idx) where a > 2;
+id	task	access object	operator info
+Projection	root		globalindex__mem_index_reader.t.a
+└─UnionScan	root		gt(globalindex__mem_index_reader.t.a, 2)
+  └─IndexReader	root	partition:all	index:IndexRangeScan
+    └─IndexRangeScan	cop[tikv]	table:t, index:idx(a)	range:(2,+inf], keep order:false, stats:pseudo
 select a from t use index(idx) where a > 2;
 a
 3
 4
 5
-explain select a from t partition(p0) use index(idx) where a <= 2;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2)
-  └─IndexReader_12	3323.33	root	partition:p0	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2], keep order:false, stats:pseudo
+explain format='plan_tree' select a from t partition(p0) use index(idx) where a <= 2;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.a, 2)
+  └─IndexReader	root	partition:p0	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx(a)	range:[-inf,2], keep order:false, stats:pseudo
 select a from t partition(p0) use index(idx) where a <= 2;
 a
-explain select a from t partition(p0, p1) use index(idx) where a <= 2;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2)
-  └─IndexReader_12	3323.33	root	partition:p0,p1	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2], keep order:false, stats:pseudo
+explain format='plan_tree' select a from t partition(p0, p1) use index(idx) where a <= 2;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.a, 2)
+  └─IndexReader	root	partition:p0,p1	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx(a)	range:[-inf,2], keep order:false, stats:pseudo
 select a from t partition(p0, p1) use index(idx) where a <= 2;
 a
 1
@@ -85,65 +85,65 @@ PARTITION BY HASH (`a`) PARTITIONS 5;
 insert into t values (2001, 2), (2002, 3), (2003, 4), (2004, 5);
 begin;
 insert into t values (2005, 1);
-explain select b from t use index(idx1) where b > 2;
-id	estRows	task	access object	operator info
-Projection_5	3333.33	root		globalindex__mem_index_reader.t.b
-└─UnionScan_8	3333.33	root		gt(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_11	3333.33	root	partition:all	index:IndexRangeScan_9
-    └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
+explain format='plan_tree' select b from t use index(idx1) where b > 2;
+id	task	access object	operator info
+Projection	root		globalindex__mem_index_reader.t.b
+└─UnionScan	root		gt(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader	root	partition:all	index:IndexRangeScan
+    └─IndexRangeScan	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
 select b from t use index(idx1) where b > 2;
 b
 3
 4
 5
-explain select b from t partition(p0) use index(idx1) where b <= 2;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.b
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_12	3323.33	root	partition:p0	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
+explain format='plan_tree' select b from t partition(p0) use index(idx1) where b <= 2;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.b
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader	root	partition:p0	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
 select b from t partition(p0) use index(idx1) where b <= 2;
 b
 1
-explain select b from t partition(p0, p1) use index(idx1) where b <= 2;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.b
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_12	3323.33	root	partition:p0,p1	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
+explain format='plan_tree' select b from t partition(p0, p1) use index(idx1) where b <= 2;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.b
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader	root	partition:p0,p1	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
 select b from t partition(p0, p1) use index(idx1) where b <= 2;
 b
 1
 2
-explain select a from t use index(idx) where a > 2002;
-id	estRows	task	access object	operator info
-Projection_5	3333.33	root		globalindex__mem_index_reader.t.a
-└─UnionScan_8	3333.33	root		gt(globalindex__mem_index_reader.t.a, 2002)
-  └─IndexReader_11	3333.33	root	partition:all	index:IndexRangeScan_9
-    └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:idx(a)	range:(2002,+inf], keep order:false, stats:pseudo
+explain format='plan_tree' select a from t use index(idx) where a > 2002;
+id	task	access object	operator info
+Projection	root		globalindex__mem_index_reader.t.a
+└─UnionScan	root		gt(globalindex__mem_index_reader.t.a, 2002)
+  └─IndexReader	root	partition:all	index:IndexRangeScan
+    └─IndexRangeScan	cop[tikv]	table:t, index:idx(a)	range:(2002,+inf], keep order:false, stats:pseudo
 select a from t use index(idx) where a > 2002;
 a
 2003
 2004
 2005
-explain select a from t partition(p0) use index(idx) where a <= 2002;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2002)
-  └─IndexReader_12	3323.33	root	partition:p0	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2002], keep order:false, stats:pseudo
+explain format='plan_tree' select a from t partition(p0) use index(idx) where a <= 2002;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.a, 2002)
+  └─IndexReader	root	partition:p0	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx(a)	range:[-inf,2002], keep order:false, stats:pseudo
 select a from t partition(p0) use index(idx) where a <= 2002;
 a
-explain select a from t partition(p0, p1) use index(idx) where a <= 2002;
-id	estRows	task	access object	operator info
-Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
-└─UnionScan_8	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2002)
-  └─IndexReader_12	3323.33	root	partition:p0,p1	index:Selection_11
-    └─Selection_11	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
-      └─IndexRangeScan_9	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2002], keep order:false, stats:pseudo
+explain format='plan_tree' select a from t partition(p0, p1) use index(idx) where a <= 2002;
+id	task	access object	operator info
+Projection	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan	root	NULL	le(globalindex__mem_index_reader.t.a, 2002)
+  └─IndexReader	root	partition:p0,p1	index:Selection
+    └─Selection	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
+      └─IndexRangeScan	cop[tikv]	table:t, index:idx(a)	range:[-inf,2002], keep order:false, stats:pseudo
 select a from t partition(p0, p1) use index(idx) where a <= 2002;
 a
 2001

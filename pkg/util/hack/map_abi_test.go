@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build (go1.25 && !go1.26) || (go1.26 && !go1.27)
+
 package hack
 
 import (
@@ -73,7 +75,7 @@ func TestSwissTable(t *testing.T) {
 		require.Equal(t, N+1, len(mp))
 		require.Equal(t, uint64(N+1), sm.Data.Used)
 		found := false
-		var lastTab *swissMapTable
+		var lastTab *testMapTable
 
 		for i := range sm.Data.dirLen {
 			table := sm.Data.directoryAt(uintptr(i))
@@ -84,7 +86,7 @@ func TestSwissTable(t *testing.T) {
 				ref := table.groups.group(sm.Type, i)
 				require.True(t, (sm.Type.GroupSize-groupSlotsOffset)%sm.Type.SlotSize == 0)
 				capacity := ref.cap(sm.Type)
-				require.True(t, capacity == swissMapGroupSlots)
+				require.True(t, capacity == testMapGroupSlots)
 				for j := range capacity {
 					k, v := *(*uint64)(ref.key(sm.Type, uintptr(j))), *(*uint64)(ref.elem(sm.Type, uintptr(j)))
 					if k == 1234 && v == 5678 {

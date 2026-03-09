@@ -436,14 +436,19 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
 	case *ast.VariableExpr:
+		// Use lowercase for consistency with how user variables are stored (session.go) and
+		// looked up in convertReadonlyVarToConst (builtin_other.go), which uses the lowercased
+		// name from the GetVar expression. Otherwise @customerId vs @customerid would have
+		// different plans: only the latter would be converted to constant for index range.
+		nameLower := strings.ToLower(node.Name)
 		if node.Value != nil {
-			p.varsMutable[node.Name] = struct{}{}
-			delete(p.varsReadonly, node.Name)
+			p.varsMutable[nameLower] = struct{}{}
+			delete(p.varsReadonly, nameLower)
 		} else if p.stmtTp == TypeSelect {
 			// Only check the variable in select statement.
-			_, ok := p.varsMutable[node.Name]
+			_, ok := p.varsMutable[nameLower]
 			if !ok {
-				p.varsReadonly[node.Name] = struct{}{}
+				p.varsReadonly[nameLower] = struct{}{}
 			}
 		}
 	case *ast.Constraint:

@@ -363,58 +363,6 @@ func TestShowStatusSnapshot(t *testing.T) {
 	}
 }
 
-func TestShowStatsExtended(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	dom.StatsHandle().Clear()
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("insert into t values(1,1,3),(2,2,2),(3,3,1)")
-
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
-	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
-		"s1 0",
-		"s2 0",
-	))
-	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 0)
-
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
-		"s1 1",
-		"s2 1",
-	))
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "test", result.Rows()[0][0])
-	require.Equal(t, "t", result.Rows()[0][1])
-	require.Equal(t, "s1", result.Rows()[0][2])
-	require.Equal(t, "[a,b]", result.Rows()[0][3])
-	require.Equal(t, "correlation", result.Rows()[0][4])
-	require.Equal(t, "1.000000", result.Rows()[0][5])
-
-	require.Equal(t, "test", result.Rows()[1][0])
-	require.Equal(t, "t", result.Rows()[1][1])
-	require.Equal(t, "s2", result.Rows()[1][2])
-	require.Equal(t, "[a,c]", result.Rows()[1][3])
-	require.Equal(t, "correlation", result.Rows()[1][4])
-	require.Equal(t, "-1.000000", result.Rows()[1][5])
-	require.Equal(t, result.Rows()[1][6], result.Rows()[0][6])
-
-	tk.MustExec("alter table t drop stats_extended s1")
-	tk.MustExec("alter table t drop stats_extended s2")
-	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
-		"s1 2",
-		"s2 2",
-	))
-	dom.StatsHandle().Update(context.Background(), dom.InfoSchema())
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 0)
-}
-
 func TestShowColumnStatsUsage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

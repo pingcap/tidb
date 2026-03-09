@@ -908,7 +908,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t index idx")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-	rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
+	rows := tk.MustQuery("EXPLAIN FORMAT='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
 	require.Equal(t, "5.00", rows[0][1])
 
 	// analyze table t index
@@ -988,10 +988,10 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("explain select * from t where a = 1").Check(
-		testkit.Rows("TableReader_8 1.00 root partition:p0 data:Selection_7",
-			"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan_6 18.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(
+		testkit.Rows("TableReader 1.00 root partition:p0 data:Selection",
+			"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan 18.00 cop[tikv] table:t keep order:false"))
 }
 
 func TestEmptyHists(t *testing.T) {

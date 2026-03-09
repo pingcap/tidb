@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
@@ -397,6 +398,20 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 		return errors.Trace(err)
 	}
 	return s.DeleteFile(ctx, oldFileName)
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (s *GCSStorage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	object := s.objectName(fileName)
+	opts := &storage.SignedURLOptions{
+		Method:  "GET",
+		Expires: time.Now().Add(expire),
+	}
+	url, err := s.GetBucketHandle().SignedURL(object, opts)
+	if err != nil {
+		return "", errors.Annotatef(err, "failed to generate GCS signed URL for %s", fileName)
+	}
+	return url, nil
 }
 
 // Close implements Storage interface.

@@ -124,13 +124,13 @@ VALUES ('a�b', '�', 'test�string');
 
 SELECT * FROM t_fffd ORDER BY id;
 
-EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
 SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
 
-EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
 SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
 
-EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
 SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
 
 UPDATE t_fffd SET c_utf8mb4_general_ci = 'X�Y' WHERE c_utf8mb4_general_ci = 'a�b';

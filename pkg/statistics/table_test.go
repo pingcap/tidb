@@ -38,34 +38,24 @@ const (
 
 func TestCopyAs(t *testing.T) {
 	tests := []struct {
-		name           string
-		intent         CopyIntent
-		expectCols     ShareMode
-		expectIdxs     ShareMode
-		expectExist    ShareMode
-		expectExtended ShareMode
+		name        string
+		intent      CopyIntent
+		expectCols  ShareMode
+		expectIdxs  ShareMode
+		expectExist ShareMode
 	}{
-		{"MetaOnly", MetaOnly, Shared, Shared, Shared, Shared},
-		{"ColumnMapWritable", ColumnMapWritable, Cloned, Shared, Cloned, Shared},
-		{"IndexMapWritable", IndexMapWritable, Shared, Cloned, Cloned, Shared},
-		{"BothMapsWritable", BothMapsWritable, Cloned, Cloned, Cloned, Shared},
-		{"ExtendedStatsWritable", ExtendedStatsWritable, Shared, Shared, Shared, Cloned},
-		{"AllDataWritable", AllDataWritable, Cloned, Cloned, Cloned, Cloned},
+		{"MetaOnly", MetaOnly, Shared, Shared, Shared},
+		{"ColumnMapWritable", ColumnMapWritable, Cloned, Shared, Cloned},
+		{"IndexMapWritable", IndexMapWritable, Shared, Cloned, Cloned},
+		{"BothMapsWritable", BothMapsWritable, Cloned, Cloned, Cloned},
+		{"AllDataWritable", AllDataWritable, Cloned, Cloned, Cloned},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create original table with ExtendedStats for testing
-			originalStats := &ExtendedStatsColl{
-				Stats:             make(map[string]*ExtendedStatsItem),
-				LastUpdateVersion: 1,
-			}
-			originalStats.Stats["test"] = &ExtendedStatsItem{StringVals: "original"}
-
 			table := &Table{
 				HistColl:              *NewHistColl(1, 1, 1, 1, 1),
 				ColAndIdxExistenceMap: NewColAndIndexExistenceMap(1, 1),
-				ExtendedStats:         originalStats,
 			}
 
 			copied := table.CopyAs(tt.intent)
@@ -91,28 +81,6 @@ func TestCopyAs(t *testing.T) {
 				require.Same(t, table.ColAndIdxExistenceMap, copied.ColAndIdxExistenceMap)
 			} else {
 				require.NotSame(t, table.ColAndIdxExistenceMap, copied.ColAndIdxExistenceMap)
-			}
-
-			// Test ExtendedStats handling
-			if tt.expectExtended == Cloned {
-				// Should be able to modify ExtendedStats without affecting original
-				newStats := &ExtendedStatsColl{
-					Stats:             make(map[string]*ExtendedStatsItem),
-					LastUpdateVersion: 2,
-				}
-				newStats.Stats["test"] = &ExtendedStatsItem{StringVals: "modified"}
-				copied.ExtendedStats = newStats
-
-				// Verify original is unchanged
-				require.Equal(t, uint64(1), table.ExtendedStats.LastUpdateVersion)
-				require.Equal(t, "original", table.ExtendedStats.Stats["test"].StringVals)
-
-				// Verify copy was modified
-				require.Equal(t, uint64(2), copied.ExtendedStats.LastUpdateVersion)
-				require.Equal(t, "modified", copied.ExtendedStats.Stats["test"].StringVals)
-			} else {
-				// For shared ExtendedStats
-				require.Same(t, table.ExtendedStats, copied.ExtendedStats)
 			}
 		})
 	}
