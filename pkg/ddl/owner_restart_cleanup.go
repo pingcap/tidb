@@ -37,8 +37,10 @@ import (
 //     after restart slow.
 //
 // This is a best-effort cleanup:
-//   - Only keys belonging to stale instances on the same IP:port (same address but different
-//     server-info ID) will be deleted.
+//   - If the ownerID is found in `/tidb/server/info`, only keys belonging to stale instances on
+//     the same IP:port (same address but different server-info ID) will be deleted.
+//   - If the ownerID is NOT found in `/tidb/server/info`, the key will be treated as stale and
+//     deleted to avoid being blocked by the lease TTL.
 func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, selfID string) {
 	if etcdCli == nil || selfID == "" {
 		return
@@ -52,29 +54,31 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 		logutil.DDLLogger().Debug("skip DDL owner key cleanup, get server infos failed", zap.Error(err))
 		return
 	}
-	selfInfo, ok := serverInfos[selfID]
-	if !ok {
-		// This might happen in unit tests or during early bootstrap.
-		logutil.DDLLogger().Debug("skip DDL owner key cleanup, self server info not found", zap.String("selfID", selfID))
+	if len(serverInfos) == 0 {
+		// Be conservative: if server-info list is unexpectedly empty, don't treat all owner keys as "unknown".
+		logutil.DDLLogger().Debug("skip DDL owner key cleanup, empty server infos", zap.String("selfID", selfID))
 		return
 	}
 
 	staleIDs := make(map[string]struct{})
 
-	// Multiple server-info IDs can exist for the same IP:port after an ungraceful restart.
-	// Only clean keys from other IDs on our own address ("cleanup self keys" only).
-	for _, info := range serverInfos {
-		if info.IP != selfInfo.IP || info.Port != selfInfo.Port {
-			continue
+	if selfInfo, ok := serverInfos[selfID]; ok {
+		// Multiple server-info IDs can exist for the same IP:port after an ungraceful restart.
+		// Only clean keys from other IDs on our own address ("cleanup self keys" only).
+		for _, info := range serverInfos {
+			if info.IP != selfInfo.IP || info.Port != selfInfo.Port {
+				continue
+			}
+			if info.ID == selfID {
+				continue
+			}
+			staleIDs[info.ID] = struct{}{}
 		}
-		if info.ID == selfID {
-			continue
-		}
-		staleIDs[info.ID] = struct{}{}
-	}
-
-	if len(staleIDs) == 0 {
-		return
+	} else {
+		// This might happen in unit tests or during early bootstrap. We can still try to
+		// clean "unknown" owner keys based on the server-info list.
+		logutil.DDLLogger().Debug("self server info not found, only clean unknown owner keys",
+			zap.String("selfID", selfID))
 	}
 
 	prefix := DDLOwnerKey + "/"
@@ -94,10 +98,14 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 		if ownerID == selfID {
 			continue
 		}
+
+		_, hasServerInfo := serverInfos[ownerID]
 		_, isStaleID := staleIDs[ownerID]
-		if !isStaleID {
+		if !isStaleID && hasServerInfo {
+			// Not a stale key from our own IP:port, and not an unknown ID.
 			continue
 		}
+		unknownOwnerID := !hasServerInfo
 
 		// Use a short timeout for each delete, and continue on errors.
 		delCtx, delCancel := context.WithTimeout(ctx, 3*time.Second)
@@ -107,13 +115,15 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 			logutil.DDLLogger().Info("delete stale DDL owner key failed",
 				zap.String("key", string(kv.Key)),
 				zap.String("ownerID", ownerID),
+				zap.Bool("unknownOwnerID", unknownOwnerID),
 				zap.Error(err))
 			continue
 		}
 		deleted++
 		logutil.DDLLogger().Info("delete stale DDL owner key",
 			zap.String("key", string(kv.Key)),
-			zap.String("ownerID", ownerID))
+			zap.String("ownerID", ownerID),
+			zap.Bool("unknownOwnerID", unknownOwnerID))
 	}
 
 	if deleted > 0 {
