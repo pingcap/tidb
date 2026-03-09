@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package storage
+package jobhistory
 
 import (
 	"context"
@@ -23,11 +23,13 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 )
 
-// ImportIntoJobDuration records the elapsed duration of an IMPORT INTO history job.
-type ImportIntoJobDuration struct {
+// Duration records elapsed time of an IMPORT INTO history job.
+type Duration struct {
 	// All fields use Go time.Duration string format, for example "40m0s".
 	Total            string `json:"total"`
 	Encode           string `json:"encode"`
@@ -38,40 +40,40 @@ type ImportIntoJobDuration struct {
 	PostProcess      string `json:"post_process"`
 }
 
-// ImportIntoJobHistoryInfo is detailed information of one IMPORT INTO history job.
-type ImportIntoJobHistoryInfo struct {
-	ImportID               int64  `json:"import_id"`
-	Keyspace               string `json:"keyspace"`
-	TaskID                 int64  `json:"task_id"`
-	State                  string `json:"state"`
-	Concurrency            int    `json:"concurrency"`
-	MaxNodeCount           int    `json:"max_node_count"`
-	DistSQLScanConcurrency int    `json:"distsql_scan_concurrency"`
-	IndexCount             int    `json:"index_count"`
-	ColumnCount            int    `json:"column_count"`
-	// Size fields use binary human-readable units, for example "512MiB".
-	FileSize     string                `json:"file_size"`
-	DataKVSize   string                `json:"data_kv_size"`
-	IndexKVSize  string                `json:"index_kv_size"`
-	PerCoreSpeed string                `json:"per_core_speed"`
-	OverallSpeed string                `json:"overall_speed"`
-	RowCount     int64                 `json:"row_count"`
-	RowLength    int64                 `json:"row_length"`
-	Duration     ImportIntoJobDuration `json:"duration"`
+// Info contains detailed information for one IMPORT INTO history job.
+type Info struct {
+	ImportID               int64    `json:"import_id"`
+	Keyspace               string   `json:"keyspace"`
+	TaskID                 int64    `json:"task_id"`
+	State                  string   `json:"state"`
+	Concurrency            int      `json:"concurrency"`
+	MaxNodeCount           int      `json:"max_node_count"`
+	DistSQLScanConcurrency int      `json:"distsql_scan_concurrency"`
+	IndexCount             int      `json:"index_count"`
+	ColumnCount            int      `json:"column_count"`
+	FileSize               string   `json:"file_size"`
+	DataKVSize             string   `json:"data_kv_size"`
+	IndexKVSize            string   `json:"index_kv_size"`
+	PerCoreSpeed           string   `json:"per_core_speed"`
+	OverallSpeed           string   `json:"overall_speed"`
+	RowCount               int64    `json:"row_count"`
+	RowLength              int64    `json:"row_length"`
+	Duration               Duration `json:"duration"`
 }
 
-// GetImportIntoJobInfoFromHistory returns IMPORT INTO job info from history table.
-// It only looks at history, and returns ErrTaskNotFound when absent.
-func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
+// GetFromHistory returns IMPORT INTO job info from history table only.
+// It returns ErrTaskNotFound when no matching history task exists.
+func GetFromHistory(
 	ctx context.Context,
+	mgr *storage.TaskManager,
 	keyspace string,
 	jobID int64,
-) (*ImportIntoJobHistoryInfo, error) {
+) (*Info, error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
 
-	taskKey := fmt.Sprintf("%s/%s/%d", keyspace, proto.ImportInto, jobID)
+	taskKey := importinto.TaskKeyForKeyspace(keyspace, jobID)
 	// NOTE: mysql.tidb_background_subtask_history.task_key stores task ID, not task_key string.
 	rows, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select
@@ -108,11 +110,11 @@ func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
 		return nil, err
 	}
 	if len(rows) == 0 {
-		return nil, errors.Annotatef(ErrTaskNotFound, "import-into job %d in keyspace %s not found in history", jobID, keyspace)
+		return nil, errors.Annotatef(storage.ErrTaskNotFound, "import-into job %d in keyspace %s not found in history", jobID, keyspace)
 	}
 
 	row := rows[0]
-	jobInfo := &ImportIntoJobHistoryInfo{
+	info := &Info{
 		ImportID:     jobID,
 		Keyspace:     keyspace,
 		TaskID:       row.GetInt64(0),
@@ -121,40 +123,40 @@ func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
 		MaxNodeCount: int(row.GetInt64(3)),
 	}
 	if !row.IsNull(4) {
-		jobInfo.DistSQLScanConcurrency = int(row.GetInt64(4))
+		info.DistSQLScanConcurrency = int(row.GetInt64(4))
 	}
 	if !row.IsNull(5) {
-		jobInfo.IndexCount = int(row.GetInt64(5))
+		info.IndexCount = int(row.GetInt64(5))
 	}
 	if !row.IsNull(6) {
-		jobInfo.ColumnCount = int(row.GetInt64(6))
+		info.ColumnCount = int(row.GetInt64(6))
 	}
 
-	var totalFileSizeBytes int64
+	var totalFileBytes int64
 	if !row.IsNull(7) {
-		totalFileSizeBytes = row.GetInt64(7)
-		jobInfo.FileSize = formatReadableBytes(totalFileSizeBytes)
+		totalFileBytes = row.GetInt64(7)
+		info.FileSize = formatBytes(totalFileBytes)
 	}
 	if !row.IsNull(8) {
-		jobInfo.DataKVSize = formatReadableBytes(row.GetInt64(8))
+		info.DataKVSize = formatBytes(row.GetInt64(8))
 	}
 	if !row.IsNull(9) {
-		jobInfo.IndexKVSize = formatReadableBytes(row.GetInt64(9))
+		info.IndexKVSize = formatBytes(row.GetInt64(9))
 	}
 
 	var totalDurationSeconds int64
 	if !row.IsNull(10) {
 		totalDurationSeconds = row.GetInt64(10)
-		jobInfo.Duration.Total = formatDurationFromSeconds(totalDurationSeconds)
+		info.Duration.Total = formatDuration(totalDurationSeconds)
 	}
-	jobInfo.PerCoreSpeed = formatBytesPerCoreHour(totalFileSizeBytes, totalDurationSeconds, jobInfo.MaxNodeCount, jobInfo.Concurrency)
-	jobInfo.OverallSpeed = formatBytesPerHour(totalFileSizeBytes, totalDurationSeconds)
+	info.PerCoreSpeed = formatBytesPerCoreHour(totalFileBytes, totalDurationSeconds, info.MaxNodeCount, info.Concurrency)
+	info.OverallSpeed = formatBytesPerHour(totalFileBytes, totalDurationSeconds)
 
 	if !row.IsNull(11) {
-		jobInfo.RowCount = row.GetInt64(11)
+		info.RowCount = row.GetInt64(11)
 	}
-	if jobInfo.RowCount > 0 {
-		jobInfo.RowLength = int64(math.Round(float64(totalFileSizeBytes) / float64(jobInfo.RowCount)))
+	if info.RowCount > 0 {
+		info.RowLength = int64(math.Round(float64(totalFileBytes) / float64(info.RowCount)))
 	}
 
 	stepRows, err := mgr.ExecuteSQLWithNewSession(ctx, `
@@ -162,7 +164,7 @@ func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
 		from mysql.tidb_background_subtask_history
 		where task_key = %? and start_time > 0 and state_update_time > 0
 		group by step`,
-		jobInfo.TaskID)
+		info.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,37 +172,37 @@ func (mgr *TaskManager) GetImportIntoJobInfoFromHistory(
 		if stepRow.IsNull(1) {
 			continue
 		}
-		durationText := formatDurationFromSeconds(stepRow.GetInt64(1))
+		duration := formatDuration(stepRow.GetInt64(1))
 		switch proto.Step(stepRow.GetInt64(0)) {
 		case proto.ImportStepEncodeAndSort:
-			jobInfo.Duration.Encode = durationText
+			info.Duration.Encode = duration
 		case proto.ImportStepMergeSort:
-			jobInfo.Duration.MergeSort = durationText
+			info.Duration.MergeSort = duration
 		case proto.ImportStepWriteAndIngest:
-			jobInfo.Duration.Ingest = durationText
+			info.Duration.Ingest = duration
 		case proto.ImportStepCollectConflicts:
-			jobInfo.Duration.CollectConflicts = durationText
+			info.Duration.CollectConflicts = duration
 		case proto.ImportStepConflictResolution:
-			jobInfo.Duration.ResolveConflicts = durationText
+			info.Duration.ResolveConflicts = duration
 		case proto.ImportStepPostProcess:
-			jobInfo.Duration.PostProcess = durationText
+			info.Duration.PostProcess = duration
 		}
 	}
-	return jobInfo, nil
+	return info, nil
 }
 
-func formatDurationFromSeconds(seconds int64) string {
+func formatDuration(seconds int64) string {
 	if seconds < 0 {
 		return ""
 	}
 	return (time.Duration(seconds) * time.Second).String()
 }
 
-func formatReadableBytes(sizeBytes int64) string {
-	if sizeBytes < 0 {
+func formatBytes(size int64) string {
+	if size < 0 {
 		return ""
 	}
-	return units.BytesSize(float64(sizeBytes))
+	return units.BytesSize(float64(size))
 }
 
 func formatBytesPerHour(totalBytes int64, durationSeconds int64) string {

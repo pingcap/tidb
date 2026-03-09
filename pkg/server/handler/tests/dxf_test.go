@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -157,7 +159,7 @@ func TestDXFAPI(t *testing.T) {
 				"row-count": 1024
 			}
 		}`)
-		taskID, err := tm.CreateTask(ctx, "ks1/ImportInto/9527", proto.ImportInto, "ks1", 8, "", 4, proto.ExtraParams{}, taskMeta)
+		taskID, err := tm.CreateTask(ctx, importinto.TaskKeyForKeyspace("ks1", 9527), proto.ImportInto, "ks1", 8, "", 4, proto.ExtraParams{}, taskMeta)
 		require.NoError(t, err)
 
 		_, err = tm.ExecuteSQLWithNewSession(ctx, `
@@ -182,7 +184,7 @@ func TestDXFAPI(t *testing.T) {
 		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
 			return ts.FetchStatus("/dxf/import-into/job/ks1/9527")
 		})
-		out := storage.ImportIntoJobHistoryInfo{}
+		out := jobhistory.Info{}
 		require.NoError(t, json.Unmarshal(body, &out))
 		require.EqualValues(t, 9527, out.ImportID)
 		require.EqualValues(t, taskID, out.TaskID)

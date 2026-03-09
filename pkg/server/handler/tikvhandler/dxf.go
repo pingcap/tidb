@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -128,7 +129,7 @@ func (*DXFImportIntoJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
 	defer cancel()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	info, err := taskMgr.GetImportIntoJobInfoFromHistory(ctx, targetKeyspace, jobID)
+	info, err := jobhistory.GetFromHistory(ctx, taskMgr, targetKeyspace, jobID)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
