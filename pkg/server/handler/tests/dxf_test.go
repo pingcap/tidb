@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -136,6 +136,9 @@ func TestDXFAPI(t *testing.T) {
 		runAndCheckReqFn(t, http.StatusBadRequest, "invalid job id", func() (*http.Response, error) {
 			return ts.FetchStatus("/dxf/import-into/job/ks1/invalid")
 		})
+		runAndCheckReqFn(t, http.StatusBadRequest, "invalid or empty target keyspace", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/import-into/job/ks.1/9527")
+		})
 
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
@@ -159,7 +162,7 @@ func TestDXFAPI(t *testing.T) {
 				"row-count": 1024
 			}
 		}`)
-		taskID, err := tm.CreateTask(ctx, importinto.TaskKeyForKeyspace("ks1", 9527), proto.ImportInto, "ks1", 8, "", 4, proto.ExtraParams{}, taskMeta)
+		taskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace("ks1", 9527), proto.ImportInto, "ks1", 8, "", 4, proto.ExtraParams{}, taskMeta)
 		require.NoError(t, err)
 
 		_, err = tm.ExecuteSQLWithNewSession(ctx, `

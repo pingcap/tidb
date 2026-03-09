@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
-        "//pkg/dxf/importinto",
+        "//pkg/dxf/importinto/taskkey",
         "//pkg/util/injectfailpoint",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
@@ -24,7 +24,7 @@ go_test(
         ":jobhistory",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/testutil",
-        "//pkg/dxf/importinto",
+        "//pkg/dxf/importinto/taskkey",
         "@com_github_stretchr_testify//require",
     ],
 )

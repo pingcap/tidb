@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +45,7 @@ func TestGetFromHistory(t *testing.T) {
 			"row-count": 1024
 		}
 	}`)
-	taskID, err := tm.CreateTask(ctx, importinto.TaskKeyForKeyspace(keyspace, jobID), proto.ImportInto, keyspace, 8, "", 4, proto.ExtraParams{}, taskMeta)
+	taskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace(keyspace, jobID), proto.ImportInto, keyspace, 8, "", 4, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 
 	encodeID := testutil.InsertSubtask(t, tm, taskID, proto.ImportStepEncodeAndSort, "tidb-1",
