@@ -1003,31 +1003,31 @@ SELECT column_name, LOWER(column_type), is_nullable
 FROM information_schema.columns
 WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 	ORDER BY ordinal_position`).Check(testkit.Rows(
-			"policy_id bigint(20) NO",
-			"policy_name varchar(64) NO",
-			"db_name varchar(64) NO",
-			"table_name varchar(64) NO",
-			"table_id bigint(20) NO",
-			"column_name varchar(64) NO",
-			"column_id bigint(20) NO",
-			"expression text NO",
-			"status enum('enable','disable') YES",
-			"function_type varchar(32) YES",
-			"created_at timestamp YES",
-			"updated_at timestamp YES",
-			"created_by varchar(128) YES",
-		))
+		"policy_id bigint(20) NO",
+		"policy_name varchar(64) NO",
+		"db_name varchar(64) NO",
+		"table_name varchar(64) NO",
+		"table_id bigint(20) NO",
+		"column_name varchar(64) NO",
+		"column_id bigint(20) NO",
+		"expression text NO",
+		"status enum('enable','disable') YES",
+		"function_type varchar(32) YES",
+		"created_at timestamp YES",
+		"updated_at timestamp YES",
+		"created_by varchar(128) YES",
+	))
 	tk.MustQuery(`
 SELECT index_name, non_unique, seq_in_index, column_name
 FROM information_schema.statistics
 WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 	ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
-			"PRIMARY 0 1 policy_id",
-			"db_name_policy_name 0 1 db_name",
-			"db_name_policy_name 0 2 policy_name",
-			"idx_table_column 1 1 table_id",
-			"idx_table_column 1 2 column_id",
-		))
+		"PRIMARY 0 1 policy_id",
+		"db_name_policy_name 0 1 db_name",
+		"db_name_policy_name 0 2 policy_name",
+		"idx_table_column 1 1 table_id",
+		"idx_table_column 1 2 column_id",
+	))
 }
 
 func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
