@@ -6803,18 +6803,15 @@ PredicateExpr:
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		}
-		// When ESCAPE '' is specified, escape is empty and explicit is true.
-		// This means no escape character should be used (Escape = 0).
-		var escapeChar byte
-		if len(escape) > 0 {
-			escapeChar = escape[0]
+		} else if len(escape) == 0 {
+			escape = "\\"
+			explicit = false
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:           $1,
 			Pattern:        $3,
 			Not:            !$2.(bool),
-			Escape:         escapeChar,
+			Escape:         escape[0],
 			EscapeExplicit: explicit,
 			IsLike:         true,
 		}
@@ -6827,18 +6824,15 @@ PredicateExpr:
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		}
-		// When ESCAPE '' is specified, escape is empty and explicit is true.
-		// This means no escape character should be used (Escape = 0).
-		var escapeChar byte
-		if len(escape) > 0 {
-			escapeChar = escape[0]
+		} else if len(escape) == 0 {
+			escape = "\\"
+			explicit = false
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:           $1,
 			Pattern:        $3,
 			Not:            !$2.(bool),
-			Escape:         escapeChar,
+			Escape:         escape[0],
 			EscapeExplicit: explicit,
 			IsLike:         false,
 		}

@@ -937,12 +937,7 @@ func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
 
 	if n.EscapeExplicit && n.Escape != '\\' {
 		ctx.WriteKeyWord(" ESCAPE ")
-		if n.Escape == 0 {
-			// ESCAPE '' means no escape character
-			ctx.WriteString("")
-		} else {
-			ctx.WriteString(string(n.Escape))
-		}
+		ctx.WriteString(string(n.Escape))
 	}
 	return nil
 }
