@@ -1039,6 +1039,13 @@ func setupTracing() error {
 
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
+	// Best-effort: revoke the DDL owner election lease ASAP so a fast restart won't be
+	// blocked by a stale owner key when PD/etcd is also shutting down.
+	if dom != nil {
+		if mgr := dom.GetDDLOwnerMgr(); mgr != nil {
+			mgr.CampaignCancel()
+		}
+	}
 	dom.Close()
 	ddl.CloseOwnerManager(storage)
 	copr.GlobalMPPFailedStoreProber.Stop()
@@ -1056,6 +1063,14 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 var gracefulCloseConnectionsTimeout = 15 * time.Second
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
+	// Best-effort: cancel the DDL owner campaign early in shutdown. `cleanup` can spend
+	// time draining connections / stopping plugins; doing it here increases the chance
+	// to revoke the lease before PD/etcd is terminated (e.g. in tiup playground Ctrl-C).
+	if dom != nil {
+		if mgr := dom.GetDDLOwnerMgr(); mgr != nil {
+			mgr.CampaignCancel()
+		}
+	}
 	dom.StopAutoAnalyze()
 
 	drainClientWait := gracefulCloseConnectionsTimeout
