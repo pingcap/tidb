@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1816,4 +1817,28 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
+}
+
+func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originConfig := config.GetGlobalConfig()
+	originServiceScope := vardef.ServiceScope.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+		vardef.ServiceScope.Store(originServiceScope)
+	})
+
+	tk.MustExec("set global tidb_service_scope='BaCkGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+
+	tk.MustExec("set instance tidb_service_scope='BackGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }
