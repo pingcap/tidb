@@ -801,9 +801,8 @@ workLoop:
 			releaseCollectorMemory := func() {
 				collectorMemSize := collector.MemSize
 				failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
-				if collectorMemSize > 0 {
-					e.memTracker.Release(collectorMemSize)
-				}
+				intest.Assert(collectorMemSize > 0, "collector memory size should be positive")
+				e.memTracker.Release(collectorMemSize)
 				collector.Destroy()
 				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
