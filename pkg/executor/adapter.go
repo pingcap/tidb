@@ -509,13 +509,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if lockKeysCnt > 0 {
 				metrics.StatementLockKeysCount.Observe(float64(lockKeysCnt))
 			}
+
+			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if execDetails.SharedLockKeysDetail != nil {
 				if execDetails.SharedLockKeysDetail.LockKeys > 0 {
 					metrics.StatementSharedLockKeysCount.Observe(float64(execDetails.SharedLockKeysDetail.LockKeys))
 				}
 			}
-
-			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
 				a.Ctx.GetSessionVars().TxnCtx.FairLockingUsed = true

@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -36,10 +35,6 @@ func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
-	}
-
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -94,10 +89,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
-	}
-
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -150,10 +141,6 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
-	}
-
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -254,10 +241,6 @@ func TestSharedLockLockView(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
-	}
-
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
