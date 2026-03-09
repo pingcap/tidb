@@ -210,6 +210,3 @@ func BenchmarkConvertBinaryStringLiterals(b *testing.B) {
 		}
 	})
 }
-
-
-

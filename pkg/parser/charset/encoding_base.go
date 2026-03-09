@@ -55,7 +55,6 @@ func (b encodingBase) IsValid(src []byte) bool {
 	return isValid
 }
 
-
 func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
 		dest = &bytes.Buffer{}
