@@ -96,7 +96,6 @@ go_library(
         "//pkg/distsql/context",
         "//pkg/domain/affinity",
         "//pkg/domain/infosync",
-        "//pkg/domain/serverinfo",
         "//pkg/dxf/framework/dxfmetric",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/metering",
