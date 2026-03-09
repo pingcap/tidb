@@ -32,9 +32,8 @@ func TestPartialCRRReplicationFailsRestoreValidationEvenIfCheckpointMatches(t *t
 		Build()
 	require.NoError(t, err)
 
-	h, err := testutil.NewLocalTestHarness(ctx, t.TempDir(), boundaries)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, testutil.NewTestContext(t), boundaries)
 	require.NoError(t, err)
-	t.Cleanup(h.Close)
 
 	var upstreamCheckpoint uint64
 	for range 3 {
@@ -70,9 +69,8 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	h, err := testutil.NewLocalTestHarness(ctx, t.TempDir(), boundaries)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, testutil.NewTestContext(t), boundaries)
 	require.NoError(t, err)
-	t.Cleanup(h.Close)
 
 	var upstreamCheckpoint uint64
 	for range 3 {

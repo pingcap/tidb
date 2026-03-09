@@ -18,10 +18,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math/rand"
+	"slices"
 	"sort"
 	"sync"
-	"time"
 
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -64,12 +63,12 @@ type PDSim struct {
 	serviceGCSafePoint uint64
 	// keyed by store id.
 	subscribers map[uint64]map[chan *logbackup.SubscribeFlushEventResponse]struct{}
+	rng         *deterministicRNG
 }
 
 var _ streamhelper.Env = (*PDSim)(nil)
 
-// NewPDSim creates a deterministic PD simulator with predefined regions.
-func NewPDSim(boundaries []RegionBoundary, taskName string) (*PDSim, error) {
+func NewPDSimWithTestContext(boundaries []RegionBoundary, taskName string, tc *TestContext) (*PDSim, error) {
 	if len(boundaries) == 0 {
 		boundaries = []RegionBoundary{{StoreID: 1}}
 	}
@@ -84,8 +83,9 @@ func NewPDSim(boundaries []RegionBoundary, taskName string) (*PDSim, error) {
 		taskName:    taskName,
 		stores:      make(map[uint64]*storeSim),
 		subscribers: make(map[uint64]map[chan *logbackup.SubscribeFlushEventResponse]struct{}),
+		rng:         tc.RNG("pd-sim"),
 	}
-	p.taskStart = oracle.ComposeTS(time.Now().UnixMilli(), 0)
+	p.taskStart = oracle.ComposeTS(defaultTaskStartPhysical+p.rng.Int63n(1<<20), 0)
 	p.currentTS = p.taskStart
 
 	for _, b := range boundaries {
@@ -222,56 +222,62 @@ func toRegionState(r *regionSim) RegionState {
 	}
 }
 
-func (p *PDSim) flushRegionByStore(ctx context.Context, storeID, regionID, checkpoint uint64) (RegionState, error) {
+func (p *PDSim) flushStore(ctx context.Context, storeID, checkpoint uint64) ([]RegionState, error) {
 	p.mu.Lock()
-	r := p.findRegionByID(regionID)
-	if r == nil {
+	store, ok := p.stores[storeID]
+	if !ok {
 		p.mu.Unlock()
-		return RegionState{}, fmt.Errorf("region %d not found", regionID)
+		return nil, fmt.Errorf("store %d not found", storeID)
 	}
-	if r.storeID != storeID {
-		p.mu.Unlock()
-		return RegionState{}, fmt.Errorf(
-			"region %d belongs to store %d, but flush comes from store %d",
-			regionID,
-			r.storeID,
-			storeID,
-		)
+	regionIDs := make([]uint64, 0, len(store.regionByID))
+	for regionID := range store.regionByID {
+		regionIDs = append(regionIDs, regionID)
 	}
-	if checkpoint <= r.checkpoint {
-		p.mu.Unlock()
-		return RegionState{}, fmt.Errorf(
-			"region %d checkpoint %d must be greater than current %d",
-			regionID,
-			checkpoint,
-			r.checkpoint,
-		)
+	sort.Slice(regionIDs, func(i, j int) bool { return regionIDs[i] < regionIDs[j] })
+
+	states := make([]RegionState, 0, len(regionIDs))
+	events := make([]*logbackup.FlushEvent, 0, len(regionIDs))
+	for _, regionID := range regionIDs {
+		r := store.regionByID[regionID]
+		if checkpoint <= r.checkpoint {
+			p.mu.Unlock()
+			return nil, fmt.Errorf(
+				"region %d checkpoint %d must be greater than current %d",
+				regionID,
+				checkpoint,
+				r.checkpoint,
+			)
+		}
 	}
-	r.checkpoint = checkpoint
+	for _, regionID := range regionIDs {
+		r := store.regionByID[regionID]
+		r.checkpoint = checkpoint
+		state := toRegionState(r)
+		states = append(states, state)
+		events = append(events, &logbackup.FlushEvent{
+			StartKey:   codec.EncodeBytes(nil, state.StartKey),
+			EndKey:     codec.EncodeBytes(nil, state.EndKey),
+			Checkpoint: checkpoint,
+		})
+	}
 	if checkpoint > p.currentTS {
 		p.currentTS = checkpoint
 	}
-	state := toRegionState(r)
 	receivers := p.subscriberChannelsLocked(storeID)
 	p.mu.Unlock()
 
-	flushEvent := &logbackup.FlushEvent{
-		StartKey:   codec.EncodeBytes(nil, state.StartKey),
-		EndKey:     codec.EncodeBytes(nil, state.EndKey),
-		Checkpoint: checkpoint,
-	}
-	resp := &logbackup.SubscribeFlushEventResponse{Events: []*logbackup.FlushEvent{flushEvent}}
+	resp := &logbackup.SubscribeFlushEventResponse{Events: events}
 	for _, ch := range receivers {
 		select {
 		case ch <- resp:
 		case <-ctx.Done():
-			return RegionState{}, fmt.Errorf(
-				"send flush event for region %d to subscribers: %w",
-				regionID, ctx.Err(),
+			return nil, fmt.Errorf(
+				"send flush events for store %d to subscribers: %w",
+				storeID, ctx.Err(),
 			)
 		}
 	}
-	return state, nil
+	return states, nil
 }
 
 func (p *PDSim) subscriberChannelsLocked(storeID uint64) []chan *logbackup.SubscribeFlushEventResponse {
@@ -299,12 +305,11 @@ func (p *PDSim) Scatter() []uint64 {
 	for id := range p.stores {
 		storeIDs = append(storeIDs, id)
 	}
-	sort.Slice(storeIDs, func(i, j int) bool { return storeIDs[i] < storeIDs[j] })
+	slices.Sort(storeIDs)
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	affected := make([]uint64, 0, len(p.regions))
 	for _, r := range p.regions {
-		nextStoreID := storeIDs[rng.Intn(len(storeIDs))]
+		nextStoreID := storeIDs[p.rng.IntN(len(storeIDs))]
 		if nextStoreID == r.storeID {
 			continue
 		}
@@ -318,7 +323,7 @@ func (p *PDSim) Scatter() []uint64 {
 		r.checkpoint = p.globalCheckpoint
 		affected = append(affected, r.id)
 	}
-	sort.Slice(affected, func(i, j int) bool { return affected[i] < affected[j] })
+	slices.Sort(affected)
 	return affected
 }
 

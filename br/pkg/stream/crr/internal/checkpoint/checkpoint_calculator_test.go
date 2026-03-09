@@ -36,9 +36,9 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	h, err := testutil.NewLocalTestHarness(ctx, t.TempDir(), boundaries)
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
 	require.NoError(t, err)
-	t.Cleanup(h.Close)
 
 	upstream := &recordingUpstreamStorage{inner: h.Upstream}
 	calculator, err := checkpoint.NewCalculator(
@@ -94,9 +94,9 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	h, err := testutil.NewLocalTestHarness(ctx, t.TempDir(), boundaries)
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
 	require.NoError(t, err)
-	t.Cleanup(h.Close)
 
 	for _, storeID := range stores {
 		_, err := h.FlushSim.FlushStore(ctx, storeID)
@@ -107,7 +107,7 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	_, err = h.Replicate(ctx, 0)
 	require.NoError(t, err)
 
-	script := testutil.NewSyncScript(t, "github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint")
+	script := h.NewSyncScript("github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint")
 	var started atomic.Int32
 	firstTwoStarted := make(chan struct{})
 	releaseFirstTwo := make(chan struct{})
@@ -170,9 +170,9 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	h, err := testutil.NewLocalTestHarness(ctx, t.TempDir(), boundaries)
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
 	require.NoError(t, err)
-	t.Cleanup(h.Close)
 
 	_, err = checkpoint.NewCalculator(
 		checkpoint.CalculatorDeps{

@@ -30,6 +30,7 @@ import (
 type FlushSim struct {
 	mu      sync.Mutex
 	pd      *PDSim
+	rng     *deterministicRNG
 	storage storeapi.Storage
 	seq     uint64
 	records []FlushRecord
@@ -43,8 +44,12 @@ type regionFiles struct {
 	maxTS     uint64
 }
 
-func NewFlushSim(pd *PDSim, storage storeapi.Storage) *FlushSim {
-	return &FlushSim{pd: pd, storage: storage}
+func NewFlushSimWithTestContext(pd *PDSim, storage storeapi.Storage, tc *TestContext) *FlushSim {
+	return &FlushSim{
+		pd:      pd,
+		rng:     tc.RNG("flush-sim"),
+		storage: storage,
+	}
 }
 
 func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, suffixToken uint64) string {
@@ -63,16 +68,9 @@ func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, suffixTo
 	)
 }
 
-func pickTSInRange(lower, upper, salt uint64) uint64 {
-	if lower >= upper {
-		return lower
-	}
-	return lower + (salt % (upper - lower + 1))
-}
-
-func pickRegionTSRange(globalCheckpoint, latestTS, flushSeq, regionID uint64) (uint64, uint64) {
-	minTS := pickTSInRange(globalCheckpoint, latestTS, flushSeq*131+regionID*17+1)
-	maxTS := pickTSInRange(globalCheckpoint, latestTS, flushSeq*197+regionID*31+3)
+func pickRegionTSRange(rng *deterministicRNG, globalCheckpoint, latestTS uint64) (uint64, uint64) {
+	minTS := rng.Uint64InRange(globalCheckpoint, latestTS)
+	maxTS := rng.Uint64InRange(globalCheckpoint, latestTS)
 	if maxTS < minTS {
 		minTS, maxTS = maxTS, minTS
 	}
@@ -95,7 +93,7 @@ func (f *FlushSim) buildRegionFiles(
 	}
 
 	for _, state := range states {
-		rMinTS, rMaxTS := pickRegionTSRange(globalCheckpoint, latestTS, flushSeq, state.ID)
+		rMinTS, rMaxTS := pickRegionTSRange(f.rng, globalCheckpoint, latestTS)
 		if rMinTS < result.minTS {
 			result.minTS = rMinTS
 		}
@@ -160,12 +158,9 @@ func (f *FlushSim) flushRegions(
 	ctx context.Context,
 	storeID uint64,
 	flushTS uint64,
-	states []RegionState,
 ) error {
-	for _, state := range states {
-		if _, err := f.pd.flushRegionByStore(ctx, storeID, state.ID, flushTS); err != nil {
-			return fmt.Errorf("flush region %d by store %d: %w", state.ID, storeID, err)
-		}
+	if _, err := f.pd.flushStore(ctx, storeID, flushTS); err != nil {
+		return fmt.Errorf("flush store %d: %w", storeID, err)
 	}
 	return nil
 }
@@ -199,7 +194,7 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 		return FlushRecord{}, err
 	}
 
-	if err := f.flushRegions(ctx, storeID, flushTS, states); err != nil {
+	if err := f.flushRegions(ctx, storeID, flushTS); err != nil {
 		return FlushRecord{}, err
 	}
 

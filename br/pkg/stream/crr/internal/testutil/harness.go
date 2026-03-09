@@ -33,6 +33,7 @@ import (
 type TestHarness struct {
 	upstreamStorage   storeapi.Storage
 	downstreamStorage storeapi.Storage
+	tc                *TestContext
 
 	PDSim      *PDSim
 	FlushSim   *FlushSim
@@ -42,8 +43,20 @@ type TestHarness struct {
 	Advancer   *streamhelper.CheckpointAdvancer
 }
 
-// NewLocalTestHarness builds a deterministic test harness on local storage.
-func NewLocalTestHarness(ctx context.Context, baseDir string, boundaries []RegionBoundary) (*TestHarness, error) {
+func NewLocalTestHarnessWithTestContext(
+	ctx context.Context,
+	tc *TestContext,
+	boundaries []RegionBoundary,
+) (*TestHarness, error) {
+	return newLocalTestHarness(ctx, tc, tc.T.TempDir(), boundaries)
+}
+
+func newLocalTestHarness(
+	ctx context.Context,
+	tc *TestContext,
+	baseDir string,
+	boundaries []RegionBoundary,
+) (*TestHarness, error) {
 	upstreamDir := filepath.Join(baseDir, "upstream")
 	downstreamDir := filepath.Join(baseDir, "downstream")
 	if err := os.MkdirAll(upstreamDir, 0o750); err != nil {
@@ -63,7 +76,7 @@ func NewLocalTestHarness(ctx context.Context, baseDir string, boundaries []Regio
 		return nil, fmt.Errorf("create local downstream storage at %s: %w", downstreamDir, err)
 	}
 
-	pd, err := NewPDSim(boundaries, defaultTaskName)
+	pd, err := NewPDSimWithTestContext(boundaries, defaultTaskName, tc)
 	if err != nil {
 		upstreamStorage.Close()
 		downstreamStorage.Close()
@@ -78,16 +91,23 @@ func NewLocalTestHarness(ctx context.Context, baseDir string, boundaries []Regio
 	advancer.StartTaskListener(ctx)
 	advancer.SpawnSubscriptionHandler(ctx)
 
-	return &TestHarness{
+	h := &TestHarness{
 		upstreamStorage:   upstreamStorage,
 		downstreamStorage: downstreamStorage,
+		tc:                tc,
 		PDSim:             pd,
-		FlushSim:          NewFlushSim(pd, upstream),
+		FlushSim:          NewFlushSimWithTestContext(pd, upstream, tc),
 		CRRWorker:         worker,
 		Upstream:          upstream,
 		Downstream:        downstreamStorage,
 		Advancer:          advancer,
-	}, nil
+	}
+	tc.T.Cleanup(h.Close)
+	return h, nil
+}
+
+func (h *TestHarness) NewSyncScript(basePath string) *SyncScript {
+	return NewSyncScriptWithTestContext(h.tc, basePath)
 }
 
 // Tick drives one deterministic advancer state transition.

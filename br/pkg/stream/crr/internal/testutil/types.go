@@ -14,10 +14,77 @@
 
 package testutil
 
-const (
-	defaultTaskName = "drr_test_task"
-	regionIDTag     = 'r'
+import (
+	"hash/fnv"
+	"math/rand"
+	"testing"
 )
+
+const (
+	defaultTaskName                = "drr_test_task"
+	defaultDeterministicSeed int64 = 0x435252
+	defaultTaskStartPhysical int64 = 1_700_000_000_000
+	regionIDTag                    = 'r'
+)
+
+type deterministicRNG struct {
+	rng *rand.Rand
+}
+
+func newDeterministicRNG(seed int64, component string) *deterministicRNG {
+	return &deterministicRNG{
+		rng: rand.New(rand.NewSource(deriveDeterministicSeed(seed, component))),
+	}
+}
+
+func deriveDeterministicSeed(seed int64, component string) int64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(component))
+	derived := uint64(seed) ^ hasher.Sum64()
+	derived &^= uint64(1) << 63
+	if derived == 0 {
+		derived = 1
+	}
+	return int64(derived)
+}
+
+func (r *deterministicRNG) IntN(n int) int {
+	return r.rng.Intn(n)
+}
+
+func (r *deterministicRNG) Int63n(n int64) int64 {
+	return r.rng.Int63n(n)
+}
+
+func (r *deterministicRNG) Uint64InRange(lower, upper uint64) uint64 {
+	if lower >= upper {
+		return lower
+	}
+	return lower + uint64(r.Int63n(int64(upper-lower+1)))
+}
+
+// TestContext groups testing-only shared state for deterministic helpers.
+type TestContext struct {
+	T    testing.TB
+	seed int64
+}
+
+func NewTestContext(t testing.TB) *TestContext {
+	return NewTestContextWithSeed(t, defaultDeterministicSeed)
+}
+
+func NewTestContextWithSeed(t testing.TB, seed int64) *TestContext {
+	t.Helper()
+	return &TestContext{T: t, seed: seed}
+}
+
+func (tc *TestContext) Seed() int64 {
+	return tc.seed
+}
+
+func (tc *TestContext) RNG(component string) *deterministicRNG {
+	return newDeterministicRNG(tc.Seed(), component)
+}
 
 // RegionBoundary describes a static region layout for a test.
 type RegionBoundary struct {

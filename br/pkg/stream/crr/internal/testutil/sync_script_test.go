@@ -52,6 +52,55 @@ func TestSyncScriptRequireSeq(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSyncScriptInterleave(t *testing.T) {
+	script := NewSyncScript(t, syncScriptTestPath)
+	left := []string{"sync-script-a1", "sync-script-a2", "sync-script-a3"}
+	right := []string{"sync-script-b1", "sync-script-b2"}
+	script.Interleave(left, right)
+
+	events := make(chan string, len(left)+len(right))
+	for _, name := range left {
+		script.On(name, func(ctx InjectContext) { events <- name })
+	}
+	for _, name := range right {
+		script.On(name, func(ctx InjectContext) { events <- name })
+	}
+
+	all := append(append([]string(nil), left...), right...)
+	var wg sync.WaitGroup
+	for _, name := range all {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			triggerSyncScriptPoint(name)
+		}(name)
+	}
+
+	got := make([]string, 0, len(all))
+	for i := 0; i < len(all); i++ {
+		got = append(got, <-events)
+	}
+	wg.Wait()
+
+	require.Len(t, got, len(all))
+	require.Equal(t, left, subseq(got, left))
+	require.Equal(t, right, subseq(got, right))
+}
+
+func subseq(seq, universe []string) []string {
+	allowed := make(map[string]struct{}, len(universe))
+	for _, item := range universe {
+		allowed[item] = struct{}{}
+	}
+	filtered := make([]string, 0, len(universe))
+	for _, item := range seq {
+		if _, ok := allowed[item]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
 func triggerSyncScriptPoint(name string) {
 	switch name {
 	case "sync-script-a":
@@ -60,6 +109,16 @@ func triggerSyncScriptPoint(name string) {
 		failpoint.InjectCall("sync-script-b")
 	case "sync-script-c":
 		failpoint.InjectCall("sync-script-c")
+	case "sync-script-a1":
+		failpoint.InjectCall("sync-script-a1")
+	case "sync-script-a2":
+		failpoint.InjectCall("sync-script-a2")
+	case "sync-script-a3":
+		failpoint.InjectCall("sync-script-a3")
+	case "sync-script-b1":
+		failpoint.InjectCall("sync-script-b1")
+	case "sync-script-b2":
+		failpoint.InjectCall("sync-script-b2")
 	default:
 		panic("unknown sync script test failpoint: " + name)
 	}

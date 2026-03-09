@@ -47,11 +47,12 @@ func (ctx InjectContext) ReleaseThis() {
 
 // SyncScript coordinates InjectCall handlers inside tests.
 type SyncScript struct {
-	t        testing.TB
+	tc       *TestContext
 	basePath string
 
 	mu     sync.Mutex
 	points map[string]*syncPoint
+	rng    *deterministicRNG
 }
 
 type syncPoint struct {
@@ -68,11 +69,20 @@ type syncPoint struct {
 
 // NewSyncScript creates a test-only failpoint script bound to one package path.
 func NewSyncScript(t testing.TB, basePath string) *SyncScript {
-	t.Helper()
+	return NewSyncScriptWithTestContext(NewTestContext(t), basePath)
+}
+
+func NewSyncScriptWithSeed(t testing.TB, basePath string, seed int64) *SyncScript {
+	return NewSyncScriptWithTestContext(NewTestContextWithSeed(t, seed), basePath)
+}
+
+func NewSyncScriptWithTestContext(tc *TestContext, basePath string) *SyncScript {
+	tc.T.Helper()
 	return &SyncScript{
-		t:        t,
+		tc:       tc,
 		basePath: basePath,
 		points:   make(map[string]*syncPoint),
+		rng:      tc.RNG("sync-script"),
 	}
 }
 
@@ -83,18 +93,18 @@ func NewSyncScript(t testing.TB, basePath string) *SyncScript {
 //	func(ctx InjectContext)
 //	func(ctx InjectContext, arg1 T1, arg2 T2, ...)
 func (s *SyncScript) On(name string, fn any) {
-	s.t.Helper()
+	s.tc.T.Helper()
 
 	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 	if fnType.Kind() != reflect.Func {
-		s.t.Fatalf("sync script handler for %s must be a function", name)
+		s.tc.T.Fatalf("sync script handler for %s must be a function", name)
 	}
 	if fnType.NumIn() < 1 || fnType.In(0) != reflect.TypeFor[InjectContext]() {
-		s.t.Fatalf("sync script handler for %s must accept InjectContext as the first argument", name)
+		s.tc.T.Fatalf("sync script handler for %s must accept InjectContext as the first argument", name)
 	}
 	if fnType.NumOut() != 0 {
-		s.t.Fatalf("sync script handler for %s must not return values", name)
+		s.tc.T.Fatalf("sync script handler for %s must not return values", name)
 	}
 
 	point := s.getPoint(name)
@@ -104,7 +114,7 @@ func (s *SyncScript) On(name string, fn any) {
 	if point.handlerType == nil {
 		point.handlerType = fnType
 	} else if !sameHandlerSignature(point.handlerType, fnType) {
-		s.t.Fatalf("sync script handler for %s has inconsistent argument types", name)
+		s.tc.T.Fatalf("sync script handler for %s has inconsistent argument types", name)
 	}
 	point.handlers = append(point.handlers, fnValue)
 
@@ -128,7 +138,7 @@ func (s *SyncScript) On(name string, fn any) {
 		return nil
 	})
 
-	testfailpoint.EnableCall(s.t, s.fullPath(name), wrapper.Interface())
+	testfailpoint.EnableCall(s.tc.T, s.fullPath(name), wrapper.Interface())
 	point.enabled = true
 }
 
@@ -182,6 +192,49 @@ func (s *SyncScript) RequireSeq(names ...string) {
 			ctx.Release(next)
 		})
 	}
+}
+
+// Interleave configures a random merged schedule of two ordered sequences.
+//
+// The relative order inside each sequence is preserved, but the two sequences
+// may interleave arbitrarily. For example:
+//
+//	Interleave([]string{"A1", "A2", "A3"}, []string{"B1", "B2"})
+//
+// may require either:
+//
+//	"A1" -> "B1" -> "A2" -> "B2" -> "A3"
+//
+// or:
+//
+//	"B1" -> "A1" -> "A2" -> "B2" -> "A3"
+func (s *SyncScript) Interleave(left, right []string) {
+	merged := interleaveSeqs(s.rng, left, right)
+	s.RequireSeq(merged...)
+}
+
+func interleaveSeqs(rng *deterministicRNG, left, right []string) []string {
+	if len(left) == 0 {
+		return append([]string(nil), right...)
+	}
+	if len(right) == 0 {
+		return append([]string(nil), left...)
+	}
+
+	merged := make([]string, 0, len(left)+len(right))
+	i, j := 0, 0
+	for i < len(left) && j < len(right) {
+		if rng.IntN(len(left)-i+len(right)-j) < len(left)-i {
+			merged = append(merged, left[i])
+			i++
+			continue
+		}
+		merged = append(merged, right[j])
+		j++
+	}
+	merged = append(merged, left[i:]...)
+	merged = append(merged, right[j:]...)
+	return merged
 }
 
 func (s *SyncScript) newContext(name string) InjectContext {
