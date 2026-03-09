@@ -62,6 +62,9 @@ func SetupTopProfiling(keyspaceName []byte, updater collector.ProcessCPUTimeUpda
 	singleTargetDataSink.Start()
 
 	stmtstats.RegisterCollector(globalTopProfilingReport)
+	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
+		stmtstats.RegisterRUCollector(ruCollector)
+	}
 	stmtstats.SetupAggregator()
 }
 
@@ -80,6 +83,9 @@ func RegisterPubSubServer(s *grpc.Server) {
 
 // Close uses to close and release the top sql resource.
 func Close() {
+	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
+		stmtstats.UnregisterRUCollector(ruCollector)
+	}
 	singleTargetDataSink.Close()
 	globalTopProfilingReport.Close()
 	stmtstats.CloseAggregator()

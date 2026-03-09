@@ -227,6 +227,18 @@ func UnregisterCollector(collector Collector) {
 	globalAggregator.unregisterCollector(collector)
 }
 
+// RegisterRUCollector binds an RUCollector to globalAggregator.
+// RegisterRUCollector is thread-safe.
+func RegisterRUCollector(collector RUCollector) {
+	globalAggregator.registerRUCollector(collector)
+}
+
+// UnregisterRUCollector removes RUCollector from globalAggregator.
+// UnregisterRUCollector is thread-safe.
+func UnregisterRUCollector(collector RUCollector) {
+	globalAggregator.unregisterRUCollector(collector)
+}
+
 // Collector is used to collect StatementStatsMap.
 type Collector interface {
 	// CollectStmtStatsMap is used to collect StatementStatsMap.

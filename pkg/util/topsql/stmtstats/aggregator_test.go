@@ -49,6 +49,19 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func Test_RegisterUnregisterRUCollector(t *testing.T) {
+	SetupAggregator()
+	defer CloseAggregator()
+	time.Sleep(100 * time.Millisecond)
+	collector := &mockRUCollector{f: func(data RUIncrementMap) {}}
+	RegisterRUCollector(collector)
+	_, ok := globalAggregator.ruCollectors.Load(collector)
+	assert.True(t, ok)
+	UnregisterRUCollector(collector)
+	_, ok = globalAggregator.ruCollectors.Load(collector)
+	assert.False(t, ok)
+}
+
 func Test_aggregator_register_collect(t *testing.T) {
 	state.EnableTopSQL()
 	defer state.DisableTopSQL()
