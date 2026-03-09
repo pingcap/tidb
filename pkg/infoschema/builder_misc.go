@@ -76,6 +76,9 @@ func applyCreateMaskingPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if policy == nil {
+		return errors.Errorf("masking policy not found (policy ID %d)", diff.SchemaID)
+	}
 	b.infoSchema.setMaskingPolicy(policy)
 	return nil
 }
@@ -84,6 +87,9 @@ func applyAlterMaskingPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) 
 	policy, err := m.GetMaskingPolicy(diff.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if policy == nil {
+		return nil, errors.Errorf("masking policy not found (policy ID %d)", diff.SchemaID)
 	}
 	b.infoSchema.setMaskingPolicy(policy)
 	return []int64{}, nil

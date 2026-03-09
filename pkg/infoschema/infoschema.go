@@ -291,6 +291,8 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 }
 
 func (is *infoSchema) MaskingPolicyByID(id int64) (val *model.MaskingPolicyInfo, ok bool) {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
 	for _, v := range is.maskingPolicyMap {
 		if v.ID == id {
 			return v, true
