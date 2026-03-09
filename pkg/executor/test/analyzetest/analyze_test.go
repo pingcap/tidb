@@ -33,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -45,8 +47,19 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+type killQuerySessionManager struct {
+	*testkit.MockSessionManager
+}
+
+func (sm *killQuerySessionManager) Kill(connID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	if sess := sm.Conn[connID]; sess != nil {
+		sess.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	}
+}
 
 func TestAnalyzePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -140,8 +153,8 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
-	tk.MustExec("truncate table mysql.analyze_jobs")
 	t.Run("cancel_on_ctx", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int)")
 		tk.MustExec("insert into t values (1), (2)")
@@ -173,6 +186,64 @@ func TestAnalyzeRestrict(t *testing.T) {
 			require.Contains(t, rows[0][1].(string), "context canceled")
 		case <-time.After(5 * time.Second):
 			t.Fatal("analyze does not stop after context canceled")
+		}
+	})
+	t.Run("kill_query", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
+		dom := domain.GetDomain(tk.Session())
+		origSM := dom.InfoSyncer().GetSessionManager()
+		sm := &killQuerySessionManager{
+			MockSessionManager: &testkit.MockSessionManager{
+				Conn: make(map[uint64]sessionapi.Session),
+			},
+		}
+		dom.InfoSyncer().SetSessionManager(sm)
+		defer dom.InfoSyncer().SetSessionManager(origSM)
+
+		tkAnalyze := testkit.NewTestKit(t, store)
+		tkAnalyze.Session().SetSessionManager(sm)
+		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
+		tkAnalyze.MustExec("use test")
+		tkAnalyze.MustExec("drop table if exists t")
+		tkAnalyze.MustExec("create table t(a int)")
+		tkAnalyze.MustExec("insert into t values (1), (2)")
+		tkAnalyze.MustExec("set @@tidb_analyze_version = 2")
+
+		tkKiller := testkit.NewTestKit(t, store)
+		tkKiller.Session().GetSessionVars().User = &auth.UserIdentity{}
+		tkKiller.Session().SetSessionManager(sm)
+		sm.Conn[tkKiller.Session().GetSessionVars().ConnectionID] = tkKiller.Session()
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tkAnalyze.Session().ExecuteInternal(baseCtx, "analyze table t")
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before kill query, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
+		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
+			rows := tkKiller.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), exeerrors.ErrQueryInterrupted.Error())
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after kill query")
 		}
 	})
 }

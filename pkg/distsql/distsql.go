@@ -180,7 +180,11 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	failpoint.Inject("mockAnalyzeRequestWaitForCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			<-ctx.Done()
-			failpoint.Return(nil, ctx.Err())
+			err := context.Cause(ctx)
+			if err == nil {
+				err = ctx.Err()
+			}
+			failpoint.Return(nil, err)
 		}
 	})
 	kvReq.RequestSource.RequestSourceInternal = true
