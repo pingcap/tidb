@@ -191,7 +191,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tables once.")
-	flags.Uint64(FlagTxnTotalSizeLimit, 0, "the total size limit of a transaction")
+	flags.Uint64(FlagTxnTotalSizeLimit, 0, "the total size limit of a transaction when restoring system tables")
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
