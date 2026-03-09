@@ -502,6 +502,32 @@
           "2",
           "1"
         ]
+      },
+      {
+        "SQL": "select count(*) over w from t2 as ref_1 join t3 using (c1) window w as (partition by exists(select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null)) order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:2, data sources:[HashJoin]",
+          "    └─Window root  count(1)->Column#18 over(partition by Column)",
+          "      └─Sort root  Column",
+          "        └─ShuffleReceiver root  ",
+          "          └─HashJoin root  CARTESIAN left outer semi join, left side:HashJoin, left cond:[not(isnull(test.t2.c1))]",
+          "            ├─TableReader(Build) root  data:TableFullScan",
+          "            │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "            └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.c1, test.t3.c1)]",
+          "              ├─TableReader(Build) root  data:Selection",
+          "              │ └─Selection cop[tikv]  not(isnull(test.t3.c1))",
+          "              │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "              └─TableReader(Probe) root  data:Selection",
+          "                └─Selection cop[tikv]  not(isnull(test.t2.c1))",
+          "                  └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3",
+          "3",
+          "3"
+        ]
       }
     ]
   }
