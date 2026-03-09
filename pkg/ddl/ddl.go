@@ -880,6 +880,8 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	if kerneltype.IsClassic() {
 		d.detectAndUpdateJobVersion()
+	} else {
+		d.detectAndUpdateGlobalIndexV1Support()
 	}
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
@@ -1088,6 +1090,36 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
 	}
 	return nil
+}
+
+// detectAndUpdateGlobalIndexV1Support is used in NextGen mode where
+// detectAndUpdateJobVersion is not called. It only handles the global
+// index V1 support flag.
+func (d *ddl) detectAndUpdateGlobalIndexV1Support() {
+	if d.etcdCli == nil {
+		model.SetGlobalIndexV1Supported(true)
+		return
+	}
+	// In production NextGen with etcd, run the same detection logic.
+	_ = d.detectAndUpdateJobVersionOnce()
+	if model.GetGlobalIndexV1Supported() {
+		return
+	}
+	d.wg.RunWithLog(func() {
+		ticker := time.NewTicker(detectJobVerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+			case <-d.ctx.Done():
+				return
+			}
+			_ = d.detectAndUpdateJobVersionOnce()
+			if model.GetGlobalIndexV1Supported() {
+				return
+			}
+		}
+	})
 }
 
 func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
