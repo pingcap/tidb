@@ -560,12 +560,14 @@ Projection	root		Column
 └─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(util__ranger.t.e, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column
-    └─HashJoin	root		inner join, equal:[eq(util__ranger.t.a, util__ranger.t.a)]
-      ├─IndexReader(Build)	root		index:IndexFullScan
-      │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(b, c, d)	keep order:false
-      └─IndexReader(Probe)	root		index:IndexRangeScan
-        └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(util__ranger.t.b, 1) in(util__ranger.t.c, 1, 2) eq(util__ranger.t.d, util__ranger.t.a)], keep order:false
+  └─Projection(Probe)	root		ifnull(Column, 0)->Column
+    └─StreamAgg	root		funcs:sum(Column)->Column
+      └─HashJoin	root		inner join, equal:[eq(util__ranger.t.a, util__ranger.t.a)]
+        ├─Projection(Build)	root		1->Column, util__ranger.t.a
+        │ └─IndexReader	root		index:IndexFullScan
+        │   └─IndexFullScan	cop[tikv]	table:t1, index:idx(b, c, d)	keep order:false
+        └─IndexReader(Probe)	root		index:IndexRangeScan
+          └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(util__ranger.t.b, 1) in(util__ranger.t.c, 1, 2) eq(util__ranger.t.d, util__ranger.t.a)], keep order:false
 select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t;
 t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a)
 1

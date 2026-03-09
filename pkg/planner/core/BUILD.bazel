@@ -67,6 +67,7 @@ go_library(
         "rule_result_reorder.go",
         "rule_semi_join_rewrite.go",
         "rule_topn_push_down.go",
+        "rule_yannakakis_plus.go",
         "runtime_filter_generator.go",
         "scalar_subq_expression.go",
         "show_predicate_extractor.go",

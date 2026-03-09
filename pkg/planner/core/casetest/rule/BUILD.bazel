@@ -17,10 +17,11 @@ go_test(
         "rule_outer_to_semi_join_test.go",
         "rule_predicate_pushdown_test.go",
         "rule_predicate_simplification_test.go",
+        "rule_yannakakis_plus_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 24,
+    shard_count = 25,
     deps = [
         "//pkg/config",
         "//pkg/domain",

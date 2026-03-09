@@ -476,8 +476,10 @@ id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
-│   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│   ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+│   │ └─TableReader	root		data:HashAgg
+│   │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__integration.t.a, 
+│   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 │   └─TableReader(Probe)	root		data:TableFullScan
 │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
@@ -487,8 +489,10 @@ id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
-│   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│   ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+│   │ └─TableReader	root		data:HashAgg
+│   │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__integration.t.a, 
+│   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 │   └─TableReader(Probe)	root		data:TableFullScan
 │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
@@ -498,8 +502,10 @@ id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
-│   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│   ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+│   │ └─TableReader	root		data:HashAgg
+│   │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__integration.t.a, 
+│   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 │   └─TableReader(Probe)	root		data:TableFullScan
 │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
@@ -509,8 +515,10 @@ id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
-│   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│   ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.a, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+│   │ └─TableReader	root		data:HashAgg
+│   │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__integration.t.a, 
+│   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 │   └─TableReader(Probe)	root		data:TableFullScan
 │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
@@ -1367,36 +1375,40 @@ drop table if exists t;
 create table t (id int, value decimal(10,5));
 explain format='plan_tree' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column
-└─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
-  ├─Selection(Build)	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
-  │ └─TopN	root		planner__core__casetest__integration.t.value, offset:0, count:1
-  │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id)]
-  │     ├─TableReader(Build)	root		data:Selection
-  │     │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
-  │     │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  │     └─TableReader(Probe)	root		data:Selection
-  │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
-  │         └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
-      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		ifnull(Column, 0)->Column
+└─StreamAgg	root		funcs:sum(Column)->Column
+  └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
+    ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.value, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__integration.t.id)->planner__core__casetest__integration.t.id, funcs:firstrow(planner__core__casetest__integration.t.value)->planner__core__casetest__integration.t.value
+    │ └─Selection	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
+    │   └─TopN	root		planner__core__casetest__integration.t.value, offset:0, count:1
+    │     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id)]
+    │       ├─TableReader(Build)	root		data:Selection
+    │       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
+    │       │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │       └─TableReader(Probe)	root		data:Selection
+    │         └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
+    │           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
+        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column
-└─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
-  ├─Selection(Build)	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
-  │ └─TopN	root		planner__core__casetest__integration.t.value, offset:0, count:1
-  │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id)]
-  │     ├─TableReader(Build)	root		data:Selection
-  │     │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
-  │     │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  │     └─TableReader(Probe)	root		data:Selection
-  │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
-  │         └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
-      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		ifnull(Column, 0)->Column
+└─StreamAgg	root		funcs:sum(Column)->Column
+  └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
+    ├─HashAgg(Build)	root		group by:planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.value, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__integration.t.id)->planner__core__casetest__integration.t.id, funcs:firstrow(planner__core__casetest__integration.t.value)->planner__core__casetest__integration.t.value
+    │ └─Selection	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
+    │   └─TopN	root		planner__core__casetest__integration.t.value, offset:0, count:1
+    │     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id)]
+    │       ├─TableReader(Build)	root		data:Selection
+    │       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
+    │       │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │       └─TableReader(Probe)	root		data:Selection
+    │         └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
+    │           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
+        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_partition_prune_mode='dynamic';
 drop table if exists t1, t2_part;
 create table t1 (a int, b int);

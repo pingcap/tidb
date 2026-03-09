@@ -36,6 +36,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
 	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "yannakakis_plus_suite", true)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -81,4 +82,8 @@ func GetOuterToSemiJoinSuiteData() testdata.TestData {
 
 func GetCDCJoinReorderSuiteData() testdata.TestData {
 	return testDataMap["cdc_join_reorder_suite"]
+}
+
+func GetYannakakisPlusSuiteData() testdata.TestData {
+	return testDataMap["yannakakis_plus_suite"]
 }

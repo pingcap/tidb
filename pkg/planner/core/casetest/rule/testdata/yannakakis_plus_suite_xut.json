@@ -1,0 +1,82 @@
+[
+  {
+    "Name": "TestYannakakisPlus",
+    "Cases": [
+      {
+        "SQL": "select count(yannakakis_t1.c) from yannakakis_t1 join yannakakis_t2 on yannakakis_t1.a = yannakakis_t2.a join yannakakis_t3 on yannakakis_t2.b = yannakakis_t3.b",
+        "Plan": [
+          "Projection root  ifnull(Column, 0)->Column",
+          "└─StreamAgg root  funcs:sum(Column)->Column",
+          "  └─Projection root  cast(if(isnull(test.yannakakis_t1.c), 0, Column), bigint(42) BINARY)->Column",
+          "    └─HashJoin root  inner join, equal:[eq(test.yannakakis_t1.a, test.yannakakis_t2.a)]",
+          "      ├─TableReader(Build) root  data:Selection",
+          "      │ └─Selection cop[tikv]  not(isnull(test.yannakakis_t1.a))",
+          "      │   └─TableFullScan cop[tikv] table:yannakakis_t1 keep order:false",
+          "      └─HashAgg(Probe) root  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.yannakakis_t2.a",
+          "        └─Projection root  cast(Column, decimal(20,0) BINARY)->Column, test.yannakakis_t2.a->Column",
+          "          └─HashJoin root  inner join, equal:[eq(test.yannakakis_t2.b, test.yannakakis_t3.b)]",
+          "            ├─HashAgg(Build) root  group by:test.yannakakis_t3.b, funcs:count(1)->Column, funcs:firstrow(test.yannakakis_t3.b)->test.yannakakis_t3.b",
+          "            │ └─TableReader root  data:Selection",
+          "            │   └─Selection cop[tikv]  not(isnull(test.yannakakis_t3.b))",
+          "            │     └─TableFullScan cop[tikv] table:yannakakis_t3 keep order:false",
+          "            └─TableReader(Probe) root  data:Selection",
+          "              └─Selection cop[tikv]  not(isnull(test.yannakakis_t2.a)), not(isnull(test.yannakakis_t2.b))",
+          "                └─TableFullScan cop[tikv] table:yannakakis_t2 keep order:false"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select yannakakis_t1.a, sum(yannakakis_t3.b) from yannakakis_t1 join yannakakis_t2 on yannakakis_t1.a = yannakakis_t2.a join yannakakis_t3 on yannakakis_t2.b = yannakakis_t3.b group by yannakakis_t1.a order by yannakakis_t1.a",
+        "Plan": [
+          "Sort root  test.yannakakis_t1.a",
+          "└─Projection root  test.yannakakis_t1.a, Column",
+          "  └─HashAgg root  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.yannakakis_t1.a",
+          "    └─Projection root  cast(mul(test.yannakakis_t2.b, mul(Column, Column)), decimal(20,0) BINARY)->Column, test.yannakakis_t2.a->Column",
+          "      └─HashJoin root  inner join, equal:[eq(test.yannakakis_t2.b, test.yannakakis_t3.b)]",
+          "        ├─HashAgg(Build) root  group by:test.yannakakis_t3.b, funcs:count(1)->Column, funcs:firstrow(test.yannakakis_t3.b)->test.yannakakis_t3.b",
+          "        │ └─TableReader root  data:Selection",
+          "        │   └─Selection cop[tikv]  not(isnull(test.yannakakis_t3.b))",
+          "        │     └─TableFullScan cop[tikv] table:yannakakis_t3 keep order:false",
+          "        └─HashJoin(Probe) root  inner join, equal:[eq(test.yannakakis_t2.a, test.yannakakis_t1.a)]",
+          "          ├─HashAgg(Build) root  group by:test.yannakakis_t1.a, funcs:count(1)->Column, funcs:firstrow(test.yannakakis_t1.a)->test.yannakakis_t1.a",
+          "          │ └─TableReader root  data:Selection",
+          "          │   └─Selection cop[tikv]  not(isnull(test.yannakakis_t1.a))",
+          "          │     └─TableFullScan cop[tikv] table:yannakakis_t1 keep order:false",
+          "          └─TableReader(Probe) root  data:Selection",
+          "            └─Selection cop[tikv]  not(isnull(test.yannakakis_t2.a)), not(isnull(test.yannakakis_t2.b))",
+          "              └─TableFullScan cop[tikv] table:yannakakis_t2 keep order:false"
+        ],
+        "Result": [
+          "1 31",
+          "2 20"
+        ]
+      },
+      {
+        "SQL": "select yannakakis_t1.a, sum(yannakakis_t3.c) from yannakakis_t1 join yannakakis_t2 on yannakakis_t1.a = yannakakis_t2.a join yannakakis_t3 on yannakakis_t2.b = yannakakis_t3.b group by yannakakis_t1.a order by yannakakis_t1.a",
+        "Plan": [
+          "Sort root  test.yannakakis_t1.a",
+          "└─Projection root  test.yannakakis_t1.a, Column",
+          "  └─HashAgg root  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.yannakakis_t1.a",
+          "    └─Projection root  cast(test.yannakakis_t3.c, decimal(10,0) BINARY)->Column, test.yannakakis_t1.a->Column",
+          "      └─HashJoin root  inner join, equal:[eq(test.yannakakis_t2.b, test.yannakakis_t3.b)]",
+          "        ├─HashJoin(Build) root  inner join, equal:[eq(test.yannakakis_t1.a, test.yannakakis_t2.a)]",
+          "        │ ├─TableReader(Build) root  data:Selection",
+          "        │ │ └─Selection cop[tikv]  not(isnull(test.yannakakis_t1.a))",
+          "        │ │   └─TableFullScan cop[tikv] table:yannakakis_t1 keep order:false",
+          "        │ └─TableReader(Probe) root  data:Selection",
+          "        │   └─Selection cop[tikv]  not(isnull(test.yannakakis_t2.a)), not(isnull(test.yannakakis_t2.b))",
+          "        │     └─TableFullScan cop[tikv] table:yannakakis_t2 keep order:false",
+          "        └─TableReader(Probe) root  data:Selection",
+          "          └─Selection cop[tikv]  not(isnull(test.yannakakis_t3.b))",
+          "            └─TableFullScan cop[tikv] table:yannakakis_t3 keep order:false"
+        ],
+        "Result": [
+          "1 3101",
+          "2 2000"
+        ]
+      }
+    ]
+  }
+]

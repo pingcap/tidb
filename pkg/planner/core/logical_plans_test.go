@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -600,6 +601,175 @@ func TestEagerAggregation(t *testing.T) {
 		})
 		require.Equal(t, output[ith], ToString(p), fmt.Sprintf("for %s %d", tt, ith))
 	}
+}
+
+func TestYannakakisPlusDistinctRewrite(t *testing.T) {
+	buildSuite := func() *coretestsdk.PlannerSuite {
+		tbls := []*model.TableInfo{
+			coretestsdk.MockSignedTable(),
+			coretestsdk.MockSignedTable(),
+			coretestsdk.MockSignedTable(),
+		}
+		for idx, tbl := range tbls {
+			tbl.ID = int64(idx + 1)
+			tbl.Name = ast.NewCIStr(fmt.Sprintf("t%d", idx+1))
+		}
+		is := infoschema.MockInfoSchema(tbls)
+		ctx := mock.NewContext()
+		ctx.Store = &mock.Store{Client: &mock.Client{}}
+		ctx.GetSessionVars().CurrentDB = "test"
+		do := domain.NewMockDomain()
+		require.NoError(t, do.CreateStatsHandle(context.Background()))
+		ctx.BindDomainAndSchValidator(do, nil)
+		ctx.SetInfoSchema(is)
+		domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
+		return coretestsdk.CreatePlannerSuite(ctx, is)
+	}
+
+	countAggs := func(p base.LogicalPlan) int {
+		aggCount := 0
+		var walk func(base.LogicalPlan)
+		walk = func(node base.LogicalPlan) {
+			if _, ok := node.(*logicalop.LogicalAggregation); ok {
+				aggCount++
+			}
+			for _, child := range node.Children() {
+				walk(child)
+			}
+		}
+		walk(p)
+		return aggCount
+	}
+
+	buildPlanSummary := func(s *coretestsdk.PlannerSuite, sql string, flags uint64) (string, int) {
+		stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err)
+		lp := p.(base.LogicalPlan)
+		lp, err = logicalOptimize(context.Background(), flags, lp)
+		require.NoError(t, err)
+		after := ToString(lp)
+		return after, countAggs(lp)
+	}
+
+	s := buildSuite()
+	defer s.Close()
+
+	baseFlags := rule.FlagBuildKeyInfo | rule.FlagEliminateProjection | rule.FlagPredicatePushDown | rule.FlagPruneColumns | rule.FlagPruneColumnsAgain
+	yannakakisFlags := baseFlags | rule.FlagYannakakisPlus
+	distinctSQL := "select distinct t1.a from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	distinctBase, distinctBaseAggs := buildPlanSummary(s, distinctSQL, baseFlags)
+	distinctYannakakis, distinctYannakakisAggs := buildPlanSummary(s, distinctSQL, yannakakisFlags)
+	require.NotEqual(t, distinctBase, distinctYannakakis)
+	require.Equal(t, 1, distinctBaseAggs)
+	require.Equal(t, 3, distinctYannakakisAggs)
+
+	countSQL := "select count(*) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	countBase, countBaseAggs := buildPlanSummary(s, countSQL, baseFlags)
+	countYannakakis, countYannakakisAggs := buildPlanSummary(s, countSQL, yannakakisFlags)
+	require.NotEqual(t, countBase, countYannakakis)
+	require.Equal(t, 1, countBaseAggs)
+	require.Equal(t, 3, countYannakakisAggs)
+
+	groupedCountSQL := "select t1.a, count(*) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b group by t1.a"
+	groupedCountBase, groupedCountBaseAggs := buildPlanSummary(s, groupedCountSQL, baseFlags)
+	groupedCountYannakakis, groupedCountYannakakisAggs := buildPlanSummary(s, groupedCountSQL, yannakakisFlags)
+	require.NotEqual(t, groupedCountBase, groupedCountYannakakis)
+	require.Equal(t, 1, groupedCountBaseAggs)
+	require.Equal(t, 3, groupedCountYannakakisAggs)
+
+	countColumnSQL := "select count(t1.c) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	countColumnBase, countColumnBaseAggs := buildPlanSummary(s, countColumnSQL, baseFlags)
+	countColumnYannakakis, countColumnYannakakisAggs := buildPlanSummary(s, countColumnSQL, yannakakisFlags)
+	require.NotEqual(t, countColumnBase, countColumnYannakakis)
+	require.Equal(t, 1, countColumnBaseAggs)
+	require.Equal(t, 3, countColumnYannakakisAggs)
+
+	sumSQL := "select sum(t1.c) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	sumBase, sumBaseAggs := buildPlanSummary(s, sumSQL, baseFlags)
+	sumYannakakis, sumYannakakisAggs := buildPlanSummary(s, sumSQL, yannakakisFlags)
+	require.NotEqual(t, sumBase, sumYannakakis)
+	require.Equal(t, 1, sumBaseAggs)
+	require.Equal(t, 3, sumYannakakisAggs)
+
+	groupedSumSQL := "select t1.a, sum(t3.b) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b group by t1.a"
+	groupedSumBase, groupedSumBaseAggs := buildPlanSummary(s, groupedSumSQL, baseFlags)
+	groupedSumYannakakis, groupedSumYannakakisAggs := buildPlanSummary(s, groupedSumSQL, yannakakisFlags)
+	require.NotEqual(t, groupedSumBase, groupedSumYannakakis)
+	require.Equal(t, 1, groupedSumBaseAggs)
+	require.Equal(t, 3, groupedSumYannakakisAggs)
+
+	mixedWeightedSQL := "select count(t3.b), sum(t3.b) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	mixedWeightedBase, mixedWeightedBaseAggs := buildPlanSummary(s, mixedWeightedSQL, baseFlags)
+	mixedWeightedYannakakis, mixedWeightedYannakakisAggs := buildPlanSummary(s, mixedWeightedSQL, yannakakisFlags)
+	require.NotEqual(t, mixedWeightedBase, mixedWeightedYannakakis)
+	require.Equal(t, 1, mixedWeightedBaseAggs)
+	require.Equal(t, 3, mixedWeightedYannakakisAggs)
+
+	minSQL := "select min(t1.c) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	minBase, minBaseAggs := buildPlanSummary(s, minSQL, baseFlags)
+	minYannakakis, minYannakakisAggs := buildPlanSummary(s, minSQL, yannakakisFlags)
+	require.NotEqual(t, minBase, minYannakakis)
+	require.Equal(t, 1, minBaseAggs)
+	require.Equal(t, 3, minYannakakisAggs)
+
+	groupedMaxSQL := "select t1.a, max(t3.b) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b group by t1.a"
+	groupedMaxBase, groupedMaxBaseAggs := buildPlanSummary(s, groupedMaxSQL, baseFlags)
+	groupedMaxYannakakis, groupedMaxYannakakisAggs := buildPlanSummary(s, groupedMaxSQL, yannakakisFlags)
+	require.NotEqual(t, groupedMaxBase, groupedMaxYannakakis)
+	require.Equal(t, 1, groupedMaxBaseAggs)
+	require.Equal(t, 3, groupedMaxYannakakisAggs)
+
+	singleTableCountSQL := "select count(*) from t1"
+	singleTableCountBase, singleTableCountBaseAggs := buildPlanSummary(s, singleTableCountSQL, baseFlags)
+	singleTableCountYannakakis, singleTableCountYannakakisAggs := buildPlanSummary(s, singleTableCountSQL, yannakakisFlags)
+	require.Equal(t, singleTableCountBase, singleTableCountYannakakis)
+	require.Equal(t, singleTableCountBaseAggs, singleTableCountYannakakisAggs)
+
+	relationDominatedDistinctSQL := "select distinct t1.a, t3.b from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	relationDominatedDistinctBase, relationDominatedDistinctBaseAggs := buildPlanSummary(s, relationDominatedDistinctSQL, baseFlags)
+	relationDominatedDistinctYannakakis, relationDominatedDistinctYannakakisAggs := buildPlanSummary(s, relationDominatedDistinctSQL, yannakakisFlags)
+	require.NotEqual(t, relationDominatedDistinctBase, relationDominatedDistinctYannakakis)
+	require.Equal(t, 1, relationDominatedDistinctBaseAggs)
+	require.Equal(t, 3, relationDominatedDistinctYannakakisAggs)
+
+	nonDominatedDistinctSQL := "select distinct t1.a, t3.c from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	nonDominatedDistinctBase, nonDominatedDistinctBaseAggs := buildPlanSummary(s, nonDominatedDistinctSQL, baseFlags)
+	nonDominatedDistinctYannakakis, nonDominatedDistinctYannakakisAggs := buildPlanSummary(s, nonDominatedDistinctSQL, yannakakisFlags)
+	require.Equal(t, nonDominatedDistinctBase, nonDominatedDistinctYannakakis)
+	require.Equal(t, nonDominatedDistinctBaseAggs, nonDominatedDistinctYannakakisAggs)
+
+	nonDominatedCountSQL := "select t1.a, t3.c, count(*) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b group by t1.a, t3.c"
+	nonDominatedCountBase, nonDominatedCountBaseAggs := buildPlanSummary(s, nonDominatedCountSQL, baseFlags)
+	nonDominatedCountYannakakis, nonDominatedCountYannakakisAggs := buildPlanSummary(s, nonDominatedCountSQL, yannakakisFlags)
+	require.Equal(t, nonDominatedCountBase, nonDominatedCountYannakakis)
+	require.Equal(t, nonDominatedCountBaseAggs, nonDominatedCountYannakakisAggs)
+
+	nonDominatedWeightedSQL := "select t1.a, count(t3.c), sum(t3.c) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b group by t1.a"
+	nonDominatedWeightedBase, nonDominatedWeightedBaseAggs := buildPlanSummary(s, nonDominatedWeightedSQL, baseFlags)
+	nonDominatedWeightedYannakakis, nonDominatedWeightedYannakakisAggs := buildPlanSummary(s, nonDominatedWeightedSQL, yannakakisFlags)
+	require.Equal(t, nonDominatedWeightedBase, nonDominatedWeightedYannakakis)
+	require.Equal(t, nonDominatedWeightedBaseAggs, nonDominatedWeightedYannakakisAggs)
+
+	nonDominatedMinMaxSQL := "select min(t1.c), max(t3.c) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b"
+	nonDominatedMinMaxBase, nonDominatedMinMaxBaseAggs := buildPlanSummary(s, nonDominatedMinMaxSQL, baseFlags)
+	nonDominatedMinMaxYannakakis, nonDominatedMinMaxYannakakisAggs := buildPlanSummary(s, nonDominatedMinMaxSQL, yannakakisFlags)
+	require.Equal(t, nonDominatedMinMaxBase, nonDominatedMinMaxYannakakis)
+	require.Equal(t, nonDominatedMinMaxBaseAggs, nonDominatedMinMaxYannakakisAggs)
+
+	cyclicSQL := "select distinct t1.a from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b and t3.c = t1.c"
+	cyclicBase, cyclicBaseAggs := buildPlanSummary(s, cyclicSQL, baseFlags)
+	cyclicYannakakis, cyclicYannakakisAggs := buildPlanSummary(s, cyclicSQL, yannakakisFlags)
+	require.Equal(t, cyclicBase, cyclicYannakakis)
+	require.Equal(t, cyclicBaseAggs, cyclicYannakakisAggs)
+
+	cyclicCountSQL := "select count(*) from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b and t3.c = t1.c"
+	cyclicCountBase, cyclicCountBaseAggs := buildPlanSummary(s, cyclicCountSQL, baseFlags)
+	cyclicCountYannakakis, cyclicCountYannakakisAggs := buildPlanSummary(s, cyclicCountSQL, yannakakisFlags)
+	require.Equal(t, cyclicCountBase, cyclicCountYannakakis)
+	require.Equal(t, cyclicCountBaseAggs, cyclicCountYannakakisAggs)
 }
 
 func TestColumnPruning(t *testing.T) {

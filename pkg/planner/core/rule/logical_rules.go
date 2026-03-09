@@ -33,6 +33,7 @@ const (
 	FlagEliminateOuterJoin
 	FlagPartitionProcessor
 	FlagCollectPredicateColumnsPoint
+	FlagYannakakisPlus
 	FlagPushDownAgg
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification

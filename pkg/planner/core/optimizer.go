@@ -98,6 +98,7 @@ var optRuleList = []base.LogicalOptRule{
 	&OuterJoinEliminator{},
 	&rule.PartitionProcessor{},
 	&rule.CollectPredicateColumnsPoint{},
+	&YannakakisPlusSolver{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
@@ -348,12 +349,16 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
 		flag |= rule.FlagPruneColumnsAgain
 	}
+	if flag&rule.FlagJoinReOrder > 0 {
+		flag |= rule.FlagYannakakisPlus
+	}
 	if checkStableResultMode(logic.SCtx()) {
 		flag |= rule.FlagStabilizeResults
 	}
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
+		flag &= ^rule.FlagYannakakisPlus
 	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {

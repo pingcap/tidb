@@ -22,12 +22,14 @@ Projection	root		Column
 └─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(subquery.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column
-    └─IndexJoin	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
-      ├─IndexReader(Build)	root		index:IndexRangeScan
-      │ └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(subquery.t.b, 1) eq(subquery.t.c, 1) eq(subquery.t.d, subquery.t.a)], keep order:false
-      └─TableReader(Probe)	root		data:TableRangeScan
-        └─TableRangeScan	cop[tikv]	table:t1	range: decided by [subquery.t.a], keep order:false
+  └─Projection(Probe)	root		ifnull(Column, 0)->Column
+    └─StreamAgg	root		funcs:sum(Column)->Column
+      └─IndexJoin	root		inner join, inner:Projection, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
+        ├─IndexReader(Build)	root		index:IndexRangeScan
+        │ └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(subquery.t.b, 1) eq(subquery.t.c, 1) eq(subquery.t.d, subquery.t.a)], keep order:false
+        └─Projection(Probe)	root		1->Column, subquery.t.a
+          └─TableReader	root		data:TableRangeScan
+            └─TableRangeScan	cop[tikv]	table:t1	range: decided by [subquery.t.a], keep order:false
 drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'plan_tree' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);

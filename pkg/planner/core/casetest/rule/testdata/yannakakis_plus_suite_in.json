@@ -1,0 +1,10 @@
+[
+  {
+    "name": "TestYannakakisPlus",
+    "cases": [
+      "select count(yannakakis_t1.c) from yannakakis_t1 join yannakakis_t2 on yannakakis_t1.a = yannakakis_t2.a join yannakakis_t3 on yannakakis_t2.b = yannakakis_t3.b",
+      "select yannakakis_t1.a, sum(yannakakis_t3.b) from yannakakis_t1 join yannakakis_t2 on yannakakis_t1.a = yannakakis_t2.a join yannakakis_t3 on yannakakis_t2.b = yannakakis_t3.b group by yannakakis_t1.a order by yannakakis_t1.a",
+      "select yannakakis_t1.a, sum(yannakakis_t3.c) from yannakakis_t1 join yannakakis_t2 on yannakakis_t1.a = yannakakis_t2.a join yannakakis_t3 on yannakakis_t2.b = yannakakis_t3.b group by yannakakis_t1.a order by yannakakis_t1.a"
+    ]
+  }
+]
