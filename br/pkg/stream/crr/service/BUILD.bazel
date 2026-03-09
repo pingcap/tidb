@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "service",
+    srcs = [
+        "http.go",
+        "service.go",
+        "status.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/service",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/stream/crr/internal/checkpoint",
+    ],
+)
+
+go_test(
+    name = "service_test",
+    timeout = "short",
+    srcs = ["service_test.go"],
+    embed = [":service"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//br/pkg/stream/crr/internal/checkpoint",
+        "//br/pkg/stream/crr/internal/testutil",
+        "@com_github_stretchr_testify//require",
+    ],
+)
