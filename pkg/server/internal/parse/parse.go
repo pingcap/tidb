@@ -148,13 +148,13 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 				return mysql.ErrMalformPacket
 			}
 			row := data[offset:end]
-			attrs, warning, err := parseAttrs(row)
+			attrs, warningsText, err := parseAttrs(row)
 			if err != nil {
 				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err))
 				return nil
 			}
-			if warning != "" {
-				logutil.Logger(ctx).Debug(warning)
+			if warningsText != "" {
+				logutil.Logger(ctx).Debug(warningsText)
 			}
 			packet.Attrs = attrs
 			offset += int(num) // Length of attributes
@@ -181,48 +181,70 @@ var standardConnAttrs = map[string]struct{}{
 	"_platform":       {},
 }
 
+type connAttrKV struct {
+	key   string
+	value string
+}
+
+type decodedConnAttrs struct {
+	items                       []connAttrKV
+	totalSize                   int64
+	hasDeprecatedUnderscoreAttr bool
+}
+
 func parseAttrs(data []byte) (map[string]string, string, error) {
-	attrs := make(map[string]string)
+	decoded, err := decodeConnAttrs(data)
+	if err != nil {
+		return map[string]string{}, "", err
+	}
+	attrs, warningsText := applyConnAttrsPolicyAndMetrics(decoded, vardef.ConnectAttrsSize.Load())
+	return attrs, warningsText, nil
+}
+
+func decodeConnAttrs(data []byte) (decodedConnAttrs, error) {
+	decoded := decodedConnAttrs{items: make([]connAttrKV, 0)}
 	pos := 0
-	var totalSize int64
-	var acceptedSize int64
-	truncated := false
-	hasDeprecatedUnderscoreAttr := false
-	limit := vardef.ConnectAttrsSize.Load()
 
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, "", err
+			return decoded, err
 		}
 		pos += off
+
 		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, "", err
+			return decoded, err
 		}
 		pos += off
 
 		keyStr := string(key)
+		valueStr := string(value)
 
-		// Keep all client-provided keys (including underscore-prefixed MySQL
-		// connector attributes). If truncation happens, server may overwrite
-		// the reserved "_truncated" key for observability metadata.
-		if !hasDeprecatedUnderscoreAttr && strings.HasPrefix(keyStr, "_") {
+		decoded.items = append(decoded.items, connAttrKV{key: keyStr, value: valueStr})
+		decoded.totalSize += int64(len(key)) + int64(len(value))
+
+		if !decoded.hasDeprecatedUnderscoreAttr && strings.HasPrefix(keyStr, "_") {
 			if _, ok := standardConnAttrs[keyStr]; !ok {
-				hasDeprecatedUnderscoreAttr = true
+				decoded.hasDeprecatedUnderscoreAttr = true
 			}
 		}
+	}
 
-		kvSize := int64(len(key)) + int64(len(value))
+	return decoded, nil
+}
+
+func applyConnAttrsPolicyAndMetrics(decoded decodedConnAttrs, limit int64) (map[string]string, string) {
+	attrs := make(map[string]string)
+	effectiveLimit := normalizeConnectAttrsLimit(limit)
+
+	var totalSize int64
+	var acceptedSize int64
+	truncated := false
+
+	for _, item := range decoded.items {
+		kvSize := int64(len(item.key)) + int64(len(item.value))
 		totalSize += kvSize
-
-		// In MySQL, -1 means autosizing. We map it to a maximum of 64KB (65536)
-		// to prevent unconstrained slow log bloating.
-		effectiveLimit := limit
-		if effectiveLimit < 0 {
-			effectiveLimit = 65536
-		}
-
 		if totalSize > effectiveLimit {
 			if !truncated {
 				truncated = true
@@ -230,46 +252,54 @@ func parseAttrs(data []byte) (map[string]string, string, error) {
 			}
 			continue
 		}
-
 		if !truncated {
-			attrs[keyStr] = string(value)
+			attrs[item.key] = item.value
 			acceptedSize += kvSize
 		}
 	}
 
-	// Update LongestSeen only for normal-sized payloads (< 64 KiB).
-	// Abnormally large payloads are still accepted (up to 1 MiB) but should
-	// not skew this monitoring metric.
-	if totalSize < 65536 {
-		for {
-			old := vardef.ConnectAttrsLongestSeen.Load()
-			if totalSize <= old {
-				break
-			}
-			if vardef.ConnectAttrsLongestSeen.CompareAndSwap(old, totalSize) {
-				break
-			}
-		}
-	}
+	updateConnectAttrsLongestSeen(decoded.totalSize)
 
 	warnings := make([]string, 0, 2)
-	if hasDeprecatedUnderscoreAttr {
+	if decoded.hasDeprecatedUnderscoreAttr {
 		warnings = append(warnings,
 			"custom connection attributes with leading underscore are deprecated and will be rejected in a future release")
 	}
 	if truncated {
-		// Calculate what limit was actually enforced
-		effectiveLimit := limit
-		if effectiveLimit < 0 {
-			effectiveLimit = 65536
-		}
-
-		truncatedBytes := totalSize - acceptedSize
+		truncatedBytes := decoded.totalSize - acceptedSize
 		attrs[reservedConnAttrTruncated] = strconv.FormatInt(truncatedBytes, 10)
 		warnings = append(warnings, fmt.Sprintf(
 			"session connection attributes truncated: total size %d bytes exceeds "+
 				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
-			totalSize, effectiveLimit, truncatedBytes))
+			decoded.totalSize, effectiveLimit, truncatedBytes))
 	}
-	return attrs, strings.Join(warnings, "; "), nil
+	warningsText := strings.Join(warnings, "; ")
+	return attrs, warningsText
+}
+
+func normalizeConnectAttrsLimit(limit int64) int64 {
+	if limit < 0 {
+		// In MySQL, -1 means autosizing. We map it to a maximum of 64KB (65536)
+		// to prevent unconstrained slow log bloating.
+		return 65536
+	}
+	return limit
+}
+
+func updateConnectAttrsLongestSeen(totalSize int64) {
+	// Update LongestSeen only for normal-sized payloads (< 64 KiB).
+	// Abnormally large payloads are still accepted (up to 1 MiB) but should
+	// not skew this monitoring metric.
+	if totalSize >= 65536 {
+		return
+	}
+	for {
+		old := vardef.ConnectAttrsLongestSeen.Load()
+		if totalSize <= old {
+			break
+		}
+		if vardef.ConnectAttrsLongestSeen.CompareAndSwap(old, totalSize) {
+			break
+		}
+	}
 }

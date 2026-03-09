@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -405,7 +406,7 @@ func TestClusterTableSlowQuerySessionConnectAttrs(t *testing.T) {
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Is_internal: false
 # Succ: true
-# Session_connect_attrs: {"_client_name":"Go-MySQL-Driver","_os":"linux","app_name":"test_app"}
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
 select * from t;`
 	fileName := "tidb-slow-query-attrs.log"
 	prepareLogs(t, []string{logData}, []string{fileName})
@@ -424,10 +425,5 @@ select * from t;`
 		"where time > '2024-01-01 00:00:00' and query = 'select * from t;'").Rows()
 	require.Len(t, clusterRows, 1)
 	clusterAttrsStr := clusterRows[0][0].(string)
-	require.Contains(t, clusterAttrsStr, `"_client_name"`)
-	require.Contains(t, clusterAttrsStr, `"Go-MySQL-Driver"`)
-	require.Contains(t, clusterAttrsStr, `"_os"`)
-	require.Contains(t, clusterAttrsStr, `"linux"`)
-	require.Contains(t, clusterAttrsStr, `"app_name"`)
-	require.Contains(t, clusterAttrsStr, `"test_app"`)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, clusterAttrsStr)
 }

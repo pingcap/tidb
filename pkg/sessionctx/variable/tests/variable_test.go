@@ -170,8 +170,8 @@ func TestIntValidation(t *testing.T) {
 	require.Equal(t, "-1", val)
 }
 
-func TestPerfSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
-	sv := variable.GetSysVar(vardef.PerfSchemaSessionConnectAttrsSize)
+func TestPerformanceSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
+	sv := variable.GetSysVar(vardef.PerformanceSchemaSessionConnectAttrsSize)
 	require.NotNil(t, sv)
 	require.True(t, sv.HasGlobalScope())
 	require.False(t, sv.HasSessionScope())

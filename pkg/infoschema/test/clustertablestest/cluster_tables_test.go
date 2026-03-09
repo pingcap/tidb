@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -310,7 +311,7 @@ func TestClusterSlowQuerySessionConnectAttrs(t *testing.T) {
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Is_internal: false
 # Succ: true
-# Session_connect_attrs: {"_client_name":"Go-MySQL-Driver","_os":"linux","app_name":"test_app"}
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
 select * from t;
 `)
 	require.NoError(t, err)
@@ -330,12 +331,7 @@ select * from t;
 		"where query = 'select * from t;'").Rows()
 	require.Len(t, rows, 1)
 	attrsStr := rows[0][0].(string)
-	require.Contains(t, attrsStr, `"_client_name"`)
-	require.Contains(t, attrsStr, `"Go-MySQL-Driver"`)
-	require.Contains(t, attrsStr, `"_os"`)
-	require.Contains(t, attrsStr, `"linux"`)
-	require.Contains(t, attrsStr, `"app_name"`)
-	require.Contains(t, attrsStr, `"test_app"`)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, attrsStr)
 
 	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$._client_name') from information_schema.cluster_slow_query " +
 		"where query = 'select * from t;'").
