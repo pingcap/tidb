@@ -2903,12 +2903,12 @@ set @@tidb_partition_prune_mode='dynamic';
 DROP TABLE IF EXISTS t;
 create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2);
 insert into t values (1, 1),(2, 2),(3, 3);
-explain select * from t where a IN (1, 2);
+explain format = 'brief' select * from t where a IN (1, 2);
 id	estRows	task	access object	operator info
-Batch_Point_Get_1	2.00	root	table:t, partition:p1,P2	handle:[1 2], keep order:false, desc:false
-explain select * from t where a IN (1, 2, 1);
+Batch_Point_Get	2.00	root	table:t, partition:p1,P2	handle:[1 2], keep order:false, desc:false
+explain format = 'brief' select * from t where a IN (1, 2, 1);
 id	estRows	task	access object	operator info
-Batch_Point_Get_1	3.00	root	table:t, partition:p1,P2	handle:[1 2], keep order:false, desc:false
+Batch_Point_Get	3.00	root	table:t, partition:p1,P2	handle:[1 2], keep order:false, desc:false
 create database Issue32007;
 USE Issue32007;
 create table t1 (a int, b tinyint, primary key (a)) partition by range (a) (partition p0 values less than (5),partition p1 values less than (20),partition p2 values less than (30),partition p3 values less than (40),partition p4 values less than MAXVALUE);
@@ -3102,36 +3102,36 @@ KEY index_partition_no (PARTITION_NO)
 PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) ;
 insert into test1 values("1", 200000, "2022-12-29 12:00:00"), ("2",200000,"2023-01-01");
 analyze table test1;
-explain select * from test1 where partition_no > 199999;
+explain format = 'brief' select * from test1 where partition_no > 199999;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		gt(issue43459.test1.partition_no, 199999)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no = 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		gt(issue43459.test1.partition_no, 199999)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no = 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		eq(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no >= 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		eq(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no >= 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		ge(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no < 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		ge(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no < 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	1.00	root	partition:2023p1	index:Selection_10
-└─Selection_10	1.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no <= 200000;
+IndexReader	1.00	root	partition:2023p1	index:Selection
+└─Selection	1.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no <= 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		le(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no > 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		le(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no > 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	1.00	root	partition:2023p2	index:Selection_10
-└─Selection_10	1.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+IndexReader	1.00	root	partition:2023p2	index:Selection
+└─Selection	1.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 select * from test1 partition (2023p1);
 ID	PARTITION_NO	CREATE_TIME
 1	200000	2022-12-29 12:00:00
@@ -3161,36 +3161,36 @@ KEY index_partition_no (PARTITION_NO)
 PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) ;
 insert into test1 values("1", 200000, "2022-12-29 12:00:00"), ("2",200000,"2023-01-01");
 analyze table test1;
-explain select * from test1 where partition_no > 199999;
+explain format = 'brief' select * from test1 where partition_no > 199999;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		gt(issue43459.test1.partition_no, 199999)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no = 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		gt(issue43459.test1.partition_no, 199999)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no = 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		eq(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no >= 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		eq(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no >= 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		ge(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no < 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		ge(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no < 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	1.00	root	partition:2023p1	index:Selection_10
-└─Selection_10	1.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no <= 200000;
+IndexReader	1.00	root	partition:2023p1	index:Selection
+└─Selection	1.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no <= 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	2.00	root	partition:all	index:Selection_10
-└─Selection_10	2.00	cop[tikv]		le(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
-explain select * from test1 where partition_no > 200000;
+IndexReader	2.00	root	partition:all	index:Selection
+└─Selection	2.00	cop[tikv]		le(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+explain format = 'brief' select * from test1 where partition_no > 200000;
 id	estRows	task	access object	operator info
-IndexReader_11	1.00	root	partition:2023p2	index:Selection_10
-└─Selection_10	1.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
-  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
+IndexReader	1.00	root	partition:2023p2	index:Selection
+└─Selection	1.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 select * from test1 partition (2023p1);
 ID	PARTITION_NO	CREATE_TIME
 1	200000	2022-12-29

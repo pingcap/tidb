@@ -99,7 +99,7 @@ type aggOrderByResolver struct {
 func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	a.exprDepth++
 	if n, ok := inNode.(*driver.ParamMarkerExpr); ok {
-		if a.exprDepth == 1 {
+		if a.exprDepth == 1 && canParamMarkerBePositionExpr(n) {
 			_, isNull, isExpectedType := getUintFromNode(a.ctx.GetExprCtx(), n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -108,6 +108,14 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 	}
 	return inNode, false
+}
+
+func canParamMarkerBePositionExpr(param *driver.ParamMarkerExpr) bool {
+	if !param.InExecute {
+		return true
+	}
+	allowed, _ := CheckParamTypeInt64orUint64(param)
+	return allowed
 }
 
 func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
@@ -926,6 +934,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		if err != nil {
 			return nil, err
 		}
+		p = np
+		if expr == nil {
+			continue
+		}
 		// for case: explain SELECT year+2 as y, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002;
 		// currently, we succeed to resolve y to (year+2), but fail to resolve (year+2) to grouping col, and to base column function: plus(year, 2) instead.
 		// which will cause this selection being pushed down through Expand OP itself.
@@ -933,10 +945,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		// In expand, we will additionally project (year+2) out as a new column, let's say grouping_col here, and we wanna it can substitute any upper layer's (year+2)
 		expr = b.replaceGroupingFunc(expr)
 
-		p = np
-		if expr == nil {
-			continue
-		}
 		expressions = append(expressions, expr)
 	}
 	cnfExpres := make([]expression.Expression, 0)
@@ -1257,7 +1265,8 @@ func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (re
 
 func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
 	// current block doesn't have an expand OP, just return it.
-	if b.currentBlockExpand == nil {
+	// expr can be nil when rewrite eliminates a predicate in non-scalar contexts.
+	if b.currentBlockExpand == nil || expr == nil {
 		return expr
 	}
 	// curExpand can supply the DistinctGbyExprs and gid col.
@@ -2868,7 +2877,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause && canParamMarkerBePositionExpr(n) {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx.GetExprCtx(), n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {

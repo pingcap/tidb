@@ -1461,6 +1461,15 @@ func (s *mockGCSSuite) TestTableMode() {
 		},
 		Content: content,
 	})
+	multiContent := []byte(`3,3
+	4,4`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "table-mode-test",
+			Name:       "data-2.csv",
+		},
+		Content: multiContent,
+	})
 	dbName := "import_into"
 	s.prepareAndUseDB(dbName)
 	tk2 := testkit.NewTestKit(s.T(), s.store)
@@ -1514,6 +1523,25 @@ func (s *mockGCSSuite) TestTableMode() {
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	require.True(s.T(), getError)
+
+	// Test executor recreation during import step won't re-check table empty.
+	s.tk.MustExec("truncate table table_mode")
+	loadDataSQLWithSmallEngine := fmt.Sprintf(`IMPORT INTO table_mode
+		FROM 'gs://table-mode-test/data*.csv?endpoint=%s' WITH __max_engine_size='1'`, gcsEndpoint)
+	recreated := atomic.NewBool(false)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
+			if errP == nil || *errP != nil {
+				return
+			}
+			if recreated.CompareAndSwap(false, true) {
+				e.Cancel()
+			}
+		},
+	)
+	s.tk.MustQuery(loadDataSQLWithSmallEngine)
+	require.True(s.T(), recreated.Load())
+	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{"1 1", "2 2", "3 3", "4 4"}...))
 
 	// Test import into check table is empty get error.
 	s.tk.MustExec("truncate table table_mode")

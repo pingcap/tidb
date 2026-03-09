@@ -53,7 +53,6 @@ go_test(
         "@io_etcd_go_etcd_server_v3//embed",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_x_exp//rand",
         "@org_uber_go_goleak//:goleak",
     ],
 )

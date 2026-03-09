@@ -244,7 +244,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
 # Digest: e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7
-# Stats: t1:123[1000;0][ID 1:allLoaded,ID 2:allLoaded][ID 2:allEvicted,ID 3:onlyCmsEvicted],t2:pseudo[10000;0]
+# Stats: t1:stats_meta_version=123[realtime_count=1000;modify_count=0][ID 1:allLoaded,ID 2:allLoaded][ID 2:allEvicted,ID 3:onlyCmsEvicted],t2:stats_meta_version=pseudo[realtime_count=10000;modify_count=0]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
@@ -454,7 +454,6 @@ func TestTableDeltaClone(t *testing.T) {
 		Delta:    1,
 		Count:    2,
 		InitTime: time.Now(),
-		TableID:  5,
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
@@ -473,7 +472,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 					Delta:    1,
 					Count:    2,
 					InitTime: time.Now(),
-					TableID:  5,
 				},
 			},
 		},
@@ -494,7 +492,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    6,
 		Count:    7,
 		InitTime: time.Now(),
-		TableID:  9,
 	}
 	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
 	tc.FlushStmtPessimisticLockCache()
@@ -510,7 +507,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    10,
 		Count:    11,
 		InitTime: time.Now(),
-		TableID:  13,
 	}
 	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
 	tc.FlushStmtPessimisticLockCache()

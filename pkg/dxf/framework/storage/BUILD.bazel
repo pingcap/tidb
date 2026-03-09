@@ -49,7 +49,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 28,
     deps = [
         "//pkg/config",
         "//pkg/dxf/framework/proto",

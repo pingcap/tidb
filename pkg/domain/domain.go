@@ -1819,7 +1819,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")

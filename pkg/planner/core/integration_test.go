@@ -2085,3 +2085,29 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
+
+func TestCorrelatedScalarSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Can't find column Column#17 in schema Column: [test.t3.user_id] PKOrUK: [] NullableUK: []
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("DROP TABLE IF EXISTS t2")
+	tk.MustExec("DROP TABLE IF EXISTS t3")
+	tk.MustExec("CREATE TABLE t1 (id bigint NOT NULL, hcode text NOT NULL, PRIMARY KEY (id))")
+	tk.MustExec("CREATE TABLE t2 (id bigint NOT NULL, bid bigint NOT NULL, cid bigint NOT NULL, PRIMARY KEY (id))")
+	tk.MustExec("CREATE TABLE t3 (id bigint NOT NULL, user_id bigint NOT NULL, PRIMARY KEY (id))")
+
+	sql := `SELECT
+    (SELECT COUNT(t3.user_id) FROM t2
+      LEFT JOIN t1 AS cm ON t2.cid = cm.id
+      LEFT JOIN t3 ON t2.bid = t3.id
+    WHERE cm.hcode = t1.hcode) AS tt
+FROM t1
+WHERE t1.id IN (SELECT MIN(id) FROM t1)`
+
+	err := tk.QueryToErr(sql)
+	require.NoError(t, err)
+}

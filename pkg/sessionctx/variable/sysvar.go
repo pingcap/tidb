@@ -1978,6 +1978,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.ForeignKeyChecks, originalValue)
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ForeignKeyCheckInSharedLock = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableForeignKey.Store(TiDBOptOn(val))
 		return nil

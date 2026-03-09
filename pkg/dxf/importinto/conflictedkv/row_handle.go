@@ -54,6 +54,7 @@ func (f *HandleFilter) needSkip(handle tidbkv.Handle) bool {
 }
 
 // BoundedHandleSet is a set of row handles with a size limit.
+// this set is not goroutine safe.
 type BoundedHandleSet struct {
 	logger *zap.Logger
 	// we use a shared size, as we collect conflicted rows concurrently

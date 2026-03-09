@@ -219,6 +219,8 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		"select * from t where a in (1, 2) and b < 15",
 		"select * from t where a between 1 and 10",
 		"select * from t where a between 1 and 10 and b < 15",
+		"select * from t where a is null",
+		"select * from t where a is not null",
 	}
 
 	for _, query := range queries {
@@ -1127,13 +1129,21 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from (select * from t1) t",                                               // sub-query
 		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
+		"select * from t where j is null",                                                  // json
+		"select * from t where j is not null",                                              // json
 		"select * from t where j < 1",                                                      // json
 		"select * from t where a > 1 and j < 1",
-		"select * from t where e < '1'", // enum
+		"select * from t where e is null",     // enum
+		"select * from t where e is not null", // enum
+		"select * from t where e < '1'",       // enum
 		"select * from t where a > 1 and e < '1'",
-		"select * from t where s < '1'", // set
+		"select * from t where s is null",     // set
+		"select * from t where s is not null", // set
+		"select * from t where s < '1'",       // set
 		"select * from t where a > 1 and s < '1'",
-		"select * from t where bt > 0", // bit
+		"select * from t where bt is null",     // bit
+		"select * from t where bt is not null", // bit
+		"select * from t where bt > 0",         // bit
 		"select * from t where a > 1 and bt > 0",
 		"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
 		"select * from v",                                                         // view
@@ -1146,6 +1156,14 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",

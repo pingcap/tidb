@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -344,4 +347,113 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			require.Equal(t, c.levels, ec.LevelMap(), msg)
 		}
 	}
+}
+
+func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+
+	const (
+		tableID    int64 = 1000
+		newTableID int64 = 2000
+		indexID    int64 = 10
+		part0ID    int64 = 1001
+		part1ID    int64 = 1002
+		handleID   int64 = 999
+	)
+
+	tblInfo := &model.TableInfo{
+		ID:   tableID,
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				State:     model.StatePublic,
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("b"),
+				State:     model.StatePublic,
+				Offset:    1,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:   indexID,
+				Name: ast.NewCIStr("uk_b"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("b"),
+						Offset: 1,
+						Length: types.UnspecifiedLength,
+					},
+				},
+				Unique:             true,
+				Global:             true,
+				GlobalIndexVersion: model.GlobalIndexVersionV1,
+				State:              model.StatePublic,
+			},
+		},
+		Partition: &model.PartitionInfo{
+			Enable: true,
+			Type:   ast.PartitionTypeHash,
+			Expr:   "a",
+			Num:    2,
+			Definitions: []model.PartitionDefinition{
+				{ID: part0ID, Name: ast.NewCIStr("p0")},
+				{ID: part1ID, Name: ast.NewCIStr("p1")},
+			},
+			NewTableID:      newTableID,
+			DDLChangedIndex: map[int64]bool{indexID: true},
+		},
+		// Non-clustered table.
+		PKIsHandle:     false,
+		IsCommonHandle: false,
+	}
+
+	tbl := tables.MockTableFromMeta(tblInfo)
+	require.NotNil(t, tbl)
+
+	pt, ok := tbl.(table.PartitionedTable)
+	require.True(t, ok)
+
+	// a=1 => 1%2=1 => partition index 1 => part1ID.
+	row := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewDatum(nil), // NULL => distinct=false for UNIQUE index
+	}
+	h := kv.IntHandle(handleID)
+
+	physicalTbl, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
+	require.NoError(t, err)
+	physicalID := physicalTbl.GetPhysicalID()
+	require.Equal(t, part1ID, physicalID)
+
+	// Expected: same key as idx.GenIndexKey, which switches to pi.NewTableID when
+	// pi.DDLChangedIndex[idx.ID] is true.
+	idx := tbl.Indices()[0]
+	ukVals, err := idx.FetchValues(row, nil)
+	require.NoError(t, err)
+	fullHandle := kv.NewPartitionHandle(physicalID, h)
+	expectedKey, _, err := idx.GenIndexKey(
+		errctx.StrictNoWarningContext,
+		sctx.GetSessionVars().StmtCtx.TimeZone(),
+		ukVals,
+		fullHandle,
+		nil,
+	)
+	require.NoError(t, err)
+
+	count, err := addUnchangedKeysForLockByRow(sctx, tbl, h, row, lockUniqueKeys)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+	require.Len(t, gotKeys, 1)
+	require.Equal(t, expectedKey, []byte(gotKeys[0]))
 }

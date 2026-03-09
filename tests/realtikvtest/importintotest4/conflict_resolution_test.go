@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
@@ -150,9 +149,6 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -456,9 +452,6 @@ abc,10,11,11,11,11
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -581,9 +574,6 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -625,9 +615,6 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -665,9 +652,6 @@ func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
@@ -706,9 +690,6 @@ func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 

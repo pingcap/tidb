@@ -407,7 +407,7 @@ func (c *MockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (
 	return ret, nil
 }
 
-func (c *MockPDClientForSplit) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *MockPDClientForSplit) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return c.stores[storeID], nil
 }
 

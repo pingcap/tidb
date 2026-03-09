@@ -260,28 +260,15 @@ func TestCorrelation(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(c1 int primary key, c2 int)")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("select * from t where c1 > 10 and c2 > 10")
 	testKit.MustExec("insert into t values(1,1),(3,12),(4,20),(2,7),(5,21)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "0", result.Rows()[0][9])
-	require.Equal(t, "1", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "1", result.Rows()[0][9])
 	require.Equal(t, "1", result.Rows()[1][9])
 	testKit.MustExec("insert into t values(8,18)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "0", result.Rows()[0][9])
-	require.Equal(t, "0.8285714285714286", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
@@ -292,26 +279,12 @@ func TestCorrelation(t *testing.T) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 0)
 	testKit.MustExec("insert into t values(1,21),(3,12),(4,7),(2,20),(5,1)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "0", result.Rows()[0][9])
-	require.Equal(t, "-1", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "1", result.Rows()[0][9])
 	require.Equal(t, "-1", result.Rows()[1][9])
 	testKit.MustExec("insert into t values(8,4)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "0", result.Rows()[0][9])
-	require.Equal(t, "-0.9428571428571428", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
@@ -320,13 +293,6 @@ func TestCorrelation(t *testing.T) {
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1),(11,1),(12,1),(13,1),(14,1),(15,1),(16,1),(17,1),(18,1),(19,1),(20,2),(21,2),(22,2),(23,2),(24,2),(25,2)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "0", result.Rows()[0][9])
-	require.Equal(t, "1", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
@@ -336,13 +302,6 @@ func TestCorrelation(t *testing.T) {
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1,1),(2,7),(3,12),(4,20),(5,21),(8,18)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "1", result.Rows()[0][9])
-	require.Equal(t, "0.8285714285714286", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
@@ -351,13 +310,6 @@ func TestCorrelation(t *testing.T) {
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values(1,1),(2,7),(3,12),(8,18),(4,20),(5,21)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "0.8285714285714286", result.Rows()[0][9])
-	require.Equal(t, "1", result.Rows()[1][9])
-	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 2)
@@ -367,17 +319,6 @@ func TestCorrelation(t *testing.T) {
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(c1 int primary key, c2 int, c3 int, key idx_c2(c2))")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3)")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't' and Is_index = 0").Sort()
-	require.Len(t, result.Rows(), 3)
-	require.Equal(t, "0", result.Rows()[0][9])
-	require.Equal(t, "1", result.Rows()[1][9])
-	require.Equal(t, "1", result.Rows()[2][9])
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't' and Is_index = 1").Sort()
-	require.Len(t, result.Rows(), 1)
-	require.Equal(t, "0", result.Rows()[0][9])
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't' and Is_index = 0").Sort()
 	require.Len(t, result.Rows(), 3)
@@ -423,260 +364,6 @@ func TestMergeGlobalTopN(t *testing.T) {
 		("test t global b 0 3 5"),
 		("test t global b 1 1 4"),
 		("test t global b 1 3 5")))
-}
-
-func TestExtendedStatsOps(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
-	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
-	tk.MustExec("analyze table t")
-	err := tk.ExecToErr("alter table not_exist_db.t add stats_extended s1 correlation(b,c)")
-	require.Equal(t, "[schema:1146]Table 'not_exist_db.t' doesn't exist", err.Error())
-	err = tk.ExecToErr("alter table not_exist_tbl add stats_extended s1 correlation(b,c)")
-	require.Equal(t, "[schema:1146]Table 'test.not_exist_tbl' doesn't exist", err.Error())
-	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(b,e)")
-	require.Equal(t, "[schema:1054]Unknown column 'e' in 't'", err.Error())
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No need to create correlation statistics on the integer primary key column",
-	))
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
-	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(b,c,d)")
-	require.Equal(t, "Only support Correlation and Dependency statistics types on 2 columns", err.Error())
-
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
-	tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"2 [2,3] <nil> 0",
-	))
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 0)
-
-	tk.MustExec("update mysql.stats_extended set status = 1 where name = 's1'")
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 1)
-
-	tk.MustExec("alter table t drop stats_extended s1")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"2 [2,3] <nil> 2",
-	))
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 0)
-}
-
-func TestAdminReloadStatistics1(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
-	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"2 [2,3] <nil> 0",
-	))
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 0)
-
-	tk.MustExec("update mysql.stats_extended set status = 1 where name = 's1'")
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 1)
-
-	tk.MustExec("delete from mysql.stats_extended where name = 's1'")
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 1)
-
-	tk.MustExec("admin reload stats_extended")
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 0)
-}
-
-func TestAdminReloadStatistics2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"1.000000 1",
-	))
-	rows := tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-
-	tk.MustExec("delete from mysql.stats_extended where name = 's1'")
-	is := dom.InfoSchema()
-	dom.StatsHandle().Update(context.Background(), is)
-	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-
-	tk.MustExec("admin reload stats_extended")
-	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 0)
-}
-
-func TestCorrelationStatsCompute(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, index idx(a, b, c))")
-	tk.MustExec("insert into t values(1,1,5),(2,2,4),(3,3,3),(4,4,2),(5,5,1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows())
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] <nil> 0",
-		"2 [1,3] <nil> 0",
-	))
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 0)
-
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] 1.000000 1",
-		"2 [1,3] -1.000000 1",
-	))
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] 1.000000 1",
-		"2 [1,3] -1.000000 1",
-	))
-	err = do.StatsHandle().Update(context.Background(), is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 2)
-	foundS1, foundS2 := false, false
-	for name, item := range statsTbl.ExtendedStats.Stats {
-		switch name {
-		case "s1":
-			foundS1 = true
-			require.Equal(t, float64(1), item.ScalarVals)
-		case "s2":
-			foundS2 = true
-			require.Equal(t, float64(-1), item.ScalarVals)
-		default:
-			require.FailNow(t, "Unexpected extended stats in cache")
-		}
-	}
-	require.True(t, foundS1 && foundS2)
-
-	// Check that table with NULLs won't cause panic
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values(1,null,2), (2,null,null)")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] 0.000000 1",
-		"2 [1,3] 1.000000 1",
-	))
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] 0.000000 1",
-		"2 [1,3] 1.000000 1",
-	))
-	tk.MustExec("insert into t values(3,3,3)")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] 1.000000 1",
-		"2 [1,3] 1.000000 1",
-	))
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"2 [1,2] 1.000000 1",
-		"2 [1,3] 1.000000 1",
-	))
-}
-
-func TestSyncStatsExtendedRemoval(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 1)
-	item := statsTbl.ExtendedStats.Stats["s1"]
-	require.NotNil(t, item)
-	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 1)
-
-	tk.MustExec("alter table t drop stats_extended s1")
-	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, statsTbl)
-	require.NotNil(t, statsTbl.ExtendedStats)
-	require.Len(t, statsTbl.ExtendedStats.Stats, 0)
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 0)
 }
 
 func TestStaticPartitionPruneMode(t *testing.T) {
@@ -783,45 +470,6 @@ func TestPartitionPruneModeSessionVariable(t *testing.T) {
 	))
 }
 
-func TestRepetitiveAddDropExtendedStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
-		"s1 0",
-	))
-	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 0)
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
-		"s1 1",
-	))
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 1)
-	tk.MustExec("alter table t drop stats_extended s1")
-	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
-		"s1 2",
-	))
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 0)
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
-		"s1 0",
-	))
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 0)
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
-		"s1 1",
-	))
-	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	require.Len(t, result.Rows(), 1)
-}
-
 func TestDuplicateFMSketch(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -903,217 +551,6 @@ func TestIndexFMSketch(t *testing.T) {
 	checkNDV(6, 1)
 	tk.MustExec("insert into t values ('1999-01-01', '1998-01-01'), ('1997-01-02', '1999-01-02'), ('1998-01-03', '1999-01-03')")
 	checkNDV(6, 2)
-}
-
-func TestShowExtendedStats4DropColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
-	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("alter table t add stats_extended s2 correlation(b,c)")
-	tk.MustExec("analyze table t")
-	rows := tk.MustQuery("show stats_extended").Sort().Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "s1", rows[0][2])
-	require.Equal(t, "[a,b]", rows[0][3])
-	require.Equal(t, "s2", rows[1][2])
-	require.Equal(t, "[b,c]", rows[1][3])
-
-	tk.MustExec("alter table t drop column b")
-	rows = tk.MustQuery("show stats_extended").Rows()
-	require.Len(t, rows, 0)
-
-	// Previously registered extended stats should be invalid for re-created columns.
-	tk.MustExec("alter table t add column b int")
-	rows = tk.MustQuery("show stats_extended").Rows()
-	require.Len(t, rows, 0)
-}
-
-func TestExtStatsOnReCreatedTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	rows := tk.MustQuery("select table_id, stats from mysql.stats_extended where name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	tableID1 := rows[0][0]
-	require.Equal(t, "1.000000", rows[0][1])
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "1.000000", rows[0][5])
-
-	tk.MustExec("drop table t")
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 0)
-
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,3),(2,2),(3,1)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	rows = tk.MustQuery("select table_id, stats from mysql.stats_extended where name = 's1' order by stats").Rows()
-	require.Len(t, rows, 2)
-	tableID2 := rows[0][0]
-	require.NotEqual(t, tableID1, tableID2)
-	require.Equal(t, tableID1, rows[1][0])
-	require.Equal(t, "-1.000000", rows[0][1])
-	require.Equal(t, "1.000000", rows[1][1])
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "-1.000000", rows[0][5])
-}
-
-func TestExtStatsOnReCreatedColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select column_ids, stats from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"[1,2] 1.000000",
-	))
-	rows := tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "[a,b]", rows[0][3])
-	require.Equal(t, "1.000000", rows[0][5])
-
-	tk.MustExec("alter table t drop column b")
-	tk.MustExec("alter table t add column b int")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
-		"1 <nil>",
-		"2 <nil>",
-		"3 <nil>",
-	))
-	tk.MustExec("update t set b = 3 where a = 1")
-	tk.MustExec("update t set b = 2 where a = 2")
-	tk.MustExec("update t set b = 1 where a = 3")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
-		"1 3",
-		"2 2",
-		"3 1",
-	))
-	tk.MustExec("analyze table t")
-	// Previous extended stats would not be collected and would not take effect anymore, it will be removed by stats GC.
-	tk.MustQuery("select column_ids, stats from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"[1,2] 1.000000",
-	))
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 0)
-}
-
-func TestExtStatsOnRenamedColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select column_ids, stats from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"[1,2] 1.000000",
-	))
-	rows := tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "[a,b]", rows[0][3])
-	require.Equal(t, "1.000000", rows[0][5])
-
-	tk.MustExec("alter table t rename column b to c")
-	tk.MustExec("update t set c = 3 where a = 1")
-	tk.MustExec("update t set c = 2 where a = 2")
-	tk.MustExec("update t set c = 1 where a = 3")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
-		"1 3",
-		"2 2",
-		"3 1",
-	))
-	tk.MustExec("analyze table t")
-	// Previous extended stats would still be collected and take effect.
-	tk.MustQuery("select column_ids, stats from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"[1,2] -1.000000",
-	))
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "[a,c]", rows[0][3])
-	require.Equal(t, "-1.000000", rows[0][5])
-}
-
-func TestExtStatsOnModifiedColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select column_ids, stats from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"[1,2] 1.000000",
-	))
-	rows := tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "[a,b]", rows[0][3])
-	require.Equal(t, "1.000000", rows[0][5])
-
-	tk.MustExec("alter table t modify column b bigint")
-	tk.MustExec("update t set b = 3 where a = 1")
-	tk.MustExec("update t set b = 2 where a = 2")
-	tk.MustExec("update t set b = 1 where a = 3")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
-		"1 3",
-		"2 2",
-		"3 1",
-	))
-	tk.MustExec("analyze table t")
-	// Previous extended stats would still be collected and take effect.
-	tk.MustQuery("select column_ids, stats from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"[1,2] -1.000000",
-	))
-	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "[a,b]", rows[0][3])
-	require.Equal(t, "-1.000000", rows[0][5])
-}
-
-func TestCorrelationWithDefinedCollate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key, b varchar(8) character set utf8mb4 collate utf8mb4_general_ci, c varchar(8) character set utf8mb4 collate utf8mb4_bin)")
-	testKit.MustExec("insert into t values(1,'aa','aa'),(2,'Cb','Cb'),(3,'CC','CC')")
-	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "a", "b", "c")
-	testKit.MustExec("analyze table t")
-	testKit.MustQuery("select a from t order by b").Check(testkit.Rows(
-		"1",
-		"2",
-		"3",
-	))
-	testKit.MustQuery("select a from t order by c").Check(testkit.Rows(
-		"3",
-		"2",
-		"1",
-	))
-	rows := testKit.MustQuery("show stats_histograms where table_name = 't'").Sort().Rows()
-	require.Len(t, rows, 3)
-	require.Equal(t, "1", rows[1][9])
-	require.Equal(t, "-1", rows[2][9])
-	testKit.MustExec("set session tidb_enable_extended_stats = on")
-	testKit.MustExec("alter table t add stats_extended s1 correlation(b,c)")
-	testKit.MustExec("analyze table t")
-	rows = testKit.MustQuery("show stats_extended where stats_name = 's1'").Sort().Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "[b,c]", rows[0][3])
-	require.Equal(t, "-1.000000", rows[0][5])
 }
 
 func TestLoadHistogramWithCollate(t *testing.T) {

@@ -84,9 +84,8 @@ func (a *AnalyzeResult) DestroyAndPutToPool() {
 
 // AnalyzeResults represents the analyze results of a task.
 type AnalyzeResults struct {
-	Err      error
-	ExtStats *ExtendedStatsColl
-	Job      *AnalyzeJob
+	Err error
+	Job *AnalyzeJob
 	// Ars: combine the analyze result of all columns and the analyze result of indexes.
 	// (In stats version2)
 	// For example:
