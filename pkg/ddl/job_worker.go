@@ -1005,9 +1005,9 @@ func (w *worker) runOneJobStep(
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(jobCtx, job)
 	case model.ActionAlterMaterializedViewRefresh:
-		ver, err = onAlterMaterializedViewRefresh(jobCtx, job)
+		ver, err = onAlterMaterializedViewRefresh(jobCtx, job, w.sess)
 	case model.ActionAlterMaterializedViewLogPurge:
-		ver, err = onAlterMaterializedViewLogPurge(jobCtx, job)
+		ver, err = onAlterMaterializedViewLogPurge(jobCtx, job, w.sess)
 	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, job)
 	case model.ActionAddTablePartition:

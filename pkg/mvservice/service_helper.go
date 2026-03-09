@@ -543,6 +543,8 @@ func shouldHandleMVCreateEvent(event *notifier.SchemaChangeEvent) bool {
 	case meta.ActionDropTable:
 		dropped := event.GetDropTableInfo()
 		return hasMVRelatedTableInfo(dropped)
+	case meta.ActionAlterMaterializedViewRefresh, meta.ActionAlterMaterializedViewLogPurge:
+		return true
 	default:
 		// For other DDL types, rely on the periodic metadata refresh.
 		return false

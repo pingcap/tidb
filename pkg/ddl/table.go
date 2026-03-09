@@ -1048,7 +1048,7 @@ func onModifyTableComment(jobCtx *jobContext, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job, se *sess.Session) (ver int64, _ error) {
 	args, err := model.GetAlterMaterializedViewRefreshArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1069,6 +1069,7 @@ func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job) (ver int
 		return ver, nil
 	}
 
+	oldTblInfo := tblInfo.Clone()
 	tblInfo.MaterializedView.RefreshMethod = args.RefreshMethod
 	tblInfo.MaterializedView.RefreshStartWith = args.RefreshStartWith
 	tblInfo.MaterializedView.RefreshNext = args.RefreshNext
@@ -1077,11 +1078,16 @@ func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job) (ver int
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	alterMVRefreshEvent := notifier.NewAlterMaterializedViewRefreshEvent(tblInfo, oldTblInfo)
+	err = asyncNotifyEvent(jobCtx, alterMVRefreshEvent, job, noSubJob, se)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
-func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job, se *sess.Session) (ver int64, _ error) {
 	args, err := model.GetAlterMaterializedViewLogPurgeArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1102,11 +1108,17 @@ func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, nil
 	}
 
+	oldTblInfo := tblInfo.Clone()
 	tblInfo.MaterializedViewLog.PurgeMethod = args.PurgeMethod
 	tblInfo.MaterializedViewLog.PurgeStartWith = args.PurgeStartWith
 	tblInfo.MaterializedViewLog.PurgeNext = args.PurgeNext
 
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	alterMLogPurgeEvent := notifier.NewAlterMaterializedViewLogPurgeEvent(tblInfo, oldTblInfo)
+	err = asyncNotifyEvent(jobCtx, alterMLogPurgeEvent, job, noSubJob, se)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
