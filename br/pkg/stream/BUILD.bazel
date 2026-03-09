@@ -26,7 +26,11 @@ go_library(
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
+<<<<<<< HEAD
         "//br/pkg/storage",
+=======
+        "//br/pkg/stream/backupmetas",
+>>>>>>> 7519c7be8dc (br/pkg/stream: support parsing tagged backupmeta file names (#66655))
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//br/pkg/utils/consts",
@@ -71,6 +75,7 @@ go_test(
         "rewrite_meta_rawkv_test.go",
         "search_test.go",
         "stream_metas_test.go",
+        "stream_mgr_fuzz_test.go",
         "stream_misc_test.go",
         "table_mapping_test.go",
     ],
@@ -78,7 +83,11 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+<<<<<<< HEAD
         "//br/pkg/storage",
+=======
+        "//br/pkg/stream/backupmetas",
+>>>>>>> 7519c7be8dc (br/pkg/stream: support parsing tagged backupmeta file names (#66655))
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//br/pkg/utils/consts",
