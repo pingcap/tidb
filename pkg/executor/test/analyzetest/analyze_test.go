@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -138,8 +140,102 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
+	tk.MustExec("truncate table mysql.analyze_jobs")
+	t.Run("cancel_on_ctx", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+		tk.MustExec("set @@tidb_analyze_version = 2")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		ctx, cancel := context.WithCancel(baseCtx)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before cancel, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		cancel()
+
+		select {
+		case <-done:
+			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), "context canceled")
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after context canceled")
+		}
+	})
 }
 
+func TestAnalyzeParameters(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := range 20 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	tk.MustExec("insert into t values (19), (19), (19)")
+
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("analyze table t with 30 samples")
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	col := tbl.GetCol(1)
+	require.Equal(t, 20, col.Len())
+	require.Len(t, col.TopN.TopN, 1)
+	width, depth := col.CMSketch.GetWidthAndDepth()
+	require.Equal(t, int32(5), depth)
+	require.Equal(t, int32(2048), width)
+
+	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	col = tbl.GetCol(1)
+	require.Equal(t, 4, col.Len())
+	require.Nil(t, col.TopN)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	require.Equal(t, int32(4), depth)
+	require.Equal(t, int32(4), width)
+
+	// Test very large cmsketch
+	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", core.CMSketchSizeLimit, 1))
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	col = tbl.GetCol(1)
+	require.Equal(t, 20, col.Len())
+
+	require.Len(t, col.TopN.TopN, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	require.Equal(t, int32(1), depth)
+	require.Equal(t, int32(core.CMSketchSizeLimit), width)
+
+	// Test very large cmsketch
+	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	col = tbl.GetCol(1)
+	require.Equal(t, 20, col.Len())
+	require.Len(t, col.TopN.TopN, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	require.Equal(t, int32(50), depth)
+	require.Equal(t, int32(20480), width)
+}
 func TestAnalyzeTooLongColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -699,6 +795,7 @@ func testKillAutoAnalyze(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -771,6 +868,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
