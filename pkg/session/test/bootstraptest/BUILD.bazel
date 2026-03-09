@@ -18,6 +18,7 @@ go_test(
         "//pkg/meta",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/server/handler",
