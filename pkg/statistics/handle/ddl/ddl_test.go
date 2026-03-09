@@ -1546,8 +1546,68 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	testKit.MustExec("insert into t values (4, 5, 6)")
 	// Analyze all columns to force creating stats for the newly added column before the DDL event is consumed.
 	testKit.MustExec("analyze table t all columns")
+	metaBefore := testKit.MustQuery(`
+		select version, last_stats_histograms_version
+		from mysql.stats_meta
+		where table_id = (
+			select tidb_table_id
+			from information_schema.tables
+			where table_schema = 'test' and table_name = 't'
+		)
+	`).Rows()
+	require.Len(t, metaBefore, 1)
 	// Find the add column event.
 	event := statstestutil.FindEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
 	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
 	require.NoError(t, err)
+	metaAfter := testKit.MustQuery(`
+		select version, last_stats_histograms_version
+		from mysql.stats_meta
+		where table_id = (
+			select tidb_table_id
+			from information_schema.tables
+			where table_schema = 'test' and table_name = 't'
+		)
+	`).Rows()
+	require.Equal(t, metaBefore, metaAfter)
+}
+
+func TestDumpStatsDeltaBeforeHandleAddNotNullColumnEvent(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	// Insert some data.
+	testKit.MustExec("insert into t values (1, 2), (2, 3), (3, 4)")
+	testKit.MustExec("analyze table t predicate columns")
+	// Add not-null column.
+	testKit.MustExec("alter table t add column c10 int not null default 10")
+	// Insert some data.
+	testKit.MustExec("insert into t(c1, c2) values (4, 5)")
+	// Analyze all columns to force creating stats for the newly added column before the DDL event is consumed.
+	testKit.MustExec("analyze table t all columns")
+	metaBefore := testKit.MustQuery(`
+		select version, last_stats_histograms_version
+		from mysql.stats_meta
+		where table_id = (
+			select tidb_table_id
+			from information_schema.tables
+			where table_schema = 'test' and table_name = 't'
+		)
+	`).Rows()
+	require.Len(t, metaBefore, 1)
+	// Find the add column event.
+	event := statstestutil.FindEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
+	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
+	require.NoError(t, err)
+	metaAfter := testKit.MustQuery(`
+		select version, last_stats_histograms_version
+		from mysql.stats_meta
+		where table_id = (
+			select tidb_table_id
+			from information_schema.tables
+			where table_schema = 'test' and table_name = 't'
+		)
+	`).Rows()
+	require.Equal(t, metaBefore, metaAfter)
 }

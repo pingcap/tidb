@@ -436,20 +436,6 @@ func InsertColStats2KV(
 		return 0, errors.Trace(err)
 	}
 
-	// First of all, we update the version.
-	_, err = util.ExecWithCtx(
-		ctx, sctx,
-		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
-		startTS, startTS, physicalID,
-	)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-	if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-		return startTS, nil
-	}
-
 	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
@@ -466,7 +452,12 @@ func InsertColStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	// If no row is returned, it means the stats of this table does not exist.
+	if req.NumRows() == 0 {
+		return startTS, nil
+	}
 	count := req.GetRow(0).GetInt64(0)
+	hasStatsUpdate := false
 	for _, colInfo := range colInfos {
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
@@ -482,6 +473,9 @@ func InsertColStats2KV(
 				startTS, physicalID, colInfo.ID, count,
 			); err != nil {
 				return 0, errors.Trace(err)
+			}
+			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+				hasStatsUpdate = true
 			}
 			continue
 		}
@@ -501,6 +495,7 @@ func InsertColStats2KV(
 		if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 			continue
 		}
+		hasStatsUpdate = true
 		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -515,6 +510,17 @@ func InsertColStats2KV(
 		); err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+	if !hasStatsUpdate {
+		return startTS, nil
+	}
+	_, err = util.ExecWithCtx(
+		ctx, sctx,
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+		startTS, startTS, physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 	return startTS, nil
 }
