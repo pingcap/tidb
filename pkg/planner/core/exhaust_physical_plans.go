@@ -20,7 +20,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -2532,19 +2531,32 @@ func GetHashJoin(la *logicalop.LogicalApply, prop *property.PhysicalProperty) *P
 }
 
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+<<<<<<< HEAD
 func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalApply)
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+=======
+func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	ge, la := base.GetGEAndLogicalOp[*logicalop.LogicalApply](super)
+	stats0, _, schema0, _ := getJoinChildStatsAndSchema(ge, la)
+	if !prop.AllColsFromSchema(schema0) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+>>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
+<<<<<<< HEAD
 	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
 		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
+=======
+	// Parallel Apply now supports ordered output via a reorder buffer,
+	// so we no longer reject sort properties here.
+	join := GetHashJoin(ge, la, prop)
+>>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		// fix the liner warning.
@@ -2566,15 +2578,45 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
+<<<<<<< HEAD
 	apply := PhysicalApply{
+=======
+	// Compute the expected row count for the outer child.  For a semi/anti-semi
+	// join, each outer row produces at most one output row, so if the parent
+	// expects N rows we need N / selectivity outer rows.  For other join types
+	// the ratio may differ, but using the Apply's own selectivity is still a
+	// reasonable approximation.
+	outerExpectedCnt := math.MaxFloat64
+	if prop.ExpectedCnt < math.MaxFloat64 {
+		outerRowCount := stats0.RowCount
+		applyRowCount := la.StatsInfo().RowCount
+		if applyRowCount > 0 && outerRowCount > 0 {
+			selectivity := applyRowCount / outerRowCount
+			if selectivity > 0 {
+				outerExpectedCnt = prop.ExpectedCnt / selectivity
+			}
+		}
+		// The outer side can never need fewer rows than the parent expects.
+		if outerExpectedCnt < prop.ExpectedCnt {
+			outerExpectedCnt = prop.ExpectedCnt
+		}
+	}
+
+	apply := physicalop.PhysicalApply{
+>>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 		CanUseCache:      canUseCache,
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
+<<<<<<< HEAD
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
+=======
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
+>>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
 }

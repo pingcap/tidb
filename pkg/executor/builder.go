@@ -2692,6 +2692,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
+			keepOrder:    v.KeepOrder,
 			useCache:     v.CanUseCache,
 		}
 	}
