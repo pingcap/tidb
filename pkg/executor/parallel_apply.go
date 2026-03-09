@@ -229,6 +229,13 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
 		chk := exec.TryNewCacheChunk(e.outerExec)
 		if err := exec.Next(ctx, e.outerExec, chk); err != nil {
+			// If the executor is shutting down, the error is from
+			// deliberate context cancellation — not a real failure.
+			select {
+			case <-e.exit:
+				return
+			default:
+			}
 			e.putResult(nil, err)
 			return
 		}
@@ -268,6 +275,15 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 		err := e.fillInnerChunk(ctx, id, chk)
 		if err == nil && chk.NumRows() == 0 { // no more data, this goroutine can exit
 			return
+		}
+		// If the executor is shutting down, the error is from
+		// deliberate context cancellation — not a real failure.
+		if err != nil {
+			select {
+			case <-e.exit:
+				return
+			default:
+			}
 		}
 		if e.putResult(chk, err) {
 			return
@@ -322,6 +338,13 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 		}
 	}
 
+	err = exec.Open(ctx, e.innerExecs[id])
+	defer func() { terror.Log(exec.Close(e.innerExecs[id])) }()
+	if err != nil {
+		return err
+	}
+	// Simulate a slow inner execution after the inner executor is opened,
+	// so the delay occurs when a real cop request would be in-flight.
 	failpoint.Inject("parallelApplySlowInner", func(val failpoint.Value) {
 		if ms, ok := val.(int); ok {
 			select {
@@ -331,11 +354,6 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 			}
 		}
 	})
-	err = exec.Open(ctx, e.innerExecs[id])
-	defer func() { terror.Log(exec.Close(e.innerExecs[id])) }()
-	if err != nil {
-		return err
-	}
 
 	if e.useCache {
 		// create a new one in this case since it may be in the cache
