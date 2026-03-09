@@ -910,7 +910,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				// Extract datums, convert TIMESTAMP columns from session TZ to UTC,
 				// evaluate in UTC context to get consistent results.
 				datums := make([]types.Datum, nCols)
-				for ci := 0; ci < nCols; ci++ {
+				for ci := range nCols {
 					datums[ci] = row.GetDatum(ci, &colInfos[ci].FieldType)
 				}
 				for _, ci := range tsColIndices {
