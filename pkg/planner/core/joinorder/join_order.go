@@ -128,6 +128,10 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		return makeSingleGroup(p)
 	}
 
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
+		return makeSingleGroup(p)
+	}
+
 	if join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
 		return makeSingleGroup(p)
 	}
