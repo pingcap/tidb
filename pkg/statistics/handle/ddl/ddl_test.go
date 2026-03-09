@@ -1544,9 +1544,8 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	testKit.MustExec("alter table t add column c10 int")
 	// Insert some data.
 	testKit.MustExec("insert into t values (4, 5, 6)")
-	// Analyze table to force create the histogram meta record.
-	// FIXME: When analyzing all columns, it will error out due to a duplicate key.
-	testKit.MustExec("analyze table t predicate columns")
+	// Analyze all columns to force creating stats for the newly added column before the DDL event is consumed.
+	testKit.MustExec("analyze table t all columns")
 	// Find the add column event.
 	event := statstestutil.FindEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
 	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)

@@ -476,7 +476,7 @@ func InsertColStats2KV(
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
 			if _, err = util.ExecWithCtx(
 				ctx, sctx,
-				`insert into mysql.stats_histograms
+				`insert ignore into mysql.stats_histograms
 					(version, table_id, is_index, hist_id, distinct_count, null_count)
 				values (%?, %?, 0, %?, 0, %?)`,
 				startTS, physicalID, colInfo.ID, count,
@@ -489,12 +489,17 @@ func InsertColStats2KV(
 		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(version, table_id, is_index, hist_id, distinct_count, tot_col_size)
 			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
 			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
 		); err != nil {
 			return 0, errors.Trace(err)
+		}
+		// The histogram may have been created by ANALYZE TABLE ... ALL COLUMNS before the add-column DDL event is handled.
+		// Skip inserting the default-value bucket in that case.
+		if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			continue
 		}
 		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
@@ -503,7 +508,7 @@ func InsertColStats2KV(
 		// There must be only one bucket for this new column and the value is the default value.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_buckets
+			`insert ignore into mysql.stats_buckets
 				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
 			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
 			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
