@@ -135,6 +135,16 @@ replace into `$mlog$t` values (1, 2, 'I', 1);
 update `$mlog$t` set a=1;
 --error 1288
 delete from `$mlog$t`;
+# Point-get UPDATE/DELETE on mlog table should also be rejected
+--error 1288
+update `$mlog$t` set b=1 where _tidb_rowid=1;
+--error 1288
+delete from `$mlog$t` where _tidb_rowid=1;
+# Batch point-get UPDATE/DELETE on mlog table should also be rejected
+--error 1288
+update `$mlog$t` set b=1 where _tidb_rowid in (1, 2);
+--error 1288
+delete from `$mlog$t` where _tidb_rowid in (1, 2);
 select * from `$mlog$t`;
 
 # Explicit DML on materialized view table should be rejected
@@ -151,6 +161,16 @@ replace into v values (1, 10, 1);
 update v set s=1;
 --error 1288
 delete from v;
+# Point-get UPDATE/DELETE on materialized view should also be rejected
+--error 1288
+update v set s=1 where a=1;
+--error 1288
+delete from v where a=1;
+# Batch point-get UPDATE/DELETE on materialized view should also be rejected
+--error 1288
+update v set s=1 where a in (1, 2);
+--error 1288
+delete from v where a in (1, 2);
 drop materialized view v;
 
 # Prepared DML on mlog table should be rejected
