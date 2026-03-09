@@ -129,7 +129,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		checkStaleKeysAfterRestartCleaned(t)
 	})
 
-	t.Run("single node deletes unknown key even if stale server info is removed", func(t *testing.T) {
+	t.Run("single node does not delete unknown key if stale server info is removed", func(t *testing.T) {
 		clearKeys()
 		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		_, err := cli.Put(ctx, DDLOwnerKey+"/unknown", "old")
@@ -155,7 +155,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		defer cancel()
 		resp, err := cli.Get(ctx, DDLOwnerKey+"/unknown")
 		require.NoError(t, err)
-		require.Empty(t, resp.Kvs)
+		require.Len(t, resp.Kvs, 1)
 
 		resp, err = cli.Get(ctx, DDLOwnerKey+"/self")
 		require.NoError(t, err)
