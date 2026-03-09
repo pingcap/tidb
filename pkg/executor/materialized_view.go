@@ -849,6 +849,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return err
 	}
 	defer e.ReleaseSysSession(kctx, refreshSctx)
+	if collectorAware, ok := refreshSctx.(interface{ AttachStatsCollectorForInternalSession() func() }); ok {
+		// REFRESH MATERIALIZED VIEW runs real maintenance reads/writes against user tables, so
+		// reuse the full session collectors here, including index usage collection when enabled.
+		defer collectorAware.AttachStatsCollectorForInternalSession()()
+	}
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
 	targetMaintainMemQuota, err := resolveMVMaintenanceMemQuota(kctx, e.Ctx().GetSessionVars(), isInternalSQL)

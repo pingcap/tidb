@@ -216,6 +216,36 @@ func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T)
 		Check(testkit.Rows("fast automatically 1"))
 }
 
+func TestMaterializedViewRefreshFastUpdatesStatsModifyCount(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_fast_stats (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_fast_stats values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_fast_stats (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_stats (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_fast_stats group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_fast_stats"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table mv_fast_stats")
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mvID)).
+		Check(testkit.Rows("0 2"))
+
+	tk.MustExec("delete from t_mv_fast_stats where a = 1 and b = 10")
+	tk.MustExec("delete from t_mv_fast_stats where a = 2 and b = 7")
+	tk.MustExec("insert into t_mv_fast_stats values (3, 4)")
+	tk.MustExec("refresh materialized view mv_fast_stats fast")
+	tk.MustQuery("select a, s, cnt from mv_fast_stats order by a").Check(testkit.Rows("1 5 1", "3 4 1"))
+
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mvID)).
+		Check(testkit.Rows("3 2"))
+}
+
 func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
