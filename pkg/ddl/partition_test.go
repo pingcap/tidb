@@ -269,7 +269,6 @@ func TestAddDropPartitionWithTiCIIndex(t *testing.T) {
 		Name:    ast.NewCIStr("idx_tici"),
 		Columns: []*model.IndexColumn{{Name: ast.NewCIStr("c"), Offset: 0}},
 		State:   model.StatePublic,
-		Global:  true,
 		// Mark it as a TiCI index (HYBRID) for this test; TiCI indexes do not write KV index data.
 		HybridInfo: &model.HybridIndexInfo{},
 	}}
@@ -278,7 +277,7 @@ func TestAddDropPartitionWithTiCIIndex(t *testing.T) {
 	ctx := testkit.NewTestKit(t, store).Session()
 	testCreateTable(t, ctx, de, dbInfo, tblInfo)
 
-	// ADD PARTITION should call TiCI AddPartition when the logical table has TiCI global indexes.
+	// ADD PARTITION should call TiCI AddPartition when the logical table has TiCI indexes.
 	tici.ResetMockTiCIAddPartitionRequest()
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockAddTiCIPartitionRequest", `return(1)`)
 

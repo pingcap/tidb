@@ -221,7 +221,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			}
 		}
 
-		if indexIDs := getTiCIGlobalIndexIDs(tblInfo); len(indexIDs) > 0 {
+		if indexIDs := getTiCIIndexIDs(tblInfo); len(indexIDs) > 0 {
 			ctx := jobCtx.stepCtx
 			if ctx == nil {
 				ctx = jobCtx.ctx
@@ -2112,13 +2112,13 @@ func hasGlobalIndex(tblInfo *model.TableInfo) bool {
 	return false
 }
 
-func getTiCIGlobalIndexIDs(tblInfo *model.TableInfo) []int64 {
+func getTiCIIndexIDs(tblInfo *model.TableInfo) []int64 {
 	if tblInfo == nil {
 		return nil
 	}
 	ids := make([]int64, 0, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
-		if idxInfo.IsTiCIIndex() && idxInfo.Global {
+		if idxInfo.IsTiCIIndex() {
 			ids = append(ids, idxInfo.ID)
 		}
 	}
@@ -2353,7 +2353,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 				return ver, errors.Trace(err)
 			}
 		}
-		if indexIDs := getTiCIGlobalIndexIDs(tblInfo); len(indexIDs) > 0 {
+		if indexIDs := getTiCIIndexIDs(tblInfo); len(indexIDs) > 0 {
 			ctx := jobCtx.stepCtx
 			if ctx == nil {
 				ctx = jobCtx.ctx
