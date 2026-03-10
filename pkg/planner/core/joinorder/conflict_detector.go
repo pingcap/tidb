@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -754,8 +753,13 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	//   Before reorder: t1 left (t2 left t3 on t2.c2 = t3.c2) on t1.c1 = t2.c1
 	//   After reorder, (t1 left t2 on t1.c1 = t2.c1) left t3 on t2.c2 = t3.c2;
 	//   We should make sure there is no NOT_NULL flag in `t2.c1`.
-	alignedEQConds = alignScalarFuncsNotNullWithSchema(alignedEQConds, join.Schema())
-	alignedNonEQConds := alignExprsNotNullWithSchema(e.nonEQConds, join.Schema())
+	for i, cond := range alignedEQConds {
+		alignedEQConds[i] = alignNotNullWithSchema(cond, join.Schema()).(*expression.ScalarFunction)
+	}
+	alignedNonEQConds := make([]expression.Expression, len(e.nonEQConds))
+	for i, cond := range e.nonEQConds {
+		alignedNonEQConds[i] = alignNotNullWithSchema(cond, join.Schema())
+	}
 	join.EqualConditions = alignedEQConds
 	for _, cond := range alignedNonEQConds {
 		fromLeft := expression.ExprFromSchema(cond, left.Schema())
@@ -771,81 +775,31 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	return join, nil
 }
 
-func alignScalarFuncsNotNullWithSchema(conds []*expression.ScalarFunction, schema *expression.Schema) []*expression.ScalarFunction {
-	if len(conds) == 0 {
-		return conds
+// alignNotNullWithSchema update the columns in expression with the one from schema,
+// whose NOT_NULL flag has already been updated by LogicalJoin.MergeSchema().
+func alignNotNullWithSchema(expr expression.Expression, schema *expression.Schema) expression.Expression {
+	if schema == nil || expr == nil {
+		return expr
 	}
-	aligned := make([]*expression.ScalarFunction, len(conds))
-	for i, cond := range conds {
-		expr := alignExprNotNullWithSchema(cond, schema)
-		if sf, ok := expr.(*expression.ScalarFunction); ok {
-			aligned[i] = sf
-			continue
-		}
-		aligned[i] = cond
-	}
-	return aligned
-}
-
-func alignExprsNotNullWithSchema(conds []expression.Expression, schema *expression.Schema) []expression.Expression {
-	if len(conds) == 0 {
-		return conds
-	}
-	aligned := make([]expression.Expression, len(conds))
-	for i, cond := range conds {
-		aligned[i] = alignExprNotNullWithSchema(cond, schema)
-	}
-	return aligned
-}
-
-func alignExprNotNullWithSchema(expr expression.Expression, schema *expression.Schema) expression.Expression {
 	switch e := expr.(type) {
 	case *expression.Column:
-		schemaCol := schema.RetrieveColumn(e)
-		if schemaCol == nil {
-			return e
+		if schemaCol := schema.RetrieveColumn(e); schemaCol != nil {
+			return schemaCol
 		}
-		schemaNotNull := mysql.HasNotNullFlag(schemaCol.RetType.GetFlag())
-		colNotNull := mysql.HasNotNullFlag(e.RetType.GetFlag())
-		if schemaNotNull == colNotNull {
-			return e
-		}
-		newCol := e.Clone().(*expression.Column)
-		newRetType := *newCol.RetType
-		if schemaNotNull {
-			newRetType.AddFlag(mysql.NotNullFlag)
-		} else {
-			newRetType.DelFlag(mysql.NotNullFlag)
-		}
-		newCol.RetType = &newRetType
-		return newCol
+		return e
 	case *expression.CorrelatedColumn:
-		newColExpr := alignExprNotNullWithSchema(&e.Column, schema)
-		newCol, ok := newColExpr.(*expression.Column)
-		if !ok || newCol == &e.Column {
-			return e
+		if schemaCol := schema.RetrieveColumn(&e.Column); schemaCol != nil {
+			clone := e.Clone()
+			clone.Column = *schemaCol
+			return &clone
 		}
-		newCorCol := e.Clone().(*expression.CorrelatedColumn)
-		newCorCol.Column = *newCol
-		return newCorCol
+		return e
 	case *expression.ScalarFunction:
-		args := e.GetArgs()
-		changed := false
-		newArgs := make([]expression.Expression, len(args))
-		for i := range args {
-			newArgs[i] = alignExprNotNullWithSchema(args[i], schema)
-			if newArgs[i] != args[i] {
-				changed = true
-			}
+		clone := e.Clone().(*expression.ScalarFunction)
+		for i, arg := range clone.GetArgs() {
+			clone.GetArgs()[i] = alignNotNullWithSchema(arg, schema)
 		}
-		if !changed {
-			return e
-		}
-		newFunc := e.Clone().(*expression.ScalarFunction)
-		for i := range newArgs {
-			newFunc.GetArgs()[i] = newArgs[i]
-		}
-		return newFunc
+		return clone
 	default:
 		return expr
 	}
