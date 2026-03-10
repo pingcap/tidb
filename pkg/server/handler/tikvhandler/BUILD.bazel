@@ -16,6 +16,14 @@ go_library(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+<<<<<<< HEAD
+=======
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/schstatus",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/importinto/jobhistory",
+>>>>>>> 5766c79bbff (dxf/importinto: add import-into history job info API (#66813))
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
