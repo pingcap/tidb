@@ -478,6 +478,12 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+
+	// version255
+	// Deduplicate mysql.tidb_runaway_queries, add update_time column, and add a composite clustered
+	// primary key (resource_group_name, sql_digest, plan_digest, match_type) to eliminate cross-window
+	// duplicate rows and the implicit _tidb_rowid write hotspot.
+	version255 = 255
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -491,7 +497,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version254
+var currentBootstrapVersion int64 = version255
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -670,6 +676,7 @@ var (
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
+		{version: version255, fn: upgradeToVer255},
 	}
 )
 
@@ -2048,4 +2055,23 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer255(s sessionapi.Session, _ int64) {
+	// Step 1: add update_time column to track last activity time (used by GC).
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP", infoschema.ErrColumnExists)
+	// Step 2: remove duplicate rows, keeping the one with the latest start_time per
+	// (resource_group_name, sql_digest, plan_digest, match_type). Safe to re-run:
+	// once deduplicated the self-join produces no further matches.
+	mustExecute(s, "DELETE t1 FROM mysql.tidb_runaway_queries t1 "+
+		"INNER JOIN mysql.tidb_runaway_queries t2 "+
+		"ON  t1.resource_group_name = t2.resource_group_name "+
+		"AND t1.sql_digest           = t2.sql_digest "+
+		"AND t1.plan_digest          = t2.plan_digest "+
+		"AND t1.match_type           = t2.match_type "+
+		"AND t1.start_time           < t2.start_time")
+	// Step 3: add composite clustered primary key for cluster-wide dedup.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD PRIMARY KEY (resource_group_name, sql_digest, plan_digest, match_type) CLUSTERED", infoschema.ErrMultiplePriKey)
+	// Step 4: add index on update_time for efficient GC scans.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX update_time_index(update_time) COMMENT 'accelerate the speed when GC expired records'", dbterror.ErrDupKeyName)
 }

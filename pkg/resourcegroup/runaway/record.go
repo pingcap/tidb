@@ -46,16 +46,21 @@ var NullTime time.Time
 type Record struct {
 	ResourceGroupName string
 	StartTime         time.Time
-	Match             string
-	Action            string
-	SampleText        string
-	SQLDigest         string
-	PlanDigest        string
-	Source            string
-	ExceedCause       string
-	// Repeats is used to avoid inserting the same record multiple times.
-	// It records the number of times after flushing the record(10s) to the table or len(map) exceeds the threshold(1024).
-	// We only consider `resource_group_name`, `sql_digest`, `plan_digest` and `match_type` when comparing records.
+	// UpdateTime is the time of the latest occurrence within the current flush batch.
+	// It is written to the table and used by GC (instead of start_time).
+	// On INSERT ... ON DUPLICATE KEY UPDATE it advances the stored update_time so GC
+	// does not expire an actively-runaway query pattern prematurely.
+	UpdateTime time.Time
+	Match      string
+	Action     string
+	SampleText string
+	SQLDigest  string
+	PlanDigest string
+	Source     string
+	ExceedCause string
+	// Repeats counts occurrences aggregated in the current flush batch.
+	// The table accumulates these across all batches and TiDB instances via
+	// ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats).
 	// default value is 1.
 	Repeats int
 }
@@ -69,20 +74,25 @@ type recordKey struct {
 }
 
 // genRunawayQueriesStmt generates statement with given RunawayRecords.
+// The primary key is (resource_group_name, sql_digest, plan_digest, match_type).
+// On duplicate the statement accumulates repeats and advances update_time;
+// start_time and sample_sql are intentionally left unchanged (first-seen semantics).
 func genRunawayQueriesStmt(recordMap map[recordKey]*Record) (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, len(recordMap)*10)
+	params := make([]any, 0, len(recordMap)*11)
 	builder.WriteString("INSERT INTO mysql.tidb_runaway_queries " +
-		"(resource_group_name, start_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats) VALUES ")
+		"(resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats) VALUES ")
 	firstRecord := true
 	for _, r := range recordMap {
 		if !firstRecord {
 			builder.WriteByte(',')
 		}
 		firstRecord = false
-		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
-		params = append(params, r.ResourceGroupName, r.StartTime, r.Match, r.Action, r.SampleText, r.SQLDigest, r.PlanDigest, r.Source, r.ExceedCause, r.Repeats)
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName, r.StartTime, r.UpdateTime,
+			r.Match, r.Action, r.SampleText, r.SQLDigest, r.PlanDigest, r.Source, r.ExceedCause, r.Repeats)
 	}
+	builder.WriteString(" ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = VALUES(update_time)")
 	return builder.String(), params
 }
 
@@ -244,7 +254,7 @@ func genBatchDeleteWatchByIDStmt(records map[int64]*QuarantineRecord) (string, [
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
-		colName   = "start_time"
+		colName   = "update_time"
 	)
 	var systemSchemaCIStr = ast.NewCIStr("mysql")
 
