@@ -953,12 +953,12 @@ type ruleTableEntry int
 // is valid for the given pair of join types.
 // Rows = join type of e1 (left/child edge), Columns = join type of e2 (right/parent edge).
 var assocRuleTable = [][]ruleTableEntry{
-	//              INNER  LEFT   RIGHT  SEMI   ANTI
-	/* INNER  */ {  1,     1,     0,     1,     1    },
-	/* LEFT   */ {  0,     1,     0,     0,     0    }, // assoc(LEFT,LEFT)=1: see NOTE above.
-	/* RIGHT  */ {  1,     1,     1,     0,     0    }, // assoc(RIGHT,RIGHT)=1: see NOTE above.
-	/* SEMI   */ {  0,     0,     0,     0,     0    },
-	/* ANTI   */ {  0,     0,     0,     0,     0    },
+	//           INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {1, 1, 0, 1, 1},
+	/* LEFT   */ {0, 1, 0, 0, 0}, // assoc(LEFT,LEFT)=1: see NOTE above.
+	/* RIGHT  */ {1, 1, 1, 0, 0}, // assoc(RIGHT,RIGHT)=1: see NOTE above.
+	/* SEMI   */ {0, 0, 0, 0, 0},
+	/* ANTI   */ {0, 0, 0, 0, 0},
 }
 
 // leftAsscomRuleTable[e1][e2] indicates whether the left-asscom transformation
@@ -967,12 +967,12 @@ var assocRuleTable = [][]ruleTableEntry{
 //
 // is valid. Here e1 is the child edge (in leftEdges) and e2 is the parent edge.
 var leftAsscomRuleTable = [][]ruleTableEntry{
-	//              INNER  LEFT   RIGHT  SEMI   ANTI
-	/* INNER  */ {  1,     1,     0,     1,     1    },
-	/* LEFT   */ {  1,     1,     0,     1,     1    },
-	/* RIGHT  */ {  0,     0,     0,     0,     0    },
-	/* SEMI   */ {  1,     1,     1,     1,     1    },
-	/* ANTI   */ {  1,     1,     1,     1,     1    },
+	//           INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {1, 1, 0, 1, 1},
+	/* LEFT   */ {1, 1, 0, 1, 1},
+	/* RIGHT  */ {0, 0, 0, 0, 0},
+	/* SEMI   */ {1, 1, 1, 1, 1},
+	/* ANTI   */ {1, 1, 1, 1, 1},
 }
 
 // rightAsscomRuleTable[e1][e2] indicates whether the right-asscom transformation
@@ -981,10 +981,10 @@ var leftAsscomRuleTable = [][]ruleTableEntry{
 //
 // is valid. Here e1 is the parent edge and e2 is the child edge (in rightEdges).
 var rightAsscomRuleTable = [][]ruleTableEntry{
-	//              INNER  LEFT   RIGHT  SEMI   ANTI
-	/* INNER  */ {  1,     0,     1,     0,     0    },
-	/* LEFT   */ {  0,     0,     0,     0,     0    },
-	/* RIGHT  */ {  0,     1,     1,     0,     0    },
-	/* SEMI   */ {  0,     0,     0,     0,     0    },
-	/* ANTI   */ {  0,     0,     0,     0,     0    },
+	//           INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {1, 0, 1, 0, 0},
+	/* LEFT   */ {0, 0, 0, 0, 0},
+	/* RIGHT  */ {0, 1, 1, 0, 0},
+	/* SEMI   */ {0, 0, 0, 0, 0},
+	/* ANTI   */ {0, 0, 0, 0, 0},
 }
