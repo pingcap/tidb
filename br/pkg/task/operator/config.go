@@ -19,6 +19,9 @@ const (
 	flagRestoredTS        = "restored-ts"
 	flagUpstreamClusterID = "upstream-cluster-id"
 	flagStorePatterns     = "stores"
+	flagTaskName          = "task-name"
+	flagUpstreamStorage   = "upstream-storage"
+	flagDownstreamStorage = "downstream-storage"
 	flagTTL               = "ttl"
 	flagSafePoint         = "safepoint"
 	flagStorage           = "storage"
@@ -218,6 +221,51 @@ func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	}
 
 	return cfg.Config.ParseFromFlags(flags)
+}
+
+type CRRCheckpointConfig struct {
+	task.Config
+
+	TaskName          string
+	UpstreamStorage   string
+	DownstreamStorage string
+}
+
+func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
+	flags.String(flagTaskName, "", "The name of the upstream log backup task.")
+	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI.")
+}
+
+func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := cfg.Config.ParseFromFlags(flags); err != nil {
+		return err
+	}
+
+	var err error
+	cfg.TaskName, err = flags.GetString(flagTaskName)
+	if err != nil {
+		return err
+	}
+	cfg.UpstreamStorage, err = flags.GetString(flagUpstreamStorage)
+	if err != nil {
+		return err
+	}
+	cfg.DownstreamStorage, err = flags.GetString(flagDownstreamStorage)
+	if err != nil {
+		return err
+	}
+
+	if cfg.TaskName == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagTaskName)
+	}
+	if cfg.UpstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
+	}
+	if cfg.DownstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagDownstreamStorage)
+	}
+	return nil
 }
 
 type ChecksumWithRewriteRulesConfig struct {

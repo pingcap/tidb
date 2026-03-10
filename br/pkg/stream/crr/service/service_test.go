@@ -39,12 +39,12 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	require.NoError(t, err)
 
 	svc, err := New(
-		checkpoint.CalculatorDeps{
+		Deps{
 			PD:         h.PDSim,
 			Upstream:   h.Upstream,
 			Downstream: h.Downstream,
 		},
-		checkpoint.CheckpointCalculatorConfig{
+		CalculatorConfig{
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},
@@ -95,12 +95,12 @@ func TestServiceTracksFailures(t *testing.T) {
 	require.NoError(t, err)
 
 	svc, err := New(
-		checkpoint.CalculatorDeps{
+		Deps{
 			PD:         h.PDSim,
 			Upstream:   h.Upstream,
 			Downstream: failingDownstreamChecker{},
 		},
-		checkpoint.CheckpointCalculatorConfig{
+		CalculatorConfig{
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},

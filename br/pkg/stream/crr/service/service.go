@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 const defaultRetryInterval = time.Second
@@ -27,6 +29,27 @@ const defaultRetryInterval = time.Second
 // Config controls the outer worker loop around checkpoint calculation.
 type Config struct {
 	RetryInterval time.Duration
+}
+
+// Deps are the external dependencies needed to build the CRR checkpoint calculator.
+type Deps struct {
+	PD interface {
+		GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
+		Stores(ctx context.Context) ([]streamhelper.Store, error)
+	}
+	Upstream interface {
+		storeapi.Storage
+	}
+	Downstream interface {
+		FileExists(ctx context.Context, name string) (bool, error)
+	}
+}
+
+// CalculatorConfig controls the inner checkpoint calculator behavior.
+type CalculatorConfig struct {
+	TaskName            string
+	PollInterval        time.Duration
+	MetaReadConcurrency int
 }
 
 // Service wraps the CRR checkpoint calculator with status tracking and HTTP exposure.
@@ -40,8 +63,8 @@ type Service struct {
 
 // New creates a CRR service with an attached calculator observer.
 func New(
-	deps checkpoint.CalculatorDeps,
-	calcCfg checkpoint.CheckpointCalculatorConfig,
+	deps Deps,
+	calcCfg CalculatorConfig,
 	cfg Config,
 ) (*Service, error) {
 	if cfg.RetryInterval <= 0 {
@@ -50,7 +73,19 @@ func New(
 
 	status := newStatusStore(calcCfg.TaskName)
 	observer := newStatusObserver(status)
-	calc, err := checkpoint.NewCalculator(deps, calcCfg, observer)
+	calc, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:         deps.PD,
+			Upstream:   deps.Upstream,
+			Downstream: deps.Downstream,
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:            calcCfg.TaskName,
+			PollInterval:        calcCfg.PollInterval,
+			MetaReadConcurrency: calcCfg.MetaReadConcurrency,
+		},
+		observer,
+	)
 	if err != nil {
 		return nil, err
 	}

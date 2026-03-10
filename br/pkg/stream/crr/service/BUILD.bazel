@@ -11,6 +11,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/stream/crr/internal/checkpoint",
+        "//br/pkg/streamhelper",
+        "//pkg/objstore/storeapi",
     ],
 )
 
