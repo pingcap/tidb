@@ -26,14 +26,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	ctx := context.Background()
-	boundaries, err := testutil.NewRegionLayoutBuilder().
-		AddRoundRobinRegions(1, 1).
-		Build()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
 	require.NoError(t, err)
 
 	tc := testutil.NewTestContext(t)
@@ -89,9 +90,9 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	ctx := context.Background()
 	stores := testutil.StoreIDRange(1, 4)
-	boundaries, err := testutil.NewRegionLayoutBuilder().
-		AddRoundRobinRegions(8, stores...).
-		Build()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(8, stores...),
+	)
 	require.NoError(t, err)
 
 	tc := testutil.NewTestContext(t)
@@ -107,12 +108,11 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	_, err = h.Replicate(ctx, 0)
 	require.NoError(t, err)
 
-	script := h.NewSyncScript("github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint")
 	var started atomic.Int32
 	firstTwoStarted := make(chan struct{})
 	releaseFirstTwo := make(chan struct{})
 	var closeStarted sync.Once
-	script.On("before-read-meta", func(ctx testutil.InjectContext, _ string) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint/before-read-meta", func(_ string) {
 		current := started.Add(1)
 		if current == 2 {
 			closeStarted.Do(func() { close(firstTwoStarted) })
@@ -165,9 +165,9 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 
 func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 	ctx := context.Background()
-	boundaries, err := testutil.NewRegionLayoutBuilder().
-		AddRoundRobinRegions(1, 1).
-		Build()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
 	require.NoError(t, err)
 
 	tc := testutil.NewTestContext(t)

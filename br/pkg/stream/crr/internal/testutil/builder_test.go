@@ -27,9 +27,9 @@ func TestStoreIDRange(t *testing.T) {
 
 func TestAddRoundRobinRegions(t *testing.T) {
 	stores := StoreIDRange(1, 3)
-	boundaries, err := NewRegionLayoutBuilder().
-		AddRoundRobinRegions(5, stores...).
-		Build()
+	boundaries, err := BuildRegionLayout(
+		AddRoundRobinRegions(5, stores...),
+	)
 	require.NoError(t, err)
 	require.Len(t, boundaries, 5)
 
@@ -43,9 +43,9 @@ func TestAddRoundRobinRegions(t *testing.T) {
 }
 
 func TestAddRegionsBySplitKeys(t *testing.T) {
-	boundaries, err := NewRegionLayoutBuilder().
-		AddRegionsBySplitKeys([]string{"a", "d"}, 10, 11).
-		Build()
+	boundaries, err := BuildRegionLayout(
+		AddRegionsBySplitKeys([]string{"a", "d"}, 10, 11),
+	)
 	require.NoError(t, err)
 	require.Len(t, boundaries, 3)
 

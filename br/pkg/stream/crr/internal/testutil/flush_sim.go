@@ -20,6 +20,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
@@ -167,6 +168,8 @@ func (f *FlushSim) flushRegions(
 
 // FlushStore simulates one store flush and emits one metadata file with all regions on that store.
 func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord, error) {
+	failpoint.InjectCall("begin-flush-store")
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -189,14 +192,17 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 		return FlushRecord{}, err
 	}
 
+	failpoint.InjectCall("before-write-flush-meta")
 	metaPath, err := f.writeBackupMeta(ctx, storeID, flushSeq, flushTS, files)
 	if err != nil {
 		return FlushRecord{}, err
 	}
+	failpoint.InjectCall("after-write-flush-meta")
 
 	if err := f.flushRegions(ctx, storeID, flushTS); err != nil {
 		return FlushRecord{}, err
 	}
+	failpoint.InjectCall("after-flush-regions")
 
 	record := FlushRecord{
 		Sequence:     flushSeq,

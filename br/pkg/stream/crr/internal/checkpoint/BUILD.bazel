@@ -34,6 +34,8 @@ go_test(
         ":checkpoint",
         "//br/pkg/stream",
         "//br/pkg/stream/crr/internal/testutil",
+        "//br/pkg/stream/crr/internal/testutil/syncpoint",
+        "//br/pkg/streamhelper/config",
         "//pkg/objstore/storeapi",
         "@com_github_stretchr_testify//require",
     ],

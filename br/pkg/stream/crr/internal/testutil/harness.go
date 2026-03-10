@@ -106,10 +106,6 @@ func newLocalTestHarness(
 	return h, nil
 }
 
-func (h *TestHarness) NewSyncScript(basePath string) *SyncScript {
-	return NewSyncScriptWithTestContext(h.tc, basePath)
-}
-
 // Tick drives one deterministic advancer state transition.
 func (h *TestHarness) Tick(ctx context.Context) (uint64, error) {
 	if err := h.Advancer.OnTick(ctx); err != nil {

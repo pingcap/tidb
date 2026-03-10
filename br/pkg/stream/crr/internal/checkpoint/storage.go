@@ -23,6 +23,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -73,6 +74,7 @@ func (c *Calculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFil
 	}
 
 	return func(yield func(parsedMetaFile, error) bool) {
+		failpoint.InjectCall("before-list-meta")
 		for entry, err := range walkDirSeq(ctx, c.deps.Upstream, walkOpt) {
 			if err != nil {
 				var zero parsedMetaFile
