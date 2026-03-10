@@ -76,7 +76,7 @@ func TestGetFromHistory(t *testing.T) {
 
 	info, err := jobhistory.GetFromHistory(ctx, tm, keyspace, jobID)
 	require.NoError(t, err)
-	require.Equal(t, jobID, info.ImportID)
+	require.Equal(t, jobID, info.JobID)
 	require.Equal(t, keyspace, info.Keyspace)
 	require.Equal(t, taskID, info.TaskID)
 	require.Equal(t, string(proto.TaskStatePending), info.State)

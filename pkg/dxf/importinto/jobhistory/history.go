@@ -42,7 +42,7 @@ type Duration struct {
 
 // Info contains detailed information for one IMPORT INTO history job.
 type Info struct {
-	ImportID               int64    `json:"import_id"`
+	JobID                  int64    `json:"job_id"`
 	Keyspace               string   `json:"keyspace"`
 	TaskID                 int64    `json:"task_id"`
 	State                  string   `json:"state"`
@@ -85,27 +85,10 @@ func GetFromHistory(
 			cast(json_length(json_extract(cast(cast(t.meta as char) as json), '$.Plan.DesiredTableInfo.index_info')) as signed) as index_count,
 			cast(json_length(json_extract(cast(cast(t.meta as char) as json), '$.Plan.DesiredTableInfo.cols')) as signed) as column_count,
 			cast(json_extract(cast(cast(t.meta as char) as json), '$.Plan.TotalFileSize') as signed) as file_size_bytes,
-			(
-				select cast(sum(cast(json_extract(summary, '$.bytes') as signed)) as signed)
-				from mysql.tidb_background_subtask_history
-				where task_key = t.id and step = %?
-					and json_extract(cast(meta as char), '$."kv-group"') = 'data'
-			) as data_kv_size_bytes,
-			(
-				select cast(sum(cast(json_extract(summary, '$.bytes') as signed)) as signed)
-				from mysql.tidb_background_subtask_history
-				where task_key = t.id and step = %?
-					and json_extract(cast(meta as char), '$."kv-group"') != 'data'
-			) as index_kv_size_bytes,
-			(
-				select TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time)))
-				from mysql.tidb_background_subtask_history
-				where task_key = t.id and start_time > 0 and state_update_time > 0
-			) as total_duration_seconds,
 			cast(json_extract(cast(cast(t.meta as char) as json), '$.Summary."row-count"') as signed) as row_count
 		from mysql.tidb_global_task_history t
 		where t.task_key = %? and t.type = %?`,
-		proto.ImportStepWriteAndIngest, proto.ImportStepWriteAndIngest, taskKey, proto.ImportInto)
+		taskKey, proto.ImportInto)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +98,7 @@ func GetFromHistory(
 
 	row := rows[0]
 	info := &Info{
-		ImportID:     jobID,
+		JobID:        jobID,
 		Keyspace:     keyspace,
 		TaskID:       row.GetInt64(0),
 		State:        row.GetString(1),
@@ -138,42 +121,93 @@ func GetFromHistory(
 		info.FileSize = formatBytes(totalFileBytes)
 	}
 	if !row.IsNull(8) {
-		info.DataKVSize = formatBytes(row.GetInt64(8))
-	}
-	if !row.IsNull(9) {
-		info.IndexKVSize = formatBytes(row.GetInt64(9))
-	}
-
-	var totalDurationSeconds int64
-	if !row.IsNull(10) {
-		totalDurationSeconds = row.GetInt64(10)
-		info.Duration.Total = formatDuration(totalDurationSeconds)
-	}
-	info.PerCoreSpeed = formatBytesPerCoreHour(totalFileBytes, totalDurationSeconds, info.MaxNodeCount, info.Concurrency)
-	info.OverallSpeed = formatBytesPerHour(totalFileBytes, totalDurationSeconds)
-
-	if !row.IsNull(11) {
-		info.RowCount = row.GetInt64(11)
+		info.RowCount = row.GetInt64(8)
 	}
 	if info.RowCount > 0 {
 		info.RowLength = int64(math.Round(float64(totalFileBytes) / float64(info.RowCount)))
 	}
 
 	stepRows, err := mgr.ExecuteSQLWithNewSession(ctx, `
-		select step, TIMESTAMPDIFF(second, FROM_UNIXTIME(min(start_time)), FROM_UNIXTIME(max(state_update_time))) as duration_seconds
+		select
+			step,
+			json_unquote(json_extract(cast(meta as char), '$."kv-group"')) as kv_group,
+			cast(sum(cast(json_extract(summary, '$.bytes') as signed)) as signed) as bytes,
+			min(case when start_time > 0 then start_time else null end) as min_start_time,
+			max(case when state_update_time > 0 then state_update_time else null end) as max_state_update_time
 		from mysql.tidb_background_subtask_history
-		where task_key = %? and start_time > 0 and state_update_time > 0
-		group by step`,
+		where task_key = %?
+		group by step, kv_group`,
 		info.TaskID)
 	if err != nil {
 		return nil, err
 	}
+	var (
+		dataKVSizeBytes  int64
+		indexKVSizeBytes int64
+		hasDataKVSize    bool
+		hasIndexKVSize   bool
+		minStartTime     int64
+		maxUpdateTime    int64
+		hasTotalDuration bool
+	)
+	stepDurations := make(map[proto.Step][2]int64)
 	for _, stepRow := range stepRows {
-		if stepRow.IsNull(1) {
+		step := proto.Step(stepRow.GetInt64(0))
+		kvGroup := ""
+		if !stepRow.IsNull(1) {
+			kvGroup = stepRow.GetString(1)
+		}
+		if step == proto.ImportStepWriteAndIngest && !stepRow.IsNull(2) {
+			if kvGroup == "data" {
+				dataKVSizeBytes += stepRow.GetInt64(2)
+				hasDataKVSize = true
+			} else {
+				indexKVSizeBytes += stepRow.GetInt64(2)
+				hasIndexKVSize = true
+			}
+		}
+
+		if stepRow.IsNull(3) || stepRow.IsNull(4) {
 			continue
 		}
-		duration := formatDuration(stepRow.GetInt64(1))
-		switch proto.Step(stepRow.GetInt64(0)) {
+		startTime := stepRow.GetInt64(3)
+		updateTime := stepRow.GetInt64(4)
+		if !hasTotalDuration {
+			minStartTime, maxUpdateTime = startTime, updateTime
+			hasTotalDuration = true
+		} else {
+			minStartTime = min(minStartTime, startTime)
+			maxUpdateTime = max(maxUpdateTime, updateTime)
+		}
+
+		existing, ok := stepDurations[step]
+		if !ok {
+			stepDurations[step] = [2]int64{startTime, updateTime}
+			continue
+		}
+		existing[0] = min(existing[0], startTime)
+		existing[1] = max(existing[1], updateTime)
+		stepDurations[step] = existing
+	}
+
+	if hasDataKVSize {
+		info.DataKVSize = formatBytes(dataKVSizeBytes)
+	}
+	if hasIndexKVSize {
+		info.IndexKVSize = formatBytes(indexKVSizeBytes)
+	}
+
+	var totalDurationSeconds int64
+	if hasTotalDuration {
+		totalDurationSeconds = max(maxUpdateTime-minStartTime, 0)
+		info.Duration.Total = formatDuration(totalDurationSeconds)
+	}
+	info.PerCoreSpeed = formatBytesPerCoreHour(totalFileBytes, totalDurationSeconds, info.MaxNodeCount, info.Concurrency)
+	info.OverallSpeed = formatBytesPerHour(totalFileBytes, totalDurationSeconds)
+
+	for step, bounds := range stepDurations {
+		duration := formatDuration(max(bounds[1]-bounds[0], 0))
+		switch step {
 		case proto.ImportStepEncodeAndSort:
 			info.Duration.Encode = duration
 		case proto.ImportStepMergeSort:

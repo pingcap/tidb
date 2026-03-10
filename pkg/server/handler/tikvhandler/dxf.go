@@ -16,6 +16,7 @@ package tikvhandler
 
 import (
 	"context"
+	goerrors "errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -95,16 +96,16 @@ func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, summary)
 }
 
-// DXFImportIntoJobInfoHandler handles getting IMPORT INTO history job details.
-type DXFImportIntoJobInfoHandler struct{}
+// DXFImportIntoHistoryJobInfoHandler handles getting IMPORT INTO history job details.
+type DXFImportIntoHistoryJobInfoHandler struct{}
 
-// NewDXFImportIntoJobInfoHandler creates a new DXFImportIntoJobInfoHandler.
-func NewDXFImportIntoJobInfoHandler() *DXFImportIntoJobInfoHandler {
-	return &DXFImportIntoJobInfoHandler{}
+// NewDXFImportIntoHistoryJobInfoHandler creates a new DXFImportIntoHistoryJobInfoHandler.
+func NewDXFImportIntoHistoryJobInfoHandler() *DXFImportIntoHistoryJobInfoHandler {
+	return &DXFImportIntoHistoryJobInfoHandler{}
 }
 
 // ServeHTTP implements http.Handler interface.
-func (*DXFImportIntoJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (*DXFImportIntoHistoryJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		handler.WriteError(w, errors.Errorf("This api only support GET method"))
 		return
@@ -115,9 +116,9 @@ func (*DXFImportIntoJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		handler.WriteError(w, errors.Errorf("invalid or empty target keyspace %s", targetKeyspace))
 		return
 	}
-	jobID, err := strconv.ParseInt(params["jobID"], 10, 64)
+	jobID, err := strconv.ParseInt(params["job_id"], 10, 64)
 	if err != nil || jobID <= 0 {
-		handler.WriteError(w, errors.Errorf("invalid job id %s", params["jobID"]))
+		handler.WriteError(w, errors.Errorf("invalid job id %s", params["job_id"]))
 		return
 	}
 
@@ -131,6 +132,10 @@ func (*DXFImportIntoJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	info, err := jobhistory.GetFromHistory(ctx, taskMgr, targetKeyspace, jobID)
 	if err != nil {
+		if goerrors.Is(err, storage.ErrTaskNotFound) {
+			handler.WriteErrorWithCode(w, http.StatusNotFound, err)
+			return
+		}
 		handler.WriteError(w, err)
 		return
 	}
