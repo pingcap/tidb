@@ -975,7 +975,7 @@ var leftAsscomRuleTable = [][]ruleTableEntry{
 // is valid. Here e1 is the parent edge and e2 is the child edge (in rightEdges).
 var rightAsscomRuleTable = [][]ruleTableEntry{
 	//              INNER  LEFT   RIGHT  SEMI   ANTI
-	/* INNER  */ {  1,     1,     1,     0,     0    },
+	/* INNER  */ {  1,     0,     1,     0,     0    },
 	/* LEFT   */ {  0,     0,     0,     0,     0    },
 	/* RIGHT  */ {  0,     1,     1,     0,     0    },
 	/* SEMI   */ {  0,     0,     0,     0,     0    },
