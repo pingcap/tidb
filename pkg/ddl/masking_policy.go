@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 )
 
 func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -584,15 +584,11 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 	if oldCol.L == newCol.L {
 		return expr, nil
 	}
-	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
+	exprNode, err := generatedexpr.ParseExpression(expr)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	selectStmt, ok := stmt.(*ast.SelectStmt)
-	if !ok || selectStmt.Fields == nil || len(selectStmt.Fields.Fields) != 1 {
-		return "", errors.New("invalid masking policy expression")
-	}
-	out, ok := selectStmt.Fields.Fields[0].Expr.Accept(&renameMaskingExprVisitor{oldCol: oldCol, newCol: newCol})
+	out, ok := exprNode.Accept(&renameMaskingExprVisitor{oldCol: oldCol, newCol: newCol})
 	if !ok {
 		return "", errors.New("failed to rewrite masking policy expression")
 	}
