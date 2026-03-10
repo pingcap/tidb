@@ -457,7 +457,9 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 		return errors.Trace(err)
 	}
 	// Reset table mode earlier than scheduler cleanup. Cleanup routine remains a fallback.
-	sch.switchTableMode2NormalMode(ctx, taskMeta, logger)
+	if err := sch.switchTableMode2NormalMode(ctx, taskMeta, logger); err != nil {
+		return err
+	}
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
@@ -471,12 +473,12 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	return sch.finishJob(ctx, logger, task, taskMeta)
 }
 
-func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *TaskMeta, logger *zap.Logger) {
+func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *TaskMeta, logger *zap.Logger) error {
 	if !kerneltype.IsClassic() {
-		return
+		return nil
 	}
 	if taskMeta == nil || taskMeta.Plan.DBID == 0 || taskMeta.Plan.TableInfo == nil || taskMeta.Plan.TableInfo.ID == 0 {
-		return
+		return nil
 	}
 	err := sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se,
@@ -490,14 +492,16 @@ func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, task
 				"table not found during import on-done, skip altering table mode",
 				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
 			)
-			return
+			return nil
 		}
 		logger.Warn(
 			"alter table mode to normal failure",
 			zap.Error(err),
 			zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
 		)
+		return errors.Trace(err)
 	}
+	return nil
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
