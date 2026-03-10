@@ -862,6 +862,18 @@ func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	return pdAddrs, errors.Annotatef(err, "sql: %s", query)
 }
 
+// GetKeyspaceMeta gets keyspace name/id from TiDB.
+// It returns empty strings for a classical cluster.
+func GetKeyspaceMeta(tctx *tcontext.Context, db *sql.DB) (keyspaceName string, keyspaceID string, err error) {
+	const query = "SELECT KEYSPACE_NAME, KEYSPACE_ID FROM information_schema.KEYSPACE_META;"
+	row := db.QueryRowContext(tctx, query)
+	var name, id sql.NullString
+	if err := row.Scan(&name, &id); err != nil {
+		return "", "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return name.String, id.String, nil
+}
+
 // GetTiDBDDLIDs gets DDL IDs from TiDB
 func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	const query = "SELECT * FROM information_schema.tidb_servers_info;"

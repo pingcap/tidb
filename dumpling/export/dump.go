@@ -64,6 +64,8 @@ type Dumper struct {
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
+	tidbKeyspaceName              string
+	tidbKeyspaceID                uint32
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
@@ -132,6 +134,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		resolveAutoConsistency,
 
 		validateResolveAutoConsistency,
+		tidbResolveKeyspaceMetaForGC,
 		tidbSetPDClientForGC,
 		tidbGetSnapshot,
 		tidbStartGCSavepointUpdateService,
@@ -1445,31 +1448,134 @@ func validateResolveAutoConsistency(d *Dumper) error {
 	return nil
 }
 
+// tidbResolveKeyspaceMetaForGC is an initialization step of Dumper.
+//
+// For a premium (keyspace) cluster, cloud control will pass `--pd` and `--keyspace-name`.
+// Dumpling validates `--keyspace-name` against information_schema.KEYSPACE_META and uses
+// the keyspace ID for keyspace-level GC barrier.
+//
+// If both keyspace names are empty, it is treated as a classical cluster and `--pd`/`--keyspace-name`
+// must not be specified.
+func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
+	tctx, conf, db := d.tctx, d.conf, d.dbHandle
+	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
+		if conf.PDAddr != "" || conf.KeyspaceName != "" {
+			return errors.New("--pd/--keyspace-name only support TiDB keyspace clusters")
+		}
+		return nil
+	}
+
+	keyspaceName, keyspaceID, err := GetKeyspaceMeta(tctx, db)
+	if err != nil {
+		// If the user explicitly passes premium GC parameters, do not ignore this error.
+		if conf.PDAddr != "" || conf.KeyspaceName != "" {
+			return err
+		}
+
+		// Be compatible with older TiDB versions which may not have KEYSPACE_META.
+		if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == 1146 {
+			tctx.L().Info("KEYSPACE_META is not available, treat as classical cluster", log.ShortError(err))
+			return nil
+		}
+		tctx.L().Info("meet some problem while fetching keyspace meta. This won't affect dump process", log.ShortError(err))
+		return nil
+	}
+	tctx.L().Info("resolved keyspace meta",
+		zap.String("keyspace-name", keyspaceName),
+		zap.String("keyspace-id", keyspaceID))
+
+	// Compare keyspace name between CLI and KEYSPACE_META.
+	if conf.KeyspaceName != keyspaceName {
+		return errors.Errorf("keyspace-name mismatch: --keyspace-name=%q, KEYSPACE_META=%q", conf.KeyspaceName, keyspaceName)
+	}
+
+	// Classical cluster: both keyspace names are empty.
+	if keyspaceName == "" {
+		if conf.PDAddr != "" {
+			return errors.New("classical cluster must not specify --pd/--keyspace-name")
+		}
+		return nil
+	}
+
+	// Premium cluster.
+	if conf.PDAddr == "" {
+		return errors.New("premium keyspace cluster requires --pd")
+	}
+	if keyspaceID == "" {
+		return errors.Errorf("empty keyspace id from KEYSPACE_META for keyspace %q", keyspaceName)
+	}
+	parsedID, err := strconv.ParseUint(keyspaceID, 10, 32)
+	if err != nil {
+		return errors.Annotatef(err, "invalid keyspace id %q from KEYSPACE_META", keyspaceID)
+	}
+	d.tidbKeyspaceName = keyspaceName
+	d.tidbKeyspaceID = uint32(parsedID)
+	return nil
+}
+
 // tidbSetPDClientForGC is an initialization step of Dumper.
 func tidbSetPDClientForGC(d *Dumper) error {
-	tctx, si, pool := d.tctx, d.conf.ServerInfo, d.dbHandle
+	tctx, conf, si, pool := d.tctx, d.conf, d.conf.ServerInfo, d.dbHandle
 	if si.ServerType != version.ServerTypeTiDB ||
 		si.ServerVersion == nil ||
 		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
 		return nil
 	}
+
+	// Premium cluster: PD endpoints are passed from cloud control.
+	if d.tidbKeyspaceName != "" {
+		pdAddrs := strings.Split(conf.PDAddr, ",")
+		pdAddrs = slices.DeleteFunc(pdAddrs, func(s string) bool { return strings.TrimSpace(s) == "" })
+		for i := range pdAddrs {
+			pdAddrs[i] = strings.TrimSpace(pdAddrs[i])
+		}
+		if len(pdAddrs) == 0 {
+			return errors.New("invalid --pd: empty PD endpoints")
+		}
+
+		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)
+		pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{
+			CAPath:   conf.Security.CAPath,
+			CertPath: conf.Security.CertPath,
+			KeyPath:  conf.Security.KeyPath,
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		d.tidbPDClientForGC = pdClient
+		return nil
+	}
+
+	// Classical cluster: discover PD endpoints from TiDB.
 	pdAddrs, err := GetPdAddrs(tctx, pool)
 	if err != nil {
 		tctx.L().Info("meet some problem while fetching pd addrs. This won't affect dump process", log.ShortError(err))
 		return nil
 	}
-	if len(pdAddrs) > 0 {
-		doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
-		if err != nil {
-			tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
-		} else if doPdGC {
-			pdClient, err := pd.NewClientWithContext(tctx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{})
-			if err != nil {
-				tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
-			}
-			d.tidbPDClientForGC = pdClient
-		}
+	if len(pdAddrs) == 0 {
+		return nil
 	}
+
+	doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
+	if err != nil {
+		tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
+		return nil
+	}
+	if !doPdGC {
+		return nil
+	}
+
+	apiCtx := pd.NewAPIContextV1()
+	pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{
+		CAPath:   conf.Security.CAPath,
+		CertPath: conf.Security.CertPath,
+		KeyPath:  conf.Security.KeyPath,
+	})
+	if err != nil {
+		tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
+		return nil
+	}
+	d.tidbPDClientForGC = pdClient
 	return nil
 }
 
@@ -1513,7 +1619,11 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 		if err != nil {
 			return err
 		}
-		go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
+		if d.tidbKeyspaceName != "" {
+			go updateKeyspaceGCBarrier(tctx, d.tidbPDClientForGC, d.tidbKeyspaceID, defaultDumpGCSafePointTTL, snapshotTS)
+		} else {
+			go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
+		}
 	} else if si.ServerType == version.ServerTypeTiDB {
 		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
 			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
@@ -1526,19 +1636,90 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
 	updateInterval := time.Duration(ttl/2) * time.Second
 	tick := time.NewTicker(updateInterval)
+	defer tick.Stop()
 	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
 	tctx.L().Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
+	defer func() {
+		// best-effort cleanup (TTL will also expire soon even if this fails)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, 0, 0)
+		if err != nil {
+			tctx.L().Debug("remove dumpling gc safePoint failed", log.ShortError(err), zap.String("id", dumplingServiceSafePointID))
+		}
+	}()
+
+	// Protect `snapshotTS` by keeping GC safe point below it.
+	safePointTS := snapshotTS
+	if safePointTS > 0 {
+		safePointTS--
+	}
 
 	for {
 		tctx.L().Debug("update PD safePoint limit with ttl",
-			zap.Uint64("safePoint", snapshotTS),
+			zap.Uint64("safePoint", safePointTS),
 			zap.Int64("ttl", ttl))
 		for retryCnt := range 11 {
-			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
+			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, safePointTS)
 			if err == nil {
 				break
 			}
 			tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
+			select {
+			case <-tctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+		select {
+		case <-tctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func updateKeyspaceGCBarrier(tctx *tcontext.Context, pdClient pd.Client, keyspaceID uint32, ttl int64, snapshotTS uint64) {
+	updateInterval := time.Duration(ttl/2) * time.Second
+	tick := time.NewTicker(updateInterval)
+	defer tick.Stop()
+	barrierID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
+	tctx.L().Info("generate dumpling gc barrier id", zap.String("id", barrierID), zap.Uint32("keyspaceID", keyspaceID))
+
+	gcClient := pdClient.GetGCStatesClient(keyspaceID)
+	ttlDuration := time.Duration(ttl) * time.Second
+
+	// Protect `snapshotTS` by keeping txn safe point below it.
+	barrierTS := snapshotTS
+	if barrierTS > 0 {
+		barrierTS--
+	}
+
+	defer func() {
+		// best-effort cleanup (TTL will also expire soon even if this fails)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err := gcClient.DeleteGCBarrier(ctx, barrierID)
+		if err != nil {
+			tctx.L().Debug("remove dumpling gc barrier failed", log.ShortError(err),
+				zap.String("id", barrierID),
+				zap.Uint32("keyspaceID", keyspaceID))
+		}
+	}()
+
+	for {
+		tctx.L().Debug("set keyspace GC barrier with ttl",
+			zap.Uint32("keyspaceID", keyspaceID),
+			zap.Uint64("barrierTS", barrierTS),
+			zap.Duration("ttl", ttlDuration))
+		for retryCnt := range 11 {
+			_, err := gcClient.SetGCBarrier(tctx, barrierID, barrierTS, ttlDuration)
+			if err == nil {
+				break
+			}
+			tctx.L().Debug("set keyspace GC barrier failed", log.ShortError(err),
+				zap.Int("retryTime", retryCnt),
+				zap.Uint32("keyspaceID", keyspaceID))
 			select {
 			case <-tctx.Done():
 				return
