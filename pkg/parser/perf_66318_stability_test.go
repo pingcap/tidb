@@ -3,6 +3,7 @@ package parser
 import (
 	"bufio"
 	stdctx "context"
+	"math/rand"
 	"os"
 	"runtime"
 	"strconv"
@@ -13,9 +14,30 @@ import (
 	"time"
 )
 
-func perf66318StabilityCorpus() []string {
-	// Keep the corpus representative but bounded; we want steady-state behavior.
+const perf66318StabilityDefaultCorpusFile = "perf_66318_stability_corpus.txt"
+
+type perf66318StabilityCorpusInfo struct {
+	Source   string
+	Shuffled bool
+	Seed     int64
+}
+
+func perf66318BuiltinStabilityCorpus() []string {
+	// Fallback only. Prefer using perf66318StabilityDefaultCorpusFile (or PERF66318_CORPUS_FILE),
+	// which supports expressing weights via line count and keeps the corpus human-editable.
 	return []string{
+		"USE sbtest0",
+		"BEGIN",
+		"COMMIT",
+		"ROLLBACK",
+		"SET autocommit = 1",
+		"SET autocommit = 0",
+		"SET NAMES utf8mb4",
+		"SET time_zone = '+00:00'",
+		"SHOW VARIABLES LIKE 'tidb%'",
+		"SHOW STATUS LIKE 'Threads_running'",
+		"SELECT DATABASE()",
+		"SELECT @@autocommit",
 		"SELECT c FROM sbtest1 WHERE id=1",
 		"SELECT c FROM sbtest1 WHERE id=?",
 		"SELECT c FROM sbtest1 WHERE id=? FOR UPDATE",
@@ -23,10 +45,7 @@ func perf66318StabilityCorpus() []string {
 		"UPDATE sbtest1 SET c=? WHERE id=?",
 		"DELETE FROM sbtest1 WHERE id=?",
 		"INSERT INTO sbtest1(id,k,c,pad) VALUES(?,?,?,?)",
-		"SET autocommit = 1",
-		"SET NAMES utf8mb4",
-		"SHOW VARIABLES LIKE 'tidb%'",
-		"SHOW STATUS LIKE 'Threads_running'",
+		"USE sbtest0; SET autocommit = 1; SELECT c FROM sbtest1 WHERE id=?",
 		strings.TrimSpace(`
 SELECT t1.a, t2.b
 FROM t1
@@ -34,11 +53,7 @@ LEFT JOIN t2 ON t1.id = t2.id
 WHERE t1.a > 10 AND t2.b IS NOT NULL
 ORDER BY t2.b DESC
 LIMIT 100`),
-		strings.TrimSpace(`
-WITH cte AS (
-  SELECT id, v FROM t WHERE v > 10
-)
-SELECT * FROM cte WHERE id < 100`),
+		"WITH cte AS (SELECT id, v FROM t WHERE v > 10) SELECT * FROM cte WHERE id < 100",
 		strings.TrimSpace(`
 SELECT id,
        SUM(v) OVER (PARTITION BY id % 10 ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s
@@ -77,6 +92,111 @@ func parseEnvInt(t *testing.T, key string, def int) int {
 	return n
 }
 
+func parseEnvInt64(t *testing.T, key string, def int64) int64 {
+	t.Helper()
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		t.Fatalf("invalid %s=%q: %v", key, v, err)
+	}
+	return n
+}
+
+func parseEnvBool(t *testing.T, key string, def bool) bool {
+	t.Helper()
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return def
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "t", "yes", "y":
+		return true
+	case "0", "false", "f", "no", "n":
+		return false
+	default:
+		t.Fatalf("invalid %s=%q: expected bool (0/1/true/false)", key, v)
+		return def
+	}
+}
+
+func perf66318LoadStabilityCorpusFile(t *testing.T, path string) []string {
+	t.Helper()
+	path = strings.TrimSpace(path)
+	if path == "" {
+		t.Fatal("empty PERF66318_CORPUS_FILE")
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open PERF66318_CORPUS_FILE=%q: %v", path, err)
+	}
+	defer f.Close()
+
+	// Allow long SQL lines while keeping Scan() simple.
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024), 4*1024*1024)
+
+	var corpus []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		corpus = append(corpus, line)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read PERF66318_CORPUS_FILE=%q: %v", path, err)
+	}
+	return corpus
+}
+
+func perf66318FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func perf66318StabilityCorpus(t *testing.T) ([]string, perf66318StabilityCorpusInfo) {
+	t.Helper()
+
+	seed := parseEnvInt64(t, "PERF66318_SEED", 1)
+	shuffle := parseEnvBool(t, "PERF66318_SHUFFLE", true)
+
+	corpusFile := strings.TrimSpace(os.Getenv("PERF66318_CORPUS_FILE"))
+	var source string
+	var corpus []string
+	switch {
+	case corpusFile != "":
+		corpus = perf66318LoadStabilityCorpusFile(t, corpusFile)
+		source = "PERF66318_CORPUS_FILE=" + corpusFile
+	case perf66318FileExists(perf66318StabilityDefaultCorpusFile):
+		corpus = perf66318LoadStabilityCorpusFile(t, perf66318StabilityDefaultCorpusFile)
+		source = "default file=" + perf66318StabilityDefaultCorpusFile
+	default:
+		corpus = perf66318BuiltinStabilityCorpus()
+		source = "builtin"
+	}
+
+	if len(corpus) == 0 {
+		t.Fatalf("empty corpus (source=%s)", source)
+	}
+
+	if shuffle && len(corpus) > 1 {
+		r := rand.New(rand.NewSource(seed))
+		r.Shuffle(len(corpus), func(i, j int) {
+			corpus[i], corpus[j] = corpus[j], corpus[i]
+		})
+	}
+
+	return corpus, perf66318StabilityCorpusInfo{
+		Source:   source,
+		Shuffled: shuffle,
+		Seed:     seed,
+	}
+}
+
 func readRSSBytesLinux() (uint64, bool) {
 	f, err := os.Open("/proc/self/status")
 	if err != nil {
@@ -108,10 +228,7 @@ func TestPerf66318Stability(t *testing.T) {
 	concurrency := parseEnvInt(t, "PERF66318_CONC", 16)
 	reportEvery := parseEnvDuration(t, "PERF66318_REPORT_EVERY", 1*time.Minute)
 
-	corpus := perf66318StabilityCorpus()
-	if len(corpus) == 0 {
-		t.Fatal("empty corpus")
-	}
+	corpus, corpusInfo := perf66318StabilityCorpus(t)
 
 	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), duration)
 	defer cancel()
@@ -163,7 +280,10 @@ func TestPerf66318Stability(t *testing.T) {
 	ticker := time.NewTicker(reportEvery)
 	defer ticker.Stop()
 
-	t.Logf("Perf66318 stability start: duration=%s conc=%d reportEvery=%s corpus=%d", duration, concurrency, reportEvery, len(corpus))
+	t.Logf(
+		"Perf66318 stability start: duration=%s conc=%d reportEvery=%s corpus=%d (%s shuffle=%t seed=%d)",
+		duration, concurrency, reportEvery, len(corpus), corpusInfo.Source, corpusInfo.Shuffled, corpusInfo.Seed,
+	)
 
 	for {
 		select {
