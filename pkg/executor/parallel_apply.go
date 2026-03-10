@@ -55,6 +55,19 @@ type orderedResult struct {
 	err  error
 }
 
+// Lifecycle states for ParallelNestedLoopApplyExec.started.
+const (
+	applyNotStarted uint32 = 0 // workers not yet launched
+	applyStarted    uint32 = 1 // all workers launched and WaitGroups registered
+	applyClosed     uint32 = 2 // Close() has been called; no new workers may start
+)
+
+// ParallelApplyInnerGate is a test-only gate for the parallelApplySlowInner
+// failpoint. When non-nil, workers block on receiving from this channel (or
+// ctx.Done()) instead of using time.After. This allows tests to control
+// exactly which workers proceed and which block, avoiding timing dependencies.
+var ParallelApplyInnerGate chan struct{}
+
 // ParallelNestedLoopApplyExec is the executor for apply.
 type ParallelNestedLoopApplyExec struct {
 	exec.BaseExecutor
@@ -82,7 +95,8 @@ type ParallelNestedLoopApplyExec struct {
 	// fields about concurrency control
 	concurrency int
 	keepOrder   bool // when true, use reorder buffer to preserve outer-side ordering
-	started     uint32
+	startMu     sync.Mutex
+	started     uint32 // applyNotStarted/applyStarted/applyClosed; atomic for fast-path
 	drained     uint32 // drained == true indicates there is no more data
 	freeChkCh   chan *chunk.Chunk
 	resultChkCh chan result
@@ -192,37 +206,55 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 		return nil
 	}
 
-	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
-		workerCtx, cancelWorkers := context.WithCancel(ctx)
-		e.cancelWorkers = cancelWorkers
-		e.workerWg.Add(1)
-		go e.outerWorker(workerCtx)
-		if e.keepOrder {
-			for i := range e.concurrency {
-				e.workerWg.Add(1)
-				go e.innerWorkerOrdered(ctx, i)
+	if atomic.LoadUint32(&e.started) != applyStarted {
+		e.startMu.Lock()
+		switch atomic.LoadUint32(&e.started) {
+		case applyClosed:
+			e.startMu.Unlock()
+			req.Reset()
+			return nil
+		case applyNotStarted:
+			// workerCtx is a cancellable child of ctx. Close() calls
+			// cancelWorkers() to abort in-flight inner/outer workers
+			// (e.g. for LIMIT queries). Coordination goroutines
+			// (notifyWorker, bridge) use the parent ctx instead, since
+			// they must outlive the workers to perform cleanup.
+			workerCtx, cancelWorkers := context.WithCancel(ctx)
+			e.cancelWorkers = cancelWorkers
+			e.workerWg.Add(1)
+			go e.outerWorker(workerCtx)
+			if e.keepOrder {
+				for i := range e.concurrency {
+					e.workerWg.Add(1)
+					go e.innerWorkerOrdered(workerCtx, i)
+				}
+				// Bridge goroutine: when all outer+inner workers finish,
+				// close orderedResultCh so the reorder worker can drain and exit.
+				e.notifyWg.Add(1)
+				go func() {
+					defer e.handleWorkerPanic(workerCtx, &e.notifyWg)
+					e.workerWg.Wait()
+					close(e.orderedResultCh)
+				}()
+				// The reorder worker is tracked by notifyWg so that
+				// Close() waits for it to fully exit before returning.
+				e.notifyWg.Add(1)
+				go e.reorderWorker(workerCtx)
+			} else {
+				for i := range e.concurrency {
+					e.workerWg.Add(1)
+					workID := i
+					go e.innerWorker(workerCtx, workID)
+				}
+				e.notifyWg.Add(1)
+				go e.notifyWorker(ctx) // deliberately uses ctx, not workerCtx (see above)
 			}
-			// Bridge goroutine: when all outer+inner workers finish,
-			// close orderedResultCh so the reorder worker can drain and exit.
-			e.notifyWg.Add(1)
-			go func() {
-				defer e.handleWorkerPanic(workerCtx, &e.notifyWg)
-				e.workerWg.Wait()
-				close(e.orderedResultCh)
-			}()
-			// The reorder worker is tracked by notifyWg so that
-			// Close() waits for it to fully exit before returning.
-			e.notifyWg.Add(1)
-			go e.reorderWorker(workerCtx)
-		} else {
-			for i := range e.concurrency {
-				e.workerWg.Add(1)
-				workID := i
-				go e.innerWorker(ctx, workID)
-			}
-			e.notifyWg.Add(1)
-			go e.notifyWorker(workerCtx)
+			// Publish started only after all WaitGroup registrations and
+			// goroutine launches are complete, so Close() cannot observe
+			// applyStarted before notifyWg.Add() calls finish.
+			atomic.StoreUint32(&e.started, applyStarted)
 		}
+		e.startMu.Unlock()
 	}
 	result := <-e.resultChkCh
 	if result.err != nil {
@@ -241,7 +273,12 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 // Close implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Close() error {
 	e.memTracker = nil
-	if atomic.LoadUint32(&e.started) == 1 {
+	e.startMu.Lock()
+	wasStarted := atomic.LoadUint32(&e.started) == applyStarted
+	// Transition to applyClosed so any concurrent/subsequent Next() bails
+	// out without launching workers.
+	atomic.StoreUint32(&e.started, applyClosed)
+	if wasStarted {
 		close(e.exit)
 		// Cancel the worker context to abort in-flight cop requests
 		// (e.g. inner-side scans) immediately rather than waiting for
@@ -250,9 +287,12 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 		// have been collected.
 		if e.cancelWorkers != nil {
 			e.cancelWorkers()
+			e.cancelWorkers = nil
 		}
+	}
+	e.startMu.Unlock()
+	if wasStarted {
 		e.notifyWg.Wait()
-		e.started = 0
 	}
 	// Wait all workers to finish before Close() is called.
 	// Otherwise we may got data race.
@@ -649,8 +689,16 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	// Simulate a slow inner execution after the inner executor is opened,
 	// so the delay occurs when a real cop request would be in-flight.
+	// When ParallelApplyInnerGate is non-nil, block on it (or ctx.Done())
+	// instead of sleeping, giving tests deterministic control.
 	failpoint.Inject("parallelApplySlowInner", func(val failpoint.Value) {
-		if ms, ok := val.(int); ok {
+		if ParallelApplyInnerGate != nil {
+			select {
+			case <-ParallelApplyInnerGate:
+			case <-ctx.Done():
+				failpoint.Return(ctx.Err())
+			}
+		} else if ms, ok := val.(int); ok {
 			select {
 			case <-time.After(time.Duration(ms) * time.Millisecond):
 			case <-ctx.Done():

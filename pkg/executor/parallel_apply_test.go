@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
@@ -531,30 +532,49 @@ func TestParallelApplyCancelInflight(t *testing.T) {
 	sql := "select * from (select t1.a from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a < t1.a)) sub limit 1"
 	checkApplyPlan(t, tk, sql, 3)
 
-	// The failpoint makes each inner execution sleep 300ms but respects
-	// context cancellation, so cancelled workers return immediately.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner", `return(300)`))
+	// Use a channel-based gate instead of a timed sleep to avoid any
+	// wall-clock dependency. We set initCap=1 and maxChunkSize=1 so
+	// each result chunk holds only 1 row, ensuring LIMIT 1 triggers
+	// Close() after the very first result.
+	//
+	// The gate has exactly `concurrency` tokens, letting the first
+	// batch of workers through immediately. After LIMIT 1 consumes
+	// one result, Close() fires. Any worker that starts a second
+	// iteration blocks on the now-empty gate:
+	//   With cancellation: workerCtx is cancelled → ctx.Done() fires
+	//   → worker unblocks and exits → query completes.
+	//   Without cancellation: worker blocks on gate forever → query
+	//   hangs → test times out.
+	const concurrency = 3
+	executor.ParallelApplyInnerGate = make(chan struct{}, concurrency)
+	for range concurrency {
+		executor.ParallelApplyInnerGate <- struct{}{}
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/exec/initCap", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/exec/maxChunkSize", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/exec/initCap"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/exec/maxChunkSize"))
+		executor.ParallelApplyInnerGate = nil
 	}()
 
-	// LIMIT 1: once one row is produced, Close() fires and should cancel
-	// in-flight inner workers via context cancellation.
-	start := time.Now()
-	rows := tk.MustQuery(sql).Rows()
-	elapsed := time.Since(start)
+	// Run the query in a goroutine so we can apply a timeout.
+	type queryResult struct {
+		rows [][]interface{}
+	}
+	done := make(chan queryResult, 1)
+	go func() {
+		done <- queryResult{rows: tk.MustQuery(sql).Rows()}
+	}()
 
-	// We got exactly 1 row.
-	require.Len(t, rows, 1)
-	// Without cancel-in-flight, all 20 outer rows would be processed
-	// (~2s per run). With cancellation, Close() fires after the first
-	// result and aborts workers sleeping in the failpoint via context
-	// cancellation. Note: fillInnerChunk may process multiple outer
-	// rows per call, so the effective savings depend on how many rows
-	// are in-flight when cancel fires. The 3s threshold is generous
-	// enough to avoid CI flakiness while catching regressions where
-	// cancellation is completely broken.
-	require.Less(t, elapsed, 3*time.Second, "query took too long (%v); cancel-in-flight may not be working", elapsed)
+	select {
+	case r := <-done:
+		require.Len(t, r.rows, 1)
+	case <-time.After(10 * time.Second):
+		t.Fatal("query hung; cancel-in-flight is not propagating to workers")
+	}
 }
 
 func TestOrderedParallelApply(t *testing.T) {
