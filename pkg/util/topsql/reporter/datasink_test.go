@@ -232,75 +232,77 @@ func TestDefaultDataSinkRegistererTopSQLRespectsTopRUOnly(t *testing.T) {
 	require.False(t, topsqlstate.TopRUEnabled())
 }
 
-func TestDefaultDataSinkRegistererSingleTargetDoesNotEnableTopRU(t *testing.T) {
-	for topsqlstate.TopRUEnabled() {
-		topsqlstate.DisableTopRU()
-	}
-	topsqlstate.DisableTopSQL()
-	topsqlstate.ResetTopRUItemInterval()
-	t.Cleanup(func() {
+func TestDefaultDataSinkRegistererSingleTargetTopRUBehavior(t *testing.T) {
+	t.Run("single target does not enable topru", func(t *testing.T) {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
 		topsqlstate.DisableTopSQL()
 		topsqlstate.ResetTopRUItemInterval()
+		t.Cleanup(func() {
+			for topsqlstate.TopRUEnabled() {
+				topsqlstate.DisableTopRU()
+			}
+			topsqlstate.DisableTopSQL()
+			topsqlstate.ResetTopRUItemInterval()
+		})
+
+		r := NewDefaultDataSinkRegisterer(context.Background())
+		ds := &SingleTargetDataSink{}
+
+		require.NoError(t, r.Register(ds))
+		require.True(t, topsqlstate.TopSQLEnabled())
+		require.False(t, topsqlstate.TopRUEnabled())
+		require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+
+		r.Deregister(ds)
+		require.False(t, topsqlstate.TopSQLEnabled())
+		require.False(t, topsqlstate.TopRUEnabled())
+		require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
 	})
 
-	r := NewDefaultDataSinkRegisterer(context.Background())
-	ds := &SingleTargetDataSink{}
-
-	require.NoError(t, r.Register(ds))
-	require.True(t, topsqlstate.TopSQLEnabled())
-	require.False(t, topsqlstate.TopRUEnabled())
-	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
-
-	r.Deregister(ds)
-	require.False(t, topsqlstate.TopSQLEnabled())
-	require.False(t, topsqlstate.TopRUEnabled())
-	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
-}
-
-func TestDefaultDataSinkRegistererMixedPubSubAndSingleTarget(t *testing.T) {
-	for topsqlstate.TopRUEnabled() {
-		topsqlstate.DisableTopRU()
-	}
-	topsqlstate.DisableTopSQL()
-	topsqlstate.ResetTopRUItemInterval()
-	t.Cleanup(func() {
+	t.Run("mixed pubsub and single target", func(t *testing.T) {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
 		topsqlstate.DisableTopSQL()
 		topsqlstate.ResetTopRUItemInterval()
+		t.Cleanup(func() {
+			for topsqlstate.TopRUEnabled() {
+				topsqlstate.DisableTopRU()
+			}
+			topsqlstate.DisableTopSQL()
+			topsqlstate.ResetTopRUItemInterval()
+		})
+
+		r := NewDefaultDataSinkRegisterer(context.Background())
+		pubsubSink := &pubSubDataSink{
+			enableTopSQL: false,
+			enableTopRU:  true,
+			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
+		}
+		singleTargetSink := &SingleTargetDataSink{}
+
+		require.NoError(t, r.Register(pubsubSink))
+		require.False(t, topsqlstate.TopSQLEnabled())
+		require.True(t, topsqlstate.TopRUEnabled())
+		require.Equal(t, int64(15), topsqlstate.GetTopRUItemInterval())
+
+		require.NoError(t, r.Register(singleTargetSink))
+		require.True(t, topsqlstate.TopSQLEnabled())
+		require.True(t, topsqlstate.TopRUEnabled())
+		require.Equal(t, int64(15), topsqlstate.GetTopRUItemInterval())
+
+		// SingleTarget does not participate in TopRU ref-count.
+		r.Deregister(pubsubSink)
+		require.True(t, topsqlstate.TopSQLEnabled())
+		require.False(t, topsqlstate.TopRUEnabled())
+		require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+
+		r.Deregister(singleTargetSink)
+		require.False(t, topsqlstate.TopSQLEnabled())
+		require.False(t, topsqlstate.TopRUEnabled())
 	})
-
-	r := NewDefaultDataSinkRegisterer(context.Background())
-	pubsubSink := &pubSubDataSink{
-		enableTopSQL: false,
-		enableTopRU:  true,
-		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
-	}
-	singleTargetSink := &SingleTargetDataSink{}
-
-	require.NoError(t, r.Register(pubsubSink))
-	require.False(t, topsqlstate.TopSQLEnabled())
-	require.True(t, topsqlstate.TopRUEnabled())
-	require.Equal(t, int64(15), topsqlstate.GetTopRUItemInterval())
-
-	require.NoError(t, r.Register(singleTargetSink))
-	require.True(t, topsqlstate.TopSQLEnabled())
-	require.True(t, topsqlstate.TopRUEnabled())
-	require.Equal(t, int64(15), topsqlstate.GetTopRUItemInterval())
-
-	// SingleTarget does not participate in TopRU ref-count.
-	r.Deregister(pubsubSink)
-	require.True(t, topsqlstate.TopSQLEnabled())
-	require.False(t, topsqlstate.TopRUEnabled())
-	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
-
-	r.Deregister(singleTargetSink)
-	require.False(t, topsqlstate.TopSQLEnabled())
-	require.False(t, topsqlstate.TopRUEnabled())
 }
 
 type mockDataSink2 struct {

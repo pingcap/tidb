@@ -271,8 +271,7 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 
 // sendBatchTopRURecord sends a batch of TopRU records by stream.
 // TopRU over SingleTarget is intentionally unsupported now.
-func (ds *SingleTargetDataSink) sendBatchTopRURecord(ctx context.Context, records []tipb.TopRURecord) (err error) {
-	_ = ctx
+func (*SingleTargetDataSink) sendBatchTopRURecord(_ context.Context, records []tipb.TopRURecord) error {
 	if len(records) == 0 {
 		return nil
 	}

@@ -122,50 +122,76 @@ func TestSingleTargetDataSink(t *testing.T) {
 	assert.Equal(t, normalizedPlan, "PLAN-1")
 }
 
-// TestSingleTargetDataSinkDropsTopRUWhenDisabled verifies TopRU records are
-// dropped even when global TopRU is enabled.
-// It uses bounded waits to avoid timing fragility in the mock server.
-func TestSingleTargetDataSinkDropsTopRUWhenDisabled(t *testing.T) {
-	server, err := mock.StartMockAgentServer()
-	require.NoError(t, err)
-	defer server.Stop()
+// TestSingleTargetDataSinkDropsTopRU verifies TopRU records are dropped by
+// SingleTargetDataSink regardless of global TopRU state.
+func TestSingleTargetDataSinkDropsTopRU(t *testing.T) {
+	t.Run("via TrySend", func(t *testing.T) {
+		server, err := mock.StartMockAgentServer()
+		require.NoError(t, err)
+		defer server.Stop()
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = server.Address()
-	})
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.ReceiverAddress = server.Address()
+		})
 
-	ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
-	ds.Start()
-	defer ds.Close()
+		ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
+		ds.Start()
+		defer ds.Close()
 
-	for topsqlstate.TopRUEnabled() {
-		topsqlstate.DisableTopRU()
-	}
-	t.Cleanup(func() {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
+		t.Cleanup(func() {
+			for topsqlstate.TopRUEnabled() {
+				topsqlstate.DisableTopRU()
+			}
+		})
+
+		records := mockTopRURecords()
+		baseCnt := server.RURecordsCnt()
+
+		err = ds.TrySend(&ReportData{RURecords: records}, time.Now().Add(10*time.Second))
+		require.NoError(t, err)
+		require.Never(t, func() bool {
+			return server.RURecordsCnt() != baseCnt
+		}, 500*time.Millisecond, 10*time.Millisecond)
+
+		topsqlstate.EnableTopRU()
+		err = ds.TrySend(&ReportData{RURecords: records}, time.Now().Add(10*time.Second))
+		require.NoError(t, err)
+		require.Never(t, func() bool {
+			return server.RURecordsCnt() != baseCnt
+		}, 500*time.Millisecond, 10*time.Millisecond)
+
+		latest := server.GetLatestRURecords()
+		require.Empty(t, latest)
 	})
 
-	records := mockTopRURecords()
+	t.Run("via sendBatchTopRURecord", func(t *testing.T) {
+		ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
 
-	baseCnt := server.RURecordsCnt()
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.EnableTopRU()
+		t.Cleanup(func() {
+			for topsqlstate.TopRUEnabled() {
+				topsqlstate.DisableTopRU()
+			}
+		})
 
-	err = ds.TrySend(&ReportData{RURecords: records}, time.Now().Add(10*time.Second))
-	require.NoError(t, err)
-	require.Never(t, func() bool {
-		return server.RURecordsCnt() != baseCnt
-	}, 500*time.Millisecond, 10*time.Millisecond)
+		records := mockTopRURecords()
 
-	topsqlstate.EnableTopRU()
-	err = ds.TrySend(&ReportData{RURecords: records}, time.Now().Add(10*time.Second))
-	require.NoError(t, err)
-	require.Never(t, func() bool {
-		return server.RURecordsCnt() != baseCnt
-	}, 500*time.Millisecond, 10*time.Millisecond)
+		err := ds.sendBatchTopRURecord(ctx, records)
+		require.NoError(t, err)
+		require.True(t, topsqlstate.TopRUEnabled())
 
-	latest := server.GetLatestRURecords()
-	require.Empty(t, latest)
+		err = ds.sendBatchTopRURecord(ctx, records)
+		require.NoError(t, err)
+		require.True(t, topsqlstate.TopRUEnabled())
+	})
 }
 
 type mockTopRURecordStream struct {
@@ -181,34 +207,6 @@ func (m *mockTopRURecordStream) Send(*tipb.TopRURecord) error {
 func (m *mockTopRURecordStream) CloseAndRecv() (*tipb.EmptyResponse, error) {
 	m.closeCalled = true
 	return &tipb.EmptyResponse{}, m.closeErr
-}
-
-// TestSingleTargetDataSinkDropsTopRUWhenEnabled ensures the explicit no-op path
-// for SingleTarget TopRU keeps behavior stable when global TopRU is enabled.
-func TestSingleTargetDataSinkDropsTopRUWhenEnabled(t *testing.T) {
-	ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	for topsqlstate.TopRUEnabled() {
-		topsqlstate.DisableTopRU()
-	}
-	topsqlstate.EnableTopRU()
-	t.Cleanup(func() {
-		for topsqlstate.TopRUEnabled() {
-			topsqlstate.DisableTopRU()
-		}
-	})
-
-	records := mockTopRURecords()
-
-	err := ds.sendBatchTopRURecord(ctx, records)
-	require.NoError(t, err)
-	require.True(t, topsqlstate.TopRUEnabled())
-
-	err = ds.sendBatchTopRURecord(ctx, records)
-	require.NoError(t, err)
-	require.True(t, topsqlstate.TopRUEnabled())
 }
 
 // TestSendTopRURecordsClosesStreamOnUnimplementedSend verifies CloseAndRecv
