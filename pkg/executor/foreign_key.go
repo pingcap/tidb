@@ -212,8 +212,8 @@ func (fkc *FKCheckExec) rowNeedCheckForUpdate(sc *stmtctx.StatementContext, oldR
 	return nil, false, nil
 }
 
-// checkIgnoreByRow uses fkc.checkRows to validate one row. checkRows appends the FK violation as a warning to the statement context
-// instead of returning it as an error. The returned bool indicates whether a FK violation has been ignored for this row.
+// checkIgnoreByRow uses fkc.checkRows to validate one row. If fkc.checkRows finds a foreign key violation, it appends fkc.FailedErr as a warning to the
+// statement context and returns `true, nil`. Non-foreign-key failures are returned directly.
 func (fkc *FKCheckExec) checkIgnoreByRow(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
 	fkToBeCheckedRows := [1]toBeCheckedRow{{row: row, ignored: false}}
 	err := fkc.checkRows(ctx, sc, txn, fkToBeCheckedRows[:])
@@ -660,6 +660,9 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 			err = fkc.checkKey(ctx, txn, k)
 		}
 		if err != nil {
+			if !errors.ErrorEqual(err, fkc.FailedErr) {
+				return err
+			}
 			rows[i].ignored = true
 			sc.AppendWarning(fkc.FailedErr)
 			fkc.checkRowsCache[string(k)] = true
