@@ -438,21 +438,93 @@ var planBuilderPool = sync.Pool{
 	},
 }
 
-type logicalPlanBuildBaseline struct {
+type logicalPlanBuildCtx struct {
 	stmtCtxState             stmtctx.LogicalPlanBuildState
 	plannerSelectBlockAsName *[]ast.HintTable
 }
 
-func captureLogicalPlanBuildBaseline(sessVars *variable.SessionVars) logicalPlanBuildBaseline {
-	return logicalPlanBuildBaseline{
+func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
+	return logicalPlanBuildCtx{
 		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
 		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
 	}
 }
 
-func restoreLogicalPlanBuildBaseline(sessVars *variable.SessionVars, baseline logicalPlanBuildBaseline) {
-	sessVars.StmtCtx.RestoreLogicalPlanBuildState(baseline.stmtCtxState)
-	sessVars.PlannerSelectBlockAsName.Store(baseline.plannerSelectBlockAsName)
+func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
+	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
+	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
+}
+
+func buildAndOptimizeLogicalPlanRound(
+	ctx context.Context,
+	sctx planctx.PlanContext,
+	node *resolve.NodeW,
+	is infoschema.InfoSchema,
+	hintProcessor *hint.QBHintHandler,
+	checked *bool,
+	needRestoreLogicalPlanCtx bool,
+	bestPlan *base.PhysicalPlan,
+	bestNames *types.NameSlice,
+	bestCost *float64,
+	bestLogicalPlanCtx *logicalPlanBuildCtx,
+) (base.Plan, types.NameSlice, bool, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, hintProcessor)
+
+	// todo: you can customize each round's special builder (like semi join rewrite or not by signal)
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	names := p.OutputNames()
+
+	if !*checked {
+		// Keep privilege and lock checks fail-fast. These depend on visitInfo
+		// produced by the logical build, but not on the later cost winner.
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
+			if err := core.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+				return nil, nil, false, err
+			}
+		}
+
+		if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+			return nil, nil, false, err
+		}
+
+		if err := core.CheckTableMode(node); err != nil {
+			return nil, nil, false, err
+		}
+		*checked = true
+	}
+
+	// Handle the non-logical plan statement.
+	logic, isLogicalPlan := p.(base.LogicalPlan)
+	if !isLogicalPlan {
+		builder.HandleUnusedViewHints()
+		return p, names, true, nil
+	}
+
+	core.RecheckCTE(logic)
+
+	// todo: also you can customize each round's special logical opt flag here (like decorrelate rule or not)
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	builder.HandleUnusedViewHints()
+
+	if *bestPlan == nil || cost < *bestCost {
+		*bestCost = cost
+		*bestPlan = finalPlan
+		*bestNames = names
+		if needRestoreLogicalPlanCtx {
+			*bestLogicalPlanCtx = saveLogicalPlanBuildCtx(sctx.GetSessionVars())
+		}
+	}
+	return p, names, false, nil
 }
 
 // optimizeCnt is a global variable only used for test.
@@ -481,91 +553,37 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 
 	// build multi logical plan from raw AST.
 	var (
-		buildRound   = 1
-		needBaseline = buildRound > 1
-		bestCost     = math.MaxFloat64
-		bestPlan     base.PhysicalPlan
-		bestNames    types.NameSlice
-		bestState    logicalPlanBuildBaseline
-		checked      bool
+		buildRound                = 1
+		needRestoreLogicalPlanCtx = buildRound > 1
+		bestCost                  = math.MaxFloat64
+		bestPlan                  base.PhysicalPlan
+		bestNames                 types.NameSlice
+		bestLogicalPlanCtx        logicalPlanBuildCtx
+		checked                   bool
 	)
-	var baseline logicalPlanBuildBaseline
-	if needBaseline {
-		baseline = captureLogicalPlanBuildBaseline(sessVars)
+	var initialLogicalPlanCtx logicalPlanBuildCtx
+	if needRestoreLogicalPlanCtx {
+		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 	}
-	activeRoles := sessVars.ActiveRoles
 	beginOpt := time.Now()
 	for i := range buildRound {
-		if needBaseline && i > 0 {
-			restoreLogicalPlanBuildBaseline(sessVars, baseline)
+		if needRestoreLogicalPlanCtx && i > 0 {
+			restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		}
 
-		var (
-			p          base.Plan
-			names      types.NameSlice
-			nonLogical bool
+		p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+			ctx,
+			sctx,
+			node,
+			is,
+			hintProcessor,
+			&checked,
+			needRestoreLogicalPlanCtx,
+			&bestPlan,
+			&bestNames,
+			&bestCost,
+			&bestLogicalPlanCtx,
 		)
-		err := func() error {
-			builder := planBuilderPool.Get().(*core.PlanBuilder)
-			defer planBuilderPool.Put(builder.ResetForReuse())
-
-			builder.Init(sctx, is, hintProcessor)
-
-			var err error
-			// todo: you can customize each round's special builder (like semi join rewrite or not by signal)
-			p, err = buildLogicalPlan(ctx, sctx, node, builder)
-			if err != nil {
-				return err
-			}
-
-			names = p.OutputNames()
-			if !checked {
-				// Keep privilege and lock checks fail-fast. These depend on visitInfo
-				// produced by the logical build, but not on the later cost winner.
-				if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-					visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
-					if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
-						return err
-					}
-				}
-
-				if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-					return err
-				}
-
-				if err := core.CheckTableMode(node); err != nil {
-					return err
-				}
-				checked = true
-			}
-
-			// Handle the non-logical plan statement.
-			logic, isLogicalPlan := p.(base.LogicalPlan)
-			if !isLogicalPlan {
-				builder.HandleUnusedViewHints()
-				nonLogical = true
-				return nil
-			}
-
-			core.RecheckCTE(logic)
-
-			// todo: also you can customize each round's special logical opt flag here (like decorrelate rule or not)
-			finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
-			if err != nil {
-				return err
-			}
-			builder.HandleUnusedViewHints()
-
-			if bestPlan == nil || cost < bestCost {
-				bestCost = cost
-				bestPlan = finalPlan
-				bestNames = names
-				if needBaseline {
-					bestState = captureLogicalPlanBuildBaseline(sessVars)
-				}
-			}
-			return nil
-		}()
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -577,8 +595,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if bestPlan == nil {
 		return nil, nil, 0, errors.New("failed to build logical plan")
 	}
-	if needBaseline {
-		restoreLogicalPlanBuildBaseline(sessVars, bestState)
+	if needRestoreLogicalPlanCtx {
+		restoreLogicalPlanBuildCtx(sessVars, bestLogicalPlanCtx)
 	}
 	sessVars.DurationOptimizer.Total = time.Since(beginOpt)
 	return bestPlan, bestNames, bestCost, nil
