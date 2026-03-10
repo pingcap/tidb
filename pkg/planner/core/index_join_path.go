@@ -766,8 +766,15 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
 func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
-	// Build table-scan and index-scan inner tasks separately here because the
-	// final choice still depends on the upper index join cost.
+	// the below code is quite similar from the original logic
+	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
+	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
+	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
+	//
+	// here we build TableScan(TS) and IndexScan(IS) separately according to different index join prop is for we couldn't decide
+	// which one as the copTask here is better, some more possible upper attached operator cost should be
+	// considered, besides the row count, double reader cost for index lookup should also be considered as
+	// a whole, so we leave the cost compare for index join itself just like what it was before.
 	var innerCopTask base.Task
 	if prop.IndexJoinProp.TableRangeScan {
 		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
