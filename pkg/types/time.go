@@ -949,7 +949,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(ctx Context, str String, fsp int, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -958,7 +958,8 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 		err                                                            error
 	)
 
-	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(str)
+	rawStr := str.String()
+	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(rawStr)
 	if truncatedOrIncorrect {
 		ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", str))
 	}
@@ -1989,7 +1990,14 @@ func parseDateTimeFromNum(ctx Context, num int64) (Time, error) {
 // The valid date range is from '1000-01-01' to '9999-12-31'
 // explicitTz is used to handle a data race of timeZone, refer to https://github.com/pingcap/tidb/issues/40710. It only works for timestamp now, be careful to use it!
 func ParseTime(ctx Context, str string, tp byte, fsp int) (Time, error) {
-	return parseTime(ctx, str, tp, fsp, false)
+	return ParseTimeWithString(ctx, PlainStr(str), tp, fsp)
+}
+
+// ParseTimeWithString parses a formatted string with type tp and specific fsp.
+// The string wrapper allows callers to mark unsafe string sources so warning/error
+// arguments are frozen before deferred formatting.
+func ParseTimeWithString(ctx Context, str String, tp byte, fsp int) (Time, error) {
+	return parseTimeWithString(ctx, str, tp, fsp, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
@@ -1998,10 +2006,10 @@ func ParseTimeFromFloatString(ctx Context, str string, tp byte, fsp int) (Time, 
 	if len(str) >= 3 && str[:3] == "0.0" {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
 	}
-	return parseTime(ctx, str, tp, fsp, true)
+	return parseTimeWithString(ctx, PlainStr(str), tp, fsp, true)
 }
 
-func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, error) {
+func parseTimeWithString(ctx Context, str String, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
@@ -2025,7 +2033,7 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 	return t, nil
 }
 
-func adjustTimestampErrForDST(loc *gotime.Location, str string, tp byte, t Time, err error) (Time, error) {
+func adjustTimestampErrForDST(loc *gotime.Location, str String, tp byte, t Time, err error) (Time, error) {
 	if tp != mysql.TypeTimestamp || t.IsZero() {
 		return t, err
 	}
@@ -2199,7 +2207,7 @@ func checkTimestampType(t CoreTime, tz *gotime.Location) error {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)
 		err := convertTime.ConvertTimeZone(tz, BoundTimezone)
 		if err != nil {
-			_, err2 := adjustTimestampErrForDST(tz, t.String(), mysql.TypeTimestamp, Time{t}, err)
+			_, err2 := adjustTimestampErrForDST(tz, PlainStr(t.String()), mysql.TypeTimestamp, Time{t}, err)
 			return err2
 		}
 		checkTime = convertTime.coreTime
