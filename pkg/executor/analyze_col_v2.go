@@ -398,7 +398,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	indexPushedDownResult := <-idxNDVPushDownCh
 	if indexPushedDownResult.err != nil {
 		close(exitCh)
-		for range buildResultChan {
+		for err := range buildResultChan {
+			_ = err
 		}
 		return 0, nil, nil, nil, indexPushedDownResult.err
 	}
