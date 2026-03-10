@@ -1834,21 +1834,21 @@ func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	originConfig := config.GetGlobalConfig()
-	originServiceScope := vardef.ServiceScope.Load()
+	originServiceScope := variable.ServiceScope.Load()
 	t.Cleanup(func() {
 		config.StoreGlobalConfig(originConfig)
-		vardef.ServiceScope.Store(originServiceScope)
+		variable.ServiceScope.Store(originServiceScope)
 	})
 
 	tk.MustExec("set global tidb_service_scope='BaCkGround'")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
-	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", variable.ServiceScope.Load())
 	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
 	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 
-	tk.MustExec("set instance tidb_service_scope='BackGround'")
+	tk.MustExec("set global tidb_service_scope='BackGround'")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
-	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", variable.ServiceScope.Load())
 	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
 	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }
