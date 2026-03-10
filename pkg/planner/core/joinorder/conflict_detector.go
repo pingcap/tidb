@@ -946,47 +946,12 @@ type ruleTableEntry int
 // is valid for the given pair of join types.
 // Rows = join type of e1 (left/child edge), Columns = join type of e2 (right/parent edge).
 var assocRuleTable = [][]ruleTableEntry{
-	// INNER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT OUTER
-	{
-		0, // INNER
-		1, // LEFT OUTER, check NOTE above.
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// RIGHT OUTER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER, check NOTE above.
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT SEMI and LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-
-	// LEFT ANTI and ANTI LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
+	//              INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {  1,     1,     0,     1,     1    },
+	/* LEFT   */ {  0,     1,     0,     0,     0    }, // assoc(LEFT,LEFT)=1: see NOTE above.
+	/* RIGHT  */ {  1,     1,     1,     0,     0    }, // assoc(RIGHT,RIGHT)=1: see NOTE above.
+	/* SEMI   */ {  0,     0,     0,     0,     0    },
+	/* ANTI   */ {  0,     0,     0,     0,     0    },
 }
 
 // leftAsscomRuleTable[e1][e2] indicates whether the left-asscom transformation
@@ -995,46 +960,12 @@ var assocRuleTable = [][]ruleTableEntry{
 //
 // is valid. Here e1 is the child edge (in leftEdges) and e2 is the parent edge.
 var leftAsscomRuleTable = [][]ruleTableEntry{
-	// INNER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT OUTER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// RIGHT OUTER
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT SEMI and LEFT OUTER SEMI
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT ANTI and ANTI LEFT OUTER SEMI
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
+	//              INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {  1,     1,     0,     1,     1    },
+	/* LEFT   */ {  1,     1,     0,     1,     1    },
+	/* RIGHT  */ {  0,     0,     0,     0,     0    },
+	/* SEMI   */ {  1,     1,     1,     1,     1    },
+	/* ANTI   */ {  1,     1,     1,     1,     1    },
 }
 
 // rightAsscomRuleTable[e1][e2] indicates whether the right-asscom transformation
@@ -1043,44 +974,10 @@ var leftAsscomRuleTable = [][]ruleTableEntry{
 //
 // is valid. Here e1 is the parent edge and e2 is the child edge (in rightEdges).
 var rightAsscomRuleTable = [][]ruleTableEntry{
-	// INNER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT OUTER
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// RIGHT OUTER
-	{
-		0, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT SEMI and LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT ANTI and ANTI LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
+	//              INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {  1,     1,     1,     0,     0    },
+	/* LEFT   */ {  0,     0,     0,     0,     0    },
+	/* RIGHT  */ {  0,     1,     1,     0,     0    },
+	/* SEMI   */ {  0,     0,     0,     0,     0    },
+	/* ANTI   */ {  0,     0,     0,     0,     0    },
 }
