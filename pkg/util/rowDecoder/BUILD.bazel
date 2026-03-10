@@ -10,6 +10,7 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/parser/mysql",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
