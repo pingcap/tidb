@@ -1997,7 +1997,7 @@ func ParseTime(ctx Context, str string, tp byte, fsp int) (Time, error) {
 // The string wrapper allows callers to mark unsafe string sources so warning/error
 // arguments are frozen before deferred formatting.
 func ParseTimeWithString(ctx Context, str String, tp byte, fsp int) (Time, error) {
-	return parseTimeWithString(ctx, str, tp, fsp, false)
+	return parseTime(ctx, str, tp, fsp, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
@@ -2006,10 +2006,10 @@ func ParseTimeFromFloatString(ctx Context, str string, tp byte, fsp int) (Time, 
 	if len(str) >= 3 && str[:3] == "0.0" {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
 	}
-	return parseTimeWithString(ctx, PlainStr(str), tp, fsp, true)
+	return parseTime(ctx, PlainStr(str), tp, fsp, true)
 }
 
-func parseTimeWithString(ctx Context, str String, tp byte, fsp int, isFloat bool) (Time, error) {
+func parseTime(ctx Context, str String, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
