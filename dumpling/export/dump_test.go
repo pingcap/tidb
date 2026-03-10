@@ -68,6 +68,112 @@ func TestDumpExit(t *testing.T) {
 	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, taskChan), sqlmock.ErrCancelled)
 }
 
+func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
+	cases := []struct {
+		name          string
+		keyspaceMeta  []string // [name,id]
+		queryErr      error
+		confPD        string
+		confKeyspace  string
+		expectErr     string
+		expectKSPName string
+		expectKSPID   uint32
+	}{
+		{
+			name:          "premium_ok",
+			keyspaceMeta:  []string{"ks1", "123"},
+			confPD:        "pd1:2379,pd2:2379",
+			confKeyspace:  "ks1",
+			expectKSPName: "ks1",
+			expectKSPID:   123,
+		},
+		{
+			name:         "premium_mismatch_name",
+			keyspaceMeta: []string{"ks1", "123"},
+			confPD:       "pd1:2379",
+			confKeyspace: "ks2",
+			expectErr:    "keyspace-name mismatch",
+		},
+		{
+			name:         "premium_missing_pd",
+			keyspaceMeta: []string{"ks1", "123"},
+			confPD:       "",
+			confKeyspace: "ks1",
+			expectErr:    "requires --pd",
+		},
+		{
+			name:         "classical_ok",
+			keyspaceMeta: []string{"", ""},
+			confPD:       "",
+			confKeyspace: "",
+		},
+		{
+			name:         "classical_with_pd_is_error",
+			keyspaceMeta: []string{"", ""},
+			confPD:       "pd1:2379",
+			confKeyspace: "",
+			expectErr:    "classical cluster must not specify",
+		},
+		{
+			name:         "classical_no_keyspace_meta_table",
+			queryErr:     &mysql.MySQLError{Number: 1146, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:       "",
+			confKeyspace: "",
+		},
+		{
+			name:         "premium_no_keyspace_meta_table_is_error",
+			queryErr:     &mysql.MySQLError{Number: 1146, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:       "pd1:2379",
+			confKeyspace: "ks1",
+			expectErr:    "KEYSPACE_META",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+
+			query := "SELECT KEYSPACE_NAME, KEYSPACE_ID FROM information_schema.KEYSPACE_META;"
+			if tc.queryErr != nil {
+				mock.ExpectQuery(query).WillReturnError(tc.queryErr)
+			} else {
+				mock.ExpectQuery(query).WillReturnRows(
+					sqlmock.NewRows([]string{"KEYSPACE_NAME", "KEYSPACE_ID"}).AddRow(tc.keyspaceMeta[0], tc.keyspaceMeta[1]),
+				)
+			}
+
+			tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+			defer cancel()
+			d := &Dumper{
+				tctx:      tctx,
+				cancelCtx: cancel,
+				conf:      DefaultConfig(),
+				dbHandle:  db,
+			}
+			d.conf.ServerInfo = version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				ServerVersion: gcSafePointVersion,
+			}
+			d.conf.PDAddr = tc.confPD
+			d.conf.KeyspaceName = tc.confKeyspace
+
+			err = tidbResolveKeyspaceMetaForGC(d)
+			if tc.expectErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectErr)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.expectKSPName, d.tidbKeyspaceName)
+				require.Equal(t, tc.expectKSPID, d.tidbKeyspaceID)
+			}
+			mock.ExpectClose()
+			require.NoError(t, db.Close())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestDumpTableMeta(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
