@@ -14,53 +14,10 @@ import (
 	"time"
 )
 
-const perf66318StabilityDefaultCorpusFile = "perf_66318_stability_corpus.txt"
-
 type perf66318StabilityCorpusInfo struct {
 	Source   string
 	Shuffled bool
 	Seed     int64
-}
-
-func perf66318BuiltinStabilityCorpus() []string {
-	// Fallback only. Prefer using perf66318StabilityDefaultCorpusFile (or PERF66318_CORPUS_FILE),
-	// which supports expressing weights via line count and keeps the corpus human-editable.
-	return []string{
-		"USE sbtest0",
-		"BEGIN",
-		"COMMIT",
-		"ROLLBACK",
-		"SET autocommit = 1",
-		"SET autocommit = 0",
-		"SET NAMES utf8mb4",
-		"SET time_zone = '+00:00'",
-		"SHOW VARIABLES LIKE 'tidb%'",
-		"SHOW STATUS LIKE 'Threads_running'",
-		"SELECT DATABASE()",
-		"SELECT @@autocommit",
-		"SELECT c FROM sbtest1 WHERE id=1",
-		"SELECT c FROM sbtest1 WHERE id=?",
-		"SELECT c FROM sbtest1 WHERE id=? FOR UPDATE",
-		"UPDATE sbtest1 SET k=k+1 WHERE id=?",
-		"UPDATE sbtest1 SET c=? WHERE id=?",
-		"DELETE FROM sbtest1 WHERE id=?",
-		"INSERT INTO sbtest1(id,k,c,pad) VALUES(?,?,?,?)",
-		"USE sbtest0; SET autocommit = 1; SELECT c FROM sbtest1 WHERE id=?",
-		strings.TrimSpace(`
-SELECT t1.a, t2.b
-FROM t1
-LEFT JOIN t2 ON t1.id = t2.id
-WHERE t1.a > 10 AND t2.b IS NOT NULL
-ORDER BY t2.b DESC
-LIMIT 100`),
-		"WITH cte AS (SELECT id, v FROM t WHERE v > 10) SELECT * FROM cte WHERE id < 100",
-		strings.TrimSpace(`
-SELECT id,
-       SUM(v) OVER (PARTITION BY id % 10 ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s
-FROM t`),
-		"SELECT /*+ USE_INDEX(t idx_a) */ * FROM t WHERE a = 1 AND b = 2",
-		"SELECT '中文' AS zh, '🙂' AS emj",
-	}
 }
 
 func parseEnvDuration(t *testing.T, key string, def time.Duration) time.Duration {
@@ -153,11 +110,6 @@ func perf66318LoadStabilityCorpusFile(t *testing.T, path string) []string {
 	return corpus
 }
 
-func perf66318FileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func perf66318StabilityCorpus(t *testing.T) ([]string, perf66318StabilityCorpusInfo) {
 	t.Helper()
 
@@ -165,19 +117,12 @@ func perf66318StabilityCorpus(t *testing.T) ([]string, perf66318StabilityCorpusI
 	shuffle := parseEnvBool(t, "PERF66318_SHUFFLE", true)
 
 	corpusFile := strings.TrimSpace(os.Getenv("PERF66318_CORPUS_FILE"))
-	var source string
-	var corpus []string
-	switch {
-	case corpusFile != "":
-		corpus = perf66318LoadStabilityCorpusFile(t, corpusFile)
-		source = "PERF66318_CORPUS_FILE=" + corpusFile
-	case perf66318FileExists(perf66318StabilityDefaultCorpusFile):
-		corpus = perf66318LoadStabilityCorpusFile(t, perf66318StabilityDefaultCorpusFile)
-		source = "default file=" + perf66318StabilityDefaultCorpusFile
-	default:
-		corpus = perf66318BuiltinStabilityCorpus()
-		source = "builtin"
+	if corpusFile == "" {
+		t.Fatal("PERF66318_CORPUS_FILE must be set (path to a .txt corpus, e.g. perf_66318_stability_corpus.txt)")
 	}
+
+	corpus := perf66318LoadStabilityCorpusFile(t, corpusFile)
+	source := "PERF66318_CORPUS_FILE=" + corpusFile
 
 	if len(corpus) == 0 {
 		t.Fatalf("empty corpus (source=%s)", source)
