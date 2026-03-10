@@ -326,6 +326,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 		fms = append(fms, collectors[i].FMSketch)
+		// Extended stats are built from the collectors after this loop.
+		if !needExtStats {
+			collectors[i].Destroy()
+			collectors[i] = nil
+		}
 	}
 	if needExtStats {
 		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, collectors)
