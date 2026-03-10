@@ -766,15 +766,8 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
 func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
-	// the below code is quite similar from the original logic
-	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
-	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
-	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
-	//
-	// here we build TableScan(TS) and IndexScan(IS) separately according to different index join prop is for we couldn't decide
-	// which one as the copTask here is better, some more possible upper attached operator cost should be
-	// considered, besides the row count, double reader cost for index lookup should also be considered as
-	// a whole, so we leave the cost compare for index join itself just like what it was before.
+	// Build table-scan and index-scan inner tasks separately here because the
+	// final choice still depends on the upper index join cost.
 	var innerCopTask base.Task
 	if prop.IndexJoinProp.TableRangeScan {
 		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
@@ -826,54 +819,6 @@ func getBestIndexJoinPathResultByProp(
 	}
 
 	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
-	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
-	}
-	return bestResult, keyOff2IdxOff
-}
-
-// getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
-// index join path for each access path. It returns the best index join path result and the mapping.
-func getBestIndexJoinPathResult(
-	join *logicalop.LogicalJoin,
-	innerChild *logicalop.DataSource,
-	innerJoinKeys, outerJoinKeys []*expression.Column,
-	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
-	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions,
-		outerJoinKeys:         outerJoinKeys,
-		innerJoinKeys:         innerJoinKeys,
-		innerPushedConditions: innerChild.PushedDownConds,
-		innerSchema:           innerChild.Schema(),
-		innerTableStats:       innerChild.TableStats,
-	}
-	var bestResult *indexJoinPathResult
-	for _, path := range innerChild.PossibleAccessPaths {
-		if checkPathValid(path) {
-			result, emptyRange, err := indexJoinPathBuild(join.SCtx(), path, indexJoinInfo, false)
-			if emptyRange {
-				return nil, nil
-			}
-			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-				continue
-			}
-			if indexJoinPathCompare(innerChild, bestResult, result) {
-				bestResult = result
-			}
-		}
-	}
-	if bestResult == nil || bestResult.chosenPath == nil {
-		return nil, nil
-	}
-
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
