@@ -193,6 +193,10 @@ type decodedConnAttrs struct {
 }
 
 func parseAttrs(data []byte) (map[string]string, string, error) {
+	if vardef.ConnectAttrsSize.Load() == 0 {
+		return map[string]string{}, "", nil
+	}
+
 	decoded, err := decodeConnAttrs(data)
 	if err != nil {
 		return map[string]string{}, "", err

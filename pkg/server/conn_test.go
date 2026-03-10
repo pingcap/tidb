@@ -2438,7 +2438,7 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		require.Equal(t, int64(8), vardef.ConnectAttrsLongestSeen.Load()) // 4+4=8
 	})
 
-	t.Run("limit 0 truncates all attrs", func(t *testing.T) {
+	t.Run("limit 0 disables collection", func(t *testing.T) {
 		vardef.ConnectAttrsSize.Store(0)
 		vardef.ConnectAttrsLongestSeen.Store(0)
 		vardef.ConnectAttrsLost.Store(0)
@@ -2470,13 +2470,9 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
 		require.NoError(t, err)
 
-		// limit 0 means no payload bytes are allowed: everything is truncated.
-		require.Len(t, p.Attrs, 1)
-		val, ok := p.Attrs["_truncated"]
-		require.True(t, ok)
-		require.Equal(t, "4", val)
-		require.Equal(t, int64(1), vardef.ConnectAttrsLost.Load())
-		require.Equal(t, int64(4), vardef.ConnectAttrsLongestSeen.Load())
+		require.Len(t, p.Attrs, 0)
+		require.Equal(t, int64(0), vardef.ConnectAttrsLost.Load())
+		require.Equal(t, int64(0), vardef.ConnectAttrsLongestSeen.Load())
 	})
 
 	t.Run("limit 65536 acceptance", func(t *testing.T) {
