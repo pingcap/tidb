@@ -471,6 +471,8 @@ func buildAndOptimizeLogicalPlanRound(
 	is infoschema.InfoSchema,
 	hintProcessor *hint.QBHintHandler,
 	checked *bool,
+	optimizeStarted *bool,
+	beginOpt *time.Time,
 	needRestoreLogicalPlanCtx bool,
 	bestPlan *base.PhysicalPlan,
 	bestNames *types.NameSlice,
@@ -520,6 +522,10 @@ func buildAndOptimizeLogicalPlanRound(
 	core.RecheckCTE(logic)
 
 	// todo: also you can customize each round's special logical opt flag here (like decorrelate rule or not)
+	if !*optimizeStarted {
+		*optimizeStarted = true
+		*beginOpt = time.Now()
+	}
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	if err != nil {
 		return nil, nil, false, err
@@ -554,9 +560,14 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
-	beginOpt := time.Now()
+	var (
+		beginOpt        time.Time
+		optimizeStarted bool
+	)
 	defer func() {
-		sessVars.DurationOptimizer.Total = time.Since(beginOpt)
+		if optimizeStarted {
+			sessVars.DurationOptimizer.Total = time.Since(beginOpt)
+		}
 	}()
 
 	// Build the logical plan from the raw AST. The hint processor only keeps
@@ -590,6 +601,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			is,
 			hintProcessor,
 			&checked,
+			&optimizeStarted,
+			&beginOpt,
 			needRestoreLogicalPlanCtx,
 			&bestPlan,
 			&bestNames,
