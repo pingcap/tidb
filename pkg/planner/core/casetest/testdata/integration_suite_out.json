@@ -1029,23 +1029,21 @@
       {
         "SQL": "explain format = 'plan_tree' select count(*) from rp_t where a = 1 or a = 20",
         "Plan": [
-          "HashAgg root  funcs:count(Column)->Column",
+          "StreamAgg root  funcs:count(1)->Column",
           "└─TableReader root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
-          "      └─Selection mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "        └─TableFullScan mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
+          "    └─Selection mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "      └─TableFullScan mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select count(*) from hp_t where a = 1 or a = 20",
         "Plan": [
-          "HashAgg root  funcs:count(Column)->Column",
+          "StreamAgg root  funcs:count(1)->Column",
           "└─TableReader root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
-          "      └─Selection mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "        └─TableFullScan mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
+          "    └─Selection mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "      └─TableFullScan mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       }
     ]
