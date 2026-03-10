@@ -40,11 +40,13 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 			Upstream:   h.Upstream,
 			Downstream: h.Downstream,
 		},
-		CalculatorConfig{
-			TaskName:     "drr_test_task",
-			PollInterval: 5 * time.Millisecond,
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
 		},
-		Config{RetryInterval: 5 * time.Millisecond},
 	)
 	require.NoError(t, err)
 
@@ -87,11 +89,13 @@ func TestServiceTracksFailures(t *testing.T) {
 			Upstream:   h.Upstream,
 			Downstream: failingDownstreamChecker{},
 		},
-		CalculatorConfig{
-			TaskName:     "drr_test_task",
-			PollInterval: 5 * time.Millisecond,
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
 		},
-		Config{RetryInterval: 5 * time.Millisecond},
 	)
 	require.NoError(t, err)
 

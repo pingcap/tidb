@@ -192,6 +192,49 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 	require.Contains(t, err.Error(), "StartAfter-capable upstream storage")
 }
 
+func TestCheckpointCalculatorReturnsCurrentCheckpointWhenUpstreamUnchanged(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: 5 * time.Millisecond,
+		},
+		nil,
+	)
+	require.NoError(t, err)
+
+	_, err = h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, h.PDSim.CurrentTSO()))
+	require.Greater(t, h.PullMessages(0), 0)
+	_, err = h.Replicate(ctx, 0)
+	require.NoError(t, err)
+
+	firstCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Greater(t, firstCheckpoint, uint64(0))
+
+	unchangedCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	secondCheckpoint, err := calculator.ComputeNextCheckpoint(unchangedCtx)
+	require.NoError(t, err)
+	require.Equal(t, firstCheckpoint, secondCheckpoint)
+}
+
 func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {
 	ctx := context.Background()
 	boundaries, err := testutil.BuildRegionLayout(

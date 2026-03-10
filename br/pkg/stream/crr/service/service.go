@@ -20,37 +20,21 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 const defaultRetryInterval = time.Second
 
-// Config controls the outer worker loop around checkpoint calculation.
+// Config controls the outer worker loop and embedded checkpoint calculator behavior.
 type Config struct {
+	CalculatorConfig
 	RetryInterval time.Duration
 }
 
 // Deps are the external dependencies needed to build the CRR checkpoint calculator.
-type Deps struct {
-	PD interface {
-		GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
-		Stores(ctx context.Context) ([]streamhelper.Store, error)
-	}
-	Upstream interface {
-		storeapi.Storage
-	}
-	Downstream interface {
-		FileExists(ctx context.Context, name string) (bool, error)
-	}
-}
+type Deps = checkpoint.CalculatorDeps
 
 // CalculatorConfig controls the inner checkpoint calculator behavior.
-type CalculatorConfig struct {
-	TaskName            string
-	PollInterval        time.Duration
-	MetaReadConcurrency int
-}
+type CalculatorConfig = checkpoint.CheckpointCalculatorConfig
 
 // Service wraps the CRR checkpoint calculator with status tracking and HTTP exposure.
 type Service struct {
@@ -58,32 +42,23 @@ type Service struct {
 	status   *statusStore
 	observer *statusObserver
 
-	retryInterval time.Duration
+	cfg Config
 }
 
 // New creates a CRR service with an attached calculator observer.
 func New(
 	deps Deps,
-	calcCfg CalculatorConfig,
 	cfg Config,
 ) (*Service, error) {
 	if cfg.RetryInterval <= 0 {
 		cfg.RetryInterval = defaultRetryInterval
 	}
 
-	status := newStatusStore(calcCfg.TaskName)
+	status := newStatusStore(cfg.TaskName)
 	observer := newStatusObserver(status)
 	calc, err := checkpoint.NewCalculator(
-		checkpoint.CalculatorDeps{
-			PD:         deps.PD,
-			Upstream:   deps.Upstream,
-			Downstream: deps.Downstream,
-		},
-		checkpoint.CheckpointCalculatorConfig{
-			TaskName:            calcCfg.TaskName,
-			PollInterval:        calcCfg.PollInterval,
-			MetaReadConcurrency: calcCfg.MetaReadConcurrency,
-		},
+		deps,
+		cfg.CalculatorConfig,
 		observer,
 	)
 	if err != nil {
@@ -91,10 +66,10 @@ func New(
 	}
 
 	return &Service{
-		calc:          calc,
-		status:        status,
-		observer:      observer,
-		retryInterval: cfg.RetryInterval,
+		calc:     calc,
+		status:   status,
+		observer: observer,
+		cfg:      cfg,
 	}, nil
 }
 
@@ -109,8 +84,14 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 
 		s.observer.BeginCalculationRound()
-		_, err := s.calc.ComputeNextCheckpoint(ctx)
+		lastCheckpoint := s.calc.LastCheckpoint()
+		checkpoint, err := s.calc.ComputeNextCheckpoint(ctx)
 		if err == nil {
+			if checkpoint == lastCheckpoint {
+				if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
+					return nil
+				}
+			}
 			continue
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -118,7 +99,7 @@ func (s *Service) Run(ctx context.Context) error {
 				return nil
 			}
 		}
-		if err := sleepContext(ctx, s.retryInterval); err != nil {
+		if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
 			return nil
 		}
 	}

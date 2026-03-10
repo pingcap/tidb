@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	defaultPollInterval        = 500 * time.Millisecond
+	defaultPollInterval        = 2 * time.Second
 	defaultMetaReadConcurrency = 16
 )
 
@@ -159,9 +159,12 @@ func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint
 		}
 	}()
 
-	upstreamCheckpoint, err := c.waitUpstreamCheckpointAdvance(ctx)
+	upstreamCheckpoint, advanced, err := c.pollUpstreamCheckpoint(ctx)
 	if err != nil {
 		return 0, err
+	}
+	if !advanced {
+		return c.state.lastCheckpoint, nil
 	}
 
 	aliveStores, err := c.loadAliveStores(ctx)

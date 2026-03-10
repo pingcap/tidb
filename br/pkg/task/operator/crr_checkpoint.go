@@ -82,10 +82,12 @@ func NewCRRCheckpointService(
 			Upstream:   upstreamStorage,
 			Downstream: downstreamStorage,
 		},
-		service.CalculatorConfig{
-			TaskName: cfg.TaskName,
+		service.Config{
+			CalculatorConfig: service.CalculatorConfig{
+				TaskName: cfg.TaskName,
+			},
+			RetryInterval: 0,
 		},
-		service.Config{},
 	)
 	if err != nil {
 		downstreamStorage.Close()
