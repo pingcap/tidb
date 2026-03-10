@@ -126,12 +126,12 @@ func perf66318LoadStabilityCorpusFile(t *testing.T, path string) []string {
 	t.Helper()
 	path = strings.TrimSpace(path)
 	if path == "" {
-		t.Fatal("empty PERF66318_CORPUS_FILE")
+		t.Fatal("empty corpus file path")
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("open PERF66318_CORPUS_FILE=%q: %v", path, err)
+		t.Fatalf("open corpus file %q: %v", path, err)
 	}
 	defer f.Close()
 
@@ -148,7 +148,7 @@ func perf66318LoadStabilityCorpusFile(t *testing.T, path string) []string {
 		corpus = append(corpus, line)
 	}
 	if err := scanner.Err(); err != nil {
-		t.Fatalf("read PERF66318_CORPUS_FILE=%q: %v", path, err)
+		t.Fatalf("read corpus file %q: %v", path, err)
 	}
 	return corpus
 }
