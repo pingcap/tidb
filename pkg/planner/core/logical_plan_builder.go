@@ -6456,7 +6456,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
 			var mayModified bool
 			for _, col := range dependentColumns {
-				colTp := col.GetType(b.ctx.GetExprCtx().GetEvalCtx()).GetFlag()
+				colTp := col.GetType().GetFlag()
 				// If any of the dependent column has on-update-now flag,
 				// this virtual generated column may be modified too.
 				if mysql.HasOnUpdateNowFlag(colTp) || dependentColumnsModified[col.UniqueID] {
