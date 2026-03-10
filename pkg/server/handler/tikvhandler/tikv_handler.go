@@ -172,10 +172,13 @@ type DDLResignOwnerHandler struct {
 	store kv.Storage
 }
 
-// DDLCheckHandler is the handler for triggering admin check index.
+// DDLCheckHandler handles admin check index requests.
+// It serves two endpoints:
+// 1. /ddl/check/{db}/{table}/{index} - legacy DDL check endpoint (returns rows on error)
+// 2. /admin/check/index - inconsistency summary endpoint (returns collected summary)
 type DDLCheckHandler struct {
 	*handler.TikvHandlerTool
-	adminCheckIndexFn func(ctx context.Context, dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error)
+	adminCheckIndexFn func(ctx context.Context, dbName, tableName, indexName string, limit int) (*variable.AdminCheckIndexInconsistentSummary, error)
 }
 
 // NewDDLResignOwnerHandler creates a new DDLResignOwnerHandler.
@@ -1287,7 +1290,7 @@ func (h DDLCheckHandler) serveAdminCheckIndexSummary(w http.ResponseWriter, req 
 		return
 	}
 	if summary == nil {
-		summary = &executor.AdminCheckIndexInconsistentSummary{}
+		summary = &variable.AdminCheckIndexInconsistentSummary{}
 	}
 
 	// For inconsistency errors from `admin check index`, summary already contains
@@ -1311,7 +1314,7 @@ func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqle
 	return rows, nil
 }
 
-func (h DDLCheckHandler) checkIndexByName(ctx context.Context, dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error) {
+func (h DDLCheckHandler) checkIndexByName(ctx context.Context, dbName, tableName, indexName string, limit int) (*variable.AdminCheckIndexInconsistentSummary, error) {
 	se, err := session.CreateSession(h.Store)
 	if err != nil {
 		return nil, err
@@ -1342,16 +1345,16 @@ func (h DDLCheckHandler) checkIndexByName(ctx context.Context, dbName, tableName
 		}
 	}
 
-	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	summary := sessVars.FastCheckTableInconsistentSummary
 	if summary == nil {
-		summary = &executor.AdminCheckIndexInconsistentSummary{}
+		summary = &variable.AdminCheckIndexInconsistentSummary{}
 	}
 	// Return SQL error only when no inconsistency rows were collected.
 	// If rows are collected, ServeHTTP still returns the summary payload.
 	if execErr != nil && !consistency.ErrAdminCheckInconsistent.Equal(execErr) {
 		return nil, execErr
 	}
-	if execErr != nil && summary.InconsistentRowCount == 0 {
+	if execErr != nil && summary.CollectedRowCount == 0 {
 		return nil, execErr
 	}
 	return summary, execErr
@@ -1377,11 +1380,11 @@ func parseAdminCheckIndexLimit(req *http.Request) (int, error) {
 }
 
 func quoteName(name string) string {
-	return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
+	return executor.ColumnName(name)
 }
 
 func quoteTable(schema, table string) string {
-	return fmt.Sprintf("%s.%s", quoteName(schema), quoteName(table))
+	return executor.TableName(schema, table)
 }
 
 func (h *TableHandler) getPDAddr() ([]string, error) {

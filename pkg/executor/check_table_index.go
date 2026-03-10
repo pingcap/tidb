@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -268,30 +269,24 @@ type FastCheckTableExec struct {
 	contextCtx context.Context
 }
 
-// AdminCheckIndexInconsistentType describes the inconsistency category found by
-// fast `admin check index`.
-type AdminCheckIndexInconsistentType string
-
-const (
-	// AdminCheckIndexRowWithoutIndex means one table row exists but the index row is missing.
-	AdminCheckIndexRowWithoutIndex AdminCheckIndexInconsistentType = "row_without_index"
-	// AdminCheckIndexIndexWithoutRow means one index row exists but the table row is missing.
-	AdminCheckIndexIndexWithoutRow AdminCheckIndexInconsistentType = "index_without_row"
-	// AdminCheckIndexRowIndexMismatch means table and index rows both exist but values don't match.
-	AdminCheckIndexRowIndexMismatch AdminCheckIndexInconsistentType = "row_index_mismatch"
+// Type aliases for admin check index types defined in sessionctx/variable package.
+// These aliases are kept for backward compatibility.
+type (
+	// AdminCheckIndexInconsistentType describes the inconsistency category found by
+	// fast `admin check index`.
+	AdminCheckIndexInconsistentType = variable.AdminCheckIndexInconsistentType
+	// AdminCheckIndexInconsistentRow stores one inconsistent handle and mismatch type.
+	AdminCheckIndexInconsistentRow = variable.AdminCheckIndexInconsistentRow
+	// AdminCheckIndexInconsistentSummary is returned by HTTP API.
+	AdminCheckIndexInconsistentSummary = variable.AdminCheckIndexInconsistentSummary
 )
 
-// AdminCheckIndexInconsistentRow stores one inconsistent handle and mismatch type.
-type AdminCheckIndexInconsistentRow struct {
-	Handle       string                          `json:"handle"`
-	MismatchType AdminCheckIndexInconsistentType `json:"mismatch_type"`
-}
-
-// AdminCheckIndexInconsistentSummary is returned by HTTP API.
-type AdminCheckIndexInconsistentSummary struct {
-	InconsistentRowCount uint64                           `json:"inconsistent_row_count"`
-	Rows                 []AdminCheckIndexInconsistentRow `json:"rows"`
-}
+// Constants for admin check index inconsistency types.
+const (
+	AdminCheckIndexRowWithoutIndex  = variable.AdminCheckIndexRowWithoutIndex
+	AdminCheckIndexIndexWithoutRow  = variable.AdminCheckIndexIndexWithoutRow
+	AdminCheckIndexRowIndexMismatch = variable.AdminCheckIndexRowIndexMismatch
+)
 
 // AdminCheckIndexInconsistentCollector collects inconsistent handles for one statement execution.
 type AdminCheckIndexInconsistentCollector struct {
@@ -388,11 +383,13 @@ func (c *AdminCheckIndexInconsistentCollector) Summary() *AdminCheckIndexInconsi
 	rows := make([]AdminCheckIndexInconsistentRow, len(c.rows))
 	copy(rows, c.rows)
 	count := uint64(len(c.rows))
+	truncated := c.collectLimit > 0 && len(c.rows) >= c.collectLimit
 	c.mu.Unlock()
 
 	return &AdminCheckIndexInconsistentSummary{
-		InconsistentRowCount: count,
-		Rows:                 rows,
+		CollectedRowCount: count,
+		Truncated:         truncated,
+		Rows:              rows,
 	}
 }
 
@@ -509,12 +506,21 @@ OUTER:
 
 	if e.collector != nil {
 		sessVars.FastCheckTableInconsistentSummary = e.collector.Summary()
+	}
+
+	// Prioritize runtime errors (context cancellation, timeout, region errors)
+	// over collected inconsistency errors to avoid masking fatal failures.
+	if opErr := wctx.OperatorErr(); opErr != nil {
+		return opErr
+	}
+
+	if e.collector != nil {
 		if firstErr := e.collector.firstErr(); firstErr != nil {
 			return firstErr
 		}
 	}
 
-	return wctx.OperatorErr()
+	return nil
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
@@ -910,6 +916,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	queue = append(queue, checksumBucketTask{offset: 0, mod: 1, depth: 0})
 	const maxRefineDepth = 10
 	for len(queue) > 0 {
+		// Stop refinement early in collector mode when limit is reached.
+		if w.e.collector != nil && w.e.collector.reachedLimit() {
+			break
+		}
 		task := queue[0]
 		queue = queue[1:]
 

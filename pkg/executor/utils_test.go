@@ -326,7 +326,8 @@ func TestAdminCheckIndexInconsistentCollectorDeduplicate(t *testing.T) {
 	collector.recordInconsistent("2", AdminCheckIndexRowIndexMismatch, errors.New("third"))
 
 	summary := collector.Summary()
-	require.Equal(t, uint64(3), summary.InconsistentRowCount)
+	require.Equal(t, uint64(3), summary.CollectedRowCount)
+	require.False(t, summary.Truncated)
 	require.ElementsMatch(t, []AdminCheckIndexInconsistentRow{
 		{Handle: "1", MismatchType: AdminCheckIndexRowWithoutIndex},
 		{Handle: "1", MismatchType: AdminCheckIndexIndexWithoutRow},
@@ -345,7 +346,8 @@ func TestAdminCheckIndexInconsistentCollectorWithLimit(t *testing.T) {
 	collector.recordInconsistent("3", AdminCheckIndexRowIndexMismatch, errors.New("third"))
 
 	summary := collector.Summary()
-	require.Equal(t, uint64(2), summary.InconsistentRowCount)
+	require.Equal(t, uint64(2), summary.CollectedRowCount)
+	require.True(t, summary.Truncated)
 	require.ElementsMatch(t, []AdminCheckIndexInconsistentRow{
 		{Handle: "1", MismatchType: AdminCheckIndexRowWithoutIndex},
 		{Handle: "2", MismatchType: AdminCheckIndexIndexWithoutRow},
@@ -359,7 +361,8 @@ func TestAdminCheckIndexInconsistentCollectorIgnoreEmptyHandle(t *testing.T) {
 	collector.recordInconsistent("", AdminCheckIndexRowWithoutIndex, errors.New("first"))
 
 	summary := collector.Summary()
-	require.Equal(t, uint64(0), summary.InconsistentRowCount)
+	require.Equal(t, uint64(0), summary.CollectedRowCount)
+	require.False(t, summary.Truncated)
 	require.Empty(t, summary.Rows)
 	require.EqualError(t, collector.firstErr(), "first")
 }
@@ -372,6 +375,7 @@ func TestAdminCheckIndexInconsistentCollectorRecordErr(t *testing.T) {
 
 	require.EqualError(t, collector.firstErr(), "first")
 	summary := collector.Summary()
-	require.Equal(t, uint64(0), summary.InconsistentRowCount)
+	require.Equal(t, uint64(0), summary.CollectedRowCount)
+	require.False(t, summary.Truncated)
 	require.Empty(t, summary.Rows)
 }

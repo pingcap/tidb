@@ -2240,7 +2240,7 @@ func TestAdminCheckIndexCollectInconsistentBySessionVar(t *testing.T) {
 		sessVars.FastCheckTableInconsistentLimit = 0
 		sessVars.FastCheckTableInconsistentSummary = nil
 		_, execErr := tk.ExecWithContext(context.Background(), "admin check index admin_collect_test idx_a")
-		summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+		summary := sessVars.FastCheckTableInconsistentSummary
 		if summary == nil {
 			summary = &executor.AdminCheckIndexInconsistentSummary{}
 		}
@@ -2251,14 +2251,14 @@ func TestAdminCheckIndexCollectInconsistentBySessionVar(t *testing.T) {
 	summaryOff, err := runCheck(false)
 	require.Error(t, err)
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
-	require.Equal(t, uint64(0), summaryOff.InconsistentRowCount)
+	require.Equal(t, uint64(0), summaryOff.CollectedRowCount)
 	require.Empty(t, summaryOff.Rows)
 
 	// Collector path (variable ON) collects all mismatches with explicit type.
 	summaryOn, err := runCheck(true)
 	require.Error(t, err)
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
-	require.Equal(t, uint64(3), summaryOn.InconsistentRowCount)
+	require.Equal(t, uint64(3), summaryOn.CollectedRowCount)
 	require.ElementsMatch(t, []executor.AdminCheckIndexInconsistentRow{
 		{Handle: "1", MismatchType: executor.AdminCheckIndexRowWithoutIndex},
 		{Handle: "2", MismatchType: executor.AdminCheckIndexRowIndexMismatch},
@@ -2309,9 +2309,9 @@ func TestAdminCheckIndexCollectInconsistentMultiLayerLocate(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 
-	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	summary := sessVars.FastCheckTableInconsistentSummary
 	require.NotNil(t, summary)
-	require.Equal(t, uint64(1), summary.InconsistentRowCount)
+	require.Equal(t, uint64(1), summary.CollectedRowCount)
 	require.Equal(t, []executor.AdminCheckIndexInconsistentRow{
 		{Handle: "512", MismatchType: executor.AdminCheckIndexRowWithoutIndex},
 	}, summary.Rows)
@@ -2356,7 +2356,7 @@ func TestAdminCheckIndexCollectInconsistentTrailingDuplicateIndex(t *testing.T) 
 	require.Error(t, err)
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 
-	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	summary := sessVars.FastCheckTableInconsistentSummary
 	require.NotNil(t, summary)
 	require.Contains(t, summary.Rows, executor.AdminCheckIndexInconsistentRow{Handle: "2", MismatchType: executor.AdminCheckIndexRowIndexMismatch})
 	require.NotContains(t, summary.Rows, executor.AdminCheckIndexInconsistentRow{Handle: "2", MismatchType: executor.AdminCheckIndexIndexWithoutRow})
