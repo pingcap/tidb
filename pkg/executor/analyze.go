@@ -177,12 +177,11 @@ TASKLOOP:
 	}()
 
 	err = e.waitFinish(ctx, g, resultsCh)
+	if err == nil && ctx.Err() != nil && (sentTasks < len(tasks) || len(taskCh) > 0) {
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
 	if err != nil {
-		if stderrors.Is(err, context.Canceled) {
-			if cause := context.Cause(ctx); cause != nil {
-				err = cause
-			}
-		}
+		err = normalizeCtxErrWithCause(ctx, err)
 		for task := range taskCh {
 			finishJobWithLog(statsHandle, task.job, err)
 		}

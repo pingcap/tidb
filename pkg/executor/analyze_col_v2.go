@@ -398,7 +398,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	indexPushedDownResult := <-idxNDVPushDownCh
 	if indexPushedDownResult.err != nil {
 		close(exitCh)
-		e.samplingBuilderWg.Wait()
+		for range buildResultChan {
+		}
 		return 0, nil, nil, nil, indexPushedDownResult.err
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
@@ -643,10 +644,11 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 		}
 		// Consume the remaining things.
 		for {
-			_, ok := <-taskCh
+			data, ok := <-taskCh
 			if !ok {
 				break
 			}
+			e.memTracker.Release(int64(cap(data)))
 		}
 		e.samplingMergeWg.Done()
 		if closeTheResultCh {
@@ -685,6 +687,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 			colResp := &tipb.AnalyzeColumnsResp{}
 			err := colResp.Unmarshal(data)
 			if err != nil {
+				e.memTracker.Release(dataSize)
 				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return

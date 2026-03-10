@@ -246,6 +246,73 @@ func TestAnalyzeRestrict(t *testing.T) {
 			t.Fatal("analyze does not stop after kill query")
 		}
 	})
+	t.Run("kill_query_cleanup_pending_jobs", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
+		dom := domain.GetDomain(tk.Session())
+		origSM := dom.InfoSyncer().GetSessionManager()
+		sm := &killQuerySessionManager{
+			MockSessionManager: &testkit.MockSessionManager{
+				Conn: make(map[uint64]sessionapi.Session),
+			},
+		}
+		dom.InfoSyncer().SetSessionManager(sm)
+		defer dom.InfoSyncer().SetSessionManager(origSM)
+
+		tkAnalyze := testkit.NewTestKit(t, store)
+		tkAnalyze.Session().SetSessionManager(sm)
+		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
+		tkAnalyze.MustExec("use test")
+		tkAnalyze.MustExec("drop table if exists t")
+		tkAnalyze.MustExec("create table t(a int, b int, index idx_b(b))")
+		tkAnalyze.MustExec("insert into t values (1, 1), (2, 2)")
+		tkAnalyze.MustExec("set @@tidb_analyze_version = 1")
+		tkAnalyze.MustExec("set @@tidb_build_stats_concurrency = 1")
+
+		tkKiller := testkit.NewTestKit(t, store)
+		tkKiller.Session().GetSessionVars().User = &auth.UserIdentity{}
+		tkKiller.Session().SetSessionManager(sm)
+		sm.Conn[tkKiller.Session().GetSessionVars().ConnectionID] = tkKiller.Session()
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tkAnalyze.Session().ExecuteInternal(baseCtx, "analyze table t")
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before kill query, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
+		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
+			rows := tkKiller.MustQuery("select lower(state), count(*) from mysql.analyze_jobs where table_name = 't' group by lower(state) order by lower(state)").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", rows[0][0].(string))
+			jobCnt, err := strconv.Atoi(rows[0][1].(string))
+			require.NoError(t, err)
+			require.Greater(t, jobCnt, 1)
+			tkKiller.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and lower(state) = 'pending'").Check(testkit.Rows("0"))
+			failReasons := tkKiller.MustQuery("select fail_reason from mysql.analyze_jobs where table_name = 't'").Rows()
+			require.Len(t, failReasons, jobCnt)
+			for _, row := range failReasons {
+				require.Contains(t, row[0].(string), exeerrors.ErrQueryInterrupted.Error())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after kill query")
+		}
+	})
 }
 
 func TestAnalyzeParameters(t *testing.T) {
