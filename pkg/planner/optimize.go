@@ -479,6 +479,7 @@ func buildAndOptimizeLogicalPlanRound(
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
+	// TODO: when buildRound > 1, only emit unused view-hint warnings for the winner build.
 	defer builder.HandleUnusedViewHints()
 
 	builder.Init(sctx, is, hintProcessor)
