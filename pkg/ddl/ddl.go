@@ -1101,7 +1101,9 @@ func (d *ddl) detectAndUpdateGlobalIndexV1Support() {
 		return
 	}
 	// In production NextGen with etcd, run the same detection logic.
-	_ = d.detectAndUpdateJobVersionOnce()
+	if err := d.detectAndUpdateJobVersionOnce(); err != nil {
+		logutil.DDLLogger().Warn("detect global index V1 support failed", zap.String("err", err.Error()))
+	}
 	if model.GetGlobalIndexV1Supported() {
 		return
 	}
@@ -1114,8 +1116,11 @@ func (d *ddl) detectAndUpdateGlobalIndexV1Support() {
 			case <-d.ctx.Done():
 				return
 			}
-			_ = d.detectAndUpdateJobVersionOnce()
+			if err := d.detectAndUpdateJobVersionOnce(); err != nil {
+				logutil.SampleLogger().Warn("detect global index V1 support failed", zap.String("err", err.Error()))
+			}
 			if model.GetGlobalIndexV1Supported() {
+				logutil.DDLLogger().Info("global index V1 supported now, stop detecting")
 				return
 			}
 		}
