@@ -102,7 +102,12 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 
 		r.dataSinks[dataSink] = struct{}{}
 
-		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopSQL {
+		// Non-pubsub sinks do not carry subscription collectors; keep TopSQL enabled by default.
+		enableTopSQL := true
+		if ds, ok := dataSink.(*pubSubDataSink); ok {
+			enableTopSQL = ds.enableTopSQL
+		}
+		if enableTopSQL {
 			topsqlstate.EnableTopSQL()
 			r.topSQLSinkCount++
 		}
@@ -124,7 +129,12 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 		}
 
 		delete(r.dataSinks, dataSink)
-		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopSQL {
+		// Non-pubsub sinks do not carry subscription collectors; keep TopSQL enabled by default.
+		enableTopSQL := true
+		if ds, ok := dataSink.(*pubSubDataSink); ok {
+			enableTopSQL = ds.enableTopSQL
+		}
+		if enableTopSQL {
 			if r.topSQLSinkCount > 0 {
 				r.topSQLSinkCount--
 			}
