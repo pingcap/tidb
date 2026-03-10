@@ -89,7 +89,9 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
-	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
+	// PreferIndexJoinFirst is a statement-level soft preference that biases the reordered joins; it must not block reorder.
+	hardHints := join.PreferJoinType &^ h.PreferIndexJoinFirst
+	if !isJoin || (hardHints > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
 		((join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) && join.EqualConditions == nil) ||
 		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
@@ -127,12 +129,13 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			joinMethodHintInfo[join.Children()[1].ID()] = &joinorder.JoinMethodHint{PreferJoinMethod: join.RightPreferJoinType, HintInfo: join.HintInfo}
 			rightHasHint = true
 		}
+	}
+	if isJoin && join.HintInfo != nil && join.HintInfo.IndexJoinFirst {
 		// INDEX_JOIN_FIRST is a statement-level hint (no table target), so it is not stored in
 		// joinMethodHintInfo. Track it separately so newCartesianJoin can re-apply it to every
-		// reordered join.
-		if join.HintInfo != nil && join.HintInfo.IndexJoinFirst {
-			indexJoinFirstHints = join.HintInfo
-		}
+		// reordered join. This capture must happen regardless of EnableAdvancedJoinHint because
+		// PreferIndexJoinFirst is exempted from the reorder-blocking guard above.
+		indexJoinFirstHints = join.HintInfo
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != base.InnerJoin)
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
