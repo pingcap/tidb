@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -216,8 +217,10 @@ func updateRecord(
 	// If any generated column depends on a TIMESTAMP column, evaluate all generated
 	// columns in UTC to ensure consistent results regardless of session timezone.
 	// See https://github.com/pingcap/tidb/issues/66753
-	if table.HasGeneratedColumnDependingOnTimestamp(t.Meta()) {
-		sessionLoc := evalCtx.Location()
+	needUTC := table.HasGeneratedColumnDependingOnTimestamp(t.Meta())
+	var sessionLoc *time.Location
+	if needUTC {
+		sessionLoc = evalCtx.Location()
 		restore := table.ConvertTimestampMutRowToUTC(evalBuffer, t.Meta().Columns, offset, sessionLoc)
 		defer restore()
 		evalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
@@ -235,6 +238,14 @@ func updateRecord(
 		rawVal, err := assign.Expr.Eval(evalCtx, evalBuffer.ToRow())
 		if err == nil {
 			newData[idxInCols], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
+		}
+		// If the generated column result type is TIMESTAMP and we evaluated in UTC,
+		// convert back from UTC to session TZ to avoid double-conversion by the storage layer.
+		if needUTC && assign.Col.GetStaticType().GetType() == mysql.TypeTimestamp && !newData[idxInCols].IsNull() && newData[idxInCols].Kind() == types.KindMysqlTime {
+			mt := newData[idxInCols].GetMysqlTime()
+			if convErr := mt.ConvertTimeZone(time.UTC, sessionLoc); convErr == nil {
+				newData[idxInCols].SetMysqlTime(mt)
+			}
 		}
 		evalBuffer.SetDatum(assign.Col.Index, newData[idxInCols])
 

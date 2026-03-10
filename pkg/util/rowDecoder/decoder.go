@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -187,8 +188,10 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx exprctx.BuildContext, row ma
 	// to ensure consistent results regardless of session timezone.
 	// See https://github.com/pingcap/tidb/issues/66753
 	evalCtx := ctx.GetEvalCtx()
-	if rd.tbl != nil && table.HasGeneratedColumnDependingOnTimestamp(rd.tbl.Meta()) {
-		sessionLoc := evalCtx.Location()
+	needUTC := rd.tbl != nil && table.HasGeneratedColumnDependingOnTimestamp(rd.tbl.Meta())
+	var sessionLoc *time.Location
+	if needUTC {
+		sessionLoc = evalCtx.Location()
 		restore := table.ConvertTimestampMutRowToUTC(rd.mutRow, rd.tbl.Meta().Columns, 0, sessionLoc)
 		defer restore()
 		ctx = exprctx.CtxWithUTCLocation(ctx)
@@ -208,6 +211,14 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx exprctx.BuildContext, row ma
 		val, err = table.CastColumnValue(ctx, *val.Clone(), col.Col.ColumnInfo, false, true)
 		if err != nil {
 			return nil, err
+		}
+		// If the generated column result type is TIMESTAMP and we evaluated in UTC,
+		// convert back from UTC to session TZ to avoid double-conversion by the storage layer.
+		if needUTC && col.Col.GetType() == mysql.TypeTimestamp && !val.IsNull() && val.Kind() == types.KindMysqlTime {
+			mt := val.GetMysqlTime()
+			if convErr := mt.ConvertTimeZone(time.UTC, sessionLoc); convErr == nil {
+				val.SetMysqlTime(mt)
+			}
 		}
 
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())

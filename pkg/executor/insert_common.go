@@ -721,8 +721,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// columns in UTC to ensure consistent results regardless of session timezone.
 	// See https://github.com/pingcap/tidb/issues/66753
 	needUTC := table.HasGeneratedColumnDependingOnTimestamp(tbl)
+	var sessionLoc *time.Location
 	if needUTC {
-		sessionLoc := evalCtx.Location()
+		sessionLoc = evalCtx.Location()
 		restore := table.ConvertTimestampDatumsToUTC(row, tbl.Columns, sessionLoc)
 		defer restore()
 		evalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
@@ -739,6 +740,15 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.Ctx(), val, gCol.ToInfo(), false, false)
+		// If the generated column result type is TIMESTAMP and we evaluated in UTC,
+		// convert the result back from UTC to session TZ. The storage layer will later
+		// convert from session TZ to UTC, so this avoids a double-conversion.
+		if needUTC && gCol.GetType() == mysql.TypeTimestamp && !row[colIdx].IsNull() && row[colIdx].Kind() == types.KindMysqlTime {
+			t := row[colIdx].GetMysqlTime()
+			if convErr := t.ConvertTimeZone(time.UTC, sessionLoc); convErr == nil {
+				row[colIdx].SetMysqlTime(t)
+			}
+		}
 		if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
 			return nil, err
 		}

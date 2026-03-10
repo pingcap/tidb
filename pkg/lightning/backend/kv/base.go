@@ -17,6 +17,7 @@ package kv
 import (
 	"context"
 	"math/rand"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -385,8 +386,9 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 			break
 		}
 	}
+	var sessionLoc *time.Location
 	if needUTC {
-		sessionLoc := evalCtx.Location()
+		sessionLoc = evalCtx.Location()
 		restore := table.ConvertTimestampDatumsToUTC(record, colInfos, sessionLoc)
 		defer restore()
 		mutRow = chunk.MutRowFromDatums(record)
@@ -403,6 +405,14 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 		value, err := table.CastColumnValue(castCtx, evaluated, col, false, false)
 		if err != nil {
 			return col, err
+		}
+		// If the generated column result type is TIMESTAMP and we evaluated in UTC,
+		// convert back from UTC to session TZ to avoid double-conversion by the storage layer.
+		if needUTC && col.GetType() == mysql.TypeTimestamp && !value.IsNull() && value.Kind() == types.KindMysqlTime {
+			mt := value.GetMysqlTime()
+			if convErr := mt.ConvertTimeZone(time.UTC, sessionLoc); convErr == nil {
+				value.SetMysqlTime(mt)
+			}
 		}
 		mutRow.SetDatum(gc.Index, value)
 		record[gc.Index] = value

@@ -939,6 +939,15 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			if err != nil {
 				return err
 			}
+			// If the generated column result type is TIMESTAMP and we evaluated in UTC,
+			// convert back from UTC to session TZ so the value matches what the index
+			// stores after Unflatten (which converts from UTC to session TZ).
+			if isUTCCol && colInfos[idx].GetType() == mysql.TypeTimestamp && !castDatum.IsNull() && castDatum.Kind() == types.KindMysqlTime {
+				mt := castDatum.GetMysqlTime()
+				if convErr := mt.ConvertTimeZone(time.UTC, origLoc); convErr == nil {
+					castDatum.SetMysqlTime(mt)
+				}
+			}
 
 			// Clip to zero if get negative value after cast to unsigned.
 			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && tc.Flags().AllowNegativeToUnsigned() {
