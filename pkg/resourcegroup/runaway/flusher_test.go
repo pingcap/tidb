@@ -148,7 +148,7 @@ func TestGenRunawayQueriesStmtODKU(t *testing.T) {
 	sql, params := genRunawayQueriesStmt(m)
 
 	// ODKU clause must be present for cluster-wide dedup to work.
-	re.Contains(sql, "ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = VALUES(update_time)")
+	re.Contains(sql, "ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = GREATEST(update_time, VALUES(update_time))")
 	// update_time column must appear in the INSERT column list.
 	re.Contains(sql, "update_time")
 	// one row × 11 columns (was 10 before update_time was added).
