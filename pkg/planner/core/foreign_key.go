@@ -162,6 +162,12 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades = append(fkCascades, referredFKCascades...)
+			for _, fk := range referredFKCascades {
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+				if ok && fkDBInfo.ReadOnly {
+					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+			}
 		}
 	} else if p.IsReplace {
 		referredFKChecks, referredFKCascades, err := p.buildOnReplaceReferredFKTriggers(ctx, is, dbName, tblInfo)
@@ -173,6 +179,12 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades = append(fkCascades, referredFKCascades...)
+			for _, fk := range referredFKCascades {
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+				if ok && fkDBInfo.ReadOnly {
+					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+			}
 		}
 	}
 	for _, fk := range tblInfo.ForeignKeys {

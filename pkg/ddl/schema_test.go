@@ -789,3 +789,23 @@ func TestTTLDeleteError(t *testing.T) {
 		return ttlError != nil && strings.Contains(ttlError.Error(), "Schema 'test' is in read only mode")
 	}, 10*time.Second, 100*time.Millisecond)
 }
+
+func TestSchemaReadOnlyBlockFKCascadeOnDuplicateKeyUpdate(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+
+	tk.MustExec("create database ro_fk_parent")
+	tk.MustExec("create database ro_fk_child")
+
+	tk.MustExec("create table ro_fk_parent.parent(id int primary key, val int)")
+	tk.MustExec("create table ro_fk_child.child(id int primary key, parent_id int, foreign key fk_p(parent_id) references ro_fk_parent.parent(id) on update cascade)")
+
+	tk.MustExec("alter schema ro_fk_child read only = 1")
+	tk.MustExec("use ro_fk_parent")
+	tk.MustGetErrMsg("insert into parent values (2, 999) on duplicate key update id = 3, val = 999", "[schema:3989]Schema 'ro_fk_child' is in read only mode.")
+
+	tk.MustQuery("select * from ro_fk_parent.parent").Check(testkit.Rows())
+	tk.MustQuery("select * from ro_fk_child.child").Check(testkit.Rows())
+}
