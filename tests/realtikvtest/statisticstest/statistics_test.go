@@ -55,7 +55,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 
 	tk.MustExec("analyze table t")
 	// Wait for stats to be fully persisted and loaded
@@ -96,8 +96,11 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		"test t  ia3 1 \x00B\x00B 1",
 		"test t  ia3 1 \x00B\x00B\x00B 5",
 	))
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tblInfo.Meta().ID
 	// Check histogram stats, using tolerance for correlation which can vary slightly
-	rows := tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Rows()
+	rows := tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where table_id = ?", tableID).Sort().Rows()
 	require.Len(t, rows, 4)
 
 	// Check column histogram (is_index=0)
@@ -112,7 +115,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	require.InDelta(t, 0.8411764705882353, correlationFloat, 0.01, "correlation should be approximately 0.841")
 
 	// Check index histograms (is_index=1)
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where is_index=1").Sort().Check(testkit.Rows(
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where is_index=1 and table_id = ?", tableID).Sort().Check(testkit.Rows(
 		"1 1 8 0 2 0",
 		"1 2 13 0 2 0",
 		"1 3 15 0 2 0",
@@ -178,7 +181,7 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	// 3. Insert some data and wait for the modify_count and the count is not null in the mysql.stats_meta.
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
@@ -244,7 +247,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	tk.MustExec("alter table t add index ia(a);")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	ctx := context.Background()
 	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.

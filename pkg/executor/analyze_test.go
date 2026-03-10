@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -29,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,5 +185,86 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec("analyze table t")
 		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
+	}
+}
+
+func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorageErr", "1*return(true)")
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tk.ExecToErr("analyze table t")
+	}()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("analyze hangs after save analyze result error")
+	}
+}
+
+func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	workerPaused := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	thirdSendPaused := make(chan struct{})
+	releaseThirdSend := make(chan struct{})
+	var workerHookCount, sendHookCount atomic.Int64
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSaveWorkerBeforeHandleSignal", func() {
+		if workerHookCount.Add(1) == 1 {
+			close(workerPaused)
+			<-releaseWorker
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeBeforeSendToSaveResults", func() {
+		if sendHookCount.Add(1) == 3 {
+			close(thirdSendPaused)
+			<-releaseThirdSend
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tk.ExecToErr("analyze table t")
+	}()
+
+	select {
+	case <-workerPaused:
+	case <-time.After(5 * time.Second):
+		t.Fatal("save worker did not reach first kill-check point")
+	}
+	select {
+	case <-thirdSendPaused:
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze did not reach third send to save channel")
+	}
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	close(releaseWorker)
+	close(releaseThirdSend)
+
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "Query execution was interrupted")
+	case <-time.After(5 * time.Second):
+		t.Fatal("analyze hangs after kill during save")
 	}
 }

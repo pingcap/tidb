@@ -330,8 +330,8 @@ func TestBRIECreateTables(t *testing.T) {
 
 type fakeDDLExecutor struct {
 	ddl.Executor
-	queryList        []string
-	successQueryList []string
+	queryList        map[string][]string
+	successQueryList map[string][]string
 	maxCount         int
 }
 
@@ -341,7 +341,7 @@ func (f *fakeDDLExecutor) BatchCreateTableWithInfo(
 	info []*model.TableInfo,
 	cs ...ddl.CreateTableOption,
 ) error {
-	f.queryList = append(f.queryList, sctx.Value(sessionctx.QueryString).(string))
+	f.queryList[schema.O] = append(f.queryList[schema.O], sctx.Value(sessionctx.QueryString).(string))
 	if len(info) > f.maxCount {
 		switch rand.Int() % 2 {
 		case 0:
@@ -350,7 +350,7 @@ func (f *fakeDDLExecutor) BatchCreateTableWithInfo(
 			return kv.ErrEntryTooLarge
 		}
 	}
-	f.successQueryList = append(f.successQueryList, sctx.Value(sessionctx.QueryString).(string))
+	f.successQueryList[info[0].Name.O] = append(f.successQueryList[info[0].Name.O], sctx.Value(sessionctx.QueryString).(string))
 	return nil
 }
 
@@ -388,7 +388,11 @@ func (f *fakeSessionContext) GetSessionVars() *variable.SessionVars {
 }
 
 func TestSplitTablesQueryMatch(t *testing.T) {
-	ddlexecutor := &fakeDDLExecutor{maxCount: 1}
+	ddlexecutor := &fakeDDLExecutor{
+		maxCount:         1,
+		queryList:        make(map[string][]string),
+		successQueryList: make(map[string][]string),
+	}
 	sctx := newFakeSessionContext(ddlexecutor)
 	tables := map[string][]*model.TableInfo{
 		"test": {
@@ -402,13 +406,18 @@ func TestSplitTablesQueryMatch(t *testing.T) {
 
 	err := executor.BRIECreateTables(sctx, tables, "/*from(br)*/")
 	require.NoError(t, err)
-	require.Len(t, ddlexecutor.queryList, 4)
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[0])
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[1])
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[2])
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[3])
+	require.Len(t, ddlexecutor.queryList, 2)
+	require.Len(t, ddlexecutor.queryList["test"], 3)
+	require.Len(t, ddlexecutor.queryList["test2"], 1)
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][0])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][1])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][2])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test2"][0])
 	require.Len(t, ddlexecutor.successQueryList, 3)
-	require.Equal(t, ddlexecutor.queryList[1], ddlexecutor.successQueryList[0])
-	require.Equal(t, ddlexecutor.queryList[2], ddlexecutor.successQueryList[1])
-	require.Equal(t, ddlexecutor.queryList[3], ddlexecutor.successQueryList[2])
+	require.Len(t, ddlexecutor.successQueryList["t1"], 1)
+	require.Len(t, ddlexecutor.successQueryList["t2"], 1)
+	require.Len(t, ddlexecutor.successQueryList["t3"], 1)
+	require.Equal(t, ddlexecutor.queryList["test"][1], ddlexecutor.successQueryList["t1"][0])
+	require.Equal(t, ddlexecutor.queryList["test"][2], ddlexecutor.successQueryList["t2"][0])
+	require.Equal(t, ddlexecutor.queryList["test2"][0], ddlexecutor.successQueryList["t3"][0])
 }

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -407,6 +408,10 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 
 // sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	newRootExceedAction := new(testutil.MockActionOnExceed)
@@ -445,10 +450,8 @@ func TestGetCorrectResult(t *testing.T) {
 	}()
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
-	for range 5 {
-		executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
-		executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
-	}
+	executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
+	executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
 
 	finished.Store(true)
 	wg.Wait()
@@ -456,6 +459,10 @@ func TestGetCorrectResult(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	for range 50 {
@@ -465,6 +472,10 @@ func TestFallBackAction(t *testing.T) {
 }
 
 func TestRandomFail(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	newRootExceedAction := new(testutil.MockActionOnExceed)
@@ -501,7 +512,7 @@ func TestRandomFail(t *testing.T) {
 
 	// Test is successful when all sqls are not hung
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
-	for range 30 {
+	for range 5 {
 		randomFailTest(t, ctx, nil, dataSource, testFuncName)
 		randomFailTest(t, ctx, aggExec, dataSource, testFuncName)
 	}

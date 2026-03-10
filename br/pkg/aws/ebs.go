@@ -4,24 +4,23 @@ package aws
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/client"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/cloudwatch"
-	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
@@ -36,77 +35,34 @@ const (
 )
 
 type EC2Session struct {
-	ec2              ec2iface.EC2API
-	cloudwatchClient *cloudwatch.CloudWatch
+	ec2              *ec2.Client
+	cloudwatchClient *cloudwatch.Client
 	// aws operation concurrency
 	concurrency uint
 }
 
 type VolumeAZs map[string]string
 
-type ebsBackupRetryer struct {
-	delegate request.Retryer
-}
-
-func (e *ebsBackupRetryer) MaxRetries() int {
-	return e.delegate.MaxRetries()
-}
-
-var backOffTimeOverride = map[string]time.Duration{
-	// From the SDK:
-	// Sadly it seems there isn't an exported operation name...
-	// const opCreateSnapshots = "CreateSnapshots"
-	// The quota for create snapshots is 5 per minute.
-	// Back off for a longer time so we won't excced it.
-	"CreateSnapshots": 20 * time.Second,
-	// const opCreateVolume = "CreateVolume"
-	"CreateVolume": 20 * time.Second,
-}
-
-func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
-	backOff := e.delegate.RetryRules(r)
-	if override, ok := backOffTimeOverride[r.Operation.Name]; ok {
-		backOff = max(override, backOff)
-	}
-	log.Warn(
-		"Retrying an operation.",
-		logutil.ShortError(r.Error),
-		zap.Duration("backoff", backOff),
-		zap.StackSkip("stack", 1),
-	)
-	return backOff
-}
-
-func (e *ebsBackupRetryer) ShouldRetry(r *request.Request) bool {
-	return e.delegate.ShouldRetry(r)
-}
-
 func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
-	// aws-sdk has builtin exponential backoff retry mechanism, see:
-	// https://github.com/aws/aws-sdk-go/blob/db4388e8b9b19d34dcde76c492b17607cd5651e2/aws/client/default_retryer.go#L12-L16
-	// with default retryer & max-retry=9, we will wait for at least 30s in total
-	awsConfig := aws.NewConfig().WithMaxRetries(9).WithRegion(region)
-	defRetry := new(client.DefaultRetryer)
-	ourRetry := ebsBackupRetryer{
-		delegate: defRetry,
-	}
-	awsConfig.Retryer = ourRetry
-	// TiDB Operator need make sure we have the correct permission to call aws api(through aws env variables)
-	// we may change this behaviour in the future.
-	sessionOptions := session.Options{Config: *awsConfig}
-	sess, err := session.NewSessionWithOptions(sessionOptions)
+	// Load AWS config with retry configuration
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithRegion(region),
+		awsconfig.WithRetryMaxAttempts(9),
+		awsconfig.WithRetryMode(aws.RetryModeStandard),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ec2Session := ec2.New(sess)
-	cloudwatchClient := cloudwatch.New(sess)
-	return &EC2Session{ec2: ec2Session, cloudwatchClient: cloudwatchClient, concurrency: concurrency}, nil
+
+	ec2Client := ec2.NewFromConfig(cfg)
+	cloudwatchClient := cloudwatch.NewFromConfig(cfg)
+	return &EC2Session{ec2: ec2Client, cloudwatchClient: cloudwatchClient, concurrency: concurrency}, nil
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
 func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[string]string, VolumeAZs, error) {
 	snapIDMap := make(map[string]string)
-	var volumeIDs []*string
+	var volumeIDs []string
 
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
@@ -115,11 +71,13 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		defer mutex.Unlock()
 		for j := range createOutput.Snapshots {
 			snapshot := createOutput.Snapshots[j]
-			snapIDMap[aws.StringValue(snapshot.VolumeId)] = aws.StringValue(snapshot.SnapshotId)
+			volumeID := aws.ToString(snapshot.VolumeId)
+			snapshotID := aws.ToString(snapshot.SnapshotId)
+			snapIDMap[volumeID] = snapshotID
 		}
 	}
 
-	tags := []*ec2.Tag{
+	tags := []ec2types.Tag{
 		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
 	}
 
@@ -129,27 +87,27 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		volumes := store.Volumes
 		if len(volumes) >= 1 {
 			log.Info("fetch EC2 instance id using first volume")
-			var targetVolumeIDs []*string
+			var targetVolumeIDs []string
 			for j := range volumes {
 				volume := volumes[j]
-				targetVolumeIDs = append(targetVolumeIDs, &volume.ID)
-				volumeIDs = append(volumeIDs, &volume.ID)
+				targetVolumeIDs = append(targetVolumeIDs, volume.ID)
+				volumeIDs = append(volumeIDs, volume.ID)
 			}
 
 			// determine the ec2 instance id
-			resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{VolumeIds: targetVolumeIDs[0:1]})
+			resp, err := e.ec2.DescribeVolumes(context.TODO(), &ec2.DescribeVolumesInput{VolumeIds: targetVolumeIDs[0:1]})
 			if err != nil {
 				return snapIDMap, nil, errors.Trace(err)
 			}
-			if resp.Volumes[0].Attachments[0] == nil || resp.Volumes[0].Attachments[0].InstanceId == nil {
+			if len(resp.Volumes[0].Attachments) == 0 || resp.Volumes[0].Attachments[0].InstanceId == nil {
 				return snapIDMap, nil, errors.Errorf("specified volume %s is not attached", volumes[0].ID)
 			}
 			ec2InstanceId := resp.Volumes[0].Attachments[0].InstanceId
 			log.Info("EC2 instance id is", zap.Stringp("id", ec2InstanceId))
 
 			// determine the exclude volume list
-			var excludedVolumeIDs []*string
-			resp1, err := e.ec2.DescribeInstances(&ec2.DescribeInstancesInput{InstanceIds: []*string{ec2InstanceId}})
+			var excludedVolumeIDs []string
+			resp1, err := e.ec2.DescribeInstances(context.TODO(), &ec2.DescribeInstancesInput{InstanceIds: []string{*ec2InstanceId}})
 			if err != nil {
 				return snapIDMap, nil, errors.Trace(err)
 			}
@@ -157,19 +115,27 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
 				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
 				// skip root volume
-				if aws.StringValue(device.DeviceName) == aws.StringValue(resp1.Reservations[0].Instances[0].RootDeviceName) {
+				deviceName := aws.ToString(device.DeviceName)
+				rootDeviceName := aws.ToString(resp1.Reservations[0].Instances[0].RootDeviceName)
+				if deviceName == rootDeviceName {
 					continue
 				}
 				toInclude := false
 				for k := range targetVolumeIDs {
 					targetVolumeID := targetVolumeIDs[k]
-					if aws.StringValue(targetVolumeID) == aws.StringValue(device.Ebs.VolumeId) {
+					ebsVolumeID := ""
+					if device.Ebs != nil {
+						ebsVolumeID = aws.ToString(device.Ebs.VolumeId)
+					}
+					if targetVolumeID == ebsVolumeID {
 						toInclude = true
 						break
 					}
 				}
-				if !toInclude {
-					excludedVolumeIDs = append(excludedVolumeIDs, device.Ebs.VolumeId)
+				if !toInclude && device.Ebs != nil {
+					if volumeID := aws.ToString(device.Ebs.VolumeId); volumeID != "" {
+						excludedVolumeIDs = append(excludedVolumeIDs, volumeID)
+					}
 				}
 			}
 
@@ -178,20 +144,22 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			// create snapshots for volumes on this ec2 instance
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// Prepare for aws requests
-				instanceSpecification := ec2.InstanceSpecification{}
-				createSnapshotInput := ec2.CreateSnapshotsInput{}
+				instanceSpecification := ec2types.InstanceSpecification{
+					InstanceId:           ec2InstanceId,
+					ExcludeBootVolume:    aws.Bool(true),
+					ExcludeDataVolumeIds: excludedVolumeIDs,
+				}
 
-				instanceSpecification.SetInstanceId(aws.StringValue(ec2InstanceId)).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
-
-				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
-				// Copy tags from source volume
-				createSnapshotInput.SetCopyTagsFromSource("volume")
-				createSnapshotInput.SetTagSpecifications([]*ec2.TagSpecification{
-					{
-						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
-						Tags:         tags,
+				createSnapshotInput := ec2.CreateSnapshotsInput{
+					InstanceSpecification: &instanceSpecification,
+					CopyTagsFromSource:    ec2types.CopyTagsFromSourceVolume,
+					TagSpecifications: []ec2types.TagSpecification{
+						{
+							ResourceType: ec2types.ResourceTypeSnapshot,
+							Tags:         tags,
+						},
 					},
-				})
+				}
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
 				if err != nil {
@@ -208,13 +176,17 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	}
 
 	volAZs := make(map[string]string)
-	resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{VolumeIds: volumeIDs})
+	resp, err := e.ec2.DescribeVolumes(context.TODO(), &ec2.DescribeVolumesInput{VolumeIds: volumeIDs})
 	if err != nil {
 		return snapIDMap, volAZs, errors.Trace(err)
 	}
 	for _, vol := range resp.Volumes {
-		log.Info("volume information", zap.Stringer("vol", vol))
-		volAZs[*vol.VolumeId] = *vol.AvailabilityZone
+		log.Info("volume information", zap.Any("vol", vol))
+		volumeID := aws.ToString(vol.VolumeId)
+		availabilityZone := aws.ToString(vol.AvailabilityZone)
+		if volumeID != "" && availabilityZone != "" {
+			volAZs[volumeID] = availabilityZone
+		}
 	}
 
 	return snapIDMap, volAZs, nil
@@ -222,17 +194,22 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 
 func (e *EC2Session) createSnapshotsWithRetry(ctx context.Context, input *ec2.CreateSnapshotsInput) (*ec2.CreateSnapshotsOutput, error) {
 	for {
-		res, err := e.ec2.CreateSnapshotsWithContext(ctx, input)
-		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == errCodeTooManyPendingSnapshots {
+		res, err := e.ec2.CreateSnapshots(ctx, input)
+		var aerr smithy.APIError
+		if stderrors.As(err, &aerr) && aerr.ErrorCode() == errCodeTooManyPendingSnapshots {
+			instanceID := ""
+			if input.InstanceSpecification != nil {
+				instanceID = aws.ToString(input.InstanceSpecification.InstanceId)
+			}
 			log.Warn("the pending snapshots exceeds the limit. waiting...",
-				zap.String("instance", aws.StringValue(input.InstanceSpecification.InstanceId)),
-				zap.Strings("volumns", aws.StringValueSlice(input.InstanceSpecification.ExcludeDataVolumeIds)),
+				zap.String("instance", instanceID),
+				zap.Strings("volumns", input.InstanceSpecification.ExcludeDataVolumeIds),
 			)
 			time.Sleep(pollingPendingSnapshotInterval)
 			continue
 		}
 		if err != nil {
-			return nil, errors.Annotatef(err, "failed to create snapshot for request %s", input)
+			return nil, errors.Annotatef(err, "failed to create snapshot for request %v", input)
 		}
 		return res, nil
 	}
@@ -267,10 +244,10 @@ func (e *EC2Session) extractSnapProgress(str *string) int64 {
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
 func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress glue.Progress) (int64, error) {
-	pendingSnapshots := make([]*string, 0, len(snapIDMap))
+	pendingSnapshots := make([]string, 0, len(snapIDMap))
 	for volID := range snapIDMap {
 		snapID := snapIDMap[volID]
-		pendingSnapshots = append(pendingSnapshots, &snapID)
+		pendingSnapshots = append(pendingSnapshots, snapID)
 	}
 	totalVolumeSize := int64(0)
 	snapProgressMap := make(map[string]int64, len(snapIDMap))
@@ -285,29 +262,34 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 		// check pending snapshots every 5 seconds
 		time.Sleep(5 * time.Second)
 		log.Info("check pending snapshots", zap.Int("count", len(pendingSnapshots)))
-		resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
+		resp, err := e.ec2.DescribeSnapshots(context.TODO(), &ec2.DescribeSnapshotsInput{
 			SnapshotIds: pendingSnapshots,
 		})
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
-		var uncompletedSnapshots []*string
+		var uncompletedSnapshots []string
 		for _, s := range resp.Snapshots {
-			if *s.State == ec2.SnapshotStateCompleted {
-				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
-				totalVolumeSize += *s.VolumeSize
-			} else if *s.State == ec2.SnapshotStateError {
-				log.Error("snapshot failed", zap.String("id", *s.SnapshotId), zap.String("error", utils.GetOrZero(s.StateMessage)))
-				return 0, errors.Errorf("snapshot %s failed", *s.SnapshotId)
+			snapshotID := aws.ToString(s.SnapshotId)
+			if s.State == ec2types.SnapshotStateCompleted {
+				log.Info("snapshot completed", zap.String("id", snapshotID))
+				if s.VolumeSize != nil {
+					totalVolumeSize += int64(*s.VolumeSize)
+				}
+			} else if s.State == ec2types.SnapshotStateError {
+				log.Error("snapshot failed", zap.String("id", snapshotID), zap.String("error", utils.GetOrZero(s.StateMessage)))
+				return 0, errors.Errorf("snapshot %s failed", snapshotID)
 			} else {
-				log.Debug("snapshot creating...", zap.Stringer("snap", s))
-				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
+				log.Debug("snapshot creating...", zap.Any("snap", s))
+				if snapshotID != "" {
+					uncompletedSnapshots = append(uncompletedSnapshots, snapshotID)
+				}
 			}
 			currSnapProgress := e.extractSnapProgress(s.Progress)
-			if currSnapProgress > snapProgressMap[*s.SnapshotId] {
-				progress.IncBy(currSnapProgress - snapProgressMap[*s.SnapshotId])
-				snapProgressMap[*s.SnapshotId] = currSnapProgress
+			if currSnapProgress > snapProgressMap[snapshotID] {
+				progress.IncBy(currSnapProgress - snapProgressMap[snapshotID])
+				snapProgressMap[snapshotID] = currSnapProgress
 			}
 		}
 		pendingSnapshots = uncompletedSnapshots
@@ -315,10 +297,10 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 }
 
 func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
-	pendingSnaps := make([]*string, 0, len(snapIDMap))
+	pendingSnaps := make([]string, 0, len(snapIDMap))
 	for volID := range snapIDMap {
 		snapID := snapIDMap[volID]
-		pendingSnaps = append(pendingSnaps, &snapID)
+		pendingSnaps = append(pendingSnaps, snapID)
 	}
 
 	var deletedCnt atomic.Int32
@@ -327,11 +309,11 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 	for i := range pendingSnaps {
 		snapID := pendingSnaps[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
-			_, err2 := e.ec2.DeleteSnapshot(&ec2.DeleteSnapshotInput{
-				SnapshotId: snapID,
+			_, err2 := e.ec2.DeleteSnapshot(context.TODO(), &ec2.DeleteSnapshotInput{
+				SnapshotId: aws.String(snapID),
 			})
 			if err2 != nil {
-				log.Error("failed to delete snapshot", zap.Error(err2), zap.Stringp("snap-id", snapID))
+				log.Error("failed to delete snapshot", zap.Error(err2), zap.String("snap-id", snapID))
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all snapshot got chance to delete.
 			} else {
@@ -345,7 +327,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 }
 
 // EnableDataFSR enables FSR for data volume snapshots
-func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) (map[string][]*string, error) {
+func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) (map[string][]string, error) {
 	snapshotsIDsMap := fetchTargetSnapshots(meta, targetAZ)
 
 	if len(snapshotsIDsMap) == 0 {
@@ -362,8 +344,8 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 			end := min(i+FsrApiSnapshotsThreshold, len(snapshotsIDsMap[targetAZ]))
 			eg.Go(func() error {
 				log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][start:end]))
-				resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
-					AvailabilityZones: []*string{&targetAZ},
+				resp, err := e.ec2.EnableFastSnapshotRestores(context.TODO(), &ec2.EnableFastSnapshotRestoresInput{
+					AvailabilityZones: []string{targetAZ},
 					SourceSnapshotIds: snapshotsIDsMap[targetAZ][start:end],
 				})
 
@@ -384,13 +366,13 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 }
 
 // waitDataFSREnabled waits FSR for data volume snapshots are all enabled and also have enough credit balance
-func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) error {
-	resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
+func (e *EC2Session) waitDataFSREnabled(snapShotIDs []string, targetAZ string) error {
+	resp, err := e.ec2.DescribeSnapshots(context.TODO(), &ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if len(resp.Snapshots) <= 0 {
-		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
+		return errors.Errorf("specified snapshot [%s] is not found", snapShotIDs[0])
 	}
 
 	// Wait that all snapshot has enough fsr credit balance
@@ -399,7 +381,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	startIdx := 0
 	retryCount := 0
 	for startIdx < len(snapShotIDs) {
-		creditBalance, _ := e.getFSRCreditBalance(snapShotIDs[startIdx], targetAZ)
+		creditBalance, _ := e.getFSRCreditBalance(aws.String(snapShotIDs[startIdx]), targetAZ)
 		if creditBalance != nil && *creditBalance >= 1.0 {
 			startIdx++
 			retryCount = 0
@@ -407,7 +389,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 			if creditBalance == nil {
 				// For invalid calling, retry 3 times
 				if retryCount >= 3 {
-					return errors.Errorf("cloudwatch metrics for %s operation failed after retrying", *snapShotIDs[startIdx])
+					return errors.Errorf("cloudwatch metrics for %s operation failed after retrying", snapShotIDs[startIdx])
 				}
 				retryCount++
 			}
@@ -421,7 +403,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 
 	// Populate the map with the strings from the array
 	for _, str := range snapShotIDs {
-		pendingSnapshots[*str] = struct{}{}
+		pendingSnapshots[str] = struct{}{}
 	}
 
 	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots), zap.String("available zone", targetAZ))
@@ -435,33 +417,35 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		time.Sleep(1 * time.Minute)
 		log.Info("check snapshots not fsr enabled", zap.Int("count", len(pendingSnapshots)))
 		input := &ec2.DescribeFastSnapshotRestoresInput{
-			Filters: []*ec2.Filter{
+			Filters: []ec2types.Filter{
 				{
 					Name:   aws.String("state"),
-					Values: []*string{aws.String("disabled"), aws.String("disabling"), aws.String("enabling"), aws.String("optimizing")},
+					Values: []string{"disabled", "disabling", "enabling", "optimizing"},
 				},
 				{
 					Name:   aws.String("availability-zone"),
-					Values: []*string{aws.String(targetAZ)},
+					Values: []string{targetAZ},
 				},
 			},
 		}
 
-		result, err := e.ec2.DescribeFastSnapshotRestores(input)
+		result, err := e.ec2.DescribeFastSnapshotRestores(context.TODO(), input)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		uncompletedSnapshots := make(map[string]struct{})
 		for _, fastRestore := range result.FastSnapshotRestores {
-			_, found := pendingSnapshots[*fastRestore.SnapshotId]
+			snapshotID := aws.ToString(fastRestore.SnapshotId)
+			_, found := pendingSnapshots[snapshotID]
 			if found {
 				// Detect some conflict states
-				if strings.EqualFold(*fastRestore.State, "disabled") || strings.EqualFold(*fastRestore.State, "disabling") {
-					log.Error("detect conflict status", zap.String("snapshot", *fastRestore.SnapshotId), zap.String("status", *fastRestore.State))
-					return errors.Errorf("status of snapshot %s is %s ", *fastRestore.SnapshotId, *fastRestore.State)
+				stateStr := string(fastRestore.State)
+				if strings.EqualFold(stateStr, "disabled") || strings.EqualFold(stateStr, "disabling") {
+					log.Error("detect conflict status", zap.String("snapshot", snapshotID), zap.String("status", stateStr))
+					return errors.Errorf("status of snapshot %s is %s ", snapshotID, stateStr)
 				}
-				uncompletedSnapshots[*fastRestore.SnapshotId] = struct{}{}
+				uncompletedSnapshots[snapshotID] = struct{}{}
 			}
 		}
 		pendingSnapshots = uncompletedSnapshots
@@ -474,13 +458,13 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (*
 	startTime := time.Now().Add(-5 * time.Minute)
 	endTime := time.Now()
 
-	// Prepare the input for the GetMetricStatisticsWithContext API call
+	// Prepare the input for the GetMetricStatistics API call
 	input := &cloudwatch.GetMetricStatisticsInput{
 		StartTime:  aws.Time(startTime),
 		EndTime:    aws.Time(endTime),
 		Namespace:  aws.String("AWS/EBS"),
 		MetricName: aws.String("FastSnapshotRestoreCreditsBalance"),
-		Dimensions: []*cloudwatch.Dimension{
+		Dimensions: []types.Dimension{
 			{
 				Name:  aws.String("SnapshotId"),
 				Value: snapshotID,
@@ -490,16 +474,16 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (*
 				Value: aws.String(targetAZ),
 			},
 		},
-		Period:     aws.Int64(300),
-		Statistics: []*string{aws.String("Maximum")},
+		Period:     aws.Int32(300),
+		Statistics: []types.Statistic{types.StatisticMaximum},
 	}
 
 	log.Info("metrics input", zap.Any("input", input))
 
 	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
-	resp, err := e.cloudwatchClient.GetMetricStatisticsWithContext(context.Background(), input)
+	resp, err := e.cloudwatchClient.GetMetricStatistics(context.Background(), input)
 	if err != nil {
-		log.Error("GetMetricStatisticsWithContext failed", zap.Error(err))
+		log.Error("GetMetricStatistics failed", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -514,7 +498,7 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (*
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
-func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error {
+func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]string) error {
 	if len(snapshotsIDsMap) == 0 {
 		return nil
 	}
@@ -528,8 +512,8 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 			start := i
 			end := min(i+FsrApiSnapshotsThreshold, len(snapshotsIDsMap[targetAZ]))
 			eg.Go(func() error {
-				resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
-					AvailabilityZones: []*string{&targetAZ},
+				resp, err := e.ec2.DisableFastSnapshotRestores(context.TODO(), &ec2.DisableFastSnapshotRestoresInput{
+					AvailabilityZones: []string{targetAZ},
 					SourceSnapshotIds: snapshotsIDsMap[targetAZ][start:end],
 				})
 
@@ -551,8 +535,8 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 	return eg.Wait()
 }
 
-func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[string][]*string {
-	var sourceSnapshotIDs = make(map[string][]*string)
+func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[string][]string {
+	var sourceSnapshotIDs = make(map[string][]string)
 
 	if len(meta.TiKVComponent.Stores) == 0 {
 		return sourceSnapshotIDs
@@ -565,9 +549,9 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 			// Handle data volume snapshots only
 			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
 				if specifiedAZ != "" {
-					sourceSnapshotIDs[specifiedAZ] = append(sourceSnapshotIDs[specifiedAZ], &oldVol.SnapshotID)
+					sourceSnapshotIDs[specifiedAZ] = append(sourceSnapshotIDs[specifiedAZ], oldVol.SnapshotID)
 				} else {
-					sourceSnapshotIDs[oldVol.VolumeAZ] = append(sourceSnapshotIDs[oldVol.VolumeAZ], &oldVol.SnapshotID)
+					sourceSnapshotIDs[oldVol.VolumeAZ] = append(sourceSnapshotIDs[oldVol.VolumeAZ], oldVol.SnapshotID)
 				}
 			}
 		}
@@ -581,23 +565,25 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 // returned map: store id -> old volume id -> new volume id
 func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, encrypted bool, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
-		VolumeType: &volumeType,
+		VolumeType: ec2types.VolumeType(volumeType),
 	}
 	if iops > 0 {
-		template.SetIops(iops)
+		template.Iops = aws.Int32(int32(iops))
 	}
 	if throughput > 0 {
-		template.SetThroughput(throughput)
+		template.Throughput = aws.Int32(int32(throughput))
 	}
 	template.Encrypted = &encrypted
 
 	newVolumeIDMap := make(map[string]string)
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
-	fillResult := func(newVol *ec2.Volume, oldVol *config.EBSVolume) {
+	fillResult := func(newVol *ec2.CreateVolumeOutput, oldVol *config.EBSVolume) {
 		mutex.Lock()
 		defer mutex.Unlock()
-		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
+		if volumeID := aws.ToString(newVol.VolumeId); volumeID != "" {
+			newVolumeIDMap[oldVol.ID] = volumeID
+		}
 	}
 
 	workerPool := util.NewWorkerPool(e.concurrency, "create volume")
@@ -609,25 +595,25 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
 
-				req.SetSnapshotId(oldVol.SnapshotID)
+				req.SnapshotId = aws.String(oldVol.SnapshotID)
 
 				// set target AZ
 				if targetAZ == "" {
-					req.SetAvailabilityZone(oldVol.VolumeAZ)
+					req.AvailabilityZone = aws.String(oldVol.VolumeAZ)
 				} else {
-					req.SetAvailabilityZone(targetAZ)
+					req.AvailabilityZone = aws.String(targetAZ)
 				}
 
 				// Copy interested tags of snapshots to the restored volume
-				tags := []*ec2.Tag{
+				tags := []ec2types.Tag{
 					ec2Tag("TiDBCluster-BR", "new"),
 					ec2Tag("ebs.csi.aws.com/cluster", "true"),
 					ec2Tag("snapshot/createdFromSnapshotId", oldVol.SnapshotID),
 				}
-				snapshotIds := make([]*string, 0)
+				snapshotIds := make([]string, 0)
 
-				snapshotIds = append(snapshotIds, &oldVol.SnapshotID)
-				resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapshotIds})
+				snapshotIds = append(snapshotIds, oldVol.SnapshotID)
+				resp, err := e.ec2.DescribeSnapshots(context.TODO(), &ec2.DescribeSnapshotsInput{SnapshotIds: snapshotIds})
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -637,24 +623,27 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 
 				// Copy tags from source snapshots, but avoid recursive tagging
 				for j := range resp.Snapshots[0].Tags {
-					if !strings.HasPrefix(aws.StringValue(resp.Snapshots[0].Tags[j].Key), "snapshot/") {
+					sourceTag := resp.Snapshots[0].Tags[j]
+					tagKey := aws.ToString(sourceTag.Key)
+					tagValue := aws.ToString(sourceTag.Value)
+					if !strings.HasPrefix(tagKey, "snapshot/") {
 						tags = append(tags,
-							ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+							ec2Tag("snapshot/"+tagKey, tagValue))
 					}
 				}
 
-				req.SetTagSpecifications([]*ec2.TagSpecification{
+				req.TagSpecifications = []ec2types.TagSpecification{
 					{
-						ResourceType: aws.String(ec2.ResourceTypeVolume),
+						ResourceType: ec2types.ResourceTypeVolume,
 						Tags:         tags,
 					},
-				})
+				}
 
-				newVol, err := e.ec2.CreateVolume(&req)
+				newVol, err := e.ec2.CreateVolume(context.TODO(), &req)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				log.Info("new volume creating", zap.Stringer("vol", newVol))
+				log.Info("new volume creating", zap.Any("vol", newVol))
 				fillResult(newVol, oldVol)
 				return nil
 			})
@@ -664,10 +653,10 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 }
 
 func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress, fsrEnabledRequired bool) (int64, error) {
-	pendingVolumes := make([]*string, 0, len(volumeIDMap))
+	pendingVolumes := make([]string, 0, len(volumeIDMap))
 	for oldVolID := range volumeIDMap {
 		newVolumeID := volumeIDMap[oldVolID]
-		pendingVolumes = append(pendingVolumes, &newVolumeID)
+		pendingVolumes = append(pendingVolumes, newVolumeID)
 	}
 	totalVolumeSize := int64(0)
 
@@ -676,7 +665,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 		// check every 5 seconds
 		time.Sleep(5 * time.Second)
 		log.Info("check pending volumes", zap.Int("count", len(pendingVolumes)))
-		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
+		resp, err := e.ec2.DescribeVolumes(context.TODO(), &ec2.DescribeVolumesInput{
 			VolumeIds: pendingVolumes,
 		})
 		if err != nil {
@@ -697,10 +686,10 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 }
 
 func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
-	pendingVolumes := make([]*string, 0, len(volumeIDMap))
+	pendingVolumes := make([]string, 0, len(volumeIDMap))
 	for oldVolID := range volumeIDMap {
 		volumeID := volumeIDMap[oldVolID]
-		pendingVolumes = append(pendingVolumes, &volumeID)
+		pendingVolumes = append(pendingVolumes, volumeID)
 	}
 
 	var deletedCnt atomic.Int32
@@ -709,11 +698,11 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 	for i := range pendingVolumes {
 		volID := pendingVolumes[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
-			_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
-				VolumeId: volID,
+			_, err2 := e.ec2.DeleteVolume(context.TODO(), &ec2.DeleteVolumeInput{
+				VolumeId: aws.String(volID),
 			})
 			if err2 != nil {
-				log.Error("failed to delete volume", zap.Error(err2), zap.Stringp("volume-id", volID))
+				log.Error("failed to delete volume", zap.Error(err2), zap.String("volume-id", volID))
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all volume got chance to delete.
 			} else {
@@ -726,25 +715,31 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 	log.Info("delete volume end", zap.Int("need-to-del", len(volumeIDMap)), zap.Int32("deleted", deletedCnt.Load()))
 }
 
-func ec2Tag(key, val string) *ec2.Tag {
-	return &ec2.Tag{Key: &key, Value: &val}
+func ec2Tag(key, val string) ec2types.Tag {
+	return ec2types.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (int64, []*string, error) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (int64, []string, error) {
 	totalVolumeSize := int64(0)
 
-	var unfinishedVolumes []*string
+	var unfinishedVolumes []string
 	for _, volume := range resp.Volumes {
-		if *volume.State == ec2.VolumeStateAvailable {
+		volumeID := aws.ToString(volume.VolumeId)
+		if volume.State == ec2types.VolumeStateAvailable {
 			if fsrEnabledRequired && volume.FastRestored != nil && !*volume.FastRestored {
-				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
-				return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId)
+				snapshotID := aws.ToString(volume.SnapshotId)
+				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", snapshotID))
+				return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", snapshotID, volumeID)
 			}
-			log.Info("volume is available", zap.String("id", *volume.VolumeId))
-			totalVolumeSize += *volume.Size
+			log.Info("volume is available", zap.String("id", volumeID))
+			if volume.Size != nil {
+				totalVolumeSize += int64(*volume.Size)
+			}
 		} else {
-			log.Debug("volume creating...", zap.Stringer("volume", volume))
-			unfinishedVolumes = append(unfinishedVolumes, volume.VolumeId)
+			log.Debug("volume creating...", zap.Any("volume", volume))
+			if volumeID != "" {
+				unfinishedVolumes = append(unfinishedVolumes, volumeID)
+			}
 		}
 	}
 

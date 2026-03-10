@@ -87,7 +87,7 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 		require.NoError(t, err)
 		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		val, err := txn.Get(context.Background(), key)
+		val, err := kv.GetValue(context.Background(), txn, key)
 		require.NoError(t, err)
 		colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 		colInfo = append(colInfo, rowcodec.ColInfo{
@@ -150,7 +150,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 		require.NoError(t, err)
 		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		val, err := txn.Get(context.Background(), key)
+		val, err := kv.GetValue(context.Background(), txn, key)
 		require.NoError(t, err)
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
 			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
@@ -263,7 +263,7 @@ func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	require.NoError(t, err)
 	_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 	require.NoError(t, err)
-	val, err := txn.Get(context.Background(), key)
+	val, err := kv.GetValue(context.Background(), txn, key)
 	require.NoError(t, err)
 	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 	colInfo = append(colInfo, rowcodec.ColInfo{
@@ -557,6 +557,17 @@ func TestPartialIndexDML(t *testing.T) {
 		{
 			tableDefinition:   "create table t (a int, b int, c int, primary key (a), key testidx(c) where c > 2)",
 			dml:               []string{"insert into t values (1, 2, 1)", "update t set c = 3 where a = 1"},
+			shouldCreateIndex: true,
+		},
+		// only modify condition column.
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a), key testidx(c) where b > 2)",
+			dml:               []string{"insert into t values (1, 3, 1)", "update t set b = 2 where a = 1"},
+			shouldCreateIndex: false,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a), key testidx(c) where b > 2)",
+			dml:               []string{"insert into t values (1, 2, 1)", "update t set b = 3 where a = 1"},
 			shouldCreateIndex: true,
 		},
 	}

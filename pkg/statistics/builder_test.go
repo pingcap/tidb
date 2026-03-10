@@ -37,31 +37,31 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 		d := types.NewIntDatum(int64(i))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 10; i++ {
 		d := types.NewIntDatum(int64(2))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 7; i++ {
 		d := types.NewIntDatum(int64(4))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 5; i++ {
 		d := types.NewIntDatum(int64(7))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 3; i++ {
 		d := types.NewIntDatum(int64(11))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	collector := &SampleCollector{
 		Samples:   data,
@@ -74,7 +74,7 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker)
 	}
 }
 
@@ -92,14 +92,14 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 		d := types.NewIntDatum(int64(1000))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i <= 1_000; i++ {
 		total++
 		d := types.NewIntDatum(int64(2000))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	end := total / 2
 	for range end {
@@ -107,14 +107,14 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 		d := types.NewIntDatum(rand.Int63n(50))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	end = cnt - total
 	for range end {
 		d := types.NewIntDatum(rand.Int63n(100))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	collector := &SampleCollector{
 		Samples:   data,
@@ -127,7 +127,7 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker)
 	}
 }
 

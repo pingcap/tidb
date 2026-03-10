@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -379,12 +379,12 @@ func createAddIndexTask(t *testing.T,
 
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
-			ID:          time.Now().UnixMicro(),
-			Type:        taskType,
-			Step:        proto.StepInit,
-			State:       proto.TaskStatePending,
-			Concurrency: 16,
-			Keyspace:    ks,
+			ID:            time.Now().UnixMicro(),
+			Type:          taskType,
+			Step:          proto.StepInit,
+			State:         proto.TaskStatePending,
+			RequiredSlots: 16,
+			Keyspace:      ks,
 		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),

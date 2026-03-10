@@ -18,11 +18,11 @@ insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
 analyze table t;
 explain format = 'plan_tree' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#22
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(subquery.t.c, Column#21)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(subquery.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column#21
+  └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─IndexJoin	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
       ├─IndexReader(Build)	root		index:IndexRangeScan
       │ └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(subquery.t.b, 1) eq(subquery.t.c, 1) eq(subquery.t.d, subquery.t.a)], keep order:false
@@ -32,11 +32,11 @@ drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'plan_tree' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b) eq(subquery.t.a, Column#9)]
-├─Selection(Build)	root		not(isnull(Column#9))
-│ └─HashAgg	root		group by:subquery.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(subquery.t.b)->subquery.t.b
+HashJoin	root		inner join, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b) eq(subquery.t.a, Column)]
+├─Selection(Build)	root		not(isnull(Column))
+│ └─HashAgg	root		group by:subquery.t.b, funcs:max(Column)->Column, funcs:firstrow(subquery.t.b)->subquery.t.b
 │   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:subquery.t.b, funcs:max(subquery.t.a)->Column#10
+│     └─HashAgg	cop[tikv]		group by:subquery.t.b, funcs:max(subquery.t.a)->Column
 │       └─Selection	cop[tikv]		not(isnull(subquery.t.b))
 │         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:Selection

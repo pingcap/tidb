@@ -54,6 +54,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_concurrency_factor":                     {},
 	"tidb_opt_force_inline_cte":                       {},
 	"tidb_opt_use_invisible_indexes":                  {},
+	"tidb_opt_index_prune_threshold":                  {},
 	"tidb_opt_hash_agg_cost_factor":                   {},
 	"tidb_opt_hash_join_cost_factor":                  {},
 	"tidb_opt_index_join_cost_factor":                 {},

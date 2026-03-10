@@ -1,47 +1,80 @@
+# OS / filesystem
 __MACOSX
+.DS_Store
+
+# Editor / IDE
+.idea/
+*.iml
+.ijwb/
+.vscode
+*.swp
+tags
+
+# Local tooling metadata
+.specstory
+.cursor
+.codex
+.trae
+
+# Go workspace / tooling
+go.work
+go.work.sum
+.golangci.bck.yml
+
+# Binaries / generated tools
 bin
 /tidb-server/tidb-server
 /tidb-server/debug
-coverage.out
-.idea/
-*.iml
-*.swp
-*.log
-*.test.bin
-tags
-profile.coverprofile
-mysql_tester
-tests/integrationtest/integration-test.out
-tests/integrationtest/integrationtest_tidb-server
-tests/integrationtest/s/
-tests/integrationtest/replayer/
-*.fail.go
 tools/bin/
-vendor
+mysql_tester
+genkeyword
 /_tools/
-.DS_Store
-.vscode
-bench_daily.json
-coverage.txt
-var
-fix.sql
-export-20*/
-*-coverage.xml
-*-junit-report.xml
-compose-dev.yaml
-# Files generated when testing
-out
+
+# Dependencies
+vendor
+
+# Bazel
+# skywalking-eyes 0.4 cannot handle the git glob syntax correctly. As a temporary workaround,
+# we explicitly list the bazel-related files and directories to be ignored.
+# TODO: test and consider upgrading skywalking-eyes in the future.
 /_bazel
+bazel-*
 bazel-bin
 bazel-out
 bazel-testlogs
 bazel-tidb
 MODULE.bazel.lock
-.ijwb/
-/oom_record/
-*.log.json
-genkeyword
+
+# Testing / coverage / reports
+# Files generated when testing
+out
 test_coverage
+coverage.out
+coverage.txt
 coverage.dat
-.specstory
-.golangci.bck.yml
+profile.coverprofile
+*-coverage.xml
+*-junit-report.xml
+*.test.bin
+*.fail.go
+*.log
+*.log.json
+*__failpoint_stash__
+/oom_record/
+
+# Integration tests
+tests/integrationtest/integration-test.out
+tests/integrationtest/integrationtest_tidb-server
+tests/integrationtest/s/
+tests/integrationtest/replayer/
+
+# Local dev artifacts
+bench_daily.json
+compose-dev.yaml
+fix.sql
+export-20*/
+var
+
+# Personal config files
+/*config.toml
+.cache

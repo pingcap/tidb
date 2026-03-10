@@ -79,6 +79,44 @@ insert into tbl_39 values (1994),(1995),(1996),(1997);
 explain format='plan_tree' select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 
+# TestIssue65937
+drop table if exists t0, t1, t2, t3, t4;
+create table t0 (k0 int, p1 bigint);
+create table t1 (k0 int, d0 varchar(64));
+create table t2 (k0 int, k1 int);
+create table t3 (k0 int, d0 decimal(12,2));
+create table t4 (k0 int);
+
+insert into t0 values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+insert into t1 values (1, 'd01'), (2, 'd02'), (3, 'd03'), (4, 'd04'), (5, 'd05');
+insert into t2 values (1, 100), (1, 120), (2, 200), (3, 300), (3, 330), (4, 400), (5, 500);
+insert into t3 values (1, 10.00), (2, 20.00), (3, 30.00), (4, 40.00), (5, 50.00);
+insert into t4 values (1), (2), (3), (4), (5);
+
+select
+  (select ifnull(bit_xor(crc32(concat_ws('#', q.c0, q.c1, q.c2))), 0)
+   from (
+     select 85.11 as c0, t0.p1 as c1, '2024-01-02 12:28:00' as c2
+     from t0 right join t1 on (t0.k0 = t1.k0)
+     join t3 on (t0.k0 = t3.k0)
+     left join t2 on not not (t0.k0 = t2.k0)
+     left join t4 on (t0.k0 = t4.k0)
+     where (t0.k0 <=> t3.k0)
+     order by (t3.d0 - t2.k1) desc, t1.d0 desc
+     limit 5
+   ) q) as chk_not_not,
+  (select ifnull(bit_xor(crc32(concat_ws('#', q.c0, q.c1, q.c2))), 0)
+   from (
+     select 85.11 as c0, t0.p1 as c1, '2024-01-02 12:28:00' as c2
+     from t0 right join t1 on (t0.k0 = t1.k0)
+     join t3 on (t0.k0 = t3.k0)
+     left join t2 on (t0.k0 = t2.k0)
+     left join t4 on (t0.k0 = t4.k0)
+     where (t0.k0 <=> t3.k0)
+     order by (t3.d0 - t2.k1) desc, t1.d0 desc
+     limit 5
+   ) q) as chk_eq;
+
 # https://github.com/pingcap/tidb/issues/47881
 drop table if exists t, t1, t2;
 create table t (id int,name varchar(10));
@@ -861,3 +899,7 @@ insert into t1 value(1,1);
 insert into t2 value(1,1);
 delete t1, t2 from t1, t2 where t1.a = t2.a;
 drop table t1, t2;
+
+# Issue65521
+SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA);
+SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_ID = 1);

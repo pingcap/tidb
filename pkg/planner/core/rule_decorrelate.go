@@ -333,7 +333,14 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 					outerCol.RetType = first.RetTp
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
-				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
+				applySchema := expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema())
+				// Ensure all columns in agg.GroupByItems are in apply schema.
+				for _, col := range agg.GetGroupByCols() {
+					if applySchema.ColumnIndex(col) == -1 {
+						applySchema.Append(col)
+					}
+				}
+				apply.SetSchema(applySchema)
 				util.ResetNotNullFlag(apply.Schema(), outerPlan.Schema().Len(), apply.Schema().Len())
 				for i, aggFunc := range agg.AggFuncs {
 					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))

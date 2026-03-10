@@ -18,12 +18,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
@@ -36,6 +36,16 @@ import (
 )
 
 func TestIssue46197(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbdrv := NewTiDBDriver(store)
@@ -66,7 +76,6 @@ func TestIssue46197(t *testing.T) {
 		pkt:        pkt,
 		capability: mysql.ClientLocalFiles,
 	}
-	ctx := context.Background()
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("use test")
@@ -77,7 +86,7 @@ func TestIssue46197(t *testing.T) {
 
 	// clean up
 	path := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_last_plan_replayer_token").Rows())
-	require.NoError(t, os.Remove(filepath.Join(replayer.GetPlanReplayerDirName(), path[0])))
+	require.NoError(t, storage.DeleteFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), path[0])))
 }
 
 func TestGetConAttrs(t *testing.T) {

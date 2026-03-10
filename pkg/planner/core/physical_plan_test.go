@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -49,42 +48,26 @@ import (
 )
 
 func TestAnalyzeBuildSucc(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tests := []struct {
-		sql      string
-		succ     bool
-		statsVer int
+		sql  string
+		succ bool
 	}{
 		{
-			sql:      "analyze table t with 0.1 samplerate",
-			succ:     true,
-			statsVer: 2,
+			sql:  "analyze table t with 0.1 samplerate",
+			succ: true,
 		},
 		{
-			sql:      "analyze table t with 0.1 samplerate",
-			succ:     false,
-			statsVer: 1,
+			sql:  "analyze table t with 10 samplerate",
+			succ: false,
 		},
 		{
-			sql:      "analyze table t with 10 samplerate",
-			succ:     false,
-			statsVer: 2,
-		},
-		{
-			sql:      "analyze table t with 0.1 samplerate, 100000 samples",
-			succ:     false,
-			statsVer: 2,
-		},
-		{
-			sql:      "analyze table t with 0.1 samplerate, 100000 samples",
-			succ:     false,
-			statsVer: 1,
+			sql:  "analyze table t with 0.1 samplerate, 100000 samples",
+			succ: false,
 		},
 	}
 
@@ -92,7 +75,6 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	for i, tt := range tests {
 		comment := fmt.Sprintf("The %v-th test failed", i)
-		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_version=%v", tt.statsVer))
 
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		if tt.succ {
@@ -247,16 +229,16 @@ func TestMPPHintsWithBinding(t *testing.T) {
 		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 
-		tk.MustExec("explain select a, sum(b) from t group by a, c")
+		tk.MustExec("explain format = 'brief' select a, sum(b) from t group by a, c")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
 		tk.MustExec("create global binding for select a, sum(b) from t group by a, c using select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c;")
-		tk.MustExec("explain select a, sum(b) from t group by a, c")
+		tk.MustExec("explain format = 'brief' select a, sum(b) from t group by a, c")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 		res := tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, res[0][0], "select `a` , sum ( `b` ) from `test` . `t` group by `a` , `c`")
 		require.Equal(t, res[0][1], "SELECT /*+ read_from_storage(tiflash[`t`]) MPP_1PHASE_AGG()*/ `a`,sum(`b`) FROM `test`.`t` GROUP BY `a`,`c`")
 		tk.MustExec("create global binding for select a, sum(b) from t group by a, c using select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c;")
-		tk.MustExec("explain select a, sum(b) from t group by a, c")
+		tk.MustExec("explain format = 'brief' select a, sum(b) from t group by a, c")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 		res = tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, res[0][0], "select `a` , sum ( `b` ) from `test` . `t` group by `a` , `c`")
@@ -265,16 +247,16 @@ func TestMPPHintsWithBinding(t *testing.T) {
 		res = tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, len(res), 0)
 
-		tk.MustExec("explain select * from t t1, t t2 where t1.a=t2.a")
+		tk.MustExec("explain format = 'brief' select * from t t1, t t2 where t1.a=t2.a")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
 		tk.MustExec("create global binding for select * from t t1, t t2 where t1.a=t2.a using select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-		tk.MustExec("explain select * from t t1, t t2 where t1.a=t2.a")
+		tk.MustExec("explain format = 'brief' select * from t t1, t t2 where t1.a=t2.a")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 		res = tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, res[0][0], "select * from ( `test` . `t` as `t1` ) join `test` . `t` as `t2` where `t1` . `a` = `t2` . `a`")
 		require.Equal(t, res[0][1], "SELECT /*+ read_from_storage(tiflash[`t1`, `t2`]) shuffle_join(`t1`, `t2`)*/ * FROM (`test`.`t` AS `t1`) JOIN `test`.`t` AS `t2` WHERE `t1`.`a` = `t2`.`a`")
 		tk.MustExec("create global binding for select * from t t1, t t2 where t1.a=t2.a using select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a;")
-		tk.MustExec("explain select * from t t1, t t2 where t1.a=t2.a")
+		tk.MustExec("explain format = 'brief' select * from t t1, t t2 where t1.a=t2.a")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 		res = tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, res[0][0], "select * from ( `test` . `t` as `t1` ) join `test` . `t` as `t2` where `t1` . `a` = `t2` . `a`")

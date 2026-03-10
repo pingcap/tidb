@@ -24,10 +24,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
@@ -49,7 +49,6 @@ var (
 		}
 		v struct {
 			atomic.Pointer[MemArbitrator]
-			baseDir string
 			sync.Mutex
 		}
 		enable struct { // register callbacks after the global memory arbitrator is enabled
@@ -59,18 +58,23 @@ var (
 		}
 		metrics struct {
 			last struct {
-				updateTime time.Time
+				updateUtimeSec atomic.Int64
 				execMetricsCounter
 			}
-			smallPool atomic.Int64
-			bigPool   struct {
-				atomic.Int64
-				into atomic.Int64
+			pools struct {
+				internal        atomic.Int64
+				internalSession atomic.Int64
+
+				small   atomic.Int64
+				big     atomic.Int64
+				intoBig atomic.Int64
 			}
-			workModeInit atomic.Bool
+			init  atomic.Bool
+			reset atomic.Bool
 			sync.Mutex
 		}
 	}
+	mockinitGlobalMemArbitrator func() *MemArbitrator
 )
 
 func reportGlobalMemArbitratorMetrics() {
@@ -79,18 +83,17 @@ func reportGlobalMemArbitratorMetrics() {
 		return
 	}
 
-	globalArbitrator.metrics.Lock()
-	defer globalArbitrator.metrics.Unlock()
-
-	now := time.Now()
-
-	if now.Before(globalArbitrator.metrics.last.updateTime.Add(time.Second)) {
+	curUtimeSec := nowUnixSec()
+	if curUtimeSec < globalArbitrator.metrics.last.updateUtimeSec.Load()+1 { // every 1 second
 		return
 	}
 
-	globalArbitrator.metrics.last.updateTime = now
+	globalArbitrator.metrics.Lock()
+	defer globalArbitrator.metrics.Unlock()
 
-	{
+	globalArbitrator.metrics.last.updateUtimeSec.Store(curUtimeSec)
+
+	{ // waiting task
 		setWaitingTask := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorWaitingTask, label, value)
 		}
@@ -101,13 +104,14 @@ func reportGlobalMemArbitratorMetrics() {
 		setWaitingTask("priority-high", p[ArbitrationPriorityHigh])
 		setWaitingTask("wait-averse", p[ArbitrationWaitAverse])
 	}
-	{
+	{ // quota
 		setQuota := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorQuota, label, value)
 		}
 		setQuota("allocated", m.allocated())
-		setQuota("out-of-control", m.avoidance.size.Load())
-		setQuota("buffer", m.buffer.size.Load())
+		setQuota("out-of-control", m.OutOfControl())
+		setQuota("buffer", m.reservedBuffer())
+		setQuota("available", m.available())
 		setQuota("tracked-heap", m.avoidance.heapTracked.Load())
 		setQuota("awaitfree-pool-cap", m.awaitFreePoolCap())
 		setQuota("awaitfree-pool-used", m.approxAwaitFreePoolUsed().quota)
@@ -117,14 +121,14 @@ func reportGlobalMemArbitratorMetrics() {
 		setQuota("wait-alloc", m.WaitingAllocSize())
 		{
 			blockedAt := int64(0)
-			if blockedSize, utimeSec := m.lastBlockedAt(); now.Unix() <= utimeSec+5 { // within 5 seconds
+			if blockedSize, utimeSec := m.lastBlockedAt(); curUtimeSec <= utimeSec+5 { // within 5 seconds
 				blockedAt = blockedSize
 			}
 			setQuota("blocked-at", blockedAt)
 		}
 		setQuota("medium-pool", m.poolMediumQuota())
 	}
-	{
+	{ // memory magnification
 		memMagnif := float64(0)
 		if quota := m.allocated(); quota > 0 {
 			f := min(calcRatio(m.heapController.lastGC.heapAlloc.Load(), quota), defMaxMagnif)
@@ -132,17 +136,19 @@ func reportGlobalMemArbitratorMetrics() {
 		}
 		metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(memMagnif)
 	}
-	{
+	{ // root pool
 		setRootPool := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
-		setRootPool("root-pool-uid", m.RootPoolNum())
+		setRootPool("rootpool-total", m.RootPoolNum())
+		setRootPool("rootpool-internal", globalArbitrator.metrics.pools.internalSession.Load())
 		setRootPool("under-kill", m.underKill.approxSize())
 		setRootPool("under-cancel", m.underCancel.approxSize())
 		setRootPool("digest-cache", m.digestProfileCache.num.Load())
-		setRootPool("big-running", globalArbitrator.metrics.bigPool.Load())
-		setRootPool("small-running", globalArbitrator.metrics.smallPool.Load())
-		setRootPool("into-big", globalArbitrator.metrics.bigPool.into.Load())
+		setRootPool("sql-total-big", globalArbitrator.metrics.pools.big.Load())
+		setRootPool("sql-total-small", globalArbitrator.metrics.pools.small.Load())
+		setRootPool("sql-internal", globalArbitrator.metrics.pools.internal.Load())
+		setRootPool("sql-total-intobig", globalArbitrator.metrics.pools.intoBig.Load())
 	}
 	{ // counter
 		newExecMetrics := m.ExecMetrics()
@@ -192,14 +198,40 @@ func doReportGlobalMemArbitratorCounter(oriExecMetrics, newExecMetrics *execMetr
 	addEventCount("shrink-digest-cache", (newExecMetrics.ShrinkDigest - oriExecMetrics.ShrinkDigest))
 }
 
+func readRuntimeMemStats() memStats {
+	s := SampleRuntimeMemStats()
+	return memStats{
+		HeapAlloc:  int64(s.HeapAlloc),
+		HeapInuse:  int64(s.HeapInuse),
+		MemOffHeap: int64(s.MemOffHeap),
+		TotalFree:  int64(s.TotalFree),
+		LastGC:     approxLastGCTime(),
+	}
+}
+
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
-func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
+func HandleGlobalMemArbitratorRuntime() {
 	m := GlobalMemArbitrator()
 	if m == nil {
+		if globalArbitrator.metrics.reset.Load() {
+			resetGlobalMemArbitratorMetrics()
+		}
 		return
 	}
-	m.HandleRuntimeStats(intoRuntimeMemStats(s))
+	m.HandleRuntimeStats(readRuntimeMemStats())
 	reportGlobalMemArbitratorMetrics()
+}
+
+func resetGlobalMemArbitratorMetrics() {
+	if !globalArbitrator.metrics.reset.Swap(false) {
+		return
+	}
+
+	globalArbitrator.metrics.Lock()
+	defer globalArbitrator.metrics.Unlock()
+
+	metrics.ResetGlobalMemArbitratorGauge()
+	metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(0)
 }
 
 // GetGlobalMemArbitratorSoftLimitText returns the text of the global memory arbitrator soft limit.
@@ -277,16 +309,17 @@ func CleanupGlobalMemArbitratorForTest() {
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
-	if globalArbitrator.v.baseDir == "" {
-		panic("env of the global memory arbitrator is not set, please call `SetupGlobalMemArbitratorForTest` first")
-	}
 	m := globalArbitrator.v.Load()
 	if m == nil {
 		return
 	}
 	m.stop()
 	globalArbitrator.v.Store(nil)
-	_ = os.Remove(runtimeMemStateRecorderFilePath(globalArbitrator.v.baseDir))
+
+	mockNow = nil
+	mockDebugInject = nil
+	mockWinupCB = nil
+	mockinitGlobalMemArbitrator = nil
 }
 
 // SetupGlobalMemArbitratorForTest sets up the global memory arbitrator for tests.
@@ -297,7 +330,33 @@ func SetupGlobalMemArbitratorForTest(baseDir string) {
 	if globalArbitrator.v.Load() != nil {
 		panic("the global memory arbitrator is already set up")
 	}
-	globalArbitrator.v.baseDir = baseDir
+
+	_ = os.Remove(runtimeMemStateRecorderFilePath(baseDir))
+	mockinitGlobalMemArbitrator = func() *MemArbitrator {
+		m := NewMemArbitrator(
+			0,
+			4,
+			defPoolQuotaShards,
+			64*byteSizeKB, /* 64k ~ */
+			newMemStateRecorder(baseDir),
+		)
+		m.AutoRun(
+			MemArbitratorActions{
+				Info:  logutil.BgLogger().Info,
+				Warn:  logutil.BgLogger().Warn,
+				Error: logutil.BgLogger().Error,
+				UpdateRuntimeMemStats: func() {
+				},
+				GC: func() {
+				},
+			},
+			defAwaitFreePoolAllocAlignSize,
+			4,
+			defTaskTickDur,
+		)
+		globalArbitrator.v.Store(m)
+		return m
+	}
 }
 
 // GetGlobalMemArbitratorWorkModeText returns the text of the global memory arbitrator work mode.
@@ -310,17 +369,17 @@ func setGlobalMemArbitratorWorkModeText(str string) {
 
 // SetGlobalMemArbitratorWorkMode sets the work mode of the global memory arbitrator.
 func SetGlobalMemArbitratorWorkMode(str string) bool {
-	if !globalArbitrator.metrics.workModeInit.Load() {
+	if !globalArbitrator.metrics.init.Load() {
 		globalArbitrator.metrics.Lock()
 
-		if !globalArbitrator.metrics.workModeInit.Load() {
+		if !globalArbitrator.metrics.init.Load() {
 			for mode := range maxArbitratorMode {
 				metrics.GlobalMemArbitratorWorkMode.WithLabelValues(mode.String()).Set(0)
 			}
 			metrics.GlobalMemArbitratorWorkMode.WithLabelValues(GetGlobalMemArbitratorWorkModeText()).Set(1)
 			execMetricsCounter := &globalArbitrator.metrics.last.execMetricsCounter
 			doReportGlobalMemArbitratorCounter(execMetricsCounter, execMetricsCounter, true)
-			globalArbitrator.metrics.workModeInit.Store(true)
+			globalArbitrator.metrics.init.Store(true)
 		}
 
 		globalArbitrator.metrics.Unlock()
@@ -364,6 +423,7 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 	if newMode == ArbitratorModeDisable {
 		m.SetWorkMode(newMode)
 		globalArbitrator.enable.Store(false)
+		globalArbitrator.metrics.reset.Store(true)
 		return true
 	}
 
@@ -409,6 +469,10 @@ func RegisterCallbackForGlobalMemArbitrator(f func()) {
 }
 
 func initGlobalMemArbitrator() (m *MemArbitrator) {
+	if intest.InTest {
+		return mockinitGlobalMemArbitrator()
+	}
+
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
@@ -416,11 +480,8 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		return
 	}
 
-	baseDir := globalArbitrator.v.baseDir
-	if baseDir == "" {
-		cfg := config.GetGlobalConfig()
-		baseDir = filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
-	}
+	cfg := config.GetGlobalConfig()
+	baseDir := filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
 
 	limit := ServerMemoryLimit.Load()
 	if limit == 0 {
@@ -441,8 +502,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 			Warn:  logutil.BgLogger().Warn,
 			Error: logutil.BgLogger().Error,
 			UpdateRuntimeMemStats: func() {
-				s := ForceReadMemStats()
-				m.SetRuntimeMemStats(intoRuntimeMemStats(s))
+				m.setRuntimeMemStats(readRuntimeMemStats())
 			},
 			GC: func() {
 				runtime.GC() //nolint: revive
@@ -556,14 +616,4 @@ func (m *runtimeMemStateRecorder) Load() (*RuntimeMemStateV1, error) {
 		return nil, fmt.Errorf("failed to unmarshal mem state: %w", err)
 	}
 	return &memState, nil
-}
-
-func intoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
-	return RuntimeMemStats{
-		HeapAlloc:  int64(s.HeapAlloc),
-		HeapInuse:  int64(s.HeapInuse),
-		TotalFree:  int64(s.TotalAlloc - s.Alloc),
-		MemOffHeap: int64(s.StackSys + s.MSpanSys + s.MCacheSys + s.BuckHashSys + s.GCSys + s.OtherSys),
-		LastGC:     int64(s.LastGC),
-	}
 }

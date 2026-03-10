@@ -234,7 +234,7 @@ analyze table t all columns;
 analyze table s all columns;
 explain format = 'plan_tree' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#6
+HashAgg	root		funcs:count(1)->Column
 └─IndexJoin	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
@@ -251,7 +251,7 @@ count(*)
 64
 explain format = 'plan_tree' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#6
+HashAgg	root		funcs:count(1)->Column
 └─MergeJoin	root		inner join, left key:executor__jointest__hash_join.t.a, right key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
   ├─IndexReader(Build)	root		index:Selection
   │ └─Selection	cop[tikv]		not(isnull(executor__jointest__hash_join.s.b))
@@ -268,7 +268,7 @@ count(*)
 64
 explain format = 'plan_tree' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#6
+HashAgg	root		funcs:count(1)->Column
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))

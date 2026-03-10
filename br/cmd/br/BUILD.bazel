@@ -34,6 +34,7 @@ go_library(
         "//br/pkg/version/build",
         "//pkg/config",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/util",
         "//pkg/util/gctuner",
@@ -55,6 +56,10 @@ go_library(
 
 go_binary(
     name = "br",
+    cgo = select({
+        "@io_bazel_rules_go//go/platform:darwin": True,
+        "//conditions:default": False,
+    }),  #keep
     embed = [":br_lib"],
     visibility = ["//visibility:public"],
 )

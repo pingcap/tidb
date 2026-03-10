@@ -11,6 +11,7 @@ go_library(
         "//pkg/util/plancodec",
         "//pkg/util/topsql/collector",
         "//pkg/util/topsql/reporter",
+        "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",

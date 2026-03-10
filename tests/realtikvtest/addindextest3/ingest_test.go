@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -29,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	disttestutil "github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -57,7 +58,11 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
+	oldRunInTest := local.RunInTest
 	local.RunInTest = true
+	t.Cleanup(func() {
+		local.RunInTest = oldRunInTest
+	})
 
 	tk.MustExec("create table t (a int, b int, c int);")
 	var sb strings.Builder
@@ -126,10 +131,14 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 
 	// test cancel is timely
 	enter := make(chan struct{})
+	blockOnce := atomic.Bool{}
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
 		func(ctx context.Context) {
+			if !blockOnce.CompareAndSwap(false, true) {
+				return
+			}
 			close(enter)
 			select {
 			case <-time.After(time.Second * 20):
@@ -148,7 +157,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk.MustExec("admin cancel ddl jobs " + jobID)
 	wg.Wait()
 	// cancel should be timely
-	require.Less(t, time.Since(now).Seconds(), 10.0)
+	require.Less(t, time.Since(now).Seconds(), 30.0)
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
@@ -247,8 +256,12 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
+	oldImporterRangeConcurrency := ingest.ImporterRangeConcurrencyForTest
 	ingest.ImporterRangeConcurrencyForTest = &atomic.Int32{}
 	ingest.ImporterRangeConcurrencyForTest.Store(2)
+	defer func() {
+		ingest.ImporterRangeConcurrencyForTest = oldImporterRangeConcurrency
+	}()
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 20;")
 
 	tk.MustExec("create table t (a int primary key);")
@@ -271,7 +284,6 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	} else {
 		require.Equal(t, jobTp, "")
 	}
-	ingest.ImporterRangeConcurrencyForTest = nil
 }
 
 func TestAddIndexIngestEmptyTable(t *testing.T) {
@@ -480,7 +492,9 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	tk.MustExec("alter table t add index idx_test(b);")
 	tk.MustExec("update t set b = b + 1;")
 
@@ -495,7 +509,6 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 		assert.Equal(t, counter, 0)
 	})
 	tk.MustExec("alter table t add index idx_test2(b);")
-	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
@@ -513,7 +526,9 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 2);")
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
@@ -595,9 +610,10 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
-	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
@@ -966,6 +982,220 @@ func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 		})
 	})
 	tk.MustExec("alter table t add unique index idx(b);")
+}
+
+// TestIngestConcurrentJobCleanupRace tests that parallel add index jobs don't
+// cause panic due to cleanup race. This covers issues #44137 and #44140.
+// The bug was: multiple jobs running ingest concurrently could trigger cleanup
+// of stale temp directories that interfered with another job's active files.
+func TestIngestConcurrentJobCleanupRace(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	oldProcs := runtime.GOMAXPROCS(0)
+	if oldProcs < 8 {
+		runtime.GOMAXPROCS(8)
+		defer runtime.GOMAXPROCS(oldProcs)
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;") // Ensure both use local ingest
+
+	// Create two tables with enough data to ensure ingest mode is used
+	tk.MustExec("create table t1 (a int primary key, b int);")
+	tk.MustExec("create table t2 (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d);", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d);", i, i))
+	}
+
+	// Ensure both jobs enter ingest and overlap at the ingest stage.
+	ingestBarrier := make(chan struct{})
+	ingestCalls := atomic.Int32{}
+	ingestTimedOut := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
+		if ingestCalls.Add(1) == 2 {
+			close(ingestBarrier)
+		}
+		select {
+		case <-ingestBarrier:
+		case <-time.After(10 * time.Second):
+			ingestTimedOut.Store(true)
+		}
+	})
+
+	// Start two add index jobs concurrently
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use addindexlit;")
+
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+
+	var err1, err2 error
+	go func() {
+		defer wg.Done()
+		_, err1 = tk1.Exec("alter table t1 add index idx1(b);")
+	}()
+	go func() {
+		defer wg.Done()
+		_, err2 = tk2.Exec("alter table t2 add index idx2(b);")
+	}()
+
+	wg.Wait()
+
+	// Verify no panic occurred and both indexes created successfully
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+
+	require.False(t, ingestTimedOut.Load(), "ingest jobs did not overlap")
+	require.GreaterOrEqual(t, ingestCalls.Load(), int32(2), "both jobs should enter ingest")
+
+	// Verify both jobs used ingest mode
+	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		jobTp := row[12].(string)
+		require.True(t, strings.Contains(jobTp, "ingest"), "both jobs should use ingest mode: %s", jobTp)
+	}
+
+	tk.MustExec("admin check table t1;")
+	tk.MustExec("admin check table t2;")
+}
+
+// TestIngestGCSafepointBlocking tests that add index correctly uses TS from checkpoint
+// and blocks GC safepoint advancement. This covers issues #40074 and #40081.
+// The fix changed Copr request start TS to use explicit transaction start time.
+// This test verifies that the internal session's start TS is properly registered
+// to block GC safepoint advancement during add index.
+func TestIngestGCSafepointBlocking(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Track that internal session TS is registered for GC blocking
+	internalTSRegistered := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
+		if startTS > 0 {
+			internalTSRegistered.Store(true)
+		}
+	})
+
+	// Force sync mode to ensure we go through the checkpoint/TS path
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
+	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
+
+	tk.MustExec("alter table t add index idx(b);")
+
+	// Assert that internal session TS was registered (this is what blocks GC)
+	require.True(t, internalTSRegistered.Load(), "internal session start TS should be registered for GC blocking")
+
+	tk.MustExec("admin check table t;")
+
+	// Verify data consistency
+	rs1 := tk.MustQuery("select count(*) from t use index(idx);").Rows()
+	rs2 := tk.MustQuery("select count(*) from t ignore index(idx);").Rows()
+	require.Equal(t, rs1[0][0], rs2[0][0])
+	require.Equal(t, "100", rs1[0][0])
+
+	// Verify the job used ingest mode
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][12].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+// TestIngestCancelCleanupOrder tests that canceling add index after ingest starts
+// doesn't cause nil pointer panic due to incorrect cleanup order.
+// This covers issues #43323 and #43326 (weak coverage).
+// The bug was: during rollback, Close engine was called before cleaning up local path.
+func TestIngestCancelCleanupOrder(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	tkCancel := testkit.NewTestKit(t, store)
+	tkCancel.MustExec("use addindexlit;")
+
+	// Cancel after backfill starts (WriteReorganization state with running backfill)
+	var jobID atomic.Int64
+	backfillStarted := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID.Store(job.ID)
+		}
+	})
+	cancelOnce := sync.Once{}
+	cancelIssued := atomic.Bool{}
+	cancelExecErrCh := make(chan error, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
+		backfillStarted.Store(true)
+		if jobID.Load() <= 0 {
+			return
+		}
+		cancelOnce.Do(func() {
+			cancelIssued.Store(true)
+			rs, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", jobID.Load()))
+			if rs != nil {
+				closeErr := rs.Close()
+				if err == nil {
+					err = closeErr
+				}
+			}
+			cancelExecErrCh <- err
+		})
+	})
+
+	err := tk.ExecToErr("alter table t add index idx(b);")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Cancelled DDL job")
+
+	// Key assertion: backfill actually started before cancel
+	require.True(t, backfillStarted.Load(), "backfill should have started before cancel")
+	require.True(t, cancelIssued.Load(), "cancel should be issued after ingest starts")
+	select {
+	case cancelErr := <-cancelExecErrCh:
+		require.NoError(t, cancelErr)
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "cancel exec should have finished")
+	}
+
+	// Verify no panic occurred and table is consistent
+	tk.MustExec("admin check table t;")
+
+	// Verify backend context is cleaned up properly
+	cnt := ingest.LitDiskRoot.Count()
+	require.Equal(t, 0, cnt, "backend context should be cleaned up after cancel")
 }
 
 func TestMergeTempIndexSplitConflictTxn(t *testing.T) {

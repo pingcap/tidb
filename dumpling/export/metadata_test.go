@@ -10,9 +10,10 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -307,9 +308,9 @@ func TestNoPrivilege(t *testing.T) {
 	require.Equal(t, "", m.buffer.String())
 }
 
-func createStorage(t *testing.T) storage.ExternalStorage {
-	backend, err := storage.ParseBackend("file:///"+os.TempDir(), nil)
+func createStorage(t *testing.T) storeapi.Storage {
+	backend, err := objstore.ParseBackend("file:///"+os.TempDir(), nil)
 	require.NoError(t, err)
-	testLoc, _ := storage.Create(context.Background(), backend, true)
+	testLoc, _ := objstore.Create(context.Background(), backend, true)
 	return testLoc
 }

@@ -11,14 +11,14 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 type Config struct {
 	Storage    string
-	BackendCfg storage.BackendOptions
+	BackendCfg objstore.BackendOptions
 	Cipher     backuppb.CipherInfo
 }
 

@@ -460,10 +460,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// build logical plan
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
 	node.Node.Accept(hintProcessor)
-	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, hintProcessor)
+	defer builder.HandleUnusedViewHints()
 	p, err := buildLogicalPlan(ctx, sctx, node, builder)
 	if err != nil {
 		return nil, nil, 0, err
@@ -502,7 +502,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	// TODO: capture plan replayer here if it matches sql and plan digest
 
-	sessVars.DurationOptimization = time.Since(beginOpt)
+	sessVars.DurationOptimizer.Total = time.Since(beginOpt)
 	return finalPlan, names, cost, err
 }
 

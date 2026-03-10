@@ -296,20 +296,20 @@ select * from t where b = 2;
 # Fast plan:
 --sorted_result
 select * from t where b in (1,2);
-explain select * from t where b in (1,2);
+explain format = 'brief' select * from t where b in (1,2);
 # Non-fast plan:
 --sorted_result
 select * from t where b in (1,2) and a like '%a%';
-explain select * from t where b in (1,2) and a like '%a%';
+explain format = 'brief' select * from t where b in (1,2) and a like '%a%';
 set @@tidb_partition_prune_mode=Default;
 # Fast plan:
 --sorted_result
 select * from t where b in (1,2);
-explain select * from t where b in (1,2);
+explain format = 'brief' select * from t where b in (1,2);
 # Non-fast plan:
 --sorted_result
 select * from t where b in (1,2) and a like '%a%';
-explain select * from t where b in (1,2) and a like '%a%';
+explain format = 'brief' select * from t where b in (1,2) and a like '%a%';
 
 # Test issue 61726
 drop table if exists t;

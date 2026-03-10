@@ -224,5 +224,12 @@
       "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
       "explain format = 'brief' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
     ]
+  },
+  {
+    "name": "TestEnforceMPPNewest",
+    "cases": [
+      "explain format='plan_tree' select /*+ set_var(tidb_enforce_mpp=on) */ * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);",
+      "explain format='plan_tree' select * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);"
+    ]
   }
 ]

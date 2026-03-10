@@ -1893,13 +1893,29 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 }
 
 // check whether one of unique keys sets is contained by inner join keys.
-func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
+func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema, innerNullEQKeys intset.FastIntSet) (bool, error) {
 	// builds UniqueKey info of innerGroup.
 	innerGroup.BuildKeyInfo()
 	for _, keyInfo := range innerGroup.Prop.Schema.PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
 			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+		}
+		if joinKeysContainKeyInfo {
+			return true, nil
+		}
+	}
+	for _, keyInfo := range innerGroup.Prop.Schema.NullableUK {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
+			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+			if innerNullEQKeys.Has(int(col.UniqueID)) {
 				joinKeysContainKeyInfo = false
 				break
 			}
@@ -1960,7 +1976,15 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	}
 	// outer join elimination without duplicate agnostic aggregate functions.
 	innerJoinKeys := join.ExtractJoinKeys(innerChildIdx)
-	contain, err := r.isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys)
+	innerNullEQKeys := intset.NewFastIntSet()
+	for _, eqCond := range join.EqualConditions {
+		if eqCond.FuncName.L != ast.NullEQ {
+			continue
+		}
+		innerKey := eqCond.GetArgs()[innerChildIdx].(*expression.Column)
+		innerNullEQKeys.Insert(int(innerKey.UniqueID))
+	}
+	contain, err := r.isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys, innerNullEQKeys)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -2015,7 +2039,15 @@ func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (new
 	}
 
 	innerJoinKeys := join.ExtractJoinKeys(innerChildIdx)
-	contain, err := r.isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys)
+	innerNullEQKeys := intset.NewFastIntSet()
+	for _, eqCond := range join.EqualConditions {
+		if eqCond.FuncName.L != ast.NullEQ {
+			continue
+		}
+		innerKey := eqCond.GetArgs()[innerChildIdx].(*expression.Column)
+		innerNullEQKeys.Insert(int(innerKey.UniqueID))
+	}
+	contain, err := r.isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys, innerNullEQKeys)
 	if err != nil {
 		return nil, false, false, err
 	}

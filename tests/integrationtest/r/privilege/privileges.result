@@ -248,27 +248,34 @@ GRANT DROP ON privilege__privileges.* TO  'tester'@'localhost';
 alter table pt exchange partition p0 with table nt;
 CREATE USER 'test_import_into'@'localhost';
 GRANT SELECT ON privilege__privileges.* TO 'test_import_into'@'localhost';
+flush privileges;
 CREATE TABLE IF NOT EXISTS t(a int);
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): UPDATE command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT SELECT on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): UPDATE command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT UPDATE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): INSERT command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT INSERT on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): DELETE command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT DELETE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): ALTER command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT ALTER on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation
 DROP USER 'test_import_into'@'localhost';
 CREATE USER 'test_import_into'@'localhost';
 GRANT FILE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): SELECT command denied to user 'test_import_into'@'localhost' for table 't'
 drop table if exists t;
@@ -763,3 +770,25 @@ CREATE OR REPLACE VIEW v AS SELECT 1, 1;
 Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v'
 CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
 Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v1'
+use privilege__privileges;
+DROP TABLE IF EXISTS t_partition;
+DROP USER IF EXISTS foo;
+CREATE TABLE t_partition (id INT, year_col INT)
+PARTITION BY RANGE (year_col) (
+PARTITION p0 VALUES LESS THAN (1991),
+PARTITION p1 VALUES LESS THAN (1995),
+PARTITION p2 VALUES LESS THAN (1999),
+PARTITION p3 VALUES LESS THAN (2003),
+PARTITION p4 VALUES LESS THAN (2007)
+);
+CREATE USER foo;
+GRANT ALTER ON privilege__privileges.t_partition TO foo;
+ALTER TABLE t_partition TRUNCATE PARTITION p0;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 't_partition'
+ALTER TABLE t_partition DROP PARTITION p1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 't_partition'
+GRANT DROP ON privilege__privileges.t_partition TO foo;
+ALTER TABLE t_partition TRUNCATE PARTITION p2;
+ALTER TABLE t_partition DROP PARTITION p3;
+DROP TABLE t_partition;
+DROP USER foo;

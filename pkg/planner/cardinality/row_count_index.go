@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -44,7 +44,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	idx := coll.GetIdx(idxID)
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
-		if hasColumnStats(sctx, coll, idxCols) {
+		if hasColumnStats(sctx, coll, idxCols) && !ranger.HasFullRange(indexRanges, false) {
 			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
 			result = statistics.RowEstimate{Est: count, MinEst: count, MaxEst: maxCount}
 		} else {
@@ -58,6 +58,9 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+	if canSkipIndexEstimation(idx, indexRanges) {
+		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
+	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 		result = statistics.DefaultRowEst(count)
@@ -282,8 +285,11 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		count.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := count.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
@@ -308,16 +314,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 		totalCount.Add(count)
 	}
-	allowZeroEst := fixcontrol.GetBoolWithDefault(
-		sctx.GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix47400,
-		false,
-	)
-	minCount := float64(1)
-	if allowZeroEst {
-		minCount = 0
-	}
-	totalCount.Clamp(minCount, float64(realtimeRowCount))
+	totalCount.Clamp(1.0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -595,6 +592,37 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// canSkipIndexEstimation checks whether expensive index row count estimation
+// (V1/V2) can be skipped because the ranges cover all rows. Returns true only when:
+//  1. The ranges include a truly full range including NULLs ([NULL, +inf)),
+//     not just [MinNotNull, +inf) which excludes NULLs and would overestimate.
+//  2. The index is not a partial index (which only covers rows matching its predicate).
+//  3. The index is not an MV index (which can have multiple entries per row).
+func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) bool {
+	if idx.Info.ConditionExprString != "" || idx.Info.MVIndex {
+		return false
+	}
+	return slices.ContainsFunc(indexRanges, isFullRangeIncludingNulls)
+}
+
+// isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull),
+// not KindMinNotNull, ensuring NULL rows are included in the count.
+func isFullRangeIncludingNulls(ran *ranger.Range) bool {
+	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	for i := range ran.LowVal {
+		if ran.LowVal[i].Kind() != types.KindNull {
+			return false
+		}
+		if ran.HighVal[i].Kind() != types.KindMaxValue {
+			return false
+		}
+	}
+	return true
 }
 
 // hasColumnStats checks if we have collected stats on any of the given columns.

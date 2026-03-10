@@ -39,7 +39,7 @@ func TestIssue54803(t *testing.T) {
     GROUP BY t1db47fc1.col_68
     HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99)
     LIMIT 106149535;
-    `).Check(testkit.Rows("Projection 8.00 root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column#7",
+    `).Check(testkit.Rows("Projection 8.00 root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column#8",
 		"└─Limit 8.00 root  offset:0, count:106149535",
 		"  └─HashAgg 8.00 root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
 		"    └─TableReader 10.00 root partition:p0 data:Selection",
@@ -80,7 +80,7 @@ GROUP BY tcd8c2aac.col_21
 HAVING ISNULL(tcd8c2aac.col_21)
 LIMIT 48579914;`).Check(testkit.Rows(
 		"Limit 6.40 root  offset:0, count:48579914",
-		"└─HashAgg 6.40 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator \",\")->Column#14",
+		"└─HashAgg 6.40 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator \",\")->Column#16",
 		"  └─HashJoin 80000.00 root  CARTESIAN inner join",
 		"    ├─IndexLookUp(Build) 8.00 root  ",
 		"    │ ├─Selection(Build) 8.00 cop[tikv]  isnull(test.tcd8c2aac.col_21)",
@@ -118,9 +118,9 @@ GROUP BY ta31c32a7.col_63
 HAVING ISNULL(ta31c32a7.col_63)
 LIMIT 65122436;`).Check(testkit.Rows(
 		"Limit 6.40 root  offset:0, count:65122436",
-		"└─StreamAgg 6.40 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#6)->Column#3",
+		"└─StreamAgg 6.40 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#7)->Column#4",
 		"  └─IndexReader 6.40 root  index:StreamAgg",
-		"    └─StreamAgg 6.40 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
+		"    └─StreamAgg 6.40 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#7",
 		"      └─IndexRangeScan 10.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], keep order:true, stats:pseudo"))
 	tk.MustQuery(`explain format='brief' SELECT BIT_XOR(ta31c32a7.col_63) AS r0
 FROM ta31c32a7
@@ -129,9 +129,9 @@ WHERE ISNULL(ta31c32a7.col_63)
 GROUP BY ta31c32a7.col_63
 LIMIT 65122436;`).Check(testkit.Rows(
 		"Limit 32.00 root  offset:0, count:65122436",
-		"└─StreamAgg 32.00 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#5)->Column#3",
+		"└─StreamAgg 32.00 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#6)->Column#4",
 		"  └─IndexReader 32.00 root  index:StreamAgg",
-		"    └─StreamAgg 32.00 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#5",
+		"    └─StreamAgg 32.00 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
 		"      └─IndexRangeScan 40.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], [1531.4023068774668,1531.4023068774668], [1780.7418079754723,1780.7418079754723], [5904.959667345741,5904.959667345741], keep order:true, stats:pseudo"))
 	tk.MustExec(`CREATE TABLE tl75eff7ba (
 col_1 tinyint(1) DEFAULT '0',

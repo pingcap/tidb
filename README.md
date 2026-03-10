@@ -7,7 +7,8 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
 [![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
-[![Build Status](https://prow.tidb.net/badge.svg?jobs=pingcap/tidb/merged_build)](https://prow.tidb.net/?repo=pingcap%2Ftidb&type=postsubmit&job=pingcap%2Ftidb%2Fmerged_build)
+
+[![Build Status](https://prow.tidb.net/badge.svg?jobs=merged-tidb-build)](https://prow.tidb.net/?repo=pingcap%2Ftidb&type=postsubmit&job=merged-tidb-build)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
 [![GitHub release](https://img.shields.io/github/tag/pingcap/tidb.svg?label=release)](https://github.com/pingcap/tidb/releases)
 </div>

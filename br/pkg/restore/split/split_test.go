@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -592,6 +595,165 @@ func TestPaginateScanRegion(t *testing.T) {
 	checkRegionsBoundaries(t, got, [][]byte{{1}, {2}, {3}, {4}, {5}})
 }
 
+type mockPDErrorClient struct {
+	pd.Client
+	t         *testing.T
+	testCases []scanRegionTestCase
+}
+
+type scanRegionTestCase struct {
+	allowFollowerHandle bool
+	caseError           error
+	caseRegion          []*router.Region
+}
+
+func (s *mockPDErrorClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
+	testCase := s.testCases[0]
+	s.testCases = s.testCases[1:]
+	op := &opt.GetRegionOp{}
+	for _, opt := range opts {
+		opt(op)
+	}
+	require.Equal(s.t, testCase.allowFollowerHandle, op.AllowFollowerHandle)
+	return testCase.caseRegion, testCase.caseError
+}
+
+func newCaseRegion(kids []uint64) []*router.Region {
+	regions := make([]*router.Region, 0, len(kids))
+	for _, kid := range kids {
+		regions = append(regions, &router.Region{
+			Meta: &metapb.Region{
+				Id:       kid,
+				StartKey: fmt.Appendf(nil, "%03d", kid),
+				EndKey:   fmt.Appendf(nil, "%03d", kid+1),
+			},
+			Leader: &metapb.Peer{
+				Id:      kid,
+				StoreId: kid,
+			},
+		})
+	}
+	return regions
+}
+
+func rk(kid int) []byte {
+	return fmt.Appendf(nil, "%03d5", kid)
+}
+
+func TestScanRegionsLimitWithRetry(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := &mockPDErrorClient{t: t}
+	mockClient := &pdClient{client: mockPDClient}
+
+	backup := WaitRegionOnlineAttemptTimes
+	WaitRegionOnlineAttemptTimes = 3
+	t.Cleanup(func() {
+		WaitRegionOnlineAttemptTimes = backup
+	})
+
+	caseError := errors.Annotate(berrors.ErrPDBatchScanRegion, "case error")
+	// Case 1: must leader is false, and the first try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err := scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, false)
+	require.True(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+
+	// Case 2: must leader is false, and the first try is successful
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err = scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, false)
+	require.False(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+
+	// Case 3: must leader is true, and the first try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: false, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err = scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, true)
+	require.True(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+
+	// Case4: must leader is true, and the first try is successful
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err = scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, true)
+	require.True(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+}
+
+func checkRegions(t *testing.T, startKid, endKid uint64, regions []*RegionInfo) {
+	require.Len(t, regions, int(endKid-startKid+1))
+	i := 0
+	for kid := startKid; kid <= endKid; kid += 1 {
+		require.Equal(t, kid, regions[i].Leader.Id)
+		require.Equal(t, kid, regions[i].Leader.StoreId)
+		require.Equal(t, kid, regions[i].Region.Id)
+		require.Equal(t, fmt.Appendf(nil, "%03d", kid), regions[i].Region.StartKey)
+		require.Equal(t, fmt.Appendf(nil, "%03d", kid+1), regions[i].Region.EndKey)
+		i += 1
+	}
+}
+
+func TestPaginateScanRegion2(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := &mockPDErrorClient{t: t}
+	mockClient := &pdClient{client: mockPDClient}
+
+	backup := WaitRegionOnlineAttemptTimes
+	WaitRegionOnlineAttemptTimes = 3
+	t.Cleanup(func() {
+		WaitRegionOnlineAttemptTimes = backup
+	})
+
+	caseError := errors.Annotate(berrors.ErrPDBatchScanRegion, "case error")
+	// Case 1: must leader is false, and the first try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5})},
+	}
+	regions, err := PaginateScanRegion(ctx, mockClient, rk(1), rk(5), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 5, regions)
+
+	// Case 2: must leader is false, and the first try is successful
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: true, caseError: caseError},
+		{allowFollowerHandle: false, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5, 6})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{7, 8, 9})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{10})},
+	}
+	regions, err = PaginateScanRegion(ctx, mockClient, rk(1), rk(10), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 10, regions)
+
+	// Case 3: must leader is false, and the first try paginate try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{4, 5})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5, 6})},
+	}
+	regions, err = PaginateScanRegion(ctx, mockClient, rk(1), rk(6), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 6, regions)
+}
+
 func TestRegionConsistency(t *testing.T) {
 	cases := []struct {
 		startKey []byte
@@ -685,9 +847,39 @@ func TestRegionConsistency(t *testing.T) {
 				},
 			},
 		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader's store id is 0(.*?)",
+			[]*RegionInfo{
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
+					},
+				},
+			},
+		},
 	}
 	for _, ca := range cases {
-		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions, false)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}

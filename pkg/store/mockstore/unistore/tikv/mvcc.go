@@ -1815,13 +1815,30 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 
 // Get implements the MVCCStore interface.
 func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
+	pair, err := store.GetPair(reqCtx, key, version)
+	if err != nil {
+		return nil, err
+	}
+	return pair.Value, nil
+}
+
+// GetPair gets the KvPair
+func (store *MVCCStore) GetPair(reqCtx *requestCtx, key []byte, version uint64) (*kvrpcpb.KvPair, error) {
 	if reqCtx.isSnapshotIsolation() {
-		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+		committedLocks := reqCtx.rpcCtx.CommittedLocks
+		if reqCtx.returnCommitTS {
+			// set committedLocks to nil if commitTS is needed to make sure all KvPair has CommitTS
+			committedLocks = nil
+		}
+		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, committedLocks, key)
 		if err != nil {
 			return nil, err
 		}
 		if len(lockPairs) != 0 {
-			return getValueFromLock(lockPairs[0].lock), nil
+			return &kvrpcpb.KvPair{
+				Key:   safeCopy(key),
+				Value: safeCopy(getValueFromLock(lockPairs[0].lock)),
+			}, nil
 		}
 	} else if reqCtx.isRcCheckTSIsolationLevel() {
 		err := store.CheckKeysLockForRcCheckTS(version, reqCtx.rpcCtx.ResolvedLocks, key)
@@ -1829,11 +1846,20 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 			return nil, err
 		}
 	}
-	val, err := reqCtx.getDBReader().Get(key, version)
-	if val == nil {
+	val, userMeta, err := reqCtx.getDBReader().Get(key, version)
+	if err != nil {
 		return nil, err
 	}
-	return safeCopy(val), err
+
+	var commitTS uint64
+	if reqCtx.returnCommitTS && len(userMeta) > 0 {
+		commitTS = userMeta.CommitTS()
+	}
+	return &kvrpcpb.KvPair{
+		Key:      safeCopy(key),
+		Value:    safeCopy(val),
+		CommitTs: commitTS,
+	}, err
 }
 
 // BatchGet implements the MVCCStore interface.
@@ -1842,8 +1868,13 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	var remain [][]byte
 	if reqCtx.isSnapshotIsolation() {
 		remain = make([][]byte, 0, len(keys))
+		committedLocks := reqCtx.rpcCtx.CommittedLocks
+		if reqCtx.returnCommitTS {
+			// set committedLocks to nil if commitTS is needed to make sure all KvPair has CommitTS
+			committedLocks = nil
+		}
 		for _, key := range keys {
-			lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+			lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, committedLocks, key)
 			if err != nil {
 				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
 			} else if len(lockPairs) != 0 {
@@ -1868,12 +1899,17 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	} else {
 		remain = keys
 	}
-	batchGetFunc := func(key, value []byte, err error) {
+	batchGetFunc := func(key, value []byte, userMeta mvcc.DBUserMeta, err error) {
 		if len(value) != 0 {
+			var commitTS uint64
+			if reqCtx.returnCommitTS && err == nil {
+				commitTS = userMeta.CommitTS()
+			}
 			pairs = append(pairs, &kvrpcpb.KvPair{
-				Key:   safeCopy(key),
-				Value: safeCopy(value),
-				Error: convertToKeyError(err),
+				Key:      safeCopy(key),
+				Value:    safeCopy(value),
+				CommitTs: commitTS,
+				Error:    convertToKeyError(err),
 			})
 		}
 	}
@@ -1927,7 +1963,7 @@ type kvScanProcessor struct {
 	scanCnt    uint32
 }
 
-func (p *kvScanProcessor) Process(key, value []byte) (err error) {
+func (p *kvScanProcessor) Process(key, value []byte, _ uint64) (err error) {
 	if p.sampleStep > 0 {
 		p.scanCnt++
 		if (p.scanCnt-1)%p.sampleStep != 0 {
