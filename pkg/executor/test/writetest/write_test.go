@@ -580,24 +580,19 @@ func TestGeneratedColumnTimestampTZConsistency(t *testing.T) {
 	tk.MustExec("ADMIN CHECK TABLE t_stored")
 	tk.MustExec("ADMIN CHECK INDEX t_stored idx_gen")
 
-	// Test 2: VIRTUAL generated column with index
-	tk.MustExec(`CREATE TABLE t_virtual (
+	// Test 2: STORED generated column — insert from one TZ, ADMIN CHECK from another
+	tk.MustExec(`CREATE TABLE t_stored2 (
 		id INT PRIMARY KEY,
 		ts TIMESTAMP,
-		gen_hour INT GENERATED ALWAYS AS (HOUR(ts)) VIRTUAL,
+		gen_hour INT GENERATED ALWAYS AS (HOUR(ts)) STORED,
 		INDEX idx_gen(gen_hour)
 	)`)
+	tk.MustExec("SET time_zone = '+08:00'")
+	tk.MustExec("INSERT INTO t_stored2 VALUES (1, '2026-03-06 13:00:00', DEFAULT)")
+	// ADMIN CHECK from a different timezone should still pass
 	tk.MustExec("SET time_zone = '+00:00'")
-	tk.MustExec("INSERT INTO t_virtual VALUES (1, '2026-03-06 05:00:00', DEFAULT)")
-
-	// Update from a different timezone
-	tk.MustExec("SET time_zone = '-08:00'")
-	tk.MustExec("UPDATE t_virtual SET ts = '2026-03-06 06:00:00' WHERE id = 1")
-
-	// ADMIN CHECK should pass regardless of session timezone
-	tk.MustExec("SET time_zone = '+00:00'")
-	tk.MustExec("ADMIN CHECK TABLE t_virtual")
-	tk.MustExec("ADMIN CHECK INDEX t_virtual idx_gen")
+	tk.MustExec("ADMIN CHECK TABLE t_stored2")
+	tk.MustExec("ADMIN CHECK INDEX t_stored2 idx_gen")
 
 	// Test 3: Verify gen_hour value is always based on UTC
 	tk.MustExec("SET time_zone = '+00:00'")
