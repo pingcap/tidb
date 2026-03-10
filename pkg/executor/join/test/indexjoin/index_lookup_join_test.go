@@ -366,10 +366,18 @@ func TestIndexHashJoinSemiJoinEarlyTermination(t *testing.T) {
 	}
 	tk.MustExec("insert into t2 values " + sb.String())
 
-	// Semi join with ORDER BY + LIMIT triggers KeepOuterOrder path.
+	// Unordered semi join (no ORDER BY) exercises the !KeepOuterOrder path.
 	sql := "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
-		"(select 1 from t2 where t2.b = t1.b) order by t1.a limit 50"
+		"(select 1 from t2 where t2.b = t1.b)"
+	tk.MustHavePlan(sql, "IndexHashJoin")
 	rows := tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 500)
+
+	// Semi join with ORDER BY + LIMIT triggers KeepOuterOrder path.
+	sql = "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b) order by t1.a limit 50"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	rows = tk.MustQuery(sql).Rows()
 	require.Len(t, rows, 50)
 	// Verify correct ordering.
 	require.Equal(t, "1", rows[0][0].(string))
@@ -378,6 +386,7 @@ func TestIndexHashJoinSemiJoinEarlyTermination(t *testing.T) {
 	// Also test without LIMIT to ensure full result correctness.
 	sql = "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
 		"(select 1 from t2 where t2.b = t1.b) order by t1.a"
+	tk.MustHavePlan(sql, "IndexHashJoin")
 	rows = tk.MustQuery(sql).Rows()
 	require.Len(t, rows, 500)
 	require.Equal(t, "1", rows[0][0].(string))
@@ -390,8 +399,17 @@ func TestIndexHashJoinSemiJoinEarlyTermination(t *testing.T) {
 	tk.MustExec("update t1 set c = a")
 	tk.MustExec("update t2 set c = a")
 
+	// Unordered with conditions exercises !KeepOuterOrder + hasConditions.
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b and t2.c > t1.c)"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	rows = tk.MustQuery(sql).Rows()
+	require.Equal(t, 500, len(rows))
+
+	// Ordered with conditions exercises KeepOuterOrder + hasConditions.
 	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b from t1 where exists " +
 		"(select 1 from t2 where t2.b = t1.b and t2.c > t1.c) order by t1.a limit 50"
+	tk.MustHavePlan(sql, "IndexHashJoin")
 	rows = tk.MustQuery(sql).Rows()
 	require.Len(t, rows, 50)
 	require.Equal(t, "1", rows[0][0].(string))
@@ -400,8 +418,10 @@ func TestIndexHashJoinSemiJoinEarlyTermination(t *testing.T) {
 	// Without LIMIT, all rows with a matching t2.c > t1.c should be returned.
 	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b from t1 where exists " +
 		"(select 1 from t2 where t2.b = t1.b and t2.c > t1.c) order by t1.a"
+	tk.MustHavePlan(sql, "IndexHashJoin")
 	rows = tk.MustQuery(sql).Rows()
-	require.Greater(t, len(rows), 0)
+	require.Equal(t, 500, len(rows))
 	// Verify ordering.
 	require.Equal(t, "1", rows[0][0].(string))
+	require.Equal(t, "500", rows[len(rows)-1][0].(string))
 }

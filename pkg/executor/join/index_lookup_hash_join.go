@@ -794,22 +794,16 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	if isSemiJoin {
 		joinStartTime = time.Now()
 		// For semi join with other conditions, we need a scratch chunk for
-		// TryToMatchOuters (condition evaluation) and persistent storage for
-		// matched inner rows (needed by TryToMatchInners during emit).
+		// TryToMatchOuters (condition evaluation). Match decisions are
+		// recorded in task.outerRowStatus and used directly by the emit
+		// phase, so no inner row storage is needed.
 		var scratchChk *chunk.Chunk
-		var matchedInners *chunk.List
-		var matchedInnerPtrs [][]chunk.RowPtr
 		hasConditions := !iw.joiner.isSemiJoinWithoutCondition()
 		if hasConditions {
 			scratchChk = chunk.New(iw.lookup.RetFieldTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
-			matchedInners = chunk.NewList(iw.InnerCtx.RowTypes, iw.ctx.GetSessionVars().InitChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
-			matchedInnerPtrs = make([][]chunk.RowPtr, task.outerResult.NumChunks())
-			for i := range matchedInnerPtrs {
-				matchedInnerPtrs[i] = make([]chunk.RowPtr, task.outerResult.GetChunk(i).NumRows())
-			}
 		}
 		for {
-			if err = iw.probeAndMarkOuterRows(task, h, scratchChk, matchedInners, matchedInnerPtrs); err != nil {
+			if err = iw.probeAndMarkOuterRows(task, h, scratchChk); err != nil {
 				if task.lookUpJoinTask.innerExec != nil {
 					terror.Log(exec.Close(task.lookUpJoinTask.innerExec))
 					task.lookUpJoinTask.innerExec = nil
@@ -828,7 +822,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 				return err
 			}
 		}
-		return iw.emitSemiJoinResultInOrder(ctx, task, joinResult, resultCh, matchedInners, matchedInnerPtrs)
+		return iw.emitSemiJoinResultInOrder(ctx, task, joinResult, resultCh)
 	}
 
 	joinStartTime = time.Now()
@@ -1047,7 +1041,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 // is used to evaluate them. Matched inner rows are saved in matchedInners
 // so the emit phase can call TryToMatchInners with a valid inner row.
 func (iw *indexHashJoinInnerWorker) probeAndMarkOuterRows(task *indexHashJoinTask, h hash.Hash64,
-	scratchChk *chunk.Chunk, matchedInners *chunk.List, matchedInnerPtrs [][]chunk.RowPtr) error {
+	scratchChk *chunk.Chunk) error {
 	hasConditions := scratchChk != nil
 	for i, numChunks := 0, task.innerResult.NumChunks(); i < numChunks; i++ {
 		chk := task.innerResult.GetChunk(i)
@@ -1067,28 +1061,26 @@ func (iw *indexHashJoinInnerWorker) probeAndMarkOuterRows(task *indexHashJoinTas
 				continue
 			}
 			// Evaluate other conditions via TryToMatchOuters.
+			// Loop until all matchedOuterRows are processed, since
+			// TryToMatchOuters is bounded by scratchChk capacity
+			// (MaxChunkSize) and may not cover all rows in one call.
+			cursor := 0
 			iw.rowIter.Reset(matchedOuterRows)
-			iw.rowIter.Begin()
-			iw.outerRowStatus, err = iw.joiner.TryToMatchOuters(iw.rowIter, innerRow, scratchChk, iw.outerRowStatus)
-			if err != nil {
-				return err
-			}
-			for idx, status := range iw.outerRowStatus {
-				ptr := matchedPtrs[idx]
-				if status == outerRowMatched && task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] != outerRowMatched {
-					task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] = outerRowMatched
-					// Save the inner row (copied into persistent storage) for emit.
-					matchedInners.AppendRow(innerRow)
-					lastChk := matchedInners.GetChunk(matchedInners.NumChunks() - 1)
-					matchedInnerPtrs[ptr.ChkIdx][ptr.RowIdx] = chunk.RowPtr{
-						ChkIdx: uint32(matchedInners.NumChunks() - 1),
-						RowIdx: uint32(lastChk.NumRows() - 1),
-					}
-				} else if task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] == outerRowUnmatched {
-					task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] = status
+			iter := iw.rowIter
+			for iw.rowIter.Begin(); iter.Current() != iter.End(); {
+				iw.outerRowStatus, err = iw.joiner.TryToMatchOuters(iter, innerRow, scratchChk, iw.outerRowStatus)
+				if err != nil {
+					return err
 				}
+				for _, status := range iw.outerRowStatus {
+					ptr := matchedPtrs[cursor]
+					if status == outerRowMatched || task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] == outerRowUnmatched {
+						task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] = status
+					}
+					cursor++
+				}
+				scratchChk.Reset()
 			}
-			scratchChk.Reset()
 		}
 	}
 	return nil
@@ -1114,13 +1106,10 @@ func (*indexHashJoinInnerWorker) allOuterRowsMatched(task *indexHashJoinTask) bo
 }
 
 // emitSemiJoinResultInOrder emits matched outer rows in their original order.
-// When matchedInners is non-nil (join has other conditions), the saved inner
-// row is used so TryToMatchInners can evaluate conditions. Otherwise a dummy
-// inner row is used since the joiner only checks inners.Len() > 0.
-// Unmatched rows are discarded (OnMissMatch is a no-op for semi join).
+// Match decisions were already made during the probe phase, so this method
+// appends outer row projections directly without re-evaluating join conditions.
 func (iw *indexHashJoinInnerWorker) emitSemiJoinResultInOrder(ctx context.Context, task *indexHashJoinTask,
-	joinResult *indexHashJoinResult, resultCh chan *indexHashJoinResult,
-	matchedInners *chunk.List, matchedInnerPtrs [][]chunk.RowPtr) (err error) {
+	joinResult *indexHashJoinResult, resultCh chan *indexHashJoinResult) (err error) {
 	defer func() {
 		if err == nil && joinResult.chk != nil {
 			if joinResult.chk.NumRows() > 0 {
@@ -1135,7 +1124,6 @@ func (iw *indexHashJoinInnerWorker) emitSemiJoinResultInOrder(ctx context.Contex
 		}
 	}()
 
-	innerRows := make([]chunk.Row, 1)
 	var ok bool
 	for chkIdx, outerRowStatus := range task.outerRowStatus {
 		chk := task.outerResult.GetChunk(chkIdx)
@@ -1143,18 +1131,7 @@ func (iw *indexHashJoinInnerWorker) emitSemiJoinResultInOrder(ctx context.Contex
 			if status != outerRowMatched {
 				continue
 			}
-			outerRow := chk.GetRow(rowIdx)
-			if matchedInners != nil {
-				innerRows[0] = matchedInners.GetRow(matchedInnerPtrs[chkIdx][rowIdx])
-			} else {
-				innerRows[0] = outerRow // dummy; content doesn't matter
-			}
-			iw.rowIter.Reset(innerRows)
-			iw.rowIter.Begin()
-			_, _, err = iw.joiner.TryToMatchInners(outerRow, iw.rowIter, joinResult.chk)
-			if err != nil {
-				return err
-			}
+			iw.joiner.appendMatchedOuter(chk.GetRow(rowIdx), joinResult.chk)
 			if joinResult.chk.IsFull() {
 				select {
 				case resultCh <- joinResult:

@@ -113,6 +113,11 @@ type Joiner interface {
 	// there are a lot of matched rows.
 	isSemiJoinWithoutCondition() bool
 
+	// appendMatchedOuter appends an already-matched outer row's projection
+	// to chk without re-evaluating join conditions. This is used by the
+	// semi join emit phase where the match decision was made during probing.
+	appendMatchedOuter(outer chunk.Row, chk *chunk.Chunk)
+
 	// Clone deep copies a Joiner.
 	Clone() Joiner
 }
@@ -239,6 +244,10 @@ func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInne
 	mutableRow := chunk.MutRowFromTypes(innerTypes)
 	mutableRow.SetDatums(defaultInner[:len(innerTypes)]...)
 	j.defaultInner = mutableRow.ToRow()
+}
+
+func (j *baseJoiner) appendMatchedOuter(outer chunk.Row, chk *chunk.Chunk) {
+	chk.AppendRowByColIdxs(outer, j.lUsed)
 }
 
 func (*baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUsed, rUsed []int) {
