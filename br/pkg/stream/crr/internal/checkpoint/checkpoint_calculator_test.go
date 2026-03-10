@@ -194,9 +194,9 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 
 func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {
 	ctx := context.Background()
-	boundaries, err := testutil.NewRegionLayoutBuilder().
-		AddRoundRobinRegions(1, 1).
-		Build()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
 	require.NoError(t, err)
 
 	tc := testutil.NewTestContext(t)
@@ -244,9 +244,9 @@ func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {
 
 func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
 	ctx := context.Background()
-	boundaries, err := testutil.NewRegionLayoutBuilder().
-		AddRoundRobinRegions(1, 1).
-		Build()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
 	require.NoError(t, err)
 
 	tc := testutil.NewTestContext(t)

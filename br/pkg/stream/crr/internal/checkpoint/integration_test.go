@@ -249,6 +249,7 @@ func newSingleStoreIntegrationHarness(t *testing.T, ctx context.Context) *integr
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},
+		nil,
 	)
 	require.NoError(t, err)
 	return h
