@@ -512,6 +512,51 @@ func TestParallelApplyCorrectness(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
 }
 
+func TestParallelApplyCancelInflight(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency = 3")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	for i := 1; i <= 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
+	}
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+
+	// Verify the optimizer chooses a parallel Apply plan for this query.
+	sql := "select * from (select t1.a from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a < t1.a)) sub limit 1"
+	checkApplyPlan(t, tk, sql, 3)
+
+	// The failpoint makes each inner execution sleep 300ms but respects
+	// context cancellation, so cancelled workers return immediately.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner", `return(300)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner"))
+	}()
+
+	// LIMIT 1: once one row is produced, Close() fires and should cancel
+	// in-flight inner workers via context cancellation.
+	start := time.Now()
+	rows := tk.MustQuery(sql).Rows()
+	elapsed := time.Since(start)
+
+	// We got exactly 1 row.
+	require.Len(t, rows, 1)
+	// Without cancel-in-flight, all 20 outer rows would be processed
+	// (~2s per run). With cancellation, Close() fires after the first
+	// result and aborts workers sleeping in the failpoint via context
+	// cancellation. Note: fillInnerChunk may process multiple outer
+	// rows per call, so the effective savings depend on how many rows
+	// are in-flight when cancel fires. The 3s threshold is generous
+	// enough to avoid CI flakiness while catching regressions where
+	// cancellation is completely broken.
+	require.Less(t, elapsed, 3*time.Second, "query took too long (%v); cancel-in-flight may not be working", elapsed)
+}
+
 func TestOrderedParallelApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

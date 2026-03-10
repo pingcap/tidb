@@ -90,6 +90,13 @@ type ParallelNestedLoopApplyExec struct {
 	exit        chan struct{}
 	workerWg    sync.WaitGroup
 	notifyWg    sync.WaitGroup
+	// cancelWorkers cancels the context passed to worker goroutines.
+	// This aborts in-flight cop requests (e.g. inner-side IndexRangeScan)
+	// immediately when the executor is closed, rather than waiting for
+	// them to complete naturally. This is especially beneficial for
+	// LIMIT queries where Close() fires as soon as enough rows are
+	// collected.
+	cancelWorkers context.CancelFunc
 
 	// ordered-mode channels (keepOrder == true)
 	orderedResultCh chan orderedResult
@@ -186,8 +193,10 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	}
 
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
+		workerCtx, cancelWorkers := context.WithCancel(ctx)
+		e.cancelWorkers = cancelWorkers
 		e.workerWg.Add(1)
-		go e.outerWorker(ctx)
+		go e.outerWorker(workerCtx)
 		if e.keepOrder {
 			for i := range e.concurrency {
 				e.workerWg.Add(1)
@@ -197,14 +206,14 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			// close orderedResultCh so the reorder worker can drain and exit.
 			e.notifyWg.Add(1)
 			go func() {
-				defer e.handleWorkerPanic(ctx, &e.notifyWg)
+				defer e.handleWorkerPanic(workerCtx, &e.notifyWg)
 				e.workerWg.Wait()
 				close(e.orderedResultCh)
 			}()
 			// The reorder worker is tracked by notifyWg so that
 			// Close() waits for it to fully exit before returning.
 			e.notifyWg.Add(1)
-			go e.reorderWorker(ctx)
+			go e.reorderWorker(workerCtx)
 		} else {
 			for i := range e.concurrency {
 				e.workerWg.Add(1)
@@ -212,7 +221,7 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 				go e.innerWorker(ctx, workID)
 			}
 			e.notifyWg.Add(1)
-			go e.notifyWorker(ctx)
+			go e.notifyWorker(workerCtx)
 		}
 	}
 	result := <-e.resultChkCh
@@ -234,6 +243,14 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if atomic.LoadUint32(&e.started) == 1 {
 		close(e.exit)
+		// Cancel the worker context to abort in-flight cop requests
+		// (e.g. inner-side scans) immediately rather than waiting for
+		// them to complete. This is important for LIMIT queries where
+		// multiple inner workers may be mid-request when enough rows
+		// have been collected.
+		if e.cancelWorkers != nil {
+			e.cancelWorkers()
+		}
 		e.notifyWg.Wait()
 		e.started = 0
 	}
@@ -277,6 +294,13 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
 		chk := exec.TryNewCacheChunk(e.outerExec)
 		if err := exec.Next(ctx, e.outerExec, chk); err != nil {
+			// If the executor is shutting down, the error is from
+			// deliberate context cancellation — not a real failure.
+			select {
+			case <-e.exit:
+				return
+			default:
+			}
 			e.putResult(nil, err)
 			return
 		}
@@ -330,6 +354,15 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 		err := e.fillInnerChunk(ctx, id, chk)
 		if err == nil && chk.NumRows() == 0 { // no more data, this goroutine can exit
 			return
+		}
+		// If the executor is shutting down, the error is from
+		// deliberate context cancellation — not a real failure.
+		if err != nil {
+			select {
+			case <-e.exit:
+				return
+			default:
+			}
 		}
 		if e.putResult(chk, err) {
 			return
@@ -614,6 +647,17 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	if err != nil {
 		return err
 	}
+	// Simulate a slow inner execution after the inner executor is opened,
+	// so the delay occurs when a real cop request would be in-flight.
+	failpoint.Inject("parallelApplySlowInner", func(val failpoint.Value) {
+		if ms, ok := val.(int); ok {
+			select {
+			case <-time.After(time.Duration(ms) * time.Millisecond):
+			case <-ctx.Done():
+				failpoint.Return(ctx.Err())
+			}
+		}
+	})
 
 	if e.useCache {
 		// create a new one in this case since it may be in the cache
@@ -624,6 +668,13 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk[id])
 	for {
+		// Fast-path: if the executor is shutting down (e.g. LIMIT
+		// satisfied), skip the next cop request entirely.
+		select {
+		case <-e.exit:
+			return nil
+		default:
+		}
 		err := exec.Next(ctx, e.innerExecs[id], e.innerChunk[id])
 		if err != nil {
 			return err
