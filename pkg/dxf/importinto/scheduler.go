@@ -29,6 +29,7 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
@@ -36,10 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -453,6 +456,8 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Reset table mode earlier than scheduler cleanup. Cleanup routine remains a fallback.
+	sch.switchTableMode2NormalMode(ctx, taskMeta, logger)
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
@@ -464,6 +469,35 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 		return sch.failJob(ctx, task, taskMeta, logger, errMsg)
 	}
 	return sch.finishJob(ctx, logger, task, taskMeta)
+}
+
+func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *TaskMeta, logger *zap.Logger) {
+	if !kerneltype.IsClassic() {
+		return
+	}
+	if taskMeta == nil || taskMeta.Plan.DBID == 0 || taskMeta.Plan.TableInfo == nil || taskMeta.Plan.TableInfo.ID == 0 {
+		return
+	}
+	err := sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se,
+			model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+	})
+	if err != nil {
+		// If the table is not found, it means the table has been either dropped or truncated.
+		// In such cases, the table mode has already been reset to normal, so we can ignore this error.
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			logger.Warn(
+				"table not found during import on-done, skip altering table mode",
+				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
+			)
+			return
+		}
+		logger.Warn(
+			"alter table mode to normal failure",
+			zap.Error(err),
+			zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
+		)
+	}
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
