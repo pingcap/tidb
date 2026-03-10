@@ -166,13 +166,28 @@ func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row [
 }
 
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	row, needsCheck, err := fkc.rowNeedCheckForUpdate(sc, oldRow, newRow)
+	if err != nil || !needsCheck {
+		return err
+	}
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
+func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
+// rowNeedCheckForUpdate selects the row image that should be validated for an update.
+// Child-table checks validate the new values, while parent-table referred checks validate the old values being removed.
+// needsCheck is false when the FK value is unchanged or when this FK check does not apply to update.
+func (fkc *FKCheckExec) rowNeedCheckForUpdate(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) (rowToCheck []types.Datum, needsCheck bool, err error) {
 	newVals, err := fkc.fetchFKValues(newRow)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	oldVals, err := fkc.fetchFKValues(oldRow)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if len(oldVals) == len(newVals) {
 		isSameValue := true
@@ -185,20 +200,47 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 		}
 		if isSameValue {
 			// If the old fk value and the new fk value are the same, no need to check.
-			return nil
+			return nil, false, nil
 		}
 	}
 
 	if fkc.FK != nil {
-		return fkc.addRowNeedToCheck(sc, newRow)
+		return newRow, true, nil
 	} else if fkc.ReferredFK != nil {
-		return fkc.addRowNeedToCheck(sc, oldRow)
+		return oldRow, true, nil
 	}
-	return nil
+	return nil, false, nil
 }
 
-func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
-	return fkc.addRowNeedToCheck(sc, row)
+// checkIgnoreByRow uses fkc.checkRows to validate one row. checkRows appends the FK violation as a warning to the statement context
+// instead of returning it as an error. The returned bool indicates whether a FK violation has been ignored for this row.
+func (fkc *FKCheckExec) checkIgnoreByRow(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
+	fkToBeCheckedRows := [1]toBeCheckedRow{{row: row, ignored: false}}
+	err := fkc.checkRows(ctx, sc, txn, fkToBeCheckedRows[:])
+	if err != nil {
+		return false, err
+	}
+	return fkToBeCheckedRows[0].ignored, nil
+}
+
+func (fkc *FKCheckExec) checkIgnoreForInsert(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
+	if fkc.ReferredFK != nil {
+		// Insert into parent table doesn't need to do foreign key check.
+		return false, nil
+	}
+	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
+}
+
+func (fkc *FKCheckExec) checkIgnoreForUpdate(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, oldRow, newRow []types.Datum) (bool, error) {
+	row, needsCheck, err := fkc.rowNeedCheckForUpdate(sc, oldRow, newRow)
+	if err != nil || !needsCheck {
+		return false, err
+	}
+	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
+}
+
+func (fkc *FKCheckExec) checkIgnoreForDelete(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
+	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }
 
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -629,30 +671,6 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 		}
 	}
 	return nil
-}
-
-// checkFKIgnoreErr will use `fkc.checkRows` to check the rows. The `fkc.checkRows` will ignore the error and append the error as warning to the statement context.
-// It'll return whether an error has been ignored. If an error has been ignored, it'll return `true, nil`.
-func checkFKIgnoreErr(ctx context.Context, sctx sessionctx.Context, fkChecks []*FKCheckExec, row []types.Datum) (bool, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return false, err
-	}
-
-	fkToBeCheckedRows := [1]toBeCheckedRow{{row: row, ignored: false}}
-
-	for _, fkc := range fkChecks {
-		err := fkc.checkRows(ctx, sctx.GetSessionVars().StmtCtx, txn, fkToBeCheckedRows[:])
-		if err != nil {
-			return false, err
-		}
-	}
-
-	if fkToBeCheckedRows[0].ignored {
-		return true, nil
-	}
-
-	return false, nil
 }
 
 func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*physicalop.FKCascade) (map[int64][]*FKCascadeExec, error) {

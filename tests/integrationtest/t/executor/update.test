@@ -701,17 +701,18 @@ create table child (id int primary key, ref int, foreign key (ref) references pa
 insert into parent values (1, 1), (2, 2);
 insert into child values (1, 1);
 
+--enable_warnings
 update child set ref = 2 where id = 1;
 -- error 1452
 update child set ref = 3 where id = 1;
---enable_warnings
 update ignore child set ref = 3 where id = 1;
---disable_warnings
+select * from child order by id;
 
+update parent set ref = 3 where id = 1;
 -- error 1451
 update parent set ref = 3 where id = 2;
---enable_warnings
 update ignore parent set ref = 3 where id = 2;
+select * from parent order by id;
 --disable_warnings
 
 # Issue 65067

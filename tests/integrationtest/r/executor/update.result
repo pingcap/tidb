@@ -900,9 +900,19 @@ Error 1452 (23000): Cannot add or update a child row: a foreign key constraint f
 update ignore child set ref = 3 where id = 1;
 Level	Code	Message
 Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+select * from child order by id;
+id	ref
+1	2
+update parent set ref = 3 where id = 1;
 update parent set ref = 3 where id = 2;
 Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
 update ignore parent set ref = 3 where id = 2;
+Level	Code	Message
+Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+select * from parent order by id;
+id	ref
+1	3
+2	2
 DROP TABLE IF EXISTS t, tp;
 CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);
 CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED)
