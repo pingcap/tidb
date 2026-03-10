@@ -747,6 +747,13 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	if err != nil {
 		return nil, err
 	}
+	// After join reorder, the NOT_NULL flag of the null-producing side should be removed.
+	// We've done this for new join's output schema in LogicalJoin.MergeSchema().
+	// Here we do the same thing for expressions in join conditions.
+	// For example:
+	//   Before reorder: t1 left (t2 left t3 on t2.c2 = t3.c2) on t1.c1 = t2.c1
+	//   After reorder, (t1 left t2 on t1.c1 = t2.c1) left t3 on t2.c2 = t3.c2;
+	//   We should make sure there is no NOT_NULL flag in `t2.c1`.
 	alignedEQConds = alignScalarFuncsNotNullWithSchema(alignedEQConds, join.Schema())
 	alignedNonEQConds := alignExprsNotNullWithSchema(e.nonEQConds, join.Schema())
 	join.EqualConditions = alignedEQConds
