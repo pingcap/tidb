@@ -311,7 +311,9 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	s := p.Self().(*LogicalSelection)
-	combinedCond := append(predicates, s.Conditions...)
+	combinedCond := make([]expression.Expression, 0, len(predicates)+len(s.Conditions))
+	combinedCond = append(combinedCond, predicates...)
+	combinedCond = append(combinedCond, s.Conditions...)
 	child := s.Children()[0]
 	child = child.ConvertOuterToInnerJoin(combinedCond)
 	s.SetChildren(child)
