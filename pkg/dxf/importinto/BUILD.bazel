@@ -110,11 +110,12 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 26,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/domain",
         "//pkg/domain/serverinfo",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/planner",
