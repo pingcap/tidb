@@ -52,6 +52,7 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 			TaskName:     "drr_test_task",
 			PollInterval: 5 * time.Millisecond,
 		},
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -133,6 +134,7 @@ func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 			PollInterval:        5 * time.Millisecond,
 			MetaReadConcurrency: 2,
 		},
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -184,9 +186,103 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 			Downstream: h.Downstream,
 		},
 		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		nil,
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "StartAfter-capable upstream storage")
+}
+
+func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.NewRegionLayoutBuilder().
+		AddRoundRobinRegions(1, 1).
+		Build()
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	observer := &recordingObserver{}
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: 5 * time.Millisecond,
+		},
+		observer,
+	)
+	require.NoError(t, err)
+
+	_, err = h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	upstreamCheckpoint := h.PDSim.CurrentTSO()
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, upstreamCheckpoint))
+	require.Greater(t, h.PullMessages(0), 0)
+	_, err = h.Replicate(ctx, 0)
+	require.NoError(t, err)
+
+	safeCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, upstreamCheckpoint, safeCheckpoint)
+
+	events := observer.Events()
+	require.Len(t, events, 3)
+	require.Equal(t, checkpoint.EventUpstreamAdvanced, events[0].Type)
+	require.Equal(t, upstreamCheckpoint, events[0].UpstreamCheckpoint)
+	require.Equal(t, checkpoint.EventRoundPlanned, events[1].Type)
+	require.Equal(t, 1, events[1].AliveStoreCount)
+	require.Greater(t, events[1].PendingFileCount, 0)
+	require.Equal(t, checkpoint.EventCheckpointAdvanced, events[2].Type)
+	require.Equal(t, upstreamCheckpoint, events[2].SafeCheckpoint)
+	require.Equal(t, calculator.SyncedTS(), events[2].SyncedTS)
+}
+
+func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.NewRegionLayoutBuilder().
+		AddRoundRobinRegions(1, 1).
+		Build()
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	observer := &recordingObserver{}
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: failingDownstreamChecker{},
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: 5 * time.Millisecond,
+		},
+		observer,
+	)
+	require.NoError(t, err)
+
+	_, err = h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, h.PDSim.CurrentTSO()))
+
+	_, err = calculator.ComputeNextCheckpoint(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "check downstream file")
+
+	events := observer.Events()
+	require.Len(t, events, 3)
+	require.Equal(t, checkpoint.EventUpstreamAdvanced, events[0].Type)
+	require.Equal(t, checkpoint.EventRoundPlanned, events[1].Type)
+	require.Equal(t, checkpoint.EventCalculationFailed, events[2].Type)
+	require.Error(t, events[2].Err)
+	require.Contains(t, events[2].Err.Error(), "boom")
 }
 
 type recordingUpstreamStorage struct {
@@ -221,4 +317,29 @@ func (s *recordingUpstreamStorage) URI() string {
 		return s.uri
 	}
 	return s.inner.URI()
+}
+
+type recordingObserver struct {
+	mu     sync.Mutex
+	events []checkpoint.CheckpointEvent
+}
+
+func (o *recordingObserver) OnCheckpointEvent(event checkpoint.CheckpointEvent) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.events = append(o.events, event)
+}
+
+func (o *recordingObserver) Events() []checkpoint.CheckpointEvent {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	events := make([]checkpoint.CheckpointEvent, len(o.events))
+	copy(events, o.events)
+	return events
+}
+
+type failingDownstreamChecker struct{}
+
+func (failingDownstreamChecker) FileExists(ctx context.Context, name string) (bool, error) {
+	return false, fmt.Errorf("boom for %s", name)
 }

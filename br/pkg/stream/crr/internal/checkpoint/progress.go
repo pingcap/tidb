@@ -33,14 +33,29 @@ type roundPlan struct {
 }
 
 func (c *Calculator) waitUpstreamCheckpointAdvance(ctx context.Context) (uint64, error) {
+	var loopIteration uint64
 	for {
 		checkpoint, err := c.deps.PD.GetGlobalCheckpointForTask(ctx, c.cfg.TaskName)
 		if err != nil {
 			return 0, fmt.Errorf("get global checkpoint for task %s: %w", c.cfg.TaskName, err)
 		}
 		if checkpoint > c.state.lastCheckpoint {
+			c.observe(CheckpointEvent{
+				Type:               EventUpstreamAdvanced,
+				TaskName:           c.cfg.TaskName,
+				LoopIteration:      loopIteration,
+				UpstreamCheckpoint: checkpoint,
+			})
 			return checkpoint, nil
 		}
+		loopIteration++
+		c.observe(CheckpointEvent{
+			Type:               EventWaitingUpstream,
+			TaskName:           c.cfg.TaskName,
+			LoopIteration:      loopIteration,
+			UpstreamCheckpoint: checkpoint,
+			SafeCheckpoint:     c.state.lastCheckpoint,
+		})
 		if err := sleepWithContext(ctx, c.cfg.PollInterval); err != nil {
 			return 0, err
 		}
@@ -172,6 +187,7 @@ func extractDataFilePaths(meta *backuppb.Metadata) []string {
 }
 
 func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[string]struct{}) error {
+	var loopIteration uint64
 	for len(pendingPaths) > 0 {
 		for filePath := range pendingPaths {
 			exists, err := c.deps.Downstream.FileExists(ctx, filePath)
@@ -185,6 +201,13 @@ func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[st
 		if len(pendingPaths) == 0 {
 			return nil
 		}
+		loopIteration++
+		c.observe(CheckpointEvent{
+			Type:             EventWaitingDownstream,
+			TaskName:         c.cfg.TaskName,
+			LoopIteration:    loopIteration,
+			PendingFileCount: len(pendingPaths),
+		})
 		if err := sleepWithContext(ctx, c.cfg.PollInterval); err != nil {
 			return err
 		}
