@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -874,4 +875,145 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, int64(0), row.GetInt64(0))
+}
+
+func TestUpgradeToVer255RunawayQueriesDedup(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+
+	// helperSetupPreV255 drops the current table, recreates it with the pre-v255
+	// schema (no clustered PK, no update_time column), and inserts test data
+	// with duplicates on the composite key.
+	helperSetupPreV255 := func(t *testing.T, se sessionapi.Session) {
+		session.MustExec(t, se, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries")
+		session.MustExec(t, se, `CREATE TABLE mysql.tidb_runaway_queries (
+			resource_group_name varchar(32) NOT NULL,
+			start_time TIMESTAMP NOT NULL,
+			repeats int DEFAULT 1,
+			match_type varchar(12) NOT NULL,
+			action varchar(64) NOT NULL,
+			sample_sql TEXT NOT NULL,
+			sql_digest varchar(64) NOT NULL,
+			plan_digest varchar(64) NOT NULL,
+			tidb_server varchar(512),
+			rule VARCHAR(512) DEFAULT '',
+			INDEX plan_index(plan_digest(64)) COMMENT 'accelerate the speed when select runaway query',
+			INDEX time_index(start_time) COMMENT 'accelerate the speed when querying with start time'
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+		// 3 duplicate rows for the same composite key, 1 unique row.
+		session.MustExec(t, se, `INSERT INTO mysql.tidb_runaway_queries
+			(resource_group_name, start_time, repeats, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule)
+			VALUES
+			('rg1', '2025-01-01 00:00:01', 5,  'identify', 'kill', 'SELECT 1', 'digest_aaa', 'plan_aaa', 'tidb1', ''),
+			('rg1', '2025-01-01 00:00:02', 3,  'identify', 'kill', 'SELECT 1', 'digest_aaa', 'plan_aaa', 'tidb2', ''),
+			('rg1', '2025-01-01 00:00:03', 10, 'identify', 'kill', 'SELECT 1', 'digest_aaa', 'plan_aaa', 'tidb3', ''),
+			('rg2', '2025-06-15 12:00:00', 1,  'watch',    'cooldown', 'SELECT 2', 'digest_bbb', 'plan_bbb', 'tidb1', 'rule1')`)
+		session.MustExec(t, se, "commit")
+	}
+
+	// helperAssertPostV255 verifies schema and data after the v255 upgrade.
+	helperAssertPostV255 := func(t *testing.T, se sessionapi.Session) {
+		ver, err := session.GetBootstrapVersion(se)
+		require.NoError(t, err)
+		require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+		// Staging table must not exist.
+		rs := session.MustExecToRecodeSet(t, se, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_runaway_queries_bak'")
+		chk := rs.NewChunk(nil)
+		require.NoError(t, rs.Next(ctx, chk))
+		require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+
+		// Table should have a 4-column composite primary key.
+		rs = session.MustExecToRecodeSet(t, se, "SHOW INDEX FROM mysql.tidb_runaway_queries WHERE Key_name = 'PRIMARY'")
+		chk = rs.NewChunk(nil)
+		require.NoError(t, rs.Next(ctx, chk))
+		require.Equal(t, 4, chk.NumRows(), "expected 4-column composite primary key")
+
+		// 3 duplicates collapsed into 1, plus 1 unique = 2 rows.
+		rs = session.MustExecToRecodeSet(t, se, "SELECT COUNT(*) FROM mysql.tidb_runaway_queries")
+		chk = rs.NewChunk(nil)
+		require.NoError(t, rs.Next(ctx, chk))
+		require.Equal(t, int64(2), chk.GetRow(0).GetInt64(0))
+
+		// Verify aggregation: start_time = MIN, repeats = SUM.
+		rs = session.MustExecToRecodeSet(t, se, `SELECT start_time, repeats FROM mysql.tidb_runaway_queries
+			WHERE resource_group_name='rg1' AND sql_digest='digest_aaa' AND plan_digest='plan_aaa' AND match_type='identify'`)
+		chk = rs.NewChunk(nil)
+		require.NoError(t, rs.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		row := chk.GetRow(0)
+		startTime := row.GetTime(0)
+		require.Equal(t, "2025-01-01 00:00:01", startTime.String())
+		require.Equal(t, int64(18), row.GetInt64(1)) // 5 + 3 + 10
+
+		// Verify unique row is preserved.
+		rs = session.MustExecToRecodeSet(t, se, `SELECT repeats, rule FROM mysql.tidb_runaway_queries
+			WHERE resource_group_name='rg2' AND sql_digest='digest_bbb' AND plan_digest='plan_bbb' AND match_type='watch'`)
+		chk = rs.NewChunk(nil)
+		require.NoError(t, rs.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+		require.Equal(t, "rule1", chk.GetRow(0).GetString(1))
+	}
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Sub-test 1: upgrade from v254 with duplicate data.
+	t.Run("dedup", func(t *testing.T) {
+		se254 := session.CreateSessionAndSetID(t, store)
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMutator(txn)
+		err = m.FinishBootstrap(int64(254))
+		require.NoError(t, err)
+		err = txn.Commit(ctx)
+		require.NoError(t, err)
+		session.RevertVersionAndVariables(t, se254, 254)
+
+		helperSetupPreV255(t, se254)
+
+		store.SetOption(session.StoreBootstrappedKey, nil)
+		ver, err := session.GetBootstrapVersion(se254)
+		require.NoError(t, err)
+		require.Equal(t, int64(254), ver)
+		dom.Close()
+
+		dom2, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		se := session.CreateSessionAndSetID(t, store)
+		helperAssertPostV255(t, se)
+		dom2.Close()
+	})
+
+	// Sub-test 2: idempotency — re-running v255 on already-migrated data.
+	t.Run("idempotent", func(t *testing.T) {
+		se254 := session.CreateSessionAndSetID(t, store)
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMutator(txn)
+		err = m.FinishBootstrap(int64(254))
+		require.NoError(t, err)
+		err = txn.Commit(ctx)
+		require.NoError(t, err)
+		session.RevertVersionAndVariables(t, se254, 254)
+		session.MustExec(t, se254, "commit")
+
+		store.SetOption(session.StoreBootstrappedKey, nil)
+		ver, err := session.GetBootstrapVersion(se254)
+		require.NoError(t, err)
+		require.Equal(t, int64(254), ver)
+
+		dom3, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		se := session.CreateSessionAndSetID(t, store)
+		helperAssertPostV255(t, se)
+		dom3.Close()
+	})
 }
