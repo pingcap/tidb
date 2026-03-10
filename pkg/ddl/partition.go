@@ -222,12 +222,24 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 
 		if indexIDs := getTiCIIndexIDs(tblInfo); len(indexIDs) > 0 {
-			ctx := jobCtx.stepCtx
-			if ctx == nil {
-				ctx = jobCtx.ctx
+			if job.ReorgMeta == nil {
+				job.ReorgMeta = &model.DDLReorgMeta{}
 			}
-			if err := tici.AddPartition(ctx, jobCtx.store, tblInfo, job.SchemaName, indexIDs, nil); err != nil {
-				return ver, errors.Trace(err)
+			// NOTE: TiCI AddPartition depends on the `AddingDefinitions` field, so it must run
+			// before `updatePartitionInfo`.
+			if !job.ReorgMeta.TiCIPartitionAdded {
+				ctx := jobCtx.stepCtx
+				if ctx == nil {
+					ctx = jobCtx.ctx
+				}
+				if err := tici.AddPartition(ctx, jobCtx.store, tblInfo, job.SchemaName, indexIDs, nil); err != nil {
+					return ver, errors.Trace(err)
+				}
+				job.ReorgMeta.TiCIPartitionAdded = true
+				// Persist the flag to avoid calling TiCI AddPartition repeatedly when this stage is retried.
+				if err := w.updateDDLJob(jobCtx, job, true); err != nil {
+					return ver, errors.Trace(err)
+				}
 			}
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.

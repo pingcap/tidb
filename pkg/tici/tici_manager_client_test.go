@@ -106,6 +106,7 @@ func matchKeyspace[T interface{ GetKeyspaceId() uint32 }](expect uint32) func(T)
 func TestCreateFulltextIndex(t *testing.T) {
 	t.Run("CreateFulltextIndex", func(t *testing.T) {
 		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
 		ctx := newTestTiCIManagerCtx(mockClient)
 		keyspaceID := uint32(123)
 		ctx.SetKeyspaceID(keyspaceID)
@@ -137,6 +138,7 @@ func TestCreateFulltextIndex(t *testing.T) {
 
 	t.Run("AddPartition", func(t *testing.T) {
 		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
 		ctx := newTestTiCIManagerCtx(mockClient)
 		keyspaceID := uint32(123)
 		ctx.SetKeyspaceID(keyspaceID)
@@ -168,6 +170,7 @@ func TestCreateFulltextIndex(t *testing.T) {
 
 	t.Run("DropPartition", func(t *testing.T) {
 		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
 		ctx := newTestTiCIManagerCtx(mockClient)
 		keyspaceID := uint32(123)
 		ctx.SetKeyspaceID(keyspaceID)

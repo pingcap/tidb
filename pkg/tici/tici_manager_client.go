@@ -352,6 +352,9 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 
 // AddPartition notifies TiCI to add new partition(s) for the given indexes.
 func (t *ManagerCtx) AddPartition(ctx context.Context, tblInfo *model.TableInfo, indexIDs []int64, schemaName string, parserInfo *ParserInfo) error {
+	if len(indexIDs) == 0 {
+		return nil
+	}
 	req, err := buildAddPartitionRequest(tblInfo, indexIDs, schemaName, t.getKeyspaceID(), parserInfo)
 	if err != nil {
 		return err
@@ -384,6 +387,9 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 
 // DropPartition notifies TiCI to drop a partition for the given indexes.
 func (t *ManagerCtx) DropPartition(ctx context.Context, tableID int64, indexIDs []int64) error {
+	if len(indexIDs) == 0 {
+		return nil
+	}
 	req := &DropPartitionRequest{
 		TableId:    tableID,
 		IndexIds:   append([]int64(nil), indexIDs...),
@@ -850,7 +856,15 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	var (
 		backoff    = 100 * time.Millisecond
 		maxBackoff = time.Second
+
+		start   = time.Now()
+		maxWait = 30 * time.Second
 	)
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < maxWait {
+			maxWait = remaining
+		}
+	}
 	for attempt := 0; ; attempt++ {
 		resp, err := func() (*GetShardLocalCacheResponse, error) {
 			t.mu.RLock()
@@ -877,11 +891,26 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 		}
 
 		code := ErrorCode(resp.Status)
-		if attempt >= 9 || !isRetryableGetShardLocalCacheStatus(resp.Status) {
-			return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %s(%d)", code.String(), resp.Status)
+		if !isRetryableGetShardLocalCacheStatus(resp.Status) || time.Since(start) >= maxWait {
+			return nil, fmt.Errorf(
+				"GetShardLocalCacheInfo failed after %s (attempts=%d, keyspaceID=%d, tableID=%d, indexID=%d, ranges=%d, limit=%d): %s(%d)",
+				time.Since(start).Round(time.Millisecond),
+				attempt+1,
+				request.KeyspaceId,
+				tableID,
+				indexID,
+				len(keyRanges),
+				limit,
+				code.String(),
+				resp.Status,
+			)
 		}
 		logutil.BgLogger().Debug("GetShardLocalCacheInfo retryable error",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
 			zap.Int("attempt", attempt+1),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Duration("maxWait", maxWait),
 			zap.String("status", code.String()),
 			zap.Int32("status_code", resp.Status),
 		)
