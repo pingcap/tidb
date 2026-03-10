@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -210,6 +211,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return err
 	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSessionVars(variable.TiDBCreateMViewImportThreads, strconv.Itoa(ctx.GetSessionVars().CreateMViewImportThreads))
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
 		MLogTableIDs: []int64{mlogTable.Meta().ID},

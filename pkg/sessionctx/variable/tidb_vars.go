@@ -156,6 +156,8 @@ const (
 	TiDBMViewRefreshHistTime = "tidb_mview_refresh_hist_time"
 	// TiDBMLogPurgeHistTime controls the retention time of mysql.tidb_mlog_purge_hist in hours.
 	TiDBMLogPurgeHistTime = "tidb_mlog_purge_hist_time"
+	// TiDBCreateMViewImportThreads controls the thread count for MV initial build IMPORT INTO.
+	TiDBCreateMViewImportThreads = "tidb_create_mview_import_threads"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
@@ -1496,6 +1498,7 @@ const (
 	DefTiDBMViewTaskThresholdMemory                   = 0.8
 	DefTiDBMViewRefreshHistTime                       = 168
 	DefTiDBMLogPurgeHistTime                          = 168
+	DefTiDBCreateMViewImportThreads                   = 0
 	DefTiDBStatsCacheMemQuota                         = 0
 	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                             = 4096

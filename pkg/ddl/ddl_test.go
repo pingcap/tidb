@@ -639,7 +639,7 @@ func TestBuildCreateMaterializedViewImportSQLNoAsOfTimestamp(t *testing.T) {
 			SQLContent: "select a, count(1) from t group by a",
 		},
 	}
-	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo)
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0)
 	require.NoError(t, err)
 	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
 	require.Contains(t, sql, "WITH disable_precheck")

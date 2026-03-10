@@ -548,7 +548,7 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	return ver, nil
 }
 
-func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
+func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, threadCnt int) (string, error) {
 	if mvTblInfo.MaterializedView == nil || len(mvTblInfo.MaterializedView.SQLContent) == 0 {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
@@ -556,7 +556,11 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.Ta
 	// Build uses current visible data of the source query directly.
 	selectSQL := mvTblInfo.MaterializedView.SQLContent
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mvTblInfo.Name.O)
-	return prefix + "(" + selectSQL + ") WITH disable_precheck", nil
+	options := []string{"disable_precheck"}
+	if threadCnt > 0 {
+		options = append(options, fmt.Sprintf("thread=%d", threadCnt))
+	}
+	return prefix + "(" + selectSQL + ") WITH " + strings.Join(options, ", "), nil
 }
 
 func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Session) (uint64, error) {
@@ -613,24 +617,27 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
+func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta, currentDB string) (func(), error) {
 	if reorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
 	restore := restoreSessCtx(sessCtx)
 	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
+	origCurrentDB := sessCtx.GetSessionVars().CurrentDB
 	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
 		// initSessCtx may mutate session vars before returning error (for example invalid timezone).
 		// Restore immediately to avoid leaking partial state into the pooled session.
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().CurrentDB = currentDB
 	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
 	// Also marks the session as MV maintenance context so writes bypass the explicit-DML guard.
 	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
 	return func() {
 		restore(sessCtx)
 		sessCtx.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		sessCtx.GetSessionVars().CurrentDB = origCurrentDB
 	}, nil
 }
 
@@ -648,7 +655,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
@@ -659,7 +666,11 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	}()
 
 	ddlSess := sess.NewSession(sessCtx)
-	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo)
+	threadCnt := sessCtx.GetSessionVars().CreateMViewImportThreads
+	if val, ok := job.GetSessionVars(variable.TiDBCreateMViewImportThreads); ok {
+		threadCnt = variable.TidbOptInt(val, threadCnt)
+	}
+	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, threadCnt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -671,7 +682,10 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(w.setCreateMaterializedViewBuildReadTSInReorgCtx(job.ID, readTS))
+	if err := w.setCreateMaterializedViewBuildReadTSInReorgCtx(job.ID, readTS); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
@@ -679,7 +693,7 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
