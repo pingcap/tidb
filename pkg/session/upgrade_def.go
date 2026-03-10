@@ -2058,44 +2058,58 @@ func upgradeToVer254(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer255(s sessionapi.Session, _ int64) {
-	// Step 1: add update_time column to track last activity time (used by GC).
-	// DEFAULT CURRENT_TIMESTAMP is required to backfill existing rows; the default
-	// is dropped in step 6 so the column definition matches the fresh-bootstrap DDL.
+	// TiDB cannot ALTER TABLE ADD PRIMARY KEY ... CLUSTERED on an existing table,
+	// so we must recreate mysql.tidb_runaway_queries with the target schema.
+
+	// Step 1: add update_time column to the old table so the migration SELECT works.
+	// DEFAULT CURRENT_TIMESTAMP backfills existing rows.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP", infoschema.ErrColumnExists)
-	// Step 2: deduplicate rows by aggregating on the composite key. Uses a temp
-	// table to collapse duplicates correctly even when TIMESTAMP values collide
-	// (second precision), preserving MIN(start_time) for first-seen semantics,
-	// MAX(update_time) for last activity, and SUM(repeats) so historical counts
-	// are not lost. Safe to re-run: on already-deduplicated data the GROUP BY
-	// produces identical rows.
-	mustExecute(s, "DROP TEMPORARY TABLE IF EXISTS tmp_runaway_dedup")
-	mustExecute(s, "CREATE TEMPORARY TABLE tmp_runaway_dedup AS "+
+
+	// Step 2: create staging table and migrate deduplicated data.
+	// Uses GROUP BY on the composite key to collapse duplicates, preserving
+	// MIN(start_time) for first-seen semantics, MAX(update_time) for last activity,
+	// and SUM(repeats) so historical counts are not lost.
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
+	mustExecute(s, "CREATE TABLE mysql.tidb_runaway_queries_bak ("+
+		"resource_group_name varchar(32) NOT NULL, "+
+		"start_time TIMESTAMP NOT NULL, "+
+		"update_time TIMESTAMP NOT NULL, "+
+		"repeats BIGINT, "+
+		"match_type varchar(12) NOT NULL, "+
+		"action varchar(64) NOT NULL, "+
+		"sample_sql TEXT NOT NULL, "+
+		"sql_digest varchar(64) NOT NULL, "+
+		"plan_digest varchar(64) NOT NULL, "+
+		"tidb_server varchar(512), "+
+		"rule VARCHAR(512) DEFAULT ''"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	mustExecute(s, "INSERT INTO mysql.tidb_runaway_queries_bak "+
 		"SELECT resource_group_name, "+
-		"MIN(start_time) AS start_time, "+
-		"MAX(update_time) AS update_time, "+
-		"SUM(repeats) AS repeats, "+
+		"MIN(start_time), "+
+		"MAX(update_time), "+
+		"SUM(repeats), "+
 		"match_type, "+
-		"ANY_VALUE(action) AS action, "+
-		"ANY_VALUE(sample_sql) AS sample_sql, "+
+		"ANY_VALUE(action), "+
+		"ANY_VALUE(sample_sql), "+
 		"sql_digest, "+
 		"plan_digest, "+
-		"ANY_VALUE(tidb_server) AS tidb_server, "+
-		"ANY_VALUE(rule) AS rule "+
+		"ANY_VALUE(tidb_server), "+
+		"ANY_VALUE(rule) "+
 		"FROM mysql.tidb_runaway_queries "+
 		"GROUP BY resource_group_name, sql_digest, plan_digest, match_type")
-	mustExecute(s, "DELETE FROM mysql.tidb_runaway_queries")
+
+	// Step 3: drop old table and recreate with target schema (CLUSTERED PK).
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries")
+	mustExecute(s, metadef.CreateTiDBRunawayQueriesTable)
+
+	// Step 4: re-insert deduplicated data into the new table.
 	mustExecute(s, "INSERT INTO mysql.tidb_runaway_queries "+
 		"(resource_group_name, start_time, update_time, repeats, match_type, "+
 		"action, sample_sql, sql_digest, plan_digest, tidb_server, rule) "+
 		"SELECT resource_group_name, start_time, update_time, repeats, match_type, "+
 		"action, sample_sql, sql_digest, plan_digest, tidb_server, rule "+
-		"FROM tmp_runaway_dedup")
-	mustExecute(s, "DROP TEMPORARY TABLE IF EXISTS tmp_runaway_dedup")
-	// Step 3: add composite clustered primary key for cluster-wide dedup.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD PRIMARY KEY (resource_group_name, sql_digest, plan_digest, match_type) CLUSTERED", infoschema.ErrMultiplePriKey)
-	// Step 4: add index on update_time for efficient GC scans.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX update_time_index(update_time) COMMENT 'accelerate the speed when GC expired records'", dbterror.ErrDupKeyName)
-	// Step 5: drop the DEFAULT added in step 1 so the column metadata matches
-	// the fresh-bootstrap DDL (CreateTiDBRunawayQueriesTable has no default).
-	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries ALTER COLUMN update_time DROP DEFAULT")
+		"FROM mysql.tidb_runaway_queries_bak")
+
+	// Step 5: drop staging table.
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
 }
