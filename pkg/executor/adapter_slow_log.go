@@ -252,12 +252,8 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.HasMoreResults = hasMoreResults
 	items.PlanFromCache = sessVars.FoundInPlanCache
 	items.PlanFromBinding = sessVars.FoundInBinding
-<<<<<<< HEAD
 	items.RewriteInfo = sessVars.RewritePhaseInfo
 	items.ResultRows = GetResultRowsCount(stmtCtx, a.Plan)
-=======
-	items.ResultRows = stmtCtx.GetResultRowsCount()
->>>>>>> dc7d3a05b5f (*: add the Rewrite_time as a slow log rule (#65086))
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
 	items.UsedStats = stmtCtx.GetUsedStatsInfo(false)

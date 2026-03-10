@@ -268,11 +268,7 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 }
 
 func TestParseSingleSlowLogField(t *testing.T) {
-<<<<<<< HEAD
-	require.Equal(t, 29, len(variable.SlowLogRuleFieldAccessors))
-=======
-	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 39)
->>>>>>> dc7d3a05b5f (*: add the Rewrite_time as a slow log rule (#65086))
+	require.Equal(t, 30, len(variable.SlowLogRuleFieldAccessors))
 	accessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)]
 	require.True(t, ok)
 	require.NotNil(t, accessor.Setter)
