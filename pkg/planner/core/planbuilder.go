@@ -3880,16 +3880,9 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column, isInsert bool) (*expres
 	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
-<<<<<<< HEAD
-// resolveGeneratedColumns resolves generated columns with their generation
-// expressions respectively. onDups indicates which columns are in on-duplicate list.
-func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
-=======
 // resolveGeneratedColumns resolves generated columns with their generation expressions respectively.
-// onDups indicates which columns are in on-duplicate list
-// and it will be **modified** inside this function.
-func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
->>>>>>> 939bf870131 (planner/core: update missing virtual columns in `update` and `insert` (#58401))
+// onDups indicates which columns are in on-duplicate list and it will be **modified** inside this function.
+func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			// columns having on-update-now flag should also be considered.
