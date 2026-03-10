@@ -17,7 +17,6 @@ package testutil
 import (
 	"context"
 	"fmt"
-	"io"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
@@ -25,27 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 )
 
 func (p *PDSim) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
-	_ = ctx
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if _, ok := p.stores[storeID]; !ok {
-		return nil, fmt.Errorf("store %d not found", storeID)
-	}
-	return &logBackupClientSim{pd: p, storeID: storeID}, nil
+	return p.Cluster.GetLogBackupClient(ctx, storeID)
 }
 
 func (p *PDSim) ClearCache(ctx context.Context, storeID uint64) error {
-	_ = ctx
-	_ = storeID
-	return nil
+	return p.Cluster.ClearCache(ctx, storeID)
 }
 
 func (p *PDSim) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
@@ -154,117 +140,4 @@ func (p *PDSim) ResolveLocksInOneRegion(
 	_ = bo
 	_ = locks
 	return loc, fmt.Errorf("lock resolving is unsupported in DRR harness")
-}
-
-type logBackupClientSim struct {
-	pd      *PDSim
-	storeID uint64
-}
-
-func (c *logBackupClientSim) GetLastFlushTSOfRegion(
-	ctx context.Context,
-	in *logbackup.GetLastFlushTSOfRegionRequest,
-	opts ...grpc.CallOption,
-) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
-	_ = ctx
-	_ = in
-	_ = opts
-	return nil, status.Error(codes.Unimplemented, "GetLastFlushTSOfRegion is legacy and disabled in DRR harness")
-}
-
-type flushEventStreamClient struct {
-	ctx context.Context
-	ch  <-chan *logbackup.SubscribeFlushEventResponse
-}
-
-func (f *flushEventStreamClient) Recv() (*logbackup.SubscribeFlushEventResponse, error) {
-	select {
-	case msg, ok := <-f.ch:
-		if !ok {
-			return nil, io.EOF
-		}
-		return msg, nil
-	case <-f.ctx.Done():
-		return nil, status.Error(codes.Canceled, f.ctx.Err().Error())
-	}
-}
-
-func (f *flushEventStreamClient) Header() (metadata.MD, error) {
-	return metadata.MD{}, nil
-}
-
-func (f *flushEventStreamClient) Trailer() metadata.MD {
-	return metadata.MD{}
-}
-
-func (f *flushEventStreamClient) CloseSend() error {
-	return nil
-}
-
-func (f *flushEventStreamClient) Context() context.Context {
-	return f.ctx
-}
-
-func (f *flushEventStreamClient) SendMsg(any) error {
-	return nil
-}
-
-func (f *flushEventStreamClient) RecvMsg(any) error {
-	return nil
-}
-
-func (p *PDSim) addSubscriber(storeID uint64, ch chan *logbackup.SubscribeFlushEventResponse) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	set, ok := p.subscribers[storeID]
-	if !ok {
-		set = make(map[chan *logbackup.SubscribeFlushEventResponse]struct{})
-		p.subscribers[storeID] = set
-	}
-	set[ch] = struct{}{}
-}
-
-func (p *PDSim) removeSubscriber(storeID uint64, ch chan *logbackup.SubscribeFlushEventResponse) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	set, ok := p.subscribers[storeID]
-	if !ok {
-		return
-	}
-	delete(set, ch)
-	if len(set) == 0 {
-		delete(p.subscribers, storeID)
-	}
-}
-
-func (c *logBackupClientSim) SubscribeFlushEvent(
-	ctx context.Context,
-	in *logbackup.SubscribeFlushEventRequest,
-	opts ...grpc.CallOption,
-) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
-	_ = in
-	_ = opts
-
-	ch := make(chan *logbackup.SubscribeFlushEventResponse, 1024)
-	c.pd.addSubscriber(c.storeID, ch)
-	go func() {
-		<-ctx.Done()
-		c.pd.removeSubscriber(c.storeID, ch)
-	}()
-	return &flushEventStreamClient{ctx: ctx, ch: ch}, nil
-}
-
-func (c *logBackupClientSim) FlushNow(
-	ctx context.Context,
-	in *logbackup.FlushNowRequest,
-	opts ...grpc.CallOption,
-) (*logbackup.FlushNowResponse, error) {
-	_ = ctx
-	_ = in
-	_ = opts
-	return &logbackup.FlushNowResponse{
-		Results: []*logbackup.FlushResult{{TaskName: "drr", Success: true}},
-	}, nil
 }

@@ -17,6 +17,7 @@ go_library(
         "//br/pkg/stream",
         "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
+        "//br/pkg/streamhelper/fakecluster",
         "//pkg/kv",
         "//pkg/objstore",
         "//pkg/objstore/objectio",

@@ -19,51 +19,25 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"sync"
 
-	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/fakecluster"
 	"github.com/tikv/client-go/v2/oracle"
 )
-
-type regionSim struct {
-	id         uint64
-	epoch      uint64
-	storeID    uint64
-	startKey   []byte
-	endKey     []byte
-	checkpoint uint64
-}
-
-type storeSim struct {
-	id         uint64
-	bootstrap  uint64
-	regionByID map[uint64]*regionSim
-}
 
 // PDSim simulates PD interfaces used by the checkpoint advancer.
 // Region layout is static: no split/merge in this simulator.
 type PDSim struct {
+	*fakecluster.Cluster
+
 	mu sync.Mutex
 
-	taskName   string
-	taskStart  uint64
-	currentTS  uint64
-	nextRegion uint64
-
-	stores map[uint64]*storeSim
-	// regions are always kept sorted by StartKey.
-	regions []*regionSim
-
-	taskCh             chan<- streamhelper.TaskEvent
-	globalCheckpoint   uint64
-	serviceGCSafePoint uint64
-	// keyed by store id.
-	subscribers map[uint64]map[chan *logbackup.SubscribeFlushEventResponse]struct{}
-	rng         *deterministicRNG
+	taskName         string
+	taskStart        uint64
+	taskCh           chan<- streamhelper.TaskEvent
+	globalCheckpoint uint64
+	rng              *deterministicRNG
 }
 
 var _ streamhelper.Env = (*PDSim)(nil)
@@ -80,35 +54,29 @@ func NewPDSimWithTestContext(boundaries []RegionBoundary, taskName string, tc *T
 	}
 
 	p := &PDSim{
-		taskName:    taskName,
-		stores:      make(map[uint64]*storeSim),
-		subscribers: make(map[uint64]map[chan *logbackup.SubscribeFlushEventResponse]struct{}),
-		rng:         tc.RNG("pd-sim"),
+		Cluster:  fakecluster.New(),
+		taskName: taskName,
+		rng:      tc.RNG("pd-sim"),
 	}
 	p.taskStart = oracle.ComposeTS(defaultTaskStartPhysical+p.rng.Int63n(1<<20), 0)
-	p.currentTS = p.taskStart
+	p.SetCurrentTS(p.taskStart)
 
 	for _, b := range boundaries {
-		store, ok := p.stores[b.StoreID]
-		if !ok {
-			store = &storeSim{
-				id:         b.StoreID,
-				bootstrap:  1,
-				regionByID: make(map[uint64]*regionSim),
-			}
-			p.stores[b.StoreID] = store
-		}
-		p.nextRegion++
-		r := &regionSim{
-			id:         p.nextRegion,
-			epoch:      1,
-			storeID:    b.StoreID,
-			startKey:   bytes.Clone(b.StartKey),
-			endKey:     bytes.Clone(b.EndKey),
-			checkpoint: p.taskStart,
-		}
-		store.regionByID[r.id] = r
-		p.regions = append(p.regions, r)
+		store := p.EnsureStore(b.StoreID, 1)
+		store.SupportsSub = true
+		store.LegacyRegionCheckpointRPCEnabled = false
+		store.FlushTaskName = "drr"
+
+		region := fakecluster.NewRegion(
+			p.AllocID(),
+			b.StartKey,
+			b.EndKey,
+			b.StoreID,
+			1,
+			p.taskStart,
+			false,
+		)
+		p.AddRegion(region, []uint64{b.StoreID})
 	}
 	return p, nil
 }
@@ -140,58 +108,38 @@ func validateBoundaries(boundaries []RegionBoundary) error {
 
 // AllocTSO allocates a monotonically increasing TSO.
 func (p *PDSim) AllocTSO() uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	physical := oracle.ExtractPhysical(p.currentTS) + 1
-	p.currentTS = oracle.ComposeTS(physical, 0)
-	return p.currentTS
+	return p.Cluster.AllocTSO()
 }
 
 // CurrentTSO returns the latest allocated TSO.
 func (p *PDSim) CurrentTSO() uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentTS
+	return p.Cluster.CurrentTSO()
 }
 
 // RegionIDs returns all known region IDs in key order.
 func (p *PDSim) RegionIDs() []uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	ids := make([]uint64, 0, len(p.regions))
-	for _, r := range p.regions {
-		ids = append(ids, r.id)
-	}
-	return ids
+	return p.Cluster.RegionIDs()
 }
 
 // RegionSnapshot gets one region snapshot.
 func (p *PDSim) RegionSnapshot(regionID uint64) (RegionState, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	r := p.findRegionByID(regionID)
-	if r == nil {
+	state, ok := p.Cluster.RegionSnapshot(regionID)
+	if !ok {
 		return RegionState{}, false
 	}
-	return toRegionState(r), true
+	return toRegionState(state), true
 }
 
 // RegionSnapshotsOnStore returns region snapshots hosted on the store.
 func (p *PDSim) RegionSnapshotsOnStore(storeID uint64) ([]RegionState, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	store, ok := p.stores[storeID]
-	if !ok {
-		return nil, fmt.Errorf("store %d not found", storeID)
+	states, err := p.Cluster.RegionSnapshotsOnStore(storeID)
+	if err != nil {
+		return nil, err
 	}
-	result := make([]RegionState, 0, len(store.regionByID))
-	for _, r := range store.regionByID {
-		result = append(result, toRegionState(r))
+	result := make([]RegionState, 0, len(states))
+	for _, state := range states {
+		result = append(result, toRegionState(state))
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
 }
 
@@ -202,94 +150,27 @@ func (p *PDSim) GlobalCheckpoint() uint64 {
 	return p.globalCheckpoint
 }
 
-func (p *PDSim) findRegionByID(regionID uint64) *regionSim {
-	for _, r := range p.regions {
-		if r.id == regionID {
-			return r
-		}
-	}
-	return nil
-}
-
-func toRegionState(r *regionSim) RegionState {
+func toRegionState(r fakecluster.RegionState) RegionState {
 	return RegionState{
-		ID:         r.id,
-		Epoch:      r.epoch,
-		StoreID:    r.storeID,
-		StartKey:   bytes.Clone(r.startKey),
-		EndKey:     bytes.Clone(r.endKey),
-		Checkpoint: r.checkpoint,
+		ID:         r.ID,
+		Epoch:      r.Epoch,
+		StoreID:    r.StoreID,
+		StartKey:   bytes.Clone(r.StartKey),
+		EndKey:     bytes.Clone(r.EndKey),
+		Checkpoint: r.Checkpoint,
 	}
 }
 
 func (p *PDSim) flushStore(ctx context.Context, storeID, checkpoint uint64) ([]RegionState, error) {
-	p.mu.Lock()
-	store, ok := p.stores[storeID]
-	if !ok {
-		p.mu.Unlock()
-		return nil, fmt.Errorf("store %d not found", storeID)
+	states, err := p.Cluster.ApplyCheckpointToStore(ctx, storeID, checkpoint)
+	if err != nil {
+		return nil, err
 	}
-	regionIDs := make([]uint64, 0, len(store.regionByID))
-	for regionID := range store.regionByID {
-		regionIDs = append(regionIDs, regionID)
+	result := make([]RegionState, 0, len(states))
+	for _, state := range states {
+		result = append(result, toRegionState(state))
 	}
-	sort.Slice(regionIDs, func(i, j int) bool { return regionIDs[i] < regionIDs[j] })
-
-	states := make([]RegionState, 0, len(regionIDs))
-	events := make([]*logbackup.FlushEvent, 0, len(regionIDs))
-	for _, regionID := range regionIDs {
-		r := store.regionByID[regionID]
-		if checkpoint <= r.checkpoint {
-			p.mu.Unlock()
-			return nil, fmt.Errorf(
-				"region %d checkpoint %d must be greater than current %d",
-				regionID,
-				checkpoint,
-				r.checkpoint,
-			)
-		}
-	}
-	for _, regionID := range regionIDs {
-		r := store.regionByID[regionID]
-		r.checkpoint = checkpoint
-		state := toRegionState(r)
-		states = append(states, state)
-		events = append(events, &logbackup.FlushEvent{
-			StartKey:   codec.EncodeBytes(nil, state.StartKey),
-			EndKey:     codec.EncodeBytes(nil, state.EndKey),
-			Checkpoint: checkpoint,
-		})
-	}
-	if checkpoint > p.currentTS {
-		p.currentTS = checkpoint
-	}
-	receivers := p.subscriberChannelsLocked(storeID)
-	p.mu.Unlock()
-
-	resp := &logbackup.SubscribeFlushEventResponse{Events: events}
-	for _, ch := range receivers {
-		select {
-		case ch <- resp:
-		case <-ctx.Done():
-			return nil, fmt.Errorf(
-				"send flush events for store %d to subscribers: %w",
-				storeID, ctx.Err(),
-			)
-		}
-	}
-	return states, nil
-}
-
-func (p *PDSim) subscriberChannelsLocked(storeID uint64) []chan *logbackup.SubscribeFlushEventResponse {
-	set, ok := p.subscribers[storeID]
-	if !ok || len(set) == 0 {
-		return nil
-	}
-	out := make([]chan *logbackup.SubscribeFlushEventResponse, 0, len(set))
-	for ch := range set {
-		out = append(out, ch)
-	}
-	return out
+	return result, nil
 }
 
 // Scatter reassigns regions to random stores. Regions moved to another store
@@ -298,125 +179,49 @@ func (p *PDSim) Scatter() []uint64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if len(p.stores) <= 1 {
+	storeIDs := p.StoreIDs()
+	if len(storeIDs) <= 1 {
 		return nil
 	}
-	storeIDs := make([]uint64, 0, len(p.stores))
-	for id := range p.stores {
-		storeIDs = append(storeIDs, id)
-	}
-	slices.Sort(storeIDs)
 
-	affected := make([]uint64, 0, len(p.regions))
-	for _, r := range p.regions {
-		nextStoreID := storeIDs[p.rng.IntN(len(storeIDs))]
-		if nextStoreID == r.storeID {
+	affected := make([]uint64, 0, len(p.Regions))
+	for _, regionID := range p.RegionIDs() {
+		state, ok := p.Cluster.RegionSnapshot(regionID)
+		if !ok {
 			continue
 		}
-		oldStore := p.stores[r.storeID]
-		newStore := p.stores[nextStoreID]
-		delete(oldStore.regionByID, r.id)
-		newStore.regionByID[r.id] = r
-
-		r.storeID = nextStoreID
-		r.epoch++
-		r.checkpoint = p.globalCheckpoint
-		affected = append(affected, r.id)
+		nextStoreID := storeIDs[p.rng.IntN(len(storeIDs))]
+		if nextStoreID == state.StoreID {
+			continue
+		}
+		p.TransferRegionTo(regionID, []uint64{nextStoreID})
+		p.SetRegionLeader(regionID, nextStoreID)
+		p.BumpRegionEpoch(regionID)
+		p.SetRegionCheckpoint(regionID, p.globalCheckpoint)
+		affected = append(affected, regionID)
 	}
 	slices.Sort(affected)
 	return affected
 }
 
-func overlapsRange(start, end, rgStart, rgEnd []byte) bool {
-	if len(end) != 0 && bytes.Compare(rgStart, end) >= 0 {
-		return false
-	}
-	if len(rgEnd) != 0 && bytes.Compare(start, rgEnd) >= 0 {
-		return false
-	}
-	return true
-}
-
-// RegionScan scans static region information.
-func (p *PDSim) RegionScan(
-	ctx context.Context,
-	key, endKey []byte,
-	limit int,
-) ([]streamhelper.RegionWithLeader, error) {
-	_ = ctx
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if limit <= 0 {
-		return nil, nil
-	}
-
-	result := make([]streamhelper.RegionWithLeader, 0, limit)
-	for _, r := range p.regions {
-		if len(result) >= limit {
-			break
-		}
-		if !overlapsRange(key, endKey, r.startKey, r.endKey) {
-			if len(endKey) != 0 && bytes.Compare(r.startKey, endKey) >= 0 {
-				break
-			}
-			continue
-		}
-		result = append(result, streamhelper.RegionWithLeader{
-			Region: &metapb.Region{
-				Id:       r.id,
-				StartKey: bytes.Clone(r.startKey),
-				EndKey:   bytes.Clone(r.endKey),
-				RegionEpoch: &metapb.RegionEpoch{
-					Version: r.epoch,
-				},
-			},
-			Leader: &metapb.Peer{StoreId: r.storeID},
-		})
-	}
-	return result, nil
-}
-
-// Stores returns all simulated stores.
 func (p *PDSim) Stores(ctx context.Context) ([]streamhelper.Store, error) {
-	_ = ctx
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	stores := make([]streamhelper.Store, 0, len(p.stores))
-	for _, st := range p.stores {
-		stores = append(stores, streamhelper.Store{ID: st.id, BootAt: st.bootstrap})
-	}
-	sort.Slice(stores, func(i, j int) bool {
-		return stores[i].ID < stores[j].ID
-	})
-	return stores, nil
+	return p.Cluster.Stores(ctx)
 }
 
-// BlockGCUntil records the service GC safe point update.
 func (p *PDSim) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
-	_ = ctx
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.serviceGCSafePoint > at {
-		return p.serviceGCSafePoint, fmt.Errorf("minimal safe point %d is greater than target %d", p.serviceGCSafePoint, at)
-	}
-	p.serviceGCSafePoint = at
-	return at, nil
+	return p.Cluster.BlockGCUntil(ctx, at)
 }
 
 func (p *PDSim) UnblockGC(ctx context.Context) error {
-	_ = ctx
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.serviceGCSafePoint = 0
+	if err := p.Cluster.UnblockGC(ctx); err != nil {
+		return err
+	}
+	p.Mu.Lock()
+	p.ServiceGCSafePoint = 0
+	p.Mu.Unlock()
 	return nil
 }
 
 func (p *PDSim) FetchCurrentTS(ctx context.Context) (uint64, error) {
-	_ = ctx
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentTS, nil
+	return p.Cluster.FetchCurrentTS(ctx)
 }
