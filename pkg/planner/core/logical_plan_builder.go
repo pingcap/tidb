@@ -4696,7 +4696,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	ds := logicalop.DataSource{
-<<<<<<< HEAD
 		DBName:              dbName,
 		TableAsName:         asName,
 		Table:               tbl,
@@ -4709,28 +4708,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		PartitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
+		TblColsByID:         make(map[int64]*expression.Column, len(columns)),
 		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
-=======
-		DBName:                 dbName,
-		TableAsName:            asName,
-		Table:                  tbl,
-		TableInfo:              tableInfo,
-		PhysicalTableID:        tableInfo.ID,
-		AstIndexHints:          tn.IndexHints,
-		IndexHints:             b.TableHints().IndexHintList,
-		IndexMergeHints:        indexMergeHints,
-		PossibleAccessPaths:    possiblePaths,
-		AllPossibleAccessPaths: allPaths,
-		Columns:                make([]*model.ColumnInfo, 0, countCnt),
-		PartitionNames:         tn.PartitionNames,
-		TblCols:                make([]*expression.Column, 0, countCnt),
-		TblColsByID:            make(map[int64]*expression.Column, countCnt),
-		PreferPartitions:       make(map[int][]ast.CIStr),
-		IS:                     b.is,
-		IsForUpdateRead:        b.isForUpdateRead,
->>>>>>> 0deccbba5fa (planner: maintain a map of columns by ID in DataSource (#64053))
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
