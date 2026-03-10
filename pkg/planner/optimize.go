@@ -441,18 +441,27 @@ var planBuilderPool = sync.Pool{
 type logicalPlanBuildCtx struct {
 	stmtCtxState             stmtctx.LogicalPlanBuildState
 	plannerSelectBlockAsName *[]ast.HintTable
+	mapScalarSubQ            []any
+	mapHashCode2UniqueID     map[string]int
+	rewritePhaseInfo         variable.RewritePhaseInfo
 }
 
 func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
 	return logicalPlanBuildCtx{
 		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
 		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
+		mapScalarSubQ:            sessVars.MapScalarSubQ,
+		mapHashCode2UniqueID:     sessVars.MapHashCode2UniqueID4ExtendedCol,
+		rewritePhaseInfo:         sessVars.RewritePhaseInfo,
 	}
 }
 
 func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
 	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
 	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
+	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
+	sessVars.MapHashCode2UniqueID4ExtendedCol = logicalPlanCtx.mapHashCode2UniqueID
+	sessVars.RewritePhaseInfo = logicalPlanCtx.rewritePhaseInfo
 }
 
 func buildAndOptimizeLogicalPlanRound(
@@ -470,6 +479,7 @@ func buildAndOptimizeLogicalPlanRound(
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
+	defer builder.HandleUnusedViewHints()
 
 	builder.Init(sctx, is, hintProcessor)
 
@@ -503,7 +513,6 @@ func buildAndOptimizeLogicalPlanRound(
 	// Handle the non-logical plan statement.
 	logic, isLogicalPlan := p.(base.LogicalPlan)
 	if !isLogicalPlan {
-		builder.HandleUnusedViewHints()
 		return p, names, true, nil
 	}
 
@@ -514,7 +523,6 @@ func buildAndOptimizeLogicalPlanRound(
 	if err != nil {
 		return nil, nil, false, err
 	}
-	builder.HandleUnusedViewHints()
 
 	if *bestPlan == nil || cost < *bestCost {
 		*bestCost = cost
@@ -545,6 +553,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
+	beginOpt := time.Now()
+	defer func() {
+		sessVars.DurationOptimizer.Total = time.Since(beginOpt)
+	}()
 
 	// Build the logical plan from the raw AST. The hint processor only keeps
 	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
@@ -565,7 +577,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if needRestoreLogicalPlanCtx {
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 	}
-	beginOpt := time.Now()
 	for i := range buildRound {
 		if needRestoreLogicalPlanCtx && i > 0 {
 			restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
@@ -598,7 +609,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if needRestoreLogicalPlanCtx {
 		restoreLogicalPlanBuildCtx(sessVars, bestLogicalPlanCtx)
 	}
-	sessVars.DurationOptimizer.Total = time.Since(beginOpt)
 	return bestPlan, bestNames, bestCost, nil
 }
 
