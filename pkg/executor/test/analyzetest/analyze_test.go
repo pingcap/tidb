@@ -154,6 +154,9 @@ func TestAnalyzeRestrict(t *testing.T) {
 	require.Nil(t, err)
 	require.Nil(t, rs)
 	t.Run("cancel_on_ctx", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("analyze restrict subtests mutate mysql.analyze_jobs")
+		}
 		tk.MustExec("truncate table mysql.analyze_jobs")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int)")
@@ -189,6 +192,9 @@ func TestAnalyzeRestrict(t *testing.T) {
 		}
 	})
 	t.Run("kill_query", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("analyze restrict subtests mutate mysql.analyze_jobs")
+		}
 		tk.MustExec("truncate table mysql.analyze_jobs")
 		dom := domain.GetDomain(tk.Session())
 		origSM := dom.InfoSyncer().GetSessionManager()
@@ -247,6 +253,9 @@ func TestAnalyzeRestrict(t *testing.T) {
 		}
 	})
 	t.Run("kill_query_cleanup_pending_jobs", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("analyze restrict subtests mutate mysql.analyze_jobs")
+		}
 		tk.MustExec("truncate table mysql.analyze_jobs")
 		dom := domain.GetDomain(tk.Session())
 		origSM := dom.InfoSyncer().GetSessionManager()
