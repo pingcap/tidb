@@ -1012,6 +1012,7 @@ ORDER BY ordinal_position`).Check(testkit.Rows(
 		"policy_name varchar(64) NO",
 		"masking_type varchar(32) NO",
 		"expression text NO",
+		"restrict_on varchar(256) NO",
 		"status enum('enabled','disabled') YES",
 		"created_at timestamp YES",
 		"created_by varchar(128) YES",
