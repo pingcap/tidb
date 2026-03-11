@@ -134,9 +134,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			logutil.Logger(ctx).Warn("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
 			result.err = util.GetRecoverError(r)
 			e.stopFetchData.Store(true)
-			if !e.sendResult(result) {
-				return
-			}
+			_ = e.sendResult(result)
 		}
 		e.wg.Done()
 	}()
