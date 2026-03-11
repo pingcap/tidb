@@ -17,6 +17,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
@@ -30,8 +31,17 @@ type Config struct {
 	RetryInterval time.Duration
 }
 
+type upstreamCheckpointWaiter interface {
+	WaitGlobalCheckpointAdvance(ctx context.Context, taskName string, current uint64) error
+}
+
 // Deps are the external dependencies needed to build the CRR checkpoint calculator.
-type Deps = checkpoint.CalculatorDeps
+type Deps struct {
+	PD         checkpoint.PDMetaReader
+	Watcher    upstreamCheckpointWaiter
+	Upstream   checkpoint.UpstreamStorageReader
+	Downstream checkpoint.DownstreamObjectChecker
+}
 
 // CalculatorConfig controls the inner checkpoint calculator behavior.
 type CalculatorConfig = checkpoint.CheckpointCalculatorConfig
@@ -41,6 +51,7 @@ type Service struct {
 	calc     *checkpoint.Calculator
 	status   *statusStore
 	observer *statusObserver
+	pd       upstreamCheckpointWaiter
 
 	cfg Config
 }
@@ -53,11 +64,18 @@ func New(
 	if cfg.RetryInterval <= 0 {
 		cfg.RetryInterval = defaultRetryInterval
 	}
+	if deps.Watcher == nil {
+		return nil, fmt.Errorf("checkpoint watcher must not be nil")
+	}
 
 	status := newStatusStore(cfg.TaskName)
 	observer := newStatusObserver(status)
 	calc, err := checkpoint.NewCalculator(
-		deps,
+		checkpoint.CalculatorDeps{
+			PD:         deps.PD,
+			Upstream:   deps.Upstream,
+			Downstream: deps.Downstream,
+		},
 		cfg.CalculatorConfig,
 		observer,
 	)
@@ -69,6 +87,7 @@ func New(
 		calc:     calc,
 		status:   status,
 		observer: observer,
+		pd:       deps.Watcher,
 		cfg:      cfg,
 	}, nil
 }
@@ -85,24 +104,50 @@ func (s *Service) Run(ctx context.Context) error {
 
 		s.observer.BeginCalculationRound()
 		lastCheckpoint := s.calc.LastCheckpoint()
-		checkpoint, err := s.calc.ComputeNextCheckpoint(ctx)
+		nextCheckpoint, err := s.calc.ComputeNextCheckpoint(ctx)
 		if err == nil {
-			if checkpoint == lastCheckpoint {
-				if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
-					return nil
+			if nextCheckpoint == lastCheckpoint {
+				if err := s.waitCheckpointAdvance(ctx, lastCheckpoint); err != nil {
+					if shouldStop(ctx, err) {
+						return nil
+					}
+					s.recordFailure(err)
+					if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
+						return nil
+					}
 				}
 			}
 			continue
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			if ctx.Err() != nil {
-				return nil
-			}
+		if shouldStop(ctx, err) {
+			return nil
 		}
+		s.recordFailure(err)
 		if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
 			return nil
 		}
 	}
+}
+
+func (s *Service) waitCheckpointAdvance(ctx context.Context, current uint64) error {
+	return s.pd.WaitGlobalCheckpointAdvance(ctx, s.cfg.TaskName, current)
+}
+
+func (s *Service) recordFailure(err error) {
+	s.observer.OnCheckpointEvent(checkpoint.CheckpointEvent{
+		Type:     checkpoint.EventCalculationFailed,
+		TaskName: s.cfg.TaskName,
+		Err:      err,
+	})
+}
+
+func shouldStop(ctx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Status returns a consistent snapshot of the current service status.

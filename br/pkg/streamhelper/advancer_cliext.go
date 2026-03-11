@@ -253,25 +253,95 @@ func (t AdvancerExt) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 }
 
 func (t AdvancerExt) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	checkpoint, _, err := t.getGlobalCheckpointWithRevision(ctx, taskName)
+	return checkpoint, err
+}
+
+func (t MetaDataClient) WaitGlobalCheckpointAdvance(ctx context.Context, taskName string, current uint64) error {
+	key := GlobalCheckpointOf(taskName)
+	for {
+		checkpoint, rev, err := t.getGlobalCheckpointWithRevision(ctx, taskName)
+		if err != nil {
+			return err
+		}
+		if checkpoint > current {
+			return nil
+		}
+
+		err = t.waitCheckpointEvent(ctx, key, current, rev+1)
+		if err == nil {
+			return nil
+		}
+		if berrors.Is(err, berrors.ErrPiTRCheckpointWatchRestart) {
+			continue
+		}
+		return err
+	}
+}
+
+func (t MetaDataClient) getGlobalCheckpointWithRevision(ctx context.Context, taskName string) (uint64, int64, error) {
 	key := GlobalCheckpointOf(taskName)
 	resp, err := t.KV.Get(ctx, key)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	if len(resp.Kvs) == 0 {
-		return 0, nil
+		return 0, resp.Header.Revision, nil
 	}
 
 	firstKV := resp.Kvs[0]
-	value := firstKV.Value
+	checkpoint, err := parseGlobalCheckpointValue(firstKV.Value)
+	if err != nil {
+		return 0, 0, err
+	}
+	return checkpoint, firstKV.ModRevision, nil
+}
+
+func (t MetaDataClient) waitCheckpointEvent(
+	ctx context.Context,
+	key string,
+	current uint64,
+	rev int64,
+) error {
+	watchCh := t.Watcher.Watch(ctx, key, clientv3.WithRev(rev))
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case resp, ok := <-watchCh:
+			if !ok {
+				return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
+			}
+			if err := resp.Err(); err != nil {
+				if resp.CompactRevision != 0 {
+					return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
+				}
+				return err
+			}
+			for _, event := range resp.Events {
+				if event.Type != clientv3.EventTypePut {
+					continue
+				}
+				checkpoint, err := parseGlobalCheckpointValue(event.Kv.Value)
+				if err != nil {
+					return err
+				}
+				if checkpoint > current {
+					return nil
+				}
+			}
+		}
+	}
+}
+
+func parseGlobalCheckpointValue(value []byte) (uint64, error) {
 	if len(value) != 8 {
 		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
 			"the global checkpoint isn't 64bits (it is %d bytes, value = %s)",
 			len(value),
 			redact.Key(value))
 	}
-
 	return binary.BigEndian.Uint64(value), nil
 }
 

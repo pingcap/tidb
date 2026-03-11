@@ -17,6 +17,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
@@ -65,7 +66,13 @@ func (p *PDSim) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName st
 	if checkpoint < p.globalCheckpoint {
 		return fmt.Errorf("checkpoint rollback: %d -> %d", p.globalCheckpoint, checkpoint)
 	}
+	waiters := p.checkpointWaiters
+	p.checkpointWaiters = nil
 	p.globalCheckpoint = checkpoint
+
+	for _, waiter := range waiters {
+		close(waiter)
+	}
 	return nil
 }
 
@@ -78,6 +85,29 @@ func (p *PDSim) GetGlobalCheckpointForTask(ctx context.Context, taskName string)
 		return 0, fmt.Errorf("unknown task %q", taskName)
 	}
 	return p.globalCheckpoint, nil
+}
+
+func (p *PDSim) WaitGlobalCheckpointAdvance(ctx context.Context, taskName string, current uint64) error {
+	p.mu.Lock()
+	unlock := sync.Once{}
+	defer unlock.Do(p.mu.Unlock)
+	if p.taskName != taskName {
+		return fmt.Errorf("task name mismatch: %s and %s", taskName, p.taskName)
+	}
+	if p.globalCheckpoint > current {
+		return nil
+	}
+	waiter := make(chan struct{})
+	p.checkpointWaiters = append(p.checkpointWaiters, waiter)
+	p.mu.Unlock()
+
+	unlock.Do(p.mu.Unlock)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-waiter:
+		return nil
+	}
 }
 
 func (p *PDSim) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error {

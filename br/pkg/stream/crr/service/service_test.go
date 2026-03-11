@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	svc, err := New(
 		Deps{
 			PD:         h.PDSim,
+			Watcher:    h.PDSim,
 			Upstream:   h.Upstream,
 			Downstream: h.Downstream,
 		},
@@ -86,6 +88,7 @@ func TestServiceTracksFailures(t *testing.T) {
 	svc, err := New(
 		Deps{
 			PD:         h.PDSim,
+			Watcher:    h.PDSim,
 			Upstream:   h.Upstream,
 			Downstream: failingDownstreamChecker{},
 		},
@@ -114,6 +117,119 @@ func TestServiceTracksFailures(t *testing.T) {
 		return snapshot.State == stateDegraded &&
 			snapshot.ConsecutiveFailures > 0 &&
 			snapshot.LastError != ""
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestServiceWaitsForCheckpointWatch(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(t, ctx)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+
+	svc, err := New(
+		Deps{
+			PD:         h.PDSim,
+			Watcher:    h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	var idleRound uint64
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		if snapshot.SafeCheckpoint != initialCheckpoint {
+			return false
+		}
+		idleRound = snapshot.CurrentRound
+		return idleRound >= 2
+	}, 5*time.Second, 20*time.Millisecond)
+
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, idleRound, svc.Status().CurrentRound)
+
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+	h.requireReplicateAllPending()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return snapshot.SafeCheckpoint == upstreamCheckpoint && snapshot.CurrentRound > idleRound
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(t, ctx)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+
+	pd := &watchErrorPDSim{
+		PDSim:     h.PDSim,
+		failNext:  true,
+		errorText: "watch boom",
+	}
+	svc, err := New(
+		Deps{
+			PD:         pd,
+			Watcher:    pd,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return snapshot.SafeCheckpoint == initialCheckpoint &&
+			snapshot.State == stateDegraded &&
+			snapshot.LastError == "watch boom" &&
+			snapshot.ConsecutiveFailures == 1
+	}, 5*time.Second, 20*time.Millisecond)
+
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+	h.requireReplicateAllPending()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return snapshot.SafeCheckpoint == upstreamCheckpoint &&
+			snapshot.State == stateRunning &&
+			snapshot.ConsecutiveFailures == 0 &&
+			snapshot.LastError == ""
 	}, 5*time.Second, 20*time.Millisecond)
 
 	cancel()
@@ -244,4 +360,23 @@ type failingDownstreamChecker struct{}
 
 func (failingDownstreamChecker) FileExists(ctx context.Context, name string) (bool, error) {
 	return false, fmt.Errorf("boom for %s", name)
+}
+
+type watchErrorPDSim struct {
+	*testutil.PDSim
+	mu        sync.Mutex
+	failNext  bool
+	errorText string
+}
+
+func (p *watchErrorPDSim) WaitGlobalCheckpointAdvance(ctx context.Context, taskName string, current uint64) error {
+	p.mu.Lock()
+	if p.failNext {
+		p.failNext = false
+		errText := p.errorText
+		p.mu.Unlock()
+		return fmt.Errorf("%s", errText)
+	}
+	p.mu.Unlock()
+	return p.PDSim.WaitGlobalCheckpointAdvance(ctx, taskName, current)
 }

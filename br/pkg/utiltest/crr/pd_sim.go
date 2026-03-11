@@ -33,11 +33,12 @@ type PDSim struct {
 
 	mu sync.Mutex
 
-	taskName         string
-	taskStart        uint64
-	taskCh           chan<- streamhelper.TaskEvent
-	globalCheckpoint uint64
-	rng              *deterministicRNG
+	taskName          string
+	taskStart         uint64
+	taskCh            chan<- streamhelper.TaskEvent
+	globalCheckpoint  uint64
+	checkpointWaiters []chan struct{}
+	rng               *deterministicRNG
 }
 
 var _ streamhelper.Env = (*PDSim)(nil)

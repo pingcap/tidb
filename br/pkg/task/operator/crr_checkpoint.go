@@ -79,6 +79,7 @@ func NewCRRCheckpointService(
 	svc, err := service.New(
 		service.Deps{
 			PD:         env,
+			Watcher:    streamhelper.NewMetaDataClient(etcdCli),
 			Upstream:   upstreamStorage,
 			Downstream: downstreamStorage,
 		},
