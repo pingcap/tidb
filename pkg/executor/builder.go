@@ -5023,68 +5023,90 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		err = exec.OpenSelf()
 		return exec, err
 	case *physicalop.PhysicalHashJoin:
-		childIdx, ok := builder.indexJoinLookupChildIdx(v)
-		if !ok {
-			return nil, errors.New("index join inner hash join cannot locate lookup child")
-		}
-		childExecs := make([]exec.Executor, 2)
-		type hashJoinExecutor interface {
-			exec.Executor
-			OpenSelf() error
-		}
-		var (
-			err      error
-			joinExec hashJoinExecutor
-		)
-		defer func() {
-			if err == nil {
-				return
-			}
-			if joinExec != nil {
-				terror.Log(exec.Close(joinExec))
-				return
-			}
-			for _, childExec := range childExecs {
-				if childExec != nil {
-					terror.Log(exec.Close(childExec))
-				}
-			}
-		}()
-		childExecs[childIdx], err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[childIdx], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-		if err != nil {
-			return nil, err
-		}
-		otherIdx := 1 - childIdx
-		childExecs[otherIdx] = builder.executorBuilder.build(v.Children()[otherIdx])
-		if builder.executorBuilder.err != nil {
-			err = builder.executorBuilder.err
-			return nil, err
-		}
-		if err = exec.Open(ctx, childExecs[otherIdx]); err != nil {
-			return nil, err
-		}
-		if builder.ctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
-			joinExec = builder.executorBuilder.buildHashJoinV2FromChildExecs(childExecs[0], childExecs[1], v)
-			if builder.executorBuilder.err != nil {
-				err = builder.executorBuilder.err
-				return nil, err
-			}
-		} else {
-			joinExec = builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
-			if builder.executorBuilder.err != nil {
-				err = builder.executorBuilder.err
-				return nil, err
-			}
-		}
-		err = joinExec.OpenSelf()
-		if err != nil {
-			return nil, err
-		}
-		return joinExec, nil
+		return builder.buildHashJoinForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
+}
+
+func (builder *dataReaderBuilder) buildHashJoinForIndexJoin(ctx context.Context, v *physicalop.PhysicalHashJoin,
+	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
+	cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (joinExec exec.Executor, err error) {
+	childIdx, ok := builder.indexJoinLookupChildIdx(v)
+	if !ok {
+		return nil, errors.New("index join inner hash join cannot locate lookup child")
+	}
+
+	childExecs := make([]exec.Executor, 2)
+	var pendingJoinExec exec.Executor
+	defer func() {
+		if err == nil {
+			return
+		}
+		if pendingJoinExec != nil {
+			terror.Log(exec.Close(pendingJoinExec))
+			return
+		}
+		for _, childExec := range childExecs {
+			if childExec != nil {
+				terror.Log(exec.Close(childExec))
+			}
+		}
+	}()
+
+	childExecs[childIdx], err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[childIdx], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	if err != nil {
+		return nil, err
+	}
+
+	otherIdx := 1 - childIdx
+	childExecs[otherIdx] = builder.executorBuilder.build(v.Children()[otherIdx])
+	if builder.executorBuilder.err != nil {
+		err = builder.executorBuilder.err
+		return nil, err
+	}
+	if err = exec.Open(ctx, childExecs[otherIdx]); err != nil {
+		return nil, err
+	}
+
+	pendingJoinExec, err = builder.buildIndexJoinHashJoinExecFromChildExecs(childExecs, v)
+	if err != nil {
+		return nil, err
+	}
+	if err = openIndexJoinHashJoinExec(pendingJoinExec); err != nil {
+		return nil, err
+	}
+	joinExec = pendingJoinExec
+	return joinExec, nil
+}
+
+func (builder *dataReaderBuilder) buildIndexJoinHashJoinExecFromChildExecs(childExecs []exec.Executor, v *physicalop.PhysicalHashJoin) (exec.Executor, error) {
+	if builder.ctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
+		joinExecV2 := builder.executorBuilder.buildHashJoinV2FromChildExecs(childExecs[0], childExecs[1], v)
+		if builder.executorBuilder.err != nil {
+			return nil, builder.executorBuilder.err
+		}
+		return joinExecV2, nil
+	}
+
+	joinExecV1 := builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
+	if builder.executorBuilder.err != nil {
+		return nil, builder.executorBuilder.err
+	}
+	return joinExecV1, nil
+}
+
+func openIndexJoinHashJoinExec(joinExec exec.Executor) error {
+	switch hashJoinExec := joinExec.(type) {
+	case *join.HashJoinV1Exec:
+		return hashJoinExec.OpenSelf()
+	case *join.HashJoinV2Exec:
+		return hashJoinExec.OpenSelf()
+	default:
+		return errors.New("unexpected index join hash join executor type")
+	}
 }
 
 func (builder *dataReaderBuilder) indexJoinLookupChildIdx(p *physicalop.PhysicalHashJoin) (int, bool) {
