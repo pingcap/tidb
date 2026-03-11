@@ -232,19 +232,31 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 }
 
 // RunawayWatchSyncLoop is used to sync runaway watch records.
+// It uses adaptive backoff: starts at watchSyncMinInterval, doubles on empty
+// results up to watchSyncMaxInterval, and resets on records found or errors.
 func (rm *Manager) RunawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
-	runawayWatchSyncTicker := time.NewTicker(watchSyncInterval)
+	interval := watchSyncMinInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		select {
 		case <-rm.exit:
 			logutil.BgLogger().Info("runaway watch sync loop exit")
 			return
-		case <-runawayWatchSyncTicker.C:
-			err := rm.UpdateNewAndDoneWatch()
+		case <-timer.C:
+			found, err := rm.UpdateNewAndDoneWatch()
 			if err != nil {
 				sampleLogger().Warn("get runaway watch record failed", zap.Error(err))
 			}
+			if found || err != nil {
+				// Reset to fast polling when there is activity or errors.
+				interval = watchSyncMinInterval
+			} else {
+				// Back off when idle.
+				interval = min(interval*2, watchSyncMaxInterval)
+			}
+			timer.Reset(interval)
 		}
 	}
 }
@@ -408,7 +420,8 @@ func (rm *Manager) Stop() {
 }
 
 // UpdateNewAndDoneWatch is used to update new and done watch items.
-func (rm *Manager) UpdateNewAndDoneWatch() error {
+// It returns true if any records were found during the sync.
+func (rm *Manager) UpdateNewAndDoneWatch() (bool, error) {
 	s := rm.runawaySyncer
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -420,27 +433,32 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 	s.lastSyncTime = now
 
 	start := time.Now()
-	err := rm.doSync()
+	found, err := rm.doSync()
 	s.syncDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
 		s.syncErrCounter.Inc()
-		return err
+		return found, err
 	}
 	s.syncOKCounter.Inc()
 	s.watchCPGauge.Set(float64(s.newWatchReader.CheckPoint))
 	s.doneCPGauge.Set(float64(s.deletionWatchReader.CheckPoint))
-	return nil
+	return found, nil
 }
 
 // doSync performs the actual sync work for watch and watch_done tables.
-func (rm *Manager) doSync() error {
+// It returns true if any records were found during the sync.
+func (rm *Manager) doSync() (bool, error) {
+	found := false
 	if !rm.runawaySyncer.checkWatchTableExist() {
-		return nil
+		return false, nil
 	}
 	for {
 		records, err := rm.runawaySyncer.getNewWatchRecords()
 		if err != nil {
-			return err
+			return found, err
+		}
+		if len(records) > 0 {
+			found = true
 		}
 		for _, r := range records {
 			rm.AddWatch(r)
@@ -450,12 +468,15 @@ func (rm *Manager) doSync() error {
 		}
 	}
 	if !rm.runawaySyncer.checkWatchDoneTableExist() {
-		return nil
+		return found, nil
 	}
 	for {
 		doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
 		if err != nil {
-			return err
+			return found, err
+		}
+		if len(doneRecords) > 0 {
+			found = true
 		}
 		for _, r := range doneRecords {
 			rm.removeWatch(r)
@@ -464,7 +485,7 @@ func (rm *Manager) doSync() error {
 			break
 		}
 	}
-	return nil
+	return found, nil
 }
 
 // AddWatch is used to add watch items from system table.

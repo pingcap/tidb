@@ -36,8 +36,10 @@ const (
 	lblWatch     = "watch"
 	lblWatchDone = "watch_done"
 
-	// watchSyncInterval is the interval to sync the watch record.
-	watchSyncInterval = time.Second
+	// watchSyncMinInterval is the minimum (initial) interval to sync watch records.
+	watchSyncMinInterval = time.Second
+	// watchSyncMaxInterval is the maximum interval after backoff when no records are found.
+	watchSyncMaxInterval = 16 * time.Second
 	// watchSyncBatchLimit is the max number of rows fetched per sync query.
 	watchSyncBatchLimit = 256
 	// watchTableName is the name of system table which save runaway watch items.
