@@ -245,7 +245,7 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	}
 }
 
-func (parser *Parser) fixDateArithIntervalWithParens(expr ast.ExprNode, asName string) (ast.ExprNode, string) {
+func (_ *Parser) fixDateArithIntervalWithParens(expr ast.ExprNode, asName string) (ast.ExprNode, string) {
 	unit, ok := getIntervalTimeUnitByName(asName)
 	if !ok {
 		return expr, asName
