@@ -104,6 +104,21 @@ type SampleCollector struct {
 	IsMerger      bool
 }
 
+// Destroy releases references held by the sample collector so the sampled data can be reclaimed eagerly.
+func (c *SampleCollector) Destroy() {
+	c.FMSketch = nil
+	c.CMSketch = nil
+	c.TopN = nil
+	c.Samples = nil
+	c.seenValues = 0
+	c.NullCount = 0
+	c.Count = 0
+	c.MaxSampleSize = 0
+	c.TotalSize = 0
+	c.MemSize = 0
+	c.IsMerger = false
+}
+
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc *SampleCollector) {
 	c.NullCount += rc.NullCount

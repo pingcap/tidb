@@ -716,7 +716,7 @@ const (
 	// TiDBOptEnableFuzzyBinding indicates whether to enable the universal binding.
 	TiDBOptEnableFuzzyBinding = "tidb_opt_enable_fuzzy_binding"
 
-	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
+	// TiDBEnableExtendedStats is kept only for system variable compatibility. Extended statistics support has been removed.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
 
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
@@ -1585,7 +1585,7 @@ const (
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBCapturePlanBaseline                        = Off
-	DefTiDBIgnoreInlistPlanDigest                     = false
+	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true
 	DefEnableLegacyInstanceScope                      = true
 	DefTiDBTableCacheLease                            = 3 // 3s
