@@ -126,6 +126,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	colDefs := make([]*ast.ColumnDef, 0, len(resultFields))
 	for i, rf := range resultFields {
 		ft := rf.Column.FieldType
+		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: s.Cols[i]},
 			Tp:   &ft,

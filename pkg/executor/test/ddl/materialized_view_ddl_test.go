@@ -435,6 +435,23 @@ func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 		Check(testkit.Rows(""))
 }
 
+func TestCreateMaterializedViewColumnFlags(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table base_mv_flags(id bigint not null auto_increment primary key, g1 int not null, v1 bigint not null, key idx_g1_id(g1, id))")
+	tk.MustExec("create materialized view log on base_mv_flags(id, g1, v1) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_flags (g1, cnt, s_v1, min_id, max_id) as select g1, count(1), sum(v1), min(id), max(id) from base_mv_flags group by g1")
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='min_id'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select extra from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='min_id'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='max_id'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select extra from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='max_id'").
+		Check(testkit.Rows(""))
+}
+
 func TestShowCreateMaterializedView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
