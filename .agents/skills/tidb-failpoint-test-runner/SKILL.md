@@ -17,5 +17,5 @@ Canonical command details live in `docs/agents/testing-flow.md` -> `Failpoint de
 2. Run the matching command set from `docs/agents/testing-flow.md`:
    - `Failpoint-enabled run` when the package matches the failpoint checks.
    - `Unit tests (/pkg/...)` when it does not.
-3. Keep the run targeted with `-run <TestName>`; for Bazel-specific variants, follow the same section.
+3. Keep the run targeted with `-run <TestName>`; for Bazel-specific variants, see the Bazel notes in `docs/agents/testing-flow.md` -> `Failpoint-enabled run`.
 4. Record the decision evidence and exact test command in the final report.
