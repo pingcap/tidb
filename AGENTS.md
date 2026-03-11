@@ -35,7 +35,7 @@ This file provides guidance to agents working in this repository.
 
 ### Skills
 
-- Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
+- Repository-level skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
 - Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
 - `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
 - Policy belongs in `AGENTS.md`; detailed command playbooks SHOULD live in `docs/agents/*`, and skills SHOULD provide entrypoint workflows that reference those playbooks.
