@@ -420,6 +420,7 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			if iType == scalarPredicate && jType == orPredicate {
 				maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
 					exprCtx,
+					ithPredicate,
 					jthPredicate)
 				predicates[j], isChanged = updateOrPredicate(sctx, jthPredicate, ithPredicate)
 				if maybeOverOptimized4PlanCache && isChanged && !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
@@ -431,7 +432,8 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			} else if iType == orPredicate && jType == scalarPredicate {
 				maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
 					exprCtx,
-					ithPredicate)
+					ithPredicate,
+					jthPredicate)
 				predicates[i], isChanged = updateOrPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache && isChanged && !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")

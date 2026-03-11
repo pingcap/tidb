@@ -709,6 +709,19 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 	return nil
 }
 
+// Keep this aligned with finalizeAccessColumnValue(): only predicates that can
+// survive finalization as a standalone Eq/In access are safe to use as a
+// generic-plan replacement candidate.
+func canSurviveAsStandaloneEqOrInAccess(expr expression.Expression) bool {
+	if !allEqOrIn(expr) {
+		return false
+	}
+	if valueInfo := extractValueInfo(expr); valueInfo != nil && valueInfo.value != nil && valueInfo.value.IsNull() {
+		return false
+	}
+	return true
+}
+
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
 // filters: conditions that should be kept as filters (e.g. prefix index re-check). In generic plan-cache mode, some
@@ -854,6 +867,12 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				continue
 			}
 			if isMutableAccess[offset] {
+				// In generic-plan mode, accesses[offset] is reserved for a standalone
+				// Eq/In access candidate. Do not demote the original mutable access
+				// unless the immutable replacement can survive finalization by itself.
+				if !canSurviveAsStandaloneEqOrInAccess(cond) {
+					continue
+				}
 				if accessOriginIdx[offset] >= 0 {
 					demoteToFilter[accessOriginIdx[offset]] = true
 				}

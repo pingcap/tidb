@@ -122,7 +122,7 @@ execute st using @x, @y, @z;
 select @@last_plan_from_cache;
 deallocate prepare st;
 
-# Outer-join null-reject inference remains conservative in generic-plan mode for mutable predicates.
+# Generic plan keeps outer-join null-reject inference conservative for mutable predicates; this case checks conservatism rather than cache reuse.
 drop table if exists t_gp_left1, t_gp_left2;
 create table t_gp_left1 (a int, key(a));
 create table t_gp_left2 (a int, b int, key(a), key(b));
@@ -144,6 +144,34 @@ execute st using @p;
 select @@last_plan_from_cache;
 set @p=1;
 execute st using @p;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Non-generic plan cache should skip cache when OR simplification depends on the scalar side.
+drop table if exists t_gp_or;
+create table t_gp_or (a int, key(a));
+insert into t_gp_or values (1), (2), (3);
+set @@tidb_enable_plan_cache_generic_plan=0;
+prepare st from 'select a from t_gp_or where a = ? and (a = 1 or a = 2) order by a';
+set @x=1;
+execute st using @x;
+select @@last_plan_from_cache;
+set @x=2;
+execute st using @x;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Generic plan should keep the original mutable Eq/In access if a later immutable replacement cannot survive.
+drop table if exists t_gp_fallback;
+create table t_gp_fallback (a int, key(a));
+insert into t_gp_fallback values (5), (20);
+set @@tidb_enable_plan_cache_generic_plan=1;
+prepare st from 'select /*+ use_index(t_gp_fallback, a) */ a from t_gp_fallback where a = ? and a < 10 order by a';
+set @x=5;
+execute st using @x;
+select @@last_plan_from_cache;
+set @x=20;
+execute st using @x;
 select @@last_plan_from_cache;
 deallocate prepare st;
 

@@ -195,6 +195,92 @@ func TestConstantPropagation(t *testing.T) {
 	}
 }
 
+func TestPropConstForOuterJoinGenericPlanSafety(t *testing.T) {
+	newNotNullColumn := func(id int) *Column {
+		ft := types.NewFieldType(mysql.TypeLonglong)
+		ft.AddFlag(mysql.NotNullFlag)
+		return newColumnWithType(id, ft)
+	}
+	newParam := func(order int, value int64) *Constant {
+		return &Constant{
+			Value:       types.NewIntDatum(value),
+			RetType:     types.NewFieldType(mysql.TypeLonglong),
+			ParamMarker: &ParamMarker{order: order},
+		}
+	}
+	stringify := func(ctx *mock.Context, exprs []Expression) []string {
+		result := make([]string, 0, len(exprs))
+		for _, expr := range exprs {
+			result = append(result, expr.StringWithCtx(ctx, errors.RedactLogDisable))
+		}
+		sort.Strings(result)
+		return result
+	}
+
+	t.Run("skip mutable outer eq propagation", func(t *testing.T) {
+		build := func(enableGeneric bool) ([]string, []string) {
+			ctx := mock.NewContext()
+			ctx.GetSessionVars().StmtCtx.EnablePlanCache()
+			ctx.GetSessionVars().EnablePlanCacheGenericPlan = enableGeneric
+			ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
+
+			outerCol := newNotNullColumn(0)
+			innerCol := newNotNullColumn(1)
+			joinConds := []Expression{newFunction(ctx, ast.EQ, outerCol, innerCol)}
+			filterConds := []Expression{newFunction(ctx, ast.EQ, outerCol, newParam(0, 1))}
+
+			newJoinConds, newFilterConds := PropConstForOuterJoin(
+				ctx,
+				joinConds,
+				filterConds,
+				NewSchema(outerCol),
+				NewSchema(innerCol),
+				false,
+				false,
+				nil,
+			)
+			return stringify(ctx, newJoinConds), stringify(ctx, newFilterConds)
+		}
+
+		nonGenericJoin, nonGenericFilter := build(false)
+		require.Equal(t, []string{"eq(Column#1, 1)"}, nonGenericJoin)
+		require.Equal(t, []string{"eq(Column#0, 1)"}, nonGenericFilter)
+
+		genericJoin, genericFilter := build(true)
+		require.Equal(t, []string{"eq(Column#0, Column#1)"}, genericJoin)
+		require.Equal(t, []string{"eq(Column#0, 1)"}, genericFilter)
+	})
+
+	t.Run("skip mutable outer predicate derivation", func(t *testing.T) {
+		build := func(enableGeneric bool) []string {
+			ctx := mock.NewContext()
+			ctx.GetSessionVars().StmtCtx.EnablePlanCache()
+			ctx.GetSessionVars().EnablePlanCacheGenericPlan = enableGeneric
+			ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
+
+			outerCol := newNotNullColumn(0)
+			innerCol := newNotNullColumn(1)
+			joinConds := []Expression{newFunction(ctx, ast.EQ, outerCol, innerCol)}
+			filterConds := []Expression{newFunction(ctx, ast.LT, outerCol, newParam(0, 1))}
+
+			newJoinConds, _ := PropConstForOuterJoin(
+				ctx,
+				joinConds,
+				filterConds,
+				NewSchema(outerCol),
+				NewSchema(innerCol),
+				false,
+				false,
+				nil,
+			)
+			return stringify(ctx, newJoinConds)
+		}
+
+		require.Equal(t, []string{"eq(Column#0, Column#1)", "lt(Column#1, 1)"}, build(false))
+		require.Equal(t, []string{"eq(Column#0, Column#1)"}, build(true))
+	})
+}
+
 func TestConstantFolding(t *testing.T) {
 	tests := []struct {
 		condition       func(ctx BuildContext) Expression
