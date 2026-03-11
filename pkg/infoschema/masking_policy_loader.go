@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // LoadMaskingPolicies loads masking policy metadata from mysql.tidb_masking_policy.
@@ -56,7 +57,13 @@ func LoadMaskingPolicies(
 
 	query, args := buildLoadMaskingPoliciesQuery(tableIDs)
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(internalCtx, nil, query, args...)
+	// Use current internal session directly to avoid re-entering session pool creation path.
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		internalCtx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		query,
+		args...,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -83,7 +90,7 @@ func LoadMaskingPolicies(
 }
 
 func buildLoadMaskingPoliciesQuery(tableIDs []int64) (string, []any) {
-	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy`
 
 	idSet := make(map[int64]struct{}, len(tableIDs))

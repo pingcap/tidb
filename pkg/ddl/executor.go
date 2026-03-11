@@ -6447,7 +6447,7 @@ func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, policyNa
 	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 		nil,
-		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy
 WHERE LOWER(policy_name) = %?
 ORDER BY policy_id

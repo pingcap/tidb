@@ -242,26 +242,26 @@ func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, whereClau
 	var query string
 	switch whereClause {
 	case "":
-		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		ORDER BY policy_id`
 	case "policy_name = %?":
-		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		WHERE policy_name = %?
 		ORDER BY policy_id`
 	case "policy_id = %?":
-		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		WHERE policy_id = %?
 		ORDER BY policy_id`
 	case "table_id = %?":
-		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		WHERE table_id = %?
 		ORDER BY policy_id`
 	case "table_id = %? AND column_id = %?":
-		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		WHERE table_id = %? AND column_id = %?
 		ORDER BY policy_id`
