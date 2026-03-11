@@ -6867,6 +6867,7 @@ Field:
 	{
 		expr := $1
 		asName := $2
+		expr, asName = parser.fixDateArithIntervalWithParens(expr, asName)
 		$$ = &ast.SelectField{Expr: expr, AsName: ast.NewCIStr(asName)}
 	}
 

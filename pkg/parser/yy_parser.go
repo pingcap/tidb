@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"unicode"
 
 	"github.com/pingcap/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -240,6 +242,104 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 	if lastField.Offset+len(lastField.OriginalText()) >= len(parser.src)-1 {
 		lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+	}
+}
+
+func (parser *Parser) fixDateArithIntervalWithParens(expr ast.ExprNode, asName string) (ast.ExprNode, string) {
+	unit, ok := getIntervalTimeUnitByName(asName)
+	if !ok {
+		return expr, asName
+	}
+
+	bop, ok := expr.(*ast.BinaryOperationExpr)
+	if !ok || (bop.Op != opcode.Plus && bop.Op != opcode.Minus) {
+		return expr, asName
+	}
+
+	intervalExpr, ok := tryUnwrapSingleArgIntervalExpr(bop.R)
+	if !ok {
+		return expr, asName
+	}
+
+	fnName := "DATE_ADD"
+	if bop.Op == opcode.Minus {
+		fnName = "DATE_SUB"
+	}
+	return &ast.FuncCallExpr{
+		FnName: ast.NewCIStr(fnName),
+		Args: []ast.ExprNode{
+			bop.L,
+			intervalExpr,
+			&ast.TimeUnitExpr{Unit: unit},
+		},
+	}, ""
+}
+
+func tryUnwrapSingleArgIntervalExpr(expr ast.ExprNode) (ast.ExprNode, bool) {
+	if fn, ok := expr.(*ast.FuncCallExpr); ok {
+		if fn.FnName.L == "interval" && len(fn.Args) == 1 {
+			return fn.Args[0], true
+		}
+		return nil, false
+	}
+
+	bop, ok := expr.(*ast.BinaryOperationExpr)
+	if !ok {
+		return nil, false
+	}
+
+	left, ok := bop.L.(*ast.FuncCallExpr)
+	if !ok || left.FnName.L != "interval" || len(left.Args) != 1 {
+		return nil, false
+	}
+
+	return &ast.BinaryOperationExpr{Op: bop.Op, L: &ast.ParenthesesExpr{Expr: left.Args[0]}, R: bop.R}, true
+}
+
+func getIntervalTimeUnitByName(name string) (ast.TimeUnitType, bool) {
+	switch strings.ToUpper(name) {
+	case "MICROSECOND":
+		return ast.TimeUnitMicrosecond, true
+	case "SECOND":
+		return ast.TimeUnitSecond, true
+	case "MINUTE":
+		return ast.TimeUnitMinute, true
+	case "HOUR":
+		return ast.TimeUnitHour, true
+	case "DAY":
+		return ast.TimeUnitDay, true
+	case "WEEK":
+		return ast.TimeUnitWeek, true
+	case "MONTH":
+		return ast.TimeUnitMonth, true
+	case "QUARTER":
+		return ast.TimeUnitQuarter, true
+	case "YEAR":
+		return ast.TimeUnitYear, true
+	case "SECOND_MICROSECOND":
+		return ast.TimeUnitSecondMicrosecond, true
+	case "MINUTE_MICROSECOND":
+		return ast.TimeUnitMinuteMicrosecond, true
+	case "MINUTE_SECOND":
+		return ast.TimeUnitMinuteSecond, true
+	case "HOUR_MICROSECOND":
+		return ast.TimeUnitHourMicrosecond, true
+	case "HOUR_SECOND":
+		return ast.TimeUnitHourSecond, true
+	case "HOUR_MINUTE":
+		return ast.TimeUnitHourMinute, true
+	case "DAY_MICROSECOND":
+		return ast.TimeUnitDayMicrosecond, true
+	case "DAY_SECOND":
+		return ast.TimeUnitDaySecond, true
+	case "DAY_MINUTE":
+		return ast.TimeUnitDayMinute, true
+	case "DAY_HOUR":
+		return ast.TimeUnitDayHour, true
+	case "YEAR_MONTH":
+		return ast.TimeUnitYearMonth, true
+	default:
+		return 0, false
 	}
 }
 
