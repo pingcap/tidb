@@ -24,13 +24,8 @@ git ls-files --others --exclude-standard
 
 ## Decision Rules
 
-Run `make bazel_prepare` if any of these are true:
+Trigger conditions are defined in `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
+Compare the output from the commands above against those conditions.
 
-- New workspace or fresh clone.
-- Changed Bazel files (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
-- Any Go source file is added/removed/renamed/moved.
-- `go.mod` or `go.sum` changed.
-- UT or RealTiKV tests were added and Bazel test targets changed.
-- Local Bazel dependency/toolchain errors occurred.
-
+If any condition matches, run `make bazel_prepare`.
 If none of the rules match, continue without `make bazel_prepare` and report the evidence.

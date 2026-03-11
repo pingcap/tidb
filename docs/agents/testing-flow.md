@@ -5,14 +5,6 @@ Root `AGENTS.md` is the source of truth for policy-level requirements; this file
 Use `AGENTS.md` -> `Task -> Validation Matrix` first, run the smallest valid command set, and report exact commands.
 Detailed command snippets in this file are the canonical operational reference; skills under `.agents/skills/` should point here rather than duplicating long command blocks.
 
-Operational skill entry points:
-
-- `.agents/skills/tidb-verify-profile`
-- `.agents/skills/tidb-bazel-prepare-gate`
-- `.agents/skills/tidb-failpoint-test-runner`
-- `.agents/skills/tidb-integrationtest-recorder`
-- `.agents/skills/tidb-realtikv-runner`
-
 ## Unit tests (`/pkg/...`)
 
 ```bash
@@ -27,7 +19,7 @@ popd
 
 ## Failpoint decision for unit tests
 
-- Policy reference: `AGENTS.md` -> `Quick Decision Matrix`, `AGENTS.md` -> `Testing Policy`.
+- Policy reference: `AGENTS.md` -> `Quick Decision Matrix` (`Unit tests in a package that uses failpoints`).
 
 ```bash
 rg -n --fixed-strings -- "failpoint." pkg/<package_name>
@@ -40,6 +32,8 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 - If `rg` finds matches, run with failpoints enabled.
 - If `rg` finds no matches, run without failpoint enable/disable and state the check evidence in the final report.
 - `-tags=intest,deadlock` does not enable failpoints.
+
+### Failpoint-enabled run
 
 ```bash
 (
@@ -61,18 +55,11 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 - If running Bazel directly (for example `bazel test`), run `make bazel-failpoint-enable` first, then `make bazel-failpoint-disable` after tests.
 - If using `make bazel_test`, do not run `make bazel-failpoint-enable` separately because `bazel_test` already depends on it; still run `make bazel-failpoint-disable` after tests.
 
-## Unit test design notes
+## Related guidance
 
-1. Follow `AGENTS.md` -> `Code Style Guide` -> `Tests and testdata` for package-level unit test suite sizing guidance (around 50 or fewer; use `shard_count` as reference).
-2. Reuse existing tests, testdata, and table structures whenever possible.
-3. For JSON-driven tests (`xxxx_in.json`, `xxxx_out.json`, `xxxx_xut.json`), update the input test set first before running/recording.
-
-## Regression tests for bug fixes
-
-- Add a regression test that reproduces the issue.
-- Verify fail-before-fix and pass-after-fix when feasible (for example `upstream/master` or a temporary revert).
-- If pre-fix failure cannot be reproduced locally, document why and provide best-available evidence.
-- Include exact test commands in PR description under `Tests` (for example `go test -run TestXxx -tags=intest,deadlock ./pkg/...`).
+- Bug-fix regression policy lives in `AGENTS.md` -> `Quick Decision Matrix` (`Bug fix`).
+- Test placement, naming, `shard_count`, and package-specific testdata rules live in `.agents/skills/tidb-test-guidelines`.
+- Include exact test commands in PR description under `Tests` when preparing a PR update.
 
 ## Integration tests (`/tests/integrationtest`)
 
@@ -92,7 +79,7 @@ popd
 ## RealTiKV tests (`/tests/realtikvtest`)
 
 - Use for cases requiring real TiKV/TiUP Playground behavior and tests under `tests/realtikvtest/`.
-- Policy reference: `AGENTS.md` -> `Quick Decision Matrix`, `AGENTS.md` -> `Testing Policy`.
+- Policy reference: `AGENTS.md` -> `Quick Decision Matrix` (`RealTiKV tests`).
 
 Start playground in background:
 
