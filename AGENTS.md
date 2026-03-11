@@ -106,7 +106,7 @@ git fetch origin --prune
 ## Task -> Validation Matrix
 
 Use the smallest set that still proves correctness.
-Command details for each surface live in `docs/agents/testing-flow.md`.
+Command details for package, integration-test, and RealTiKV surfaces live in `docs/agents/testing-flow.md`.
 
 | Change scope | Minimum validation |
 | --- | --- |
@@ -116,7 +116,7 @@ Command details for each surface live in `docs/agents/testing-flow.md`.
 | `pkg/session/**` / variables / protocol behavior | Targeted package tests plus SQL integration tests for user-visible behavior |
 | `pkg/ddl/**` schema changes | DDL-focused unit/integration tests and compatibility impact checks |
 | `pkg/store/**` / `pkg/kv/**` storage behavior | Targeted unit tests; use realtikv tests if behavior depends on real TiKV |
-| Parser files (`pkg/parser/**`) | Parser-specific Make targets and related unit tests |
+| Parser files (`pkg/parser/**`) | Parser-specific Make targets (`make parser`, `make parser_yacc`, `make parser_fmt`, `make parser_unit_test`) and related unit tests |
 | `tests/integrationtest/t/**` changed | Record and verify regenerated result correctness (see `docs/agents/testing-flow.md` -> `Integration tests`) |
 | `tests/realtikvtest/**` changed | Start playground, run scoped tests, then mandatory cleanup (see `docs/agents/testing-flow.md` -> `RealTiKV tests`) |
 
