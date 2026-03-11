@@ -1092,7 +1092,7 @@ func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
 	m = meta.NewMutator(txn)
 	err = m.DropTableOrView(policyDBID, policyTblID)
 	require.NoError(t, err)
-	exists, err := m.CheckTableExists(policyDBID, policyTblID)
+	exists, err = m.CheckTableExists(policyDBID, policyTblID)
 	require.NoError(t, err)
 	require.False(t, exists)
 	err = txn.Commit(context.Background())
