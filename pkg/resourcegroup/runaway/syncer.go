@@ -48,6 +48,16 @@ const (
 	runawayWatchDoneTableName = "tidb_runaway_watch_done"
 )
 
+// computeNextWatchInterval returns the next sync interval based on backoff rules.
+// Resets to watchSyncMinInterval on activity (found) or errors; otherwise doubles
+// the current interval up to watchSyncMaxInterval.
+func computeNextWatchInterval(current time.Duration, found bool, err error) time.Duration {
+	if found || err != nil {
+		return watchSyncMinInterval
+	}
+	return min(current*2, watchSyncMaxInterval)
+}
+
 func getRunawayWatchTableName() string {
 	return fmt.Sprintf("mysql.%s", runawayWatchTableName)
 }

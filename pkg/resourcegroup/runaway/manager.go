@@ -249,13 +249,7 @@ func (rm *Manager) RunawayWatchSyncLoop() {
 			if err != nil {
 				sampleLogger().Warn("get runaway watch record failed", zap.Error(err))
 			}
-			if found || err != nil {
-				// Reset to fast polling when there is activity or errors.
-				interval = watchSyncMinInterval
-			} else {
-				// Back off when idle.
-				interval = min(interval*2, watchSyncMaxInterval)
-			}
+			interval = computeNextWatchInterval(interval, found, err)
 			timer.Reset(interval)
 		}
 	}

@@ -25,55 +25,47 @@ import (
 func TestWatchSyncBackoffInterval(t *testing.T) {
 	re := require.New(t)
 
-	// Simulate the backoff logic from RunawayWatchSyncLoop.
-	computeNextInterval := func(interval time.Duration, found bool, err error) time.Duration {
-		if found || err != nil {
-			return watchSyncMinInterval
-		}
-		return min(interval*2, watchSyncMaxInterval)
-	}
-
 	// Start at min interval.
 	interval := watchSyncMinInterval
 	re.Equal(time.Second, interval)
 
 	// Consecutive empty results should double the interval up to max.
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(2*time.Second, interval)
 
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(4*time.Second, interval)
 
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(8*time.Second, interval)
 
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(16*time.Second, interval)
 
 	// Should cap at max.
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(watchSyncMaxInterval, interval)
 
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(watchSyncMaxInterval, interval)
 
 	// Finding records resets to min.
-	interval = computeNextInterval(interval, true, nil)
+	interval = computeNextWatchInterval(interval, true, nil)
 	re.Equal(watchSyncMinInterval, interval)
 
 	// Back off again.
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(2*time.Second, interval)
 
-	interval = computeNextInterval(interval, false, nil)
+	interval = computeNextWatchInterval(interval, false, nil)
 	re.Equal(4*time.Second, interval)
 
 	// Error also resets to min.
-	interval = computeNextInterval(interval, false, errMock)
+	interval = computeNextWatchInterval(interval, false, errMock)
 	re.Equal(watchSyncMinInterval, interval)
 
 	// found=true with error still resets.
-	interval = computeNextInterval(8*time.Second, true, errMock)
+	interval = computeNextWatchInterval(8*time.Second, true, errMock)
 	re.Equal(watchSyncMinInterval, interval)
 }
 
