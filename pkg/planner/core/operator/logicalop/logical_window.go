@@ -295,6 +295,26 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 	for i, item := range p.OrderBy {
 		p.OrderBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
+	if p.Frame == nil {
+		return
+	}
+	// RANGE frames keep order-by dependent expressions in frame bounds as well.
+	// When projection elimination rewrites window columns, update frame expressions
+	// together with PartitionBy/OrderBy so later ResolveIndices sees the same column IDs.
+	replaceFrameBoundColumns(p.Frame.Start, replace)
+	replaceFrameBoundColumns(p.Frame.End, replace)
+}
+
+func replaceFrameBoundColumns(bound *FrameBound, replace map[string]*expression.Column) {
+	if bound == nil {
+		return
+	}
+	for i, expr := range bound.CalcFuncs {
+		bound.CalcFuncs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
+	}
+	for i, expr := range bound.CompareCols {
+		bound.CompareCols[i] = ruleutil.ResolveExprAndReplace(expr, replace)
+	}
 }
 
 // *************************** end implementation of Plan interface ***************************

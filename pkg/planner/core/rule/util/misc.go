@@ -40,8 +40,22 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 		newExpr.Column = *newCol
 		return newExpr
 	case *expression.ScalarFunction:
+		var cloned *expression.ScalarFunction
+		// Planner expressions may already be hashed or shared across operators.
+		// Rewrite scalar-function args with copy-on-write so column replacement
+		// does not mutate an existing expression tree in place.
 		for i, arg := range expr.GetArgs() {
-			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
+			newArg := ResolveExprAndReplace(arg, replace)
+			if newArg == arg {
+				continue
+			}
+			if cloned == nil {
+				cloned = expr.Clone().(*expression.ScalarFunction)
+			}
+			cloned.GetArgs()[i] = newArg
+		}
+		if cloned != nil {
+			return cloned
 		}
 		return expr
 	}
