@@ -2544,9 +2544,10 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		switch n.Burstable {
 		case BurstableDisable:
-			ctx.WritePlain("OFF")
+			ctx.WritePlain("FALSE")
 		case BurstableModerated:
-			ctx.WritePlain("MODERATED")
+			// Keep restore output parser-compatible on release-8.5 branch.
+			ctx.WritePlain("TRUE")
 		case BurstableUnlimited:
 			ctx.WritePlain("UNLIMITED")
 		}
