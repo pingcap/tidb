@@ -17,18 +17,14 @@ import pmodel "github.com/pingcap/tidb/pkg/parser/model"
 
 // Keep AST model types compatible with parser/model without duplicating implementations.
 type (
-	TableLockType     = pmodel.TableLockType
-	ViewAlgorithm     = pmodel.ViewAlgorithm
-	ViewSecurity      = pmodel.ViewSecurity
-	ViewCheckOption   = pmodel.ViewCheckOption
-	PartitionType     = pmodel.PartitionType
-	PrimaryKeyType    = pmodel.PrimaryKeyType
-	ReferOptionType   = pmodel.ReferOptionType
-	CIStr             = pmodel.CIStr
-	RunawayActionType = pmodel.RunawayActionType
-	RunawayWatchType  = pmodel.RunawayWatchType
-	RunawayOptionType = pmodel.RunawayOptionType
-	ColumnChoice      = pmodel.ColumnChoice
+	TableLockType   = pmodel.TableLockType
+	ViewAlgorithm   = pmodel.ViewAlgorithm
+	ViewSecurity    = pmodel.ViewSecurity
+	ViewCheckOption = pmodel.ViewCheckOption
+	PartitionType   = pmodel.PartitionType
+	PrimaryKeyType  = pmodel.PrimaryKeyType
+	ReferOptionType = pmodel.ReferOptionType
+	CIStr           = pmodel.CIStr
 )
 
 const (
@@ -122,40 +118,6 @@ const (
 	ReferOptionSetNull    = pmodel.ReferOptionSetNull
 	ReferOptionNoAction   = pmodel.ReferOptionNoAction
 	ReferOptionSetDefault = pmodel.ReferOptionSetDefault
-)
-
-const (
-	RunawayActionNone        = pmodel.RunawayActionNone
-	RunawayActionDryRun      = pmodel.RunawayActionDryRun
-	RunawayActionCooldown    = pmodel.RunawayActionCooldown
-	RunawayActionKill        = pmodel.RunawayActionKill
-	RunawayActionSwitchGroup = pmodel.RunawayActionSwitchGroup
-)
-
-const (
-	WatchNone    = pmodel.WatchNone
-	WatchExact   = pmodel.WatchExact
-	WatchSimilar = pmodel.WatchSimilar
-	WatchPlan    = pmodel.WatchPlan
-)
-
-const (
-	RunawayRule   = pmodel.RunawayRule
-	RunawayAction = pmodel.RunawayAction
-	RunawayWatch  = pmodel.RunawayWatch
-)
-
-const (
-	DefaultChoice    = pmodel.DefaultChoice
-	AllColumns       = pmodel.AllColumns
-	PredicateColumns = pmodel.PredicateColumns
-	ColumnList       = pmodel.ColumnList
-)
-
-const (
-	LowPriorityValue    = pmodel.LowPriorityValue
-	MediumPriorityValue = pmodel.MediumPriorityValue
-	HighPriorityValue   = pmodel.HighPriorityValue
 )
 
 // NewCIStr creates a new CIStr.
