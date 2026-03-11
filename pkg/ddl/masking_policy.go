@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -197,7 +196,7 @@ func (w *worker) onDropMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver in
 }
 
 func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
-	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "policy_name = %?", policyName.O)
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByNameFromSysTable, policyName.O)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +207,7 @@ func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyN
 }
 
 func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
-	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %? AND column_id = %?", tableID, columnID)
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByTableColumnFromSysTable, tableID, columnID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +218,7 @@ func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, 
 }
 
 func (w *worker) getMaskingPolicyByIDFromSysTable(ctx context.Context, policyID int64) (*model.MaskingPolicyInfo, error) {
-	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "policy_id = %?", policyID)
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByIDFromSysTable, policyID)
 	if err != nil {
 		return nil, err
 	}
@@ -230,20 +229,23 @@ func (w *worker) getMaskingPolicyByIDFromSysTable(ctx context.Context, policyID 
 }
 
 func (w *worker) getMaskingPoliciesByTableIDFromSysTable(ctx context.Context, tableID int64) ([]*model.MaskingPolicyInfo, error) {
-	return w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %?", tableID)
+	return w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByTableIDFromSysTable, tableID)
 }
 
 func (w *worker) getMaskingPoliciesByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) ([]*model.MaskingPolicyInfo, error) {
-	return w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %? AND column_id = %?", tableID, columnID)
+	return w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByTableColumnFromSysTable, tableID, columnID)
 }
 
-func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, whereClause string, args ...any) ([]*model.MaskingPolicyInfo, error) {
-	query := `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+const (
+	queryMaskingPolicyFromSysTable = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy`
-	if whereClause != "" {
-		query += " WHERE " + whereClause
-	}
-	query += " ORDER BY policy_id"
+	queryMaskingPolicyByNameFromSysTable        = queryMaskingPolicyFromSysTable + ` WHERE policy_name = %? ORDER BY policy_id`
+	queryMaskingPolicyByTableColumnFromSysTable = queryMaskingPolicyFromSysTable + ` WHERE table_id = %? AND column_id = %? ORDER BY policy_id`
+	queryMaskingPolicyByIDFromSysTable          = queryMaskingPolicyFromSysTable + ` WHERE policy_id = %? ORDER BY policy_id`
+	queryMaskingPolicyByTableIDFromSysTable     = queryMaskingPolicyFromSysTable + ` WHERE table_id = %? ORDER BY policy_id`
+)
+
+func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, query string, args ...any) ([]*model.MaskingPolicyInfo, error) {
 	rows, err := w.sess.Execute(ctx, query, "query-masking-policy", args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -261,11 +263,11 @@ func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, whereClau
 
 func validateMaskingPolicyTarget(ctx context.Context, infoCache *infoschema.InfoCache, policy *model.MaskingPolicyInfo) error {
 	is := infoCache.GetLatest()
-	dbInfo, ok := is.SchemaByName(pmodel.CIStr(policy.DBName))
+	dbInfo, ok := is.SchemaByName(policy.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(policy.DBName)
 	}
-	tbl, err := is.TableByName(ctx, pmodel.CIStr(policy.DBName), pmodel.CIStr(policy.TableName))
+	tbl, err := is.TableByName(ctx, policy.DBName, policy.TableName)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(policy.DBName, policy.TableName)
 	}
@@ -352,10 +354,10 @@ func buildMaskingPolicyInfo(
 	}
 	return &model.MaskingPolicyInfo{
 		Name:        policyName,
-		DBName:      ast.CIStr(schema.Name),
-		TableName:   ast.CIStr(tblInfo.Name),
+		DBName:      schema.Name,
+		TableName:   tblInfo.Name,
 		TableID:     tblInfo.ID,
-		ColumnName:  ast.CIStr(col.Name),
+		ColumnName:  col.Name,
 		ColumnID:    col.ID,
 		Expression:  exprStr,
 		Status:      status,
@@ -534,11 +536,11 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 		}
 
 		newPolicy := policy.Clone()
-		newPolicy.TableName = ast.CIStr(tblInfo.Name)
+		newPolicy.TableName = tblInfo.Name
 		newPolicy.ColumnID = newCol.ID
-		newPolicy.ColumnName = ast.CIStr(newCol.Name)
+		newPolicy.ColumnName = newCol.Name
 		if policy.ColumnName.L != newCol.Name.L {
-			newExpr, err := rewriteMaskingPolicyExprColumnName(policy.Expression, policy.ColumnName, ast.CIStr(newCol.Name))
+			newExpr, err := rewriteMaskingPolicyExprColumnName(policy.Expression, policy.ColumnName, newCol.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -651,7 +653,7 @@ func (v *renameMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
 	if colExpr.Name.Name.L != v.oldCol.L {
 		return in, false
 	}
-	colExpr.Name.Name = pmodel.CIStr(v.newCol)
+	colExpr.Name.Name = v.newCol
 	return in, false
 }
 
@@ -663,6 +665,7 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 	if oldCol.L == newCol.L {
 		return expr, nil
 	}
+	// #nosec G202: expression here is parsed as SQL AST for rewrite, not executed against storage.
 	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
 	if err != nil {
 		return "", errors.Trace(err)
