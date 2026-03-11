@@ -193,6 +193,11 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	}
 
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
+		// workerCtx is a cancellable child of ctx. Close() calls
+		// cancelWorkers() to abort in-flight inner/outer workers
+		// (e.g. for LIMIT queries). Coordination goroutines
+		// (notifyWorker, bridge) use the parent ctx instead, since
+		// they must outlive the workers to perform cleanup.
 		workerCtx, cancelWorkers := context.WithCancel(ctx)
 		e.cancelWorkers = cancelWorkers
 		e.workerWg.Add(1)
@@ -200,7 +205,9 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 		if e.keepOrder {
 			for i := range e.concurrency {
 				e.workerWg.Add(1)
-				go e.innerWorkerOrdered(ctx, i)
+				// Uses workerCtx so Close() → cancelWorkers() aborts
+				// in-flight inner-side scans immediately.
+				go e.innerWorkerOrdered(workerCtx, i)
 			}
 			// Bridge goroutine: when all outer+inner workers finish,
 			// close orderedResultCh so the reorder worker can drain and exit.
@@ -218,10 +225,15 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			for i := range e.concurrency {
 				e.workerWg.Add(1)
 				workID := i
-				go e.innerWorker(ctx, workID)
+				// Uses workerCtx so Close() → cancelWorkers() aborts
+				// in-flight inner-side scans immediately.
+				go e.innerWorker(workerCtx, workID)
 			}
 			e.notifyWg.Add(1)
-			go e.notifyWorker(workerCtx)
+			// Uses parent ctx (not workerCtx) because notifyWorker
+			// calls workerWg.Wait() and must outlive the workers to
+			// send the EOF result after they have all exited.
+			go e.notifyWorker(ctx)
 		}
 	}
 	result := <-e.resultChkCh
