@@ -1229,6 +1229,8 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findColFromNaturalUsingJoin(p.Children()[0], col)
+	case *logicalop.LogicalApply:
+		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {
 			idx := x.FullSchema.ColumnIndex(col)

@@ -2676,6 +2676,8 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
+	case *logicalop.LogicalApply:
+		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {
 			idx, err := expression.FindFieldName(x.FullNames, v)
