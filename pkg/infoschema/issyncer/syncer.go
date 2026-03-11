@@ -413,10 +413,6 @@ func (s *Syncer) Reload() error {
 		}
 	})
 
-	// Lock here for only once at the same time.
-	s.m.Lock()
-	defer s.m.Unlock()
-
 	startTime := time.Now()
 	ver, err := s.store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
@@ -437,6 +433,11 @@ func (s *Syncer) Reload() error {
 		return err
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
+
+	// Serialize post-load state updates, but don't hold this lock while loading schema:
+	// loading masking policies may acquire a system session and contend with domainMap lock.
+	s.m.Lock()
+	defer s.m.Unlock()
 
 	// only update if it is not from cache
 	if !hitCache {
