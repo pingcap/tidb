@@ -178,15 +178,38 @@ func TestCheckpointCalculatorConcurrentFlushInterleavings(t *testing.T) {
 		t.Run(round.name, func(t *testing.T) {
 			currentCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
 			h.requireCheckpointAdvancedByTick(stableCheckpoint, currentCheckpoint)
-			h.requireReplicateAllPending()
 
 			seqCtx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 			defer cancel()
 			script.BeginSeq(seqCtx, round.steps...)
-			futureFlushTS := h.runConcurrentFlushRound(currentCheckpoint)
+			futureFlushCh := make(chan flushResult, 1)
+			go func() {
+				record, err := h.FlushSim.FlushStore(h.ctx, 1)
+				futureFlushCh <- flushResult{record: record, err: err}
+			}()
+
+			resultCh := make(chan calcResult, 1)
+			calcCtx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
+			defer cancel()
+			go func() {
+				checkpoint, err := h.calculator.ComputeNextCheckpoint(calcCtx)
+				resultCh <- calcResult{checkpoint: checkpoint, err: err}
+			}()
+
+			future := h.requireFlushResult(futureFlushCh)
+			require.Greater(h.t, future.record.FlushTS, currentCheckpoint)
+
+			h.requireReplicateAllPending()
+
+			result := h.requireCalcResult(resultCh)
+			require.NoError(h.t, result.err)
+			require.Equal(h.t, currentCheckpoint, result.checkpoint)
+			require.NoError(h.t, h.AssertDownstreamCanRestoreTo(h.ctx, result.checkpoint))
+			futureFlushTS := future.record.FlushTS
 			script.EndSeq()
 			stableCheckpoint = h.advanceToStableCheckpoint(currentCheckpoint, futureFlushTS)
 			require.Equal(t, futureFlushTS, stableCheckpoint)
+			h.AssertDownstreamCanRestoreTo(ctx, stableCheckpoint)
 		})
 	}
 }
@@ -261,33 +284,6 @@ func checkpointStep(name string, fn any) syncpoint.StepDecl {
 
 func flushStep(name string, fn any) syncpoint.StepDecl {
 	return syncpoint.Step(testutilSyncPath+"/"+name, fn)
-}
-
-func (h *integrationHarness) runConcurrentFlushRound(currentCheckpoint uint64) uint64 {
-	futureFlushCh := make(chan flushResult, 1)
-	go func() {
-		record, err := h.FlushSim.FlushStore(h.ctx, 1)
-		futureFlushCh <- flushResult{record: record, err: err}
-	}()
-
-	resultCh := make(chan calcResult, 1)
-	calcCtx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
-	defer cancel()
-	go func() {
-		checkpoint, err := h.calculator.ComputeNextCheckpoint(calcCtx)
-		resultCh <- calcResult{checkpoint: checkpoint, err: err}
-	}()
-
-	future := h.requireFlushResult(futureFlushCh)
-	require.Greater(h.t, future.record.FlushTS, currentCheckpoint)
-
-	h.requireReplicateAllPending()
-
-	result := h.requireCalcResult(resultCh)
-	require.NoError(h.t, result.err)
-	require.Equal(h.t, currentCheckpoint, result.checkpoint)
-	require.NoError(h.t, h.AssertDownstreamCanRestoreTo(h.ctx, result.checkpoint))
-	return future.record.FlushTS
 }
 
 func (h *integrationHarness) computeStableCheckpoint(lastCheckpoint uint64) uint64 {
