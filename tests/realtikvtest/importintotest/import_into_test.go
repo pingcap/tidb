@@ -1478,18 +1478,18 @@ func (s *mockGCSSuite) TestTableMode() {
 	s.tk.MustExec(createTableSQL)
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
-		query := "SELECT * FROM table_mode"
+	query := "SELECT * FROM table_mode"
 
-		// Table mode should be reset to Normal when the task is done.
-		s.tk.MustQuery(loadDataSQL)
-		s.checkMode(s.tk, query, "table_mode", true)
-		s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
+	// Table mode should be reset to Normal when the task is done.
+	s.tk.MustQuery(loadDataSQL)
+	s.checkMode(s.tk, query, "table_mode", true)
+	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
 
-		// Table mode should still be Import during post process.
-		s.tk.MustExec("truncate table table_mode")
-		wg := sync.WaitGroup{}
-		wg.Add(2)
-		go func() {
+	// Table mode should still be Import during post process.
+	s.tk.MustExec("truncate table table_mode")
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
 		defer func() {
 			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/waitBeforePostProcess")
 			wg.Done()

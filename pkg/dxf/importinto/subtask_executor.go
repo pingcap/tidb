@@ -163,12 +163,12 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 	}
 
-		return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
-			err = importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
-				func() (*local.RemoteChecksum, error) {
-					return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
-				},
-			)
-			return err
-		})
-	}
+	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
+		err = importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
+			func() (*local.RemoteChecksum, error) {
+				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
+			},
+		)
+		return err
+	})
+}
