@@ -1703,6 +1703,19 @@ func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bo
 	return true
 }
 
+// PlanCacheGenericEnabled indicates whether TiDB should generate a more conservative generic plan template
+// for some parameter-sensitive optimizations when plan cache is enabled.
+func PlanCacheGenericEnabled(ctx BuildContext) bool {
+	if ctx == nil || !ctx.IsUseCache() {
+		return false
+	}
+	sv, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx.GetEvalCtx())
+	if err != nil || sv == nil {
+		return false
+	}
+	return sv.EnablePlanCacheGenericPlan
+}
+
 // MaybeOverOptimized4PlanCache used to check whether an optimization can work
 // for the statement when we enable the plan cache.
 // In some situations, some optimizations maybe over-optimize and cache an

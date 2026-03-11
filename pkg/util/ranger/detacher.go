@@ -711,7 +711,8 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
-// filters: filters is the part that some access conditions need to be evaluated again since it's only the prefix part of char column.
+// filters: conditions that should be kept as filters (e.g. prefix index re-check). In generic plan-cache mode, some
+// parameter-sensitive predicates may also be demoted here to keep the cached plan template stable.
 // newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
 //
 //	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
@@ -733,18 +734,17 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	newConditions = make([]expression.Expression, 0, len(conditions))
 	columnValues = make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
+	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...)
+	genericForPlanCache := expression.PlanCacheGenericEnabled(sctx.ExprCtx) && maybeOverOptimized4PlanCache
 	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
-		offsets[i] = offset
-		if offset == -1 {
-			continue
+		offsets[i] = getPotentialEqOrInColOffset(sctx, cond, cols)
+	}
+	recordPlanCacheOverwrite := func() {
+		if maybeOverOptimized4PlanCache {
+			sctx.SetSkipPlanCache("some parameters may be overwritten")
 		}
-		if accesses[offset] == nil {
-			accesses[offset] = cond
-			continue
-		}
-		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
-		// Lazily compute the points for the previously visited Eq/In
+	}
+	intersectAccessConditions := func(offset int, cond expression.Expression, recordOverwrite bool) bool {
 		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
 		collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
 		if mergedAccesses[offset] == nil {
@@ -755,59 +755,202 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			points[offset] = rb.build(accesses[offset], newTp, types.UnspecifiedLength, false)
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
-		if len(points[offset]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
-				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				sctx.SetSkipPlanCache("some parameters may be overwritten")
+		if len(points[offset]) == 0 {
+			if recordOverwrite {
+				recordPlanCacheOverwrite()
 			}
-			return nil, nil, nil, nil, true
+			return true
 		}
+		return false
 	}
-	for i, ma := range mergedAccesses {
-		if ma == nil {
-			if accesses[i] != nil {
-				if allEqOrIn(accesses[i]) {
-					columnValues[i] = extractValueInfo(accesses[i])
-					if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
-						accesses[i] = nil
-					} else {
-						newConditions = append(newConditions, accesses[i])
-					}
-				} else {
-					accesses[i] = nil
-				}
-			}
-			continue
+	finalizeAccessColumnValue := func(offset int, forceMutable bool) bool {
+		if accesses[offset] == nil || !allEqOrIn(accesses[offset]) {
+			accesses[offset] = nil
+			columnValues[offset] = nil
+			return false
 		}
-		points[i] = allSinglePoints(sctx.TypeCtx, points[i])
-		if points[i] == nil {
-			// There exists an interval whose length is larger than 0
-			accesses[i] = nil
-		} else if len(points[i]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
-				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				sctx.SetSkipPlanCache("some parameters may be overwritten")
-			}
-			return nil, nil, nil, nil, true
-		} else {
-			// All Intervals are single points
-
-			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
-			newConditions = append(newConditions, accesses[i])
-			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
+		if forceMutable {
+			if f, ok := accesses[offset].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
 				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
 				// Maybe we can improve it later.
-				columnValues[i] = &valueInfo{mutable: true}
+				columnValues[offset] = &valueInfo{mutable: true}
+			} else {
+				columnValues[offset] = extractValueInfo(accesses[offset])
 			}
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
-				// `a=@x and a=@y` --> `a=@x if @x==@y`
-				sctx.SetSkipPlanCache("some parameters may be overwritten")
+		} else {
+			columnValues[offset] = extractValueInfo(accesses[offset])
+		}
+		if columnValues[offset] != nil && columnValues[offset].value != nil && columnValues[offset].value.IsNull() {
+			accesses[offset] = nil
+			columnValues[offset] = nil
+			return false
+		}
+		return true
+	}
+	finalizeMergedPointAccess := func(offset int, forceMutable, recordOverwriteOnEmpty bool) (emptyRange bool, kept bool) {
+		points[offset] = allSinglePoints(sctx.TypeCtx, points[offset])
+		if points[offset] == nil {
+			accesses[offset] = nil
+			columnValues[offset] = nil
+			return false, false
+		}
+		if len(points[offset]) == 0 {
+			if recordOverwriteOnEmpty {
+				recordPlanCacheOverwrite()
+			}
+			return true, false
+		}
+		accesses[offset] = points2EqOrInCond(sctx.ExprCtx, points[offset], cols[offset])
+		if accesses[offset] == nil {
+			columnValues[offset] = nil
+			return false, false
+		}
+		return false, finalizeAccessColumnValue(offset, forceMutable)
+	}
+
+	if genericForPlanCache {
+		// In generic-plan mode, the template must not depend on the current parameter values.
+		// The safe rule here is:
+		// 1) Stable predicates can keep the original merge/intersection behavior because their values never change.
+		// 2) Mutable predicates must not be merged into a new predicate shape; at most one original mutable Eq/In can be
+		//    kept as access, while the rest are preserved as filters.
+		// 3) Mutable range predicates stay in newConditions unless the column already has a chosen access, in which case
+		//    they are demoted to filters. This lets later range building still use them without changing the access template.
+		isMutable := make([]bool, len(conditions))
+		isEqOrInCond := make([]bool, len(conditions))
+		demoteToFilter := make([]bool, len(conditions))
+		isMutableAccess := make([]bool, len(cols))
+		accessOriginIdx := make([]int, len(cols))
+		accessIsMerged := make([]bool, len(cols))
+		for i := range accessOriginIdx {
+			accessOriginIdx[i] = -1
+		}
+
+		for i, cond := range conditions {
+			offset := offsets[i]
+			if offset == -1 {
+				continue
+			}
+			isMutable[i] = expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, cond)
+			isEqOrInCond[i] = allEqOrIn(cond)
+
+			if isMutable[i] {
+				if !isEqOrInCond[i] {
+					continue
+				}
+				if accesses[offset] == nil {
+					accesses[offset] = cond
+					isMutableAccess[offset] = true
+					accessOriginIdx[offset] = i
+					continue
+				}
+				demoteToFilter[i] = true
+				continue
+			}
+
+			if accesses[offset] == nil {
+				accesses[offset] = cond
+				accessOriginIdx[offset] = i
+				continue
+			}
+			if isMutableAccess[offset] {
+				if accessOriginIdx[offset] >= 0 {
+					demoteToFilter[accessOriginIdx[offset]] = true
+				}
+				accesses[offset] = cond
+				isMutableAccess[offset] = false
+				accessOriginIdx[offset] = i
+				continue
+			}
+
+			if intersectAccessConditions(offset, cond, false) {
+				return nil, nil, nil, nil, true
+			}
+			accessOriginIdx[offset] = -1
+		}
+
+		for i, ma := range mergedAccesses {
+			if ma == nil {
+				if accesses[i] == nil {
+					continue
+				}
+				if !finalizeAccessColumnValue(i, false) {
+					accessOriginIdx[i] = -1
+				}
+				continue
+			}
+			emptyRange, kept := finalizeMergedPointAccess(i, false, false)
+			if emptyRange {
+				return nil, nil, nil, nil, true
+			}
+			if !kept {
+				accessOriginIdx[i] = -1
+				continue
+			}
+			accessIsMerged[i] = true
+		}
+
+		for _, acc := range accesses {
+			if acc != nil {
+				newConditions = append(newConditions, acc)
 			}
 		}
-	}
-	for i, offset := range offsets {
-		if offset == -1 || accesses[offset] == nil {
-			newConditions = append(newConditions, conditions[i])
+		for i, cond := range conditions {
+			offset := offsets[i]
+			if offset == -1 {
+				newConditions = append(newConditions, cond)
+				continue
+			}
+			if demoteToFilter[i] {
+				filters = append(filters, cond)
+				continue
+			}
+			if isMutable[i] && !isEqOrInCond[i] && accesses[offset] != nil {
+				filters = append(filters, cond)
+				continue
+			}
+			if accessIsMerged[offset] && !isMutable[i] {
+				continue
+			}
+			if accesses[offset] != nil && accessOriginIdx[offset] == i {
+				continue
+			}
+			newConditions = append(newConditions, cond)
+		}
+	} else {
+		for i, cond := range conditions {
+			offset := offsets[i]
+			if offset == -1 {
+				continue
+			}
+			if accesses[offset] == nil {
+				accesses[offset] = cond
+				continue
+			}
+			if intersectAccessConditions(offset, cond, true) {
+				return nil, nil, nil, nil, true
+			}
+		}
+		for i, ma := range mergedAccesses {
+			if ma == nil {
+				if finalizeAccessColumnValue(i, false) {
+					newConditions = append(newConditions, accesses[i])
+				}
+				continue
+			}
+			emptyRange, kept := finalizeMergedPointAccess(i, true, true)
+			if emptyRange {
+				return nil, nil, nil, nil, true
+			}
+			if kept {
+				newConditions = append(newConditions, accesses[i])
+				recordPlanCacheOverwrite()
+			}
+		}
+		for i, offset := range offsets {
+			if offset == -1 || accesses[offset] == nil {
+				newConditions = append(newConditions, conditions[i])
+			}
 		}
 	}
 	for i, cond := range accesses {

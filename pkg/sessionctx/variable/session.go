@@ -1581,6 +1581,11 @@ type SessionVars struct {
 	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
 	EnablePlanCacheForSubquery bool
 
+	// EnablePlanCacheGenericPlan controls whether to generate a generic plan for some parameter-sensitive
+	// optimizations when plan cache is enabled. It is a correctness-first knob that trades performance
+	// for cacheability in those cases.
+	EnablePlanCacheGenericPlan bool
+
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
@@ -2402,6 +2407,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		chunkPool:                        nil,
 		mppExchangeCompressionMode:       vardef.DefaultExchangeCompressionMode,
 		mppVersion:                       kv.MppVersionUnspecified,
+		EnablePlanCacheGenericPlan:       vardef.DefTiDBEnablePlanCacheGenericPlan,
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,

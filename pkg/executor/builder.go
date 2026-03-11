@@ -5342,6 +5342,9 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager,
 ) ([]*ranger.Range, error) {
 	retRanges := make([]*ranger.Range, 0, len(ranges)*len(lookUpContents))
+	if len(ranges) == 0 {
+		return retRanges, nil
+	}
 	lastPos := len(ranges[0].LowVal) - 1
 	tmpDatumRanges := make([]*ranger.Range, 0, len(lookUpContents))
 	for _, content := range lookUpContents {
