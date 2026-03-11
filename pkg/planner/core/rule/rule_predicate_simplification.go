@@ -239,11 +239,13 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 	specialCase := false
 	removeValues := make([]int, 0, len(predicates))
 	for i := range predicates {
+		ithPredicate := predicates[i]
+		if !canUsePredicateSimplificationForPlanCache(sctx, ithPredicate) {
+			continue
+		}
 		for j := i + 1; j < len(predicates); j++ {
-			ithPredicate := predicates[i]
 			jthPredicate := predicates[j]
-			if !canUsePredicateSimplificationForPlanCache(sctx, ithPredicate) ||
-				!canUsePredicateSimplificationForPlanCache(sctx, jthPredicate) {
+			if !canUsePredicateSimplificationForPlanCache(sctx, jthPredicate) {
 				continue
 			}
 			iCol, iType := FindPredicateType(sctx, ithPredicate)
