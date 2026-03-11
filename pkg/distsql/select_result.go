@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -351,35 +350,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 }
 
 func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
-	defer func() {
-		if r.stats != nil {
-			// Ignore internal sql.
-			if !r.ctx.InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
-				ratio := r.stats.calcCacheHit()
-				if ratio >= 1 {
-					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
-				}
-				if ratio >= 0.8 {
-					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
-				}
-				if ratio >= 0.4 {
-					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
-				}
-				if ratio >= 0.2 {
-					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
-				}
-				if ratio >= 0.1 {
-					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
-				}
-				if ratio >= 0.01 {
-					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
-				}
-				if ratio >= 0 {
-					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
-				}
-			}
-		}
-	}()
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
