@@ -17,6 +17,7 @@ package runaway
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -60,12 +61,22 @@ type Record struct {
 	Repeats int
 }
 
-// recordKey represents the composite key for record key in `tidb_runaway_queries`.
-type recordKey struct {
-	ResourceGroupName string
-	SQLDigest         string
-	PlanDigest        string
-	Match             string
+// recordKey represents the composite key for record dedup in `tidb_runaway_queries`.
+// It is a pre-computed FNV-64a hash of (ResourceGroupName, SQLDigest, PlanDigest, Match)
+// to reduce map operation cost when merging high-volume runaway records.
+type recordKey uint64
+
+func newRecordKey(resourceGroupName, sqlDigest, planDigest, match string) recordKey {
+	h := fnv.New64a()
+	// Separator byte 0 prevents collisions like ("ab","c") vs ("a","bc").
+	h.Write([]byte(resourceGroupName))
+	h.Write([]byte{0})
+	h.Write([]byte(sqlDigest))
+	h.Write([]byte{0})
+	h.Write([]byte(planDigest))
+	h.Write([]byte{0})
+	h.Write([]byte(match))
+	return recordKey(h.Sum64())
 }
 
 // genRunawayQueriesStmt generates statement with given RunawayRecords.

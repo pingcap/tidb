@@ -21,54 +21,69 @@ import (
 )
 
 func TestRecordKey(t *testing.T) {
-	// Initialize test data
-	key1 := recordKey{
-		ResourceGroupName: "group1",
-		SQLDigest:         "digest1",
-		PlanDigest:        "plan1",
-	}
-	// key2 is identical to key1
-	key2 := recordKey{
-		ResourceGroupName: "group1",
-		SQLDigest:         "digest1",
-		PlanDigest:        "plan1",
-	}
-	key3 := recordKey{
-		ResourceGroupName: "group2",
-	}
+	// Identical inputs produce the same key.
+	key1 := newRecordKey("group1", "digest1", "plan1", "match1")
+	key2 := newRecordKey("group1", "digest1", "plan1", "match1")
+	assert.Equal(t, key1, key2, "identical inputs should produce the same key")
 
-	// Test MapKey method
+	// Different inputs produce different keys.
+	key3 := newRecordKey("group2", "digest1", "plan1", "match1")
+	assert.NotEqual(t, key1, key3, "different resource group should produce different key")
+
+	key4 := newRecordKey("group1", "digest2", "plan1", "match1")
+	assert.NotEqual(t, key1, key4, "different sql digest should produce different key")
+
+	key5 := newRecordKey("group1", "digest1", "plan2", "match1")
+	assert.NotEqual(t, key1, key5, "different plan digest should produce different key")
+
+	key6 := newRecordKey("group1", "digest1", "plan1", "match2")
+	assert.NotEqual(t, key1, key6, "different match type should produce different key")
+
+	// Empty fields.
+	key7 := newRecordKey("", "", "", "")
+	key8 := newRecordKey("", "", "", "")
+	assert.Equal(t, key7, key8, "empty inputs should produce the same key")
+	assert.NotEqual(t, key1, key7, "empty vs non-empty should differ")
+
+	// Separator prevents cross-field collisions: ("ab","c") vs ("a","bc").
+	keyA := newRecordKey("ab", "c", "", "")
+	keyB := newRecordKey("a", "bc", "", "")
+	assert.NotEqual(t, keyA, keyB, "separator should prevent cross-field collision")
+
+	// Map dedup behavior.
 	recordMap := make(map[recordKey]*Record)
 	record1 := &Record{
 		ResourceGroupName: "group1",
 		SQLDigest:         "digest1",
 		PlanDigest:        "plan1",
-	}
-	// put key1 into recordMap
-	recordMap[key1] = record1
-	assert.Len(t, recordMap, 1, "recordMap should have 1 element")
-	assert.Equal(t, "group1", recordMap[key1].ResourceGroupName, "Repeats should not be updated")
-	assert.Equal(t, 0, recordMap[key1].Repeats, "Repeats should be incremented")
-	// key2 is identical to key1, so we can use key2 to get the record
-	assert.NotNil(t, recordMap[key1], "key1 should exist in recordMap")
-	assert.NotNil(t, recordMap[key2], "key2 should exist in recordMap")
-	assert.Nil(t, recordMap[key3], "key3 should not exist in recordMap")
-
-	// put key2 into recordMap and update Repeats
-	record2 := &Record{
-		ResourceGroupName: "group1",
+		Match:             "match1",
 		Repeats:           1,
 	}
+	recordMap[key1] = record1
+	assert.Len(t, recordMap, 1)
+	assert.NotNil(t, recordMap[key2], "same key should find existing record")
+	assert.Nil(t, recordMap[key3], "different key should not find record")
+
+	// Overwrite with same key increments repeats (simulates mergeFn).
+	record2 := &Record{
+		ResourceGroupName: "group1",
+		SQLDigest:         "digest1",
+		PlanDigest:        "plan1",
+		Match:             "match1",
+		Repeats:           2,
+	}
 	recordMap[key2] = record2
-	assert.Len(t, recordMap, 1, "recordMap should have 1 element")
-	assert.Equal(t, 1, recordMap[key1].Repeats, "Repeats should be updated")
-	// change ResourceGroupName of key2 will not affect key1
-	key2.ResourceGroupName = "group2"
+	assert.Len(t, recordMap, 1, "same key should not increase map size")
+	assert.Equal(t, 2, recordMap[key1].Repeats, "value should be updated")
+
+	// Different key adds new entry.
 	record3 := &Record{
 		ResourceGroupName: "group2",
+		SQLDigest:         "digest1",
+		PlanDigest:        "plan1",
+		Match:             "match1",
+		Repeats:           1,
 	}
-	recordMap[key2] = record3
-	assert.Len(t, recordMap, 2, "recordMap should have 1 element")
-	assert.Equal(t, "group1", recordMap[key1].ResourceGroupName, "Repeats should not be updated")
-	assert.Equal(t, "group2", recordMap[key2].ResourceGroupName, "ResourceGroupName should be updated")
+	recordMap[key3] = record3
+	assert.Len(t, recordMap, 2)
 }

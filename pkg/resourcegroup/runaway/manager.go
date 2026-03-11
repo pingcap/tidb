@@ -207,12 +207,7 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 		case <-runawayRecordFlusher.tickerCh(): // flush runaway records periodically
 			runawayRecordFlusher.flush()
 		case r := <-recordCh: // add runaway records to the flusher
-			key := recordKey{
-				ResourceGroupName: r.ResourceGroupName,
-				SQLDigest:         r.SQLDigest,
-				PlanDigest:        r.PlanDigest,
-				Match:             r.Match,
-			}
+			key := newRecordKey(r.ResourceGroupName, r.SQLDigest, r.PlanDigest, r.Match)
 			runawayRecordFlusher.add(key, r)
 		case <-runawayRecordGCTicker.C: // delete expired runaway records periodically
 			go rm.deleteExpiredRows(runawayRecordExpiredDuration)
