@@ -1011,6 +1011,7 @@ WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 		"column_name varchar(64) NO",
 		"column_id bigint(20) NO",
 		"expression text NO",
+		"restrict_on varchar(256) NO",
 		"status enum('enable','disable') YES",
 		"function_type varchar(32) YES",
 		"created_at timestamp YES",

@@ -802,6 +802,7 @@ const (
 		column_name VARCHAR(64) NOT NULL,
 		column_id BIGINT NOT NULL,
 		expression TEXT NOT NULL,
+		restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
 		status ENUM('ENABLE','DISABLE') DEFAULT 'ENABLE',
 		function_type VARCHAR(32),
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
