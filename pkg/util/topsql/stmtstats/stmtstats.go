@@ -43,19 +43,19 @@ type StatementObserver interface {
 
 // ExecBeginInfo carries optional execution-begin context for extensible stats collection.
 type ExecBeginInfo struct {
-	InNetworkBytes uint64
-	User           string
-	TopRUEnabled   bool
 	Ctx            context.Context
+	User           string
+	InNetworkBytes uint64
+	TopRUEnabled   bool
 }
 
 // ExecFinishInfo carries optional execution-finish context for extensible stats collection.
 type ExecFinishInfo struct {
+	RUDetails       *util.RUDetails
+	User            string
 	OutNetworkBytes uint64
 	ExecDuration    time.Duration
-	User            string
 	TopRUEnabled    bool
-	RUDetails       *util.RUDetails
 }
 
 // StatementStats is a counter used locally in each session.
@@ -65,13 +65,12 @@ type ExecFinishInfo struct {
 type StatementStats struct {
 	data     StatementStatsMap
 	finished *atomic.Bool
-	mu       sync.Mutex
-
 	// RU tracking fields for TopRU (separate from TopSQL stmtstats).
 	finishedRUBuffer RUIncrementMap // Completed SQL RU deltas drained by aggregator ticks.
 	// execCtx tracks the currently active SQL execution in this session.
 	// TiDB session execution is serialized, so at most one active context is kept.
 	execCtx *ExecutionContext
+	mu      sync.Mutex
 }
 
 // CreateStatementStats try to create and register an StatementStats.
