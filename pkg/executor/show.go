@@ -298,15 +298,12 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
-<<<<<<< HEAD
 	case ast.ShowTableGroups:
 		return e.fetchShowTableGroups()
-=======
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
 	case ast.ShowAffinity:
 		return e.fetchShowAffinity(ctx)
->>>>>>> release-7.1.8-5.5
 	}
 	return nil
 }

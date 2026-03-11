@@ -63,15 +63,11 @@ go_test(
         "request_builder_test.go",
         "select_result_test.go",
     ],
-    embed = [":distsql"],
-    flaky = True,
-    race = "on",
-<<<<<<< HEAD
-    shard_count = 32,
-=======
-    shard_count = 33,
->>>>>>> release-7.1.8-5.5
-    deps = [
+	    embed = [":distsql"],
+	    flaky = True,
+	    race = "on",
+	    shard_count = 33,
+	    deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",
         "//pkg/kv",

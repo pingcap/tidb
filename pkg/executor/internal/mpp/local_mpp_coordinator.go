@@ -604,11 +604,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-<<<<<<< HEAD
-							RecordOneCopTask(-1, kv.TiFlash, report.mppReq.Meta.GetAddress(), detail)] = 0
-=======
 							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
->>>>>>> release-7.1.8-5.5
 					}
 				}
 				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
@@ -617,11 +613,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					}
 				}
 			}
-<<<<<<< HEAD
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, "", kv.TiFlash, c.planIDs, recordedPlanIDs)
-=======
 			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
->>>>>>> release-7.1.8-5.5
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Info(fmt.Sprintf("Mpp coordinator not received all reports within %d ms", int(receiveReportTimeout.Milliseconds())),

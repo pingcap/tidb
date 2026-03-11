@@ -54,8 +54,6 @@ var (
 
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
-<<<<<<< HEAD
-=======
 
 	// AffectedRowsCounterNTDMLUpdate records the number of NT-DML update affected rows.
 	AffectedRowsCounterNTDMLUpdate prometheus.Counter
@@ -65,8 +63,6 @@ var (
 	AffectedRowsCounterNTDMLInsert prometheus.Counter
 	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
 	AffectedRowsCounterNTDMLReplace prometheus.Counter
-
->>>>>>> release-7.1.8-5.5
 	// IndexLookUpExecutorDuration records the duration of index look up executor
 	IndexLookUpExecutorDuration *prometheus.HistogramVec
 
@@ -154,14 +150,11 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
 
-<<<<<<< HEAD
-=======
 	AffectedRowsCounterNTDMLUpdate = AffectedRowsCounter.WithLabelValues("NTDML-Update")
 	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
 	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
 	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
 
->>>>>>> release-7.1.8-5.5
 	IndexLookUpExecutorDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

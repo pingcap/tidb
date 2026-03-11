@@ -101,11 +101,8 @@ const (
 	HintNoOrderIndex = "no_order_index"
 	// HintIndexLookUpPushDown is hint to enforce index lookup push down.
 	HintIndexLookUpPushDown = "index_lookup_pushdown"
-<<<<<<< HEAD
-=======
 	// HintNoIndexLookUpPushDown is hint enforce not using index lookup push down.
 	HintNoIndexLookUpPushDown = "no_index_lookup_pushdown"
->>>>>>> release-7.1.8-5.5
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
 	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
@@ -629,11 +626,7 @@ func (hint *HintedIndex) HintTypeString() string {
 		if hint.PushDownLookUp {
 			return HintIndexLookUpPushDown
 		}
-<<<<<<< HEAD
 		return HintUseIndex
-=======
-		return "use_index"
->>>>>>> release-7.1.8-5.5
 	case ast.HintIgnore:
 		return "ignore_index"
 	case ast.HintForce:
@@ -804,12 +797,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-<<<<<<< HEAD
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIndex, HintFull, HintIgnoreIndex, HintNoIndex,
-=======
-			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
->>>>>>> release-7.1.8-5.5
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintNoIndexLookUpPushDown, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -864,7 +853,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggType |= PreferStreamAgg
 		case HintAggToCop:
 			preferAggToCop = true
-<<<<<<< HEAD
 		case HintFull:
 			for _, table := range hint.Tables {
 				dbName := table.DBName
@@ -881,8 +869,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					},
 				})
 			}
-		case HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
-=======
 		case HintNoIndexLookUpPushDown:
 			if len(hint.Indexes) > 0 {
 				warnHandler.SetHintWarning(
@@ -898,8 +884,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				DBName:  dbName,
 				TblName: hint.Tables[0].TableName,
 			})
-		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
->>>>>>> release-7.1.8-5.5
+		case HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
 				dbName = pmodel.NewCIStr(currentDB)
@@ -922,18 +907,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			case HintIndexLookUpPushDown:
-<<<<<<< HEAD
-				inapplicableMsg := ""
-				switch {
-				case len(hint.Indexes) == 0:
-					inapplicableMsg = "the index names should be specified"
-				}
-				if inapplicableMsg != "" {
-					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
-=======
 				if len(hint.Indexes) == 0 {
 					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
->>>>>>> release-7.1.8-5.5
 					continue
 				}
 				hintType = ast.HintUse

@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 5,
-=======
     shard_count = 4,
->>>>>>> release-7.1.8-5.5
     deps = [
         "//pkg/config",
         "//pkg/kv",

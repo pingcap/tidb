@@ -97,21 +97,17 @@ go_deps()
 
 go_rules_dependencies()
 
-go_download_sdk(
-    name = "go_sdk",
-    urls = [
-        "https://cache.hawkingrei.com/golang/{}",
-        "http://ats.apps.svc/golang/{}",
-        "http://bazel-cache.pingcap.net:8080/golang/{}",
-        "https://mirrors.aliyun.com/golang/{}",
-        "https://dl.google.com/go/{}",
-    ],
-<<<<<<< HEAD
-    version = "1.24.11",
-=======
-    version = "1.25.5",
->>>>>>> release-7.1.8-5.5
-)
+	go_download_sdk(
+	    name = "go_sdk",
+	    urls = [
+	        "https://cache.hawkingrei.com/golang/{}",
+	        "http://ats.apps.svc/golang/{}",
+	        "http://bazel-cache.pingcap.net:8080/golang/{}",
+	        "https://mirrors.aliyun.com/golang/{}",
+	        "https://dl.google.com/go/{}",
+	    ],
+	    version = "1.25.5",
+	)
 
 gazelle_dependencies(go_sdk = "go_sdk")
 

@@ -191,21 +191,14 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		}
 	}
-<<<<<<< HEAD
-
-=======
->>>>>>> release-7.1.8-5.5
 	txnLeastID := 1 // used to let update/delete id keep increasing in a txn to avoid deadlock.
 	genUpdate := func() *testStmt {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
-<<<<<<< HEAD
-=======
 			if id == txnLeastID {
 				return nil // avoid updating duplicated row id and deadlock
 			}
->>>>>>> release-7.1.8-5.5
 			txnLeastID = id
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
@@ -215,12 +208,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		default: // update sbtest set c=? where id=?
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
-<<<<<<< HEAD
-=======
 			if id == txnLeastID {
 				return nil // avoid updating duplicated row id and deadlock
 			}
->>>>>>> release-7.1.8-5.5
 			txnLeastID = id
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
@@ -245,12 +235,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	}
 	genDelete := func() *testStmt {
 		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
-<<<<<<< HEAD
-=======
 		if id == txnLeastID {
 			return nil // avoid deleting duplicated row id and deadlock
 		}
->>>>>>> release-7.1.8-5.5
 		txnLeastID = id
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),

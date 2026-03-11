@@ -42,10 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-=======
 	"github.com/tikv/client-go/v2/oracle"
->>>>>>> release-7.1.8-5.5
 	"go.uber.org/zap"
 )
 

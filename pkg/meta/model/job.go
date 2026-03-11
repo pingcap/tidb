@@ -111,16 +111,13 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
-<<<<<<< HEAD
-	ActionCreateTableGroup       ActionType = 74
-	ActionDropTableGroup         ActionType = 75
-	ActionAlterTableGroup        ActionType = 76
-=======
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
 	_                            ActionType = 77 // reserve for database read-only feature
 	ActionAlterTableAffinity     ActionType = 78
->>>>>>> release-7.1.8-5.5
+	ActionCreateTableGroup       ActionType = 79
+	ActionDropTableGroup         ActionType = 80
+	ActionAlterTableGroup        ActionType = 81
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -193,15 +190,12 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
-<<<<<<< HEAD
-	ActionCreateTableGroup:              "create tablegroup",
-	ActionDropTableGroup:                "drop tablegroup",
-	ActionAlterTableGroup:               "alter tablegroup",
-=======
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
 	ActionAlterTableAffinity:            "alter table affinity",
->>>>>>> release-7.1.8-5.5
+	ActionCreateTableGroup:              "create tablegroup",
+	ActionDropTableGroup:                "drop tablegroup",
+	ActionAlterTableGroup:               "alter tablegroup",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

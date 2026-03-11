@@ -108,7 +108,11 @@ var (
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
-<<<<<<< HEAD
+
+	// ErrProtectedTableMode returns for accessing table in import/restore mode.
+	ErrProtectedTableMode = dbterror.ClassSchema.NewStd(mysql.ErrProtectedTableMode)
+	// ErrInvalidTableModeSet returns for invalid TableMode conversion.
+	ErrInvalidTableModeSet = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeSet)
 
 	// ErrTableGroupExists returns when tablegroup already exists
 	ErrTableGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupExists)
@@ -121,10 +125,4 @@ var (
 	ErrTableGroupPartitionNumNotMatch = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupPartitionNumNotMatch)
 	// ErrDuplicateTable returns when table already exists
 	ErrDuplicateTable = dbterror.ClassSchema.NewStd(mysql.ErrDuplicateTable)
-=======
-	// ErrProtectedTableMode returns for accessing table in import/restore mode.
-	ErrProtectedTableMode = dbterror.ClassSchema.NewStd(mysql.ErrProtectedTableMode)
-	// ErrInvalidTableModeSet returns for invalid TableMode conversion.
-	ErrInvalidTableModeSet = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeSet)
->>>>>>> release-7.1.8-5.5
 )

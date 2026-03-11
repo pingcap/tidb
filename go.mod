@@ -1,10 +1,6 @@
 module github.com/pingcap/tidb
 
-<<<<<<< HEAD
-go 1.24.3
-=======
 go 1.25.5
->>>>>>> release-7.1.8-5.5
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -93,7 +89,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20251212013835-ed676560b3b4
+	github.com/pingcap/kvproto v0.0.0-20260119070026-e7016d9dbe90
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -109,8 +105,8 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/afero v1.11.0
-	github.com/spf13/cobra v1.8.1
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/cobra v1.9.1
+	github.com/spf13/pflag v1.0.6
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.10.0
@@ -136,17 +132,6 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-<<<<<<< HEAD
-	golang.org/x/net v0.38.0
-	golang.org/x/oauth2 v0.23.0
-	golang.org/x/sync v0.12.0
-	golang.org/x/sys v0.31.0
-	golang.org/x/term v0.30.0
-	golang.org/x/text v0.23.0
-	golang.org/x/time v0.7.0
-	golang.org/x/tools v0.26.0
-	google.golang.org/api v0.169.0
-=======
 	golang.org/x/net v0.47.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.18.0
@@ -156,7 +141,6 @@ require (
 	golang.org/x/time v0.14.0
 	golang.org/x/tools v0.39.0
 	google.golang.org/api v0.170.0
->>>>>>> release-7.1.8-5.5
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
@@ -176,6 +160,7 @@ require (
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
+	github.com/ihciah/rust2go v0.0.0-20250928063553-71a443c56a01 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
@@ -320,16 +305,6 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-<<<<<<< HEAD
-	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
-	golang.org/x/mod v0.21.0 // indirect
-	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
-	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
-	google.golang.org/protobuf v1.34.2
-=======
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.30.0 // indirect
@@ -338,7 +313,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20240401170217-c3f982113cda // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250425173222-7b384671a197 // indirect
 	google.golang.org/protobuf v1.36.10
->>>>>>> release-7.1.8-5.5
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -364,8 +338,9 @@ replace (
 )
 
 replace (
-	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20251217084855-cadfecf1aef6
-	github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334
-	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260209084050-f5cad9b65c32
-	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20251217153224-c982d611f7c8
+	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260310042541-b713c0a2eb21
+	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260311172720-1b359c2c78ee
+	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20251219084741-029eb6e7d5d0
 )
+
+replace github.com/ihciah/rust2go => git.pingcap.net/pingkai/rust2go v0.0.0-20260116050154-68094297cea8

@@ -343,10 +343,6 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
-<<<<<<< HEAD
-=======
-
->>>>>>> release-7.1.8-5.5
 	// IndexLookup
 	prometheus.MustRegister(IndexLookUpExecutorDuration)
 	prometheus.MustRegister(IndexLookRowsCounter)

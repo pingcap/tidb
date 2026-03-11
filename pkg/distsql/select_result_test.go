@@ -62,13 +62,8 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
-<<<<<<< HEAD
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{DetailsNeedP90: execdetails.DetailsNeedP90{CalleeAddress: "callee"}}}, 0)
-	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetOrCreateCopStats(1234, kv.TiKV).String())
-=======
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"}}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
->>>>>>> release-7.1.8-5.5
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {

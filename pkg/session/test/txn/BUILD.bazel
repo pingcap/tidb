@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 12,
-=======
     shard_count = 11,
->>>>>>> release-7.1.8-5.5
     deps = [
         "//pkg/config",
         "//pkg/domain",

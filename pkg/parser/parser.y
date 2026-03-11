@@ -991,7 +991,7 @@ import (
 	AdminStmt                  "Check table statement or show ddl statement"
 	AlterDatabaseStmt          "Alter database statement"
 	AlterTableStmt             "Alter table statement"
-	AlterTableGroupStmt		   "Alter tablegroup statement"
+	AlterTableGroupStmt        "Alter tablegroup statement"
 	AlterUserStmt              "Alter user statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterRangeStmt             "Alter data range configuration statement"
@@ -4604,17 +4604,17 @@ AlterTableGroupStmt:
 	"ALTER" "TABLEGROUP" TableGroupName "ADD" "TABLES" TableNameList
 	{
 		$$ = &ast.AlterTableGroupStmt{
-			Name:     model.NewCIStr($3),
-			Option:   ast.AlterTableGroupOptionAddTables,
-			Tables:      $6.([]*ast.TableName),
+			Name:   model.NewCIStr($3),
+			Option: ast.AlterTableGroupOptionAddTables,
+			Tables: $6.([]*ast.TableName),
 		}
 	}
-|   "ALTER" "TABLEGROUP" TableGroupName "DROP" "TABLES" TableNameList
+|	"ALTER" "TABLEGROUP" TableGroupName "DROP" "TABLES" TableNameList
 	{
 		$$ = &ast.AlterTableGroupStmt{
-			Name:     model.NewCIStr($3),
-			Option:   ast.AlterTableGroupOptionDropTables,
-			Tables:      $6.([]*ast.TableName),
+			Name:   model.NewCIStr($3),
+			Option: ast.AlterTableGroupOptionDropTables,
+			Tables: $6.([]*ast.TableName),
 		}
 	}
 
@@ -12369,15 +12369,13 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
-<<<<<<< HEAD
 |	"TABLEGROUPS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowTableGroups}
-=======
+	}
 |	"DISTRIBUTION" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
->>>>>>> release-7.1.8-5.5
 	}
 
 ShowLikeOrWhereOpt:

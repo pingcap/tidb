@@ -69,11 +69,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-=======
 	"github.com/pingcap/tidb/pkg/util/dbutil"
->>>>>>> release-7.1.8-5.5
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"

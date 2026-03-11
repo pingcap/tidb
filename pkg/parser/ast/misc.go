@@ -561,8 +561,8 @@ type ExecuteStmt struct {
 
 	Name       string
 	UsingVars  []ExprNode
-	BinaryArgs interface{}
-	PrepStmt   interface{} // the corresponding prepared statement
+	BinaryArgs any
+	PrepStmt   any // the corresponding prepared statement
 	PrepStmtId uint32
 	IdxInMulti int
 
@@ -2816,8 +2816,8 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 
 // RoleOrPriv is a temporary structure to be further processed into auth.RoleIdentity or PrivElem
 type RoleOrPriv struct {
-	Symbols string      // hold undecided symbols
-	Node    interface{} // hold auth.RoleIdentity or PrivElem that can be sure when parsing
+	Symbols string // hold undecided symbols
+	Node    any    // hold auth.RoleIdentity or PrivElem that can be sure when parsing
 }
 
 func (n *RoleOrPriv) ToRole() (*auth.RoleIdentity, error) {
@@ -3876,7 +3876,7 @@ type TableOptimizerHint struct {
 	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
-	HintData interface{}
+	HintData any
 	// QBName is the default effective query block of this hint.
 	QBName  model.CIStr
 	Tables  []HintTable
@@ -3968,18 +3968,16 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-<<<<<<< HEAD
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown":
-=======
 	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown":
->>>>>>> release-7.1.8-5.5
 		n.Tables[0].Restore(ctx)
-		ctx.WritePlain(" ")
-		for i, index := range n.Indexes {
-			if i != 0 {
-				ctx.WritePlain(", ")
+		if len(n.Indexes) > 0 {
+			ctx.WritePlain(" ")
+			for i, index := range n.Indexes {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(index.String())
 			}
-			ctx.WriteName(index.String())
 		}
 	case "qb_name":
 		if len(n.Tables) > 0 {
@@ -4050,13 +4048,13 @@ type BinaryLiteral interface {
 }
 
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
-var NewDecimal func(string) (interface{}, error)
+var NewDecimal func(string) (any, error)
 
 // NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
-var NewHexLiteral func(string) (interface{}, error)
+var NewHexLiteral func(string) (any, error)
 
 // NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
-var NewBitLiteral func(string) (interface{}, error)
+var NewBitLiteral func(string) (any, error)
 
 // SetResourceGroupStmt is a statement to set the resource group name for current session.
 type SetResourceGroupStmt struct {

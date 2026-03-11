@@ -3692,7 +3692,6 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
-<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXEnableIndexLookUpPushDown, Value: BoolToOnOff(DefTiDBXEnableIndexLookUpPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexLookUpPushDown = TiDBOptOn(val)
 		return nil
@@ -3702,7 +3701,6 @@ var defaultSysVars = []*SysVar{
 		transaction.SingleStoreTxnCommitEnabled = enabled
 		return nil
 	}},
-=======
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,
@@ -3754,7 +3752,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
->>>>>>> release-7.1.8-5.5
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

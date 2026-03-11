@@ -182,10 +182,7 @@ func TestAddStatement(t *testing.T) {
 			NumCopTasks:       20,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
-<<<<<<< HEAD
-=======
 			TotProcessTime:    40000,
->>>>>>> release-7.1.8-5.5
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
 			TotWaitTime:       40000,
@@ -333,10 +330,7 @@ func TestAddStatement(t *testing.T) {
 			NumCopTasks:       2,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
-<<<<<<< HEAD
-=======
 			TotProcessTime:    200,
->>>>>>> release-7.1.8-5.5
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
 			TotWaitTime:       40,
@@ -641,10 +635,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			NumCopTasks:       10,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-<<<<<<< HEAD
-=======
 			TotProcessTime:    10000,
->>>>>>> release-7.1.8-5.5
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 			TotWaitTime:       1000,

@@ -39,7 +39,7 @@ type hintScanner struct {
 	Scanner
 }
 
-func (hs *hintScanner) Errorf(format string, args ...interface{}) error {
+func (hs *hintScanner) Errorf(format string, args ...any) error {
 	inner := hs.Scanner.Errorf(format, args...)
 	return ErrParse.GenWithStackByArgs("Optimizer hint syntax error at", inner)
 }

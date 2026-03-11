@@ -1697,7 +1697,6 @@ func TestIssue54652(t *testing.T) {
 	tk.MustExec(`commit`)
 }
 
-<<<<<<< HEAD
 func TestNonPreparedPlanCacheMaxTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1722,7 +1721,8 @@ func TestNonPreparedPlanCacheMaxTable(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("select * from t1,t2,t3,t4,t5,t6").Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-=======
+}
+
 func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1753,5 +1753,4 @@ func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	tk.MustExec(`rollback`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
->>>>>>> release-7.1.8-5.5
 }

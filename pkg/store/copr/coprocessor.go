@@ -1099,24 +1099,16 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
-<<<<<<< HEAD
-		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
-		it.liteWorker.tryCopLiteWorker.CompareAndSwap(1, 0)
-=======
->>>>>>> release-7.1.8-5.5
 		if resp == nil {
 			it.actionOnExceed.close()
 			return nil, nil
 		}
-<<<<<<< HEAD
 		if len(it.tasks) > 0 && len(it.liteWorker.batchCopRespList) == 0 && resp.err == nil {
 			// if there are remain tasks to be processed, we need to run worker concurrently to avoid blocking.
 			// see more detail in https://github.com/pingcap/tidb/issues/58658 and TestDMLWithLiteCopWorker.
 			it.liteWorker.runWorkerConcurrently(it)
 			it.liteWorker = nil
 		}
-=======
->>>>>>> release-7.1.8-5.5
 		it.actionOnExceed.destroyTokenIfNeeded(func() {})
 		memTrackerConsumeResp(it.memTracker, resp)
 	} else if it.respChan != nil {
@@ -1201,13 +1193,10 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		} else {
 			it.tasks = it.tasks[1:]
 		}
-<<<<<<< HEAD
-=======
 		if len(it.tasks) == 0 {
 			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
 			w.tryCopLiteWorker.Store(0)
 		}
->>>>>>> release-7.1.8-5.5
 		if result != nil {
 			if result.resp != nil {
 				w.batchCopRespList = result.batchRespList
@@ -1223,8 +1212,11 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 	return nil
 }
 
-<<<<<<< HEAD
 func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
+	if w.tryCopLiteWorker != nil {
+		// Switch from lite worker to normal workers; release the lite-worker token so other iterators may reuse it.
+		w.tryCopLiteWorker.Store(0)
+	}
 	taskCh := make(chan *copTask, 1)
 	worker := w.worker
 	worker.taskCh = taskCh
@@ -1252,8 +1244,6 @@ func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
 	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
-=======
->>>>>>> release-7.1.8-5.5
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
 type HasUnconsumedCopRuntimeStats interface {
 	// CollectUnconsumedCopRuntimeStats returns unconsumed CopRuntimeStats.
@@ -1997,12 +1987,9 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
-<<<<<<< HEAD
-=======
 	if rpcCtx != nil {
 		copStats.CalleeAddress = rpcCtx.Addr
 	}
->>>>>>> release-7.1.8-5.5
 	if worker.kvclient.Stats == nil {
 		return
 	}
@@ -2011,17 +1998,6 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}()
 	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
-<<<<<<< HEAD
-	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
-		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		copStats.CalleeAddress = rpcCtx.Addr
-=======
 	if len(backoffTimes) > 0 {
 		copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 		copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
@@ -2030,7 +2006,6 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
 			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 		}
->>>>>>> release-7.1.8-5.5
 	}
 }
 

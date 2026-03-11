@@ -137,14 +137,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
-<<<<<<< HEAD
 		Stmt:       paramStmt,
-		StmtType:   ast.GetStmtLabel(paramStmt),
+		StmtType:   stmtctx.GetStmtLabel(ctx, paramStmt),
 		IsReadOnly: ast.IsReadOnly(paramStmt),
-=======
-		Stmt:     paramStmt,
-		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
->>>>>>> release-7.1.8-5.5
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -288,9 +283,9 @@ func extractEarlyLocationInfo(ctx context.Context, is infoschema.InfoSchema, stm
 	}
 
 	info := &EarlyLocationInfo{
-		TableIDs:             tableIDs,
-		HasPartitionTable:    hasPartitionTable,
-		ForceRemotePlanHint:  hasForceRemotePlanHint(stmt),
+		TableIDs:            tableIDs,
+		HasPartitionTable:   hasPartitionTable,
+		ForceRemotePlanHint: hasForceRemotePlanHint(stmt),
 	}
 
 	// Check if this is a DML statement
@@ -335,15 +330,15 @@ var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
 })
 
 type earlySelectAnalysis struct {
-	where         ast.ExprNode
-	tblInfo       *metamodel.TableInfo
-	hasWhere      bool
+	where          ast.ExprNode
+	tblInfo        *metamodel.TableInfo
+	hasWhere       bool
 	isSimpleSelect bool
-	isSimpleKind  bool
-	noOrderLimit  bool
-	noLock        bool
-	noSetOrWith   bool
-	simpleFields  bool
+	isSimpleKind   bool
+	noOrderLimit   bool
+	noLock         bool
+	noSetOrWith    bool
+	simpleFields   bool
 }
 
 // extractEarlySelectTraits evaluates a SELECT once to derive early location hints.

@@ -329,11 +329,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		ExtraHandleCol: col,
 		PushedLimit:    &PushedDownLimit{1, 2},
 	}
-<<<<<<< HEAD
-	indexLookup = indexLookup.Init(ctx, 0, false)
-=======
 	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
->>>>>>> release-7.1.8-5.5
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
@@ -1023,11 +1019,7 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	checkPushDownIndexLookUpReaderCommon := func(r *PhysicalIndexLookUpReader) {
 		require.True(t, r.IndexLookUpPushDown)
-<<<<<<< HEAD
 		tablePlans := FlattenListPushDownPlan(r.tablePlan)
-=======
-		tablePlans := flattenListPushDownPlan(r.tablePlan)
->>>>>>> release-7.1.8-5.5
 		require.Len(t, r.TablePlans, len(tablePlans))
 		planIDMap := make(map[int]struct{})
 		for i, p := range tablePlans {
@@ -1038,11 +1030,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 			require.False(t, ok, "duplicated plan id %d", p.ID())
 			planIDMap[p.ID()] = struct{}{}
 		}
-<<<<<<< HEAD
 		indexPlans, m := FlattenTreePushDownPlan(r.indexPlan)
-=======
-		indexPlans, m := flattenTreePushDownPlan(r.indexPlan)
->>>>>>> release-7.1.8-5.5
 		require.Len(t, r.IndexPlans, len(indexPlans))
 		for i, p := range indexPlans {
 			require.Equal(t, p, r.IndexPlans[i], i)
@@ -1104,11 +1092,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		tablePlan: tablePlan,
 		indexPlan: indexPlan,
 		keepOrder: false,
-<<<<<<< HEAD
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
-=======
 	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
->>>>>>> release-7.1.8-5.5
 	check(reader)
 	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
@@ -1176,11 +1160,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		tablePlan: projectionPlan,
 		indexPlan: limitPlan,
 		keepOrder: false,
-<<<<<<< HEAD
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
-=======
 	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
->>>>>>> release-7.1.8-5.5
 	check(reader)
 	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)

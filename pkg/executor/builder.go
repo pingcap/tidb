@@ -154,12 +154,7 @@ type MockExecutorBuilder struct {
 // NewMockExecutorBuilderForTest is ONLY used in test.
 func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-<<<<<<< HEAD
 		executorBuilder: newExecutorBuilder(ctx, is)}
-=======
-		executorBuilder: newExecutorBuilder(ctx, is, ti),
-	}
->>>>>>> release-7.1.8-5.5
 }
 
 // Build builds an executor tree according to `p`.
@@ -2331,12 +2326,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
 			strings.ToLower(infoschema.TableSchemaPrivileges),
-<<<<<<< HEAD
 			strings.ToLower(infoschema.TableTableGroups),
-			strings.ToLower(infoschema.TableTableGroupStatus):
-=======
+			strings.ToLower(infoschema.TableTableGroupStatus),
 			strings.ToLower(infoschema.TableRegions):
->>>>>>> release-7.1.8-5.5
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -4899,15 +4891,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookUpReader,
-<<<<<<< HEAD
 	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
-=======
-	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
-) (exec.Executor, error) {
-	if builder.Ti != nil {
-		builder.Ti.UseTableLookUp.Store(true)
-	}
->>>>>>> release-7.1.8-5.5
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err

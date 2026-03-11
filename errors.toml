@@ -3191,7 +3191,16 @@ error = '''
 Cannot set resource group for a role
 '''
 
-<<<<<<< HEAD
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
+'''
+
 ["schema:8280"]
 error = '''
 Tablegroup '%-.192s' already exists
@@ -3215,16 +3224,6 @@ Tablegroup partitions count not match
 ["schema:8284"]
 error = '''
 Duplicate table name '%-.192s'
-=======
-["schema:8258"]
-error = '''
-Table %s is in mode %s
-'''
-
-["schema:8259"]
-error = '''
-Invalid mode set from (or by default) %s to %s for table %s
->>>>>>> release-7.1.8-5.5
 '''
 
 ["server:1040"]
@@ -3781,4 +3780,3 @@ snapshot is older than GC safe point %s
 error = '''
 option '%s' is no longer supported. Reason: %s
 '''
-

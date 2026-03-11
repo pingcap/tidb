@@ -3143,13 +3143,10 @@ const (
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
-<<<<<<< HEAD
-	ShowTableGroups
-=======
 	ShowDistributionJobs
 	ShowDistributions
 	ShowAffinity
->>>>>>> release-7.1.8-5.5
+	ShowTableGroups
 )
 
 const (
@@ -3553,13 +3550,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SESSION_STATES")
 		case ShowReplicaStatus:
 			ctx.WriteKeyWord("REPLICA STATUS")
-<<<<<<< HEAD
 		case ShowTableGroups:
 			ctx.WriteKeyWord("TABLEGROUPS")
-=======
-		case ShowDistributionJobs:
-			ctx.WriteKeyWord("DISTRIBUTION JOBS")
->>>>>>> release-7.1.8-5.5
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

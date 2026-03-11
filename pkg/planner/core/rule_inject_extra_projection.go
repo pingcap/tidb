@@ -60,11 +60,7 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 
 	if tr, ok := plan.(*PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
 		tr.tablePlan = pe.inject(tr.tablePlan)
-<<<<<<< HEAD
 		tr.TablePlans = FlattenListPushDownPlan(tr.tablePlan)
-=======
-		tr.TablePlans = flattenListPushDownPlan(tr.tablePlan)
->>>>>>> release-7.1.8-5.5
 	}
 
 	switch p := plan.(type) {

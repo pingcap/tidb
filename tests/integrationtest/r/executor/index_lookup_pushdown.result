@@ -1,8 +1,5 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
-<<<<<<< HEAD
-=======
 set @@tidb_scatter_region='table';
->>>>>>> release-7.1.8-5.5
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
 create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 create table t3 (
@@ -140,8 +137,6 @@ IndexLookUp_13	1.00	root		limit embedded(offset:10, count:1)
 └─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
 id	a	b	c
-<<<<<<< HEAD
-=======
 explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
 id	estRows	task	access object	operator info
 TableReader_7	10.00	root		data:Selection_6
@@ -234,7 +229,6 @@ set @@tidb_index_lookup_pushdown_policy=default;
 select @@tidb_index_lookup_pushdown_policy;
 @@tidb_index_lookup_pushdown_policy
 hint-only
->>>>>>> release-7.1.8-5.5
 prepare stmt from 'select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > ? and c > ?';
 set @x1 = '1j';
 set @x2 = '5e';
@@ -366,23 +360,6 @@ a	b	c	d	e
 A	2	8020	200	80
 b	1	6040	400	60
 B	2	5050	500	50
-<<<<<<< HEAD
-explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
-id	estRows	task	access object	operator info
-TopN_8	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-└─IndexLookUp_15	4.00	root		
-  ├─LocalIndexLookUp_17(Build)	4.00	cop[tikv]		index handle offsets:[]
-  │ ├─TopN_14(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-  │ │ └─IndexFullScan_12	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
-  │ └─TableRowIDScan_16(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableRowIDScan_13(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
-a	b	c	d	e
-c	3	1090	900	10
-C	2	2080	800	20
-c	1	3070	700	30
-b	3	4060	600	40
-=======
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
 id	estRows	task	access object	operator info
 TopN_9	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
@@ -399,7 +376,6 @@ C	2	2080	800	20
 c	1	3070	700	30
 B	2	5050	500	50
 b	1	6040	400	60
->>>>>>> release-7.1.8-5.5
 create table t22(a varchar(32), b int, c int, d int, e int, primary key(a(2), b) CLUSTERED, index i(c)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 insert into t22 values
 ('abc', 1, 9010, 100, 90),
@@ -589,7 +565,4 @@ id	a	b
 1	2	3
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
-<<<<<<< HEAD
-=======
 set @@tidb_scatter_region=default;
->>>>>>> release-7.1.8-5.5

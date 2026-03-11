@@ -66,11 +66,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	rows := uint64(2024)
 	zero := uint64(0)
 	executorID := "test-executor"
-<<<<<<< HEAD
-	runtimeStatsColl.GetOrCreateCopStats(planID, kv.TiKV).RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
-=======
 	runtimeStatsColl.RecordOneCopTask(planID, kv.TiKV, &tipb.ExecutorExecutionSummary{
->>>>>>> release-7.1.8-5.5
 		TimeProcessedNs: &zero,
 		NumProducedRows: &rows,
 		NumIterations:   &zero,

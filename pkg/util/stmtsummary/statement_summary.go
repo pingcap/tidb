@@ -756,15 +756,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.maxCompileLatency = sei.CompileLatency
 	}
 
-<<<<<<< HEAD
-	if sei.CopTasks != nil {
-		numCopTasks := int64(sei.CopTasks.NumCopTasks)
-		ssElement.sumNumCopTasks += numCopTasks
-=======
-	// coprocessor
 	if sei.CopTasks != nil {
 		ssElement.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
->>>>>>> release-7.1.8-5.5
 		if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
 			ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
 			ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress

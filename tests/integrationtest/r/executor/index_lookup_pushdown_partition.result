@@ -4,11 +4,7 @@ set @@tidb_partition_prune_mode = 'dynamic';
 select @@tidb_partition_prune_mode;
 @@tidb_partition_prune_mode
 dynamic
-<<<<<<< HEAD
-create table tp1 (a int primary key, b int, c int, key b(b), key c(c)) partition by hash(a) partitions 4;
-=======
 create table tp1 (a int primary key, b int, c int, key b(b), key c(c) global) partition by hash(a) partitions 4;
->>>>>>> release-7.1.8-5.5
 insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
 explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
 id	estRows	task	access object	operator info
@@ -38,15 +34,6 @@ a	b	c
 2	9	20
 3	8	30
 4	7	40
-<<<<<<< HEAD
-explain select /*+ index_lookup_pushdown(tp1, c) */ * from tp1;
-id	estRows	task	access object	operator info
-IndexLookUp_6	10000.00	root	partition:all	
-├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1]
-│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:tp1, index:c(c)	keep order:false, stats:pseudo
-│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
-└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
-=======
 select @@tidb_index_lookup_pushdown_policy;
 @@tidb_index_lookup_pushdown_policy
 hint-only
@@ -87,17 +74,12 @@ TableReader_5	10000.00	root	partition:all	data:TableFullScan_4
 └─TableFullScan_4	10000.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, the global index in partition table is not supported
->>>>>>> release-7.1.8-5.5
 create table tp2 (
 id1 varchar(32),
 id2 int,
 a int,
 b int,
-<<<<<<< HEAD
-primary key (id1, id2),
-=======
 primary key (id1, id2) CLUSTERED,
->>>>>>> release-7.1.8-5.5
 index a(a)
 )
 PARTITION BY RANGE COLUMNS (id1) (
@@ -118,11 +100,7 @@ insert into tp2 values
 explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
 id	estRows	task	access object	operator info
 IndexLookUp_13	5.00	root	partition:all	limit embedded(offset:0, count:5)
-<<<<<<< HEAD
-├─LocalIndexLookUp_15(Build)	5.00	cop[tikv]		index handle offsets:[1]
-=======
 ├─LocalIndexLookUp_15(Build)	5.00	cop[tikv]		index handle offsets:[]
->>>>>>> release-7.1.8-5.5
 │ ├─Limit_12(Build)	5.00	cop[tikv]		offset:0, count:5
 │ │ └─IndexRangeScan_10	5.00	cop[tikv]	table:tp2, index:a(a)	range:(33,+inf], keep order:false, stats:pseudo
 │ └─TableRowIDScan_14(Probe)	5.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
@@ -137,11 +115,7 @@ e	5	55	50
 explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
 id	estRows	task	access object	operator info
 IndexLookUp_6	10000.00	root	partition:p1	
-<<<<<<< HEAD
-├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1]
-=======
 ├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[]
->>>>>>> release-7.1.8-5.5
 │ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:tp2, index:a(a)	keep order:false, stats:pseudo
 │ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
 └─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo

@@ -243,8 +243,6 @@ create table tt(a int, key(a));
 explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;
 explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);
 --disable_warnings
-<<<<<<< HEAD
-=======
 
 # INDEX_LOOKUP_PUSH_DOWN is in developing, it should be disabled currently
 drop table if exists t1;
@@ -254,5 +252,3 @@ explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from 
 explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from t1 where a=2;
 explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_b) */ * from t1 where b=3;
 --disable_warnings
-
->>>>>>> release-7.1.8-5.5

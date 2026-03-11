@@ -93,8 +93,6 @@ const (
 	MaxCommentLength = 1024
 )
 
-<<<<<<< HEAD
-=======
 var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 
 // DefaultCumulativeTimeout is the default cumulative timeout for analyze operation.
@@ -105,7 +103,6 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
->>>>>>> release-7.1.8-5.5
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -1020,15 +1017,6 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-<<<<<<< HEAD
-		loadCloudStorageURI(w, job)
-		if reorgTp.NeedMergeProcess() {
-			for _, indexInfo := range allIndexInfos {
-				indexInfo.BackfillState = model.BackfillStateRunning
-			}
-		}
-=======
->>>>>>> release-7.1.8-5.5
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
 			moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)

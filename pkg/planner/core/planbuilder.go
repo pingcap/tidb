@@ -1213,9 +1213,6 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-<<<<<<< HEAD
-func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
-=======
 func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	// when the PKIsHandle of table is true, the primary key is not in the indices list.
 	if idxName.L == "primary" && tblInfo.PKIsHandle {
@@ -1225,7 +1222,6 @@ func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo
 }
 
 func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
->>>>>>> release-7.1.8-5.5
 	unSupportedReason := ""
 	sessionVars := ctx.GetSessionVars()
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion < 1 {
@@ -1249,20 +1245,14 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	}
 
 	if unSupportedReason != "" {
-<<<<<<< HEAD
-		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
-=======
 		if !suppressWarning {
 			ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
 		}
->>>>>>> release-7.1.8-5.5
 		return false
 	}
 	return true
 }
 
-<<<<<<< HEAD
-=======
 func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
 	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
 	switch policy {
@@ -1278,7 +1268,6 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
->>>>>>> release-7.1.8-5.5
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1362,13 +1351,15 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			path := &util.AccessPath{Index: index}
-<<<<<<< HEAD
-			if ctx.GetSessionVars().EnableIndexLookUpPushDown && checkIndexLookUpPushDownSupported(ctx, tblInfo, index) {
-				path.IsIndexLookUpPushDown = true
-=======
-			if !forceNoIndexLookUpPushDown && checkAutoForceIndexLookUpPushDown(ctx, tblInfo, index) {
-				path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
->>>>>>> release-7.1.8-5.5
+			if !forceNoIndexLookUpPushDown {
+				if ctx.GetSessionVars().EnableIndexLookUpPushDown &&
+					checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true) {
+					path.IsIndexLookUpPushDown = true
+					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
+				} else if checkAutoForceIndexLookUpPushDown(ctx, tblInfo, index) {
+					path.IsIndexLookUpPushDown = true
+					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
+				}
 			}
 			publicPaths = append(publicPaths, path)
 		}
@@ -1502,12 +1493,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				// Currently we only support to hint the index look up push down for comment-style sql hints.
 				// So only i >= indexHintsLen may have the hints here.
 				if _, ok := indexLookUpPushDownHints[i]; ok {
-<<<<<<< HEAD
-					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
-						continue
-					}
-					path.IsIndexLookUpPushDown = true
-=======
 					if forceNoIndexLookUpPushDown {
 						ctx.GetSessionVars().StmtCtx.SetHintWarning(
 							"hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified",
@@ -1518,8 +1503,8 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index, false) {
 						continue
 					}
+					path.IsIndexLookUpPushDown = true
 					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownByHint
->>>>>>> release-7.1.8-5.5
 				}
 			}
 			available = append(available, path)
@@ -6301,18 +6286,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
-<<<<<<< HEAD
 	case ast.ShowTableGroups:
 		names = []string{"TableGroups"}
 		ftypes = []byte{mysql.TypeVarchar}
-=======
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
 	case ast.ShowAffinity:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
->>>>>>> release-7.1.8-5.5
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }

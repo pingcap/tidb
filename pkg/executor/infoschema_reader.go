@@ -250,15 +250,12 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTablePrivileges(ctx, sctx)
 		case infoschema.TableSchemaPrivileges:
 			err = e.setDataFromSchemaPrivileges(ctx, sctx)
-<<<<<<< HEAD
 		case infoschema.TableTableGroups:
 			err = e.setDataFromTableGroups(ctx)
 		case infoschema.TableTableGroupStatus:
 			err = e.setDataFromTableGroupStatus(ctx, sctx)
-=======
 		case infoschema.TableRegions:
 			err = e.setDataForTableRegions(ctx, sctx)
->>>>>>> release-7.1.8-5.5
 		}
 		if err != nil {
 			return nil, err

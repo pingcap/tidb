@@ -1153,16 +1153,14 @@ const (
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 
-<<<<<<< HEAD
+	ErrInvalidAffinityOption = 8266
+
 	// TableGroup errors.
 	ErrTableGroupExists               = 8280
 	ErrTableGroupNotExists            = 8281
 	ErrTableGroupNotSupported         = 8282
 	ErrTableGroupPartitionNumNotMatch = 8283
 	ErrDuplicateTable                 = 8284
-=======
-	ErrInvalidAffinityOption = 8266
->>>>>>> release-7.1.8-5.5
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

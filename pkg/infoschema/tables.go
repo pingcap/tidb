@@ -227,7 +227,6 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
-<<<<<<< HEAD
 	// TableTiDBPlanCache is the plan cache table.
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
 	// TableTableGroups is a table to show the tablegroup information.
@@ -235,10 +234,8 @@ const (
 
 	// TableTableGroupStatus is the name of the TABLEGROUP_STATUS table.
 	TableTableGroupStatus = "TABLEGROUP_STATUS"
-=======
 	// TableRegions is the string constant of table regions.
 	TableRegions = "TABLE_REGIONS"
->>>>>>> release-7.1.8-5.5
 )
 
 const (
@@ -361,15 +358,12 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
-<<<<<<< HEAD
 	TableTiDBPlanCache:                   autoid.InformationSchemaDBID + 96,
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
 	TableTableGroups:                     autoid.InformationSchemaDBID + 98,
 	TableTableGroupStatus:                autoid.InformationSchemaDBID + 99,
-=======
 	// PingKaiDB tables.
 	TableRegions: autoid.InformationSchemaDBID + 5003,
->>>>>>> release-7.1.8-5.5
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -2524,12 +2518,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
 	TableUserLoginHistory:                   tableUserLoginHistoryCols,
-<<<<<<< HEAD
 	TableTableGroups:                        tablegroupsCols,
 	TableTableGroupStatus:                   tablegroupStatusCols,
-=======
 	TableRegions:                            TableRegionsCols,
->>>>>>> release-7.1.8-5.5
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

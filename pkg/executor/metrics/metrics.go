@@ -128,12 +128,7 @@ var (
 	MppCoordinatorStatsOverTimeNumber        prometheus.Gauge
 	MppCoordinatorStatsReportNotReceived     prometheus.Gauge
 
-<<<<<<< HEAD
 	MppCoordinatorLatencyRcvReport                  prometheus.Observer
-=======
-	MppCoordinatorLatencyRcvReport prometheus.Observer
-
->>>>>>> release-7.1.8-5.5
 	IndexLookUpNormalRowsCounter                    prometheus.Counter
 	IndexLookUpPushDownRowsCounterHit               prometheus.Counter
 	IndexLookUpPushDownRowsCounterMiss              prometheus.Counter
@@ -228,10 +223,6 @@ func InitMetricsVars() {
 	MppCoordinatorStatsReportNotReceived = metrics.MppCoordinatorStats.WithLabelValues("reportNotRcv")
 
 	MppCoordinatorLatencyRcvReport = metrics.MppCoordinatorLatency.WithLabelValues("rcvReports")
-<<<<<<< HEAD
-=======
-
->>>>>>> release-7.1.8-5.5
 	IndexLookUpNormalRowsCounter = metrics.IndexLookRowsCounter.WithLabelValues("normal")
 	IndexLookUpPushDownRowsCounterHit = metrics.IndexLookRowsCounter.WithLabelValues("index_lookup_push_down_hit")
 	IndexLookUpPushDownRowsCounterMiss = metrics.IndexLookRowsCounter.WithLabelValues("index_lookup_push_down_miss")

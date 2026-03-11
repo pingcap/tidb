@@ -549,13 +549,9 @@ func (sc *StatementContext) Reset() bool {
 		stmtCache:           sc.stmtCache,
 		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
-<<<<<<< HEAD
-	clear(sc.TableDeltaMap)
-=======
 	sc.mu = sc.mu.reset()
 	sc.stmtCache = sc.stmtCache.reset()
 	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
->>>>>>> release-7.1.8-5.5
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)

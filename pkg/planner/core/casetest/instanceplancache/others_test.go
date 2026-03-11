@@ -504,7 +504,6 @@ func TestInstancePlanCachePlan(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestInstancePlanCacheMetaInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -651,7 +650,8 @@ func TestInstancePlanCacheIssue58395(t *testing.T) {
 
 	tk.MustExec(`set @i0 = 'a', @i1 = 'b'`)
 	tk.MustExec(`execute p4 using @i0, @i1`)
-=======
+}
+
 func TestInstancePlanCacheWithDualTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -682,5 +682,4 @@ func TestInstancePlanCacheWithDualTable(t *testing.T) {
 
 	// Clean up
 	tk.MustExec(`set global tidb_enable_instance_plan_cache = 0`)
->>>>>>> release-7.1.8-5.5
 }

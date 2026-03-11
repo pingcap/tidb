@@ -3401,8 +3401,6 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 		ts.CheckRows(t, rows, "a b\nc d")
 	})
 }
-<<<<<<< HEAD
-
 func TestPreparedPointGetFastPathBasic(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
@@ -3463,7 +3461,9 @@ func TestPreparedPointGetFastPathBasic(t *testing.T) {
 				}
 			}
 		}
-=======
+	})
+}
+
 func TestAuditPluginInfoForStarting(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
@@ -3770,6 +3770,5 @@ func TestAuditPluginRetrying(t *testing.T) {
 
 		resetTestResults()
 		runExplicitTransactionRetry(db, true)
->>>>>>> release-7.1.8-5.5
 	})
 }

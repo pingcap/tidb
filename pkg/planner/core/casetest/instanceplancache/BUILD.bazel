@@ -12,11 +12,7 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 42,
-=======
     shard_count = 19,
->>>>>>> release-7.1.8-5.5
     deps = [
         "//pkg/domain",
         "//pkg/parser/auth",

@@ -39,15 +39,10 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		core.PhysicalProjection{}, core.PhysicalSort{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
 		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
-<<<<<<< HEAD
 		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
 		core.PhysicalIndexMergeReader{}, core.PhysicalLocalIndexLookUp{},
-		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{}}
-=======
-		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalLocalIndexLookUp{}, core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{},
 		core.PhysicalTableDual{}}
->>>>>>> release-7.1.8-5.5
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -81,7 +76,6 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		switch fullFieldName { // handle some fields specially
 		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
 			"core.PhysicalIndexMergeReader.TablePlans":
-<<<<<<< HEAD
 			c.write("cloned.TablePlans = FlattenListPushDownPlan(cloned.tablePlan)")
 			continue
 		case "core.PhysicalIndexReader.IndexPlans":
@@ -92,28 +86,12 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(cloned.indexPlan)")
 			c.write("} else {")
 			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.indexPlan)")
-=======
-			c.write("cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)")
-			continue
-		case "core.PhysicalIndexReader.IndexPlans":
-			c.write("cloned.IndexPlans = flattenListPushDownPlan(cloned.indexPlan)")
-			continue
-		case "core.PhysicalIndexLookUpReader.IndexPlans":
-			c.write("if cloned.IndexLookUpPushDown {")
-			c.write("cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = flattenTreePushDownPlan(cloned.indexPlan)")
-			c.write("} else {")
-			c.write("cloned.IndexPlans = flattenListPushDownPlan(cloned.indexPlan)")
->>>>>>> release-7.1.8-5.5
 			c.write("}")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.partialPlans {")
-<<<<<<< HEAD
 			c.write("cloned.PartialPlans[i] = FlattenListPushDownPlan(plan)")
-=======
-			c.write("cloned.PartialPlans[i] = flattenListPushDownPlan(plan)")
->>>>>>> release-7.1.8-5.5
 			c.write("}")
 			continue
 		}

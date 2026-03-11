@@ -584,7 +584,6 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-<<<<<<< HEAD
 func TestTxnTableDeltaMap(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -635,7 +634,8 @@ func TestHasDirtyContent(t *testing.T) {
 		tk.MustExec(ca.sql)
 		require.Equal(t, ca.hasDirty, tk.Session().HasDirtyContent(tb.Meta().ID))
 	}
-=======
+}
+
 func TestPanicOnRollbackKilledTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -656,5 +656,4 @@ func TestPanicOnRollbackKilledTxn(t *testing.T) {
 	tk.Session().GetSessionVars().MemTracker.AttachTo(mockTracker)
 	mockTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 	tk.Session().Close()
->>>>>>> release-7.1.8-5.5
 }
