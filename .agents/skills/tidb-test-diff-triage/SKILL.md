@@ -25,18 +25,7 @@ test -f pkg/<package_name>/BUILD.bazel && \
   rg -n --fixed-strings -- "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
 ```
 
-2. If any hit exists, rerun with failpoint enable/disable wrapper:
-```bash
-make failpoint-enable && (
-  go test ./pkg/<package_name> \
-    -run '<TestName>' \
-    -tags=intest,deadlock \
-    -count=1
-  rc=$?
-  make failpoint-disable
-  exit $rc
-)
-```
+2. If any hit exists, rerun with the cleanup-safe failpoint wrapper from `.agents/skills/tidb-failpoint-test-runner` (`Failpoint-Enabled Run`) and add `-count=1` to the `go test` command for reproducibility.
 
 3. If diff disappears after failpoint enable, classify as environment/setup issue, not logic regression.
 
