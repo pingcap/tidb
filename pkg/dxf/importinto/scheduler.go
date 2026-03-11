@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -483,18 +482,10 @@ func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, task
 			model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 	})
 	if err != nil {
-		// If the table is not found, it means the table has been either dropped or truncated.
-		// In such cases, the table mode has already been reset to normal, so we can ignore this error.
-		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-			logger.Warn(
-				"table not found during import on-done, skip altering table mode",
-				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
-			)
-			return
-		}
 		logger.Warn(
 			"alter table mode to normal failure",
 			zap.Error(err),
+			zap.Int64("dbID", taskMeta.Plan.DBID),
 			zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
 		)
 	}
