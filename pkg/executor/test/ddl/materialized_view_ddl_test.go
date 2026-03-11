@@ -140,6 +140,18 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_sum_nullable (a, s, c) as select a, sum(b), count(1) from t_sum_nullable group by a")
 	require.ErrorContains(t, err, "only supports SUM/MIN/MAX on NOT NULL column")
 
+	// SUM does not support time or duration columns.
+	tk.MustExec("create table t_sum_time (a int not null, d date not null default '2020-01-01', dt datetime not null default '2020-01-01 00:00:00', ts timestamp not null default '2020-01-01 00:00:00', dur time not null default '00:00:00')")
+	tk.MustExec("create materialized view log on t_sum_time (a, d, dt, ts, dur) purge next date_add(now(), interval 1 hour)")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_date (a, s, c) as select a, sum(d), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_datetime (a, s, c) as select a, sum(dt), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_timestamp (a, s, c) as select a, sum(ts), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_time (a, s, c) as select a, sum(dur), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+
 	// MIN/MAX requires a base-table index whose leading columns cover all GROUP BY columns.
 	tk.MustExec("create table t_minmax_bad (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
 	tk.MustExec("create materialized view log on t_minmax_bad (a, b, c) purge next date_add(now(), interval 1 hour)")
@@ -245,6 +257,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
 	tk.MustExec("drop materialized view log on t_sum_nullable")
+	tk.MustExec("drop materialized view log on t_sum_time")
 	tk.MustExec("drop materialized view log on t_minmax_bad")
 	tk.MustExec("drop materialized view log on t_minmax_ok")
 	tk.MustExec("drop materialized view log on t_presplit")

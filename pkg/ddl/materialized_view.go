@@ -875,6 +875,12 @@ func validateCreateMaterializedViewQuery(
 				if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SUM/MIN/MAX on NOT NULL column")
 				}
+				if aggFunc == ast.AggFuncSum {
+					tp := baseColMap[colName].GetType()
+					if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
+						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+					}
+				}
 				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
 					hasMinOrMax = true
 				}
