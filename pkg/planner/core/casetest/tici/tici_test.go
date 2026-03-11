@@ -356,6 +356,17 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 	tk.MustExec(`create fulltext index idx_c on t2(c)`)
 	testkit.SetTiFlashReplica(t, dom, "test", "t2")
 
+	// FTS predicates on another table should not block the local non-FTS TiCI path.
+	tk.MustQuery("explain format='brief' select /*+ use_index(t1, idx1) */ * from t1, t2 where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckContain("idx1")
+	tk.MustQuery("explain format='brief' select /*+ use_index(t1, idx1) */ * from t1, t2 where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckContain("idx_c")
+
+	// Dirty writes on a table without local FTS predicates should not make the whole query fail.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(1, '2026-01-01 10:10:10', '2026-01-01 10:10:10', 'text1')")
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.i = t2.a where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckContain("idx_c")
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.i = t2.a where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckNotContain("idx1")
+	tk.MustExec("rollback")
+
 	// With dirty write, TiCI index cannot be used.
 	tk.MustExec("begin")
 	tk.MustExec("insert into t2 values(1, 1, 'text1')")

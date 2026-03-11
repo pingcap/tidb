@@ -654,16 +654,22 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // analyzeTiCIIndex checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
 func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
-	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncGlobal)
+	condHasFTSFunc := intset.NewFastIntSet()
+	if hasFTSFuncGlobal {
+		// Use the plan-level flag as a fast pre-check so we don't rescan
+		// this DataSource when the whole query contains no FTS function.
+		condHasFTSFunc = ds.collectPushedDownCondsHasFTSFuncSet()
+	}
+	hasFTSFuncLocal := !condHasFTSFunc.IsEmpty()
+
+	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncLocal)
 	if err != nil {
 		return err
 	}
 	if shouldSkip {
 		return nil
 	}
-
-	condHasFTSFunc := ds.collectPushedDownCondsHasFTSFuncSet(hasFTSFuncGlobal)
-	matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx := ds.chooseTiCIIndex(hasFTSFuncGlobal, condHasFTSFunc)
+	matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx := ds.chooseTiCIIndex(hasFTSFuncLocal, condHasFTSFunc)
 
 	// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
 	if hasUnmatchedFTSOverAllIdx {
@@ -673,7 +679,9 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 	if matchedIdx == nil {
 		// If no FTS function is found, we should remove all the TiCI index
 		// paths from PossibleAccessPaths.
-		ds.removeTiCIIndexPathsFromPossibleAccessPaths()
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return path.Index != nil && path.Index.IsTiCIIndex()
+		})
 		return nil
 	}
 
@@ -685,12 +693,12 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedCondIdxes)
 }
 
-func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFunc bool) (shouldSkip bool, err error) {
+func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFuncLocal bool) (shouldSkip bool, err error) {
 	hasDirtyWrite := ds.SCtx().HasDirtyContent(ds.TableInfo.ID)
 	if !hasDirtyWrite {
 		return false, nil
 	}
-	if hasFTSFunc {
+	if hasFTSFuncLocal {
 		return false, errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data")
 	}
 	// If there is no FTS function, and there're dirty writes on the table,
@@ -700,11 +708,8 @@ func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFunc bool) (shouldSkip bool, err
 	return true, nil
 }
 
-func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet(hasFTSFuncGlobal bool) intset.FastIntSet {
+func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet() intset.FastIntSet {
 	condHasFTSFunc := intset.NewFastIntSet()
-	if !hasFTSFuncGlobal {
-		return condHasFTSFunc
-	}
 	for i, cond := range ds.PushedDownConds {
 		if expression.ContainsFullTextSearchFn(cond) {
 			condHasFTSFunc.Insert(i)
@@ -714,7 +719,7 @@ func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet(hasFTSFuncGlobal bool)
 }
 
 func (ds *DataSource) chooseTiCIIndex(
-	hasFTSFuncGlobal bool,
+	hasFTSFuncLocal bool,
 	condHasFTSFunc intset.FastIntSet,
 ) (*model.IndexInfo, intset.FastIntSet, bool) {
 	var matchedIdx *model.IndexInfo
@@ -724,7 +729,7 @@ func (ds *DataSource) chooseTiCIIndex(
 	matchedIndexIsHinted := false
 
 	for _, path := range ds.AllPossibleAccessPaths {
-		if !ds.isTiCIIndexPathCandidate(path, hasFTSFuncGlobal, matchedIndexIsHinted) {
+		if !ds.isTiCIIndexPathCandidate(path, hasFTSFuncLocal, matchedIndexIsHinted) {
 			continue
 		}
 
@@ -747,16 +752,16 @@ func (ds *DataSource) chooseTiCIIndex(
 	return matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx
 }
 
-func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFuncGlobal bool, matchedIndexIsHinted bool) bool {
+func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFuncLocal bool, matchedIndexIsHinted bool) bool {
 	// Not TiCI index, skip it.
 	if path.Index == nil || !path.Index.IsTiCIIndex() {
 		return false
 	}
 	// Has FTS function, but the index doesn't support FTS search.
-	if hasFTSFuncGlobal && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
+	if hasFTSFuncLocal && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
 		return false
 	}
-	if !hasFTSFuncGlobal {
+	if !hasFTSFuncLocal {
 		// If there is no FTS function, predicates are free to choose normal TiKV index.
 		// So if there is any hint, we should skip the non-hinted indexes.
 		if ds.HasForceHints && !path.Forced {
@@ -801,6 +806,9 @@ func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ft
 	return ftsCols, invertedIndexedCols
 }
 
+// collectMatchedExprSetForTiCIIndex collects the pushed-down conditions that can
+// be covered by the TiCI index into matchedExprSet. It returns false if any
+// pushed-down condition containing an FTS function cannot be covered by this index.
 func (ds *DataSource) collectMatchedExprSetForTiCIIndex(
 	condHasFTSFunc intset.FastIntSet,
 	ftsCols, invertedIndexedCols intset.FastIntSet,
@@ -820,12 +828,6 @@ func (ds *DataSource) collectMatchedExprSetForTiCIIndex(
 		matchedExprSet.Insert(i)
 	}
 	return true
-}
-
-func (ds *DataSource) removeTiCIIndexPathsFromPossibleAccessPaths() {
-	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex()
-	})
 }
 
 func (ds *DataSource) rewriteMatchedTiCIFTSExprs(
