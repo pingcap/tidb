@@ -160,11 +160,11 @@ func TestMaskingPolicyModifyColumnGuard(t *testing.T) {
 	tk.MustExec("create masking policy p_guard_c on t_guard(c) as c enable")
 	tk.MustExec("create masking policy p_guard_d on t_guard(d) as d enable")
 
-	tk.MustGetErrCode("alter table t_guard modify column c varchar(64)", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t_guard modify column c varchar(64)")
 	tk.MustGetErrCode("alter table t_guard modify column d datetime(6)", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("show create table t_guard").Check(testkit.Rows(
 		"t_guard CREATE TABLE `t_guard` (\n" +
-			"  `c` varchar(20) DEFAULT NULL /* MASKING POLICY `p_guard_c` ENABLED */,\n" +
+			"  `c` varchar(64) DEFAULT NULL /* MASKING POLICY `p_guard_c` ENABLED */,\n" +
 			"  `d` datetime(3) DEFAULT NULL /* MASKING POLICY `p_guard_d` ENABLED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
