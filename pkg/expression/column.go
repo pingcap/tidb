@@ -763,50 +763,6 @@ func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.Index
 	return nil
 }
 
-<<<<<<< HEAD
-func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, onlyPrefixCols bool) ([]*Column, []int) {
-=======
-<<<<<<< HEAD
-// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column and its length.
-// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lengths := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			return retCols, lengths
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lengths = append(lengths, types.UnspecifiedLength)
-		} else {
-			lengths = append(lengths, c.Length)
-		}
-	}
-	return retCols, lengths
-}
-
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
->>>>>>> 4f191be31f (This is an automated cherry-pick of #64484)
-	retCols := make([]*Column, 0, len(index.Columns))
-	lens := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			if onlyPrefixCols {
-				return retCols, lens
-			}
-			retCols = append(retCols, col)
-			lens = append(lens, types.UnspecifiedLength)
-=======
 type indexInfo2ColsFlags uint
 
 const (
@@ -838,7 +794,6 @@ func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *mod
 			}
 			fullCols = append(fullCols, col)
 			fullLens = append(fullLens, types.UnspecifiedLength)
->>>>>>> a97f75ba4b6 (expression,planner: gather both prefix and full index columns at once (#64484))
 			continue
 		}
 
@@ -862,30 +817,12 @@ func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *mod
 	return
 }
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
->>>>>>> 4f191be31f (This is an automated cherry-pick of #64484)
 // IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be only the 1st corresponding *Column and its length.
 // TODO: Use a struct to represent {*Column, int}.
 func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-<<<<<<< HEAD
-	return indexInfo2ColsImpl(colInfos, cols, index, true)
-}
-
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	return indexInfo2ColsImpl(colInfos, cols, index, false)
-}
-
-=======
 	prefixCols, prefixLens, _, _ := indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols)
 	return prefixCols, prefixLens
 }
@@ -907,8 +844,6 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 	return indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols|extractFullCols)
 }
 
->>>>>>> a97f75ba4b6 (expression,planner: gather both prefix and full index columns at once (#64484))
->>>>>>> 4f191be31f (This is an automated cherry-pick of #64484)
 // FindPrefixOfIndex will find columns in index by checking the unique id.
 // So it will return at once no matching column is found.
 func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {

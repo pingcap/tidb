@@ -136,19 +136,12 @@ func TestColInfo2Col(t *testing.T) {
 func TestIndexInfo2Cols(t *testing.T) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-<<<<<<< HEAD
+	col2 := &Column{UniqueID: 2, ID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	colInfo0 := &model.ColumnInfo{ID: 0, Name: pmodel.NewCIStr("0")}
 	colInfo1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: pmodel.NewCIStr("0")}, &model.IndexColumn{Name: pmodel.NewCIStr("1")}
-	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
-=======
-	col2 := &Column{UniqueID: 2, ID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: ast.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("1")}
-	colInfo2 := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("2")}
-	indexCol0, indexCol1, indexCol2 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}, &model.IndexColumn{Name: ast.NewCIStr("2")}
+	colInfo2 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("2")}
+	indexCol0, indexCol1, indexCol2 := &model.IndexColumn{Name: pmodel.NewCIStr("0")}, &model.IndexColumn{Name: pmodel.NewCIStr("1")}, &model.IndexColumn{Name: pmodel.NewCIStr("2")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1, indexCol2}}
->>>>>>> a97f75ba4b6 (expression,planner: gather both prefix and full index columns at once (#64484))
 
 	cols := []*Column{col0}
 	colInfos := []*model.ColumnInfo{colInfo0}
