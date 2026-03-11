@@ -789,9 +789,9 @@ func alignNotNullWithSchema(expr expression.Expression, schema *expression.Schem
 		return e
 	case *expression.CorrelatedColumn:
 		if schemaCol := schema.RetrieveColumn(&e.Column); schemaCol != nil {
-			clone := e.Clone()
+			clone := e.Clone().(*expression.CorrelatedColumn)
 			clone.Column = *schemaCol
-			return &clone
+			return clone
 		}
 		return e
 	case *expression.ScalarFunction:
