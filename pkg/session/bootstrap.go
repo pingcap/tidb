@@ -1240,38 +1240,20 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
+	// version 224
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	version224 = 224
+
 	// ...
 	// [version223, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
-<<<<<<< HEAD
-=======
-
-	// version 239
-	// add modify_params to tidb_global_task and tidb_global_task_history.
-	version239 = 239
-
-	// version 240
-	// Add indexes to mysql.analyze_jobs to speed up the query.
-	version240 = 240
-
-	// Add index on user field for some mysql tables.
-	version241 = 241
-
-	// version 242
-	//   insert `cluster_id` into the `mysql.tidb` table.
-	version242 = 242
->>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-<<<<<<< HEAD
-var currentBootstrapVersion int64 = version223
-=======
-var currentBootstrapVersion int64 = version242
->>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
+var currentBootstrapVersion int64 = version224
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1445,18 +1427,7 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
-<<<<<<< HEAD
-		upgradeToVer219,
-		upgradeToVer220,
-		upgradeToVer221,
-		upgradeToVer222,
-		upgradeToVer223,
-=======
-		upgradeToVer239,
-		upgradeToVer240,
-		upgradeToVer241,
-		upgradeToVer242,
->>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
+		upgradeToVer224,
 	}
 )
 
@@ -3349,8 +3320,8 @@ func writeClusterID(s sessiontypes.Session) {
 	)
 }
 
-func upgradeToVer242(s sessiontypes.Session, ver int64) {
-	if ver >= version242 {
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
 		return
 	}
 

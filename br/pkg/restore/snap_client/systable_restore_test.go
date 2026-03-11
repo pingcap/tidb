@@ -393,8 +393,7 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-<<<<<<< HEAD
-	require.Equal(t, int64(223), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(224), session.CurrentBootstrapVersion)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {
@@ -560,7 +559,4 @@ func TestNotifyUpdateAllUsersPrivilege(t *testing.T) {
 		"mysql": {"test": {}, "user": {}, "db": {}},
 	}, notifier)
 	require.Error(t, err)
-=======
-	require.Equal(t, int64(242), session.CurrentBootstrapVersion)
->>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
 }
