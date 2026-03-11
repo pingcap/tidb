@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 )
@@ -53,13 +53,12 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	metaMut := jobCtx.metaMut
-	existPolicy, err := getMaskingPolicyByName(jobCtx.infoCache, metaMut, policyInfo.Name)
+	existPolicy, err := w.getMaskingPolicyByNameFromSysTable(jobCtx.stepCtx, policyInfo.Name)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	existOnColumn, err := getMaskingPolicyByTableColumn(jobCtx.infoCache, metaMut, policyInfo.TableID, policyInfo.ColumnID)
+	existOnColumn, err := w.getMaskingPolicyByTableColumnFromSysTable(jobCtx.stepCtx, policyInfo.TableID, policyInfo.ColumnID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -81,10 +80,6 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		replacePolicy.MaskingType = policyInfo.MaskingType
 		replacePolicy.RestrictOps = policyInfo.RestrictOps
 		replacePolicy.UpdatedAt = policyInfo.UpdatedAt
-		if err = metaMut.UpdateMaskingPolicy(replacePolicy); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 		if err = w.updateMaskingPolicyInSysTable(jobCtx, replacePolicy); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -106,10 +101,6 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 	switch policyInfo.State {
 	case model.StateNone:
 		policyInfo.State = model.StatePublic
-		if err = metaMut.CreateMaskingPolicy(policyInfo); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 		if err = w.insertMaskingPolicyIntoSysTable(jobCtx, policyInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -137,13 +128,18 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 		return ver, errors.New("masking policy args missing policy info")
 	}
 
-	metaMut := jobCtx.metaMut
-	oldPolicy, err := metaMut.GetMaskingPolicy(args.PolicyID)
+	oldPolicy, err := w.getMaskingPolicyByIDFromSysTable(jobCtx.stepCtx, args.PolicyID)
 	if err != nil {
-		if errors.ErrorEqual(err, meta.ErrMaskingPolicyNotExists) {
-			job.State = model.JobStateCancelled
-		}
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if oldPolicy == nil {
+		job.State = model.JobStateCancelled
+		policyName := args.PolicyName
+		if args.Policy != nil {
+			policyName = args.Policy.Name
+		}
+		return ver, dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 
 	if err := validateMaskingPolicyTarget(jobCtx.stepCtx, jobCtx.infoCache, oldPolicy); err != nil {
@@ -157,10 +153,6 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 	newPolicy.MaskingType = args.Policy.MaskingType
 	newPolicy.RestrictOps = args.Policy.RestrictOps
 	newPolicy.UpdatedAt = args.Policy.UpdatedAt
-	if err = metaMut.UpdateMaskingPolicy(newPolicy); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
 	if err = w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -181,19 +173,16 @@ func (w *worker) onDropMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	metaMut := jobCtx.metaMut
-	policyInfo, err := metaMut.GetMaskingPolicy(args.PolicyID)
+	policyInfo, err := w.getMaskingPolicyByIDFromSysTable(jobCtx.stepCtx, args.PolicyID)
 	if err != nil {
-		if errors.ErrorEqual(err, meta.ErrMaskingPolicyNotExists) {
-			job.State = model.JobStateCancelled
-		}
-		return ver, errors.Trace(err)
-	}
-	policyInfo.State = model.StateNone
-	if err = metaMut.DropMaskingPolicy(policyInfo.ID); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if policyInfo == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(args.PolicyName.O)
+	}
+	policyInfo.State = model.StateNone
 	if err = w.deleteMaskingPolicyFromSysTable(jobCtx, policyInfo.ID); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -207,56 +196,67 @@ func (w *worker) onDropMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver in
 	return ver, nil
 }
 
-func getMaskingPolicyByName(infoCache *infoschema.InfoCache, t *meta.Mutator, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
-	currVer, err := t.GetSchemaVersion()
+func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "policy_name = %?", policyName.O)
 	if err != nil {
 		return nil, err
 	}
-
-	is := infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		policy, ok := is.MaskingPolicyByName(pmodel.CIStr(policyName))
-		if ok {
-			return policy, nil
-		}
+	if len(policies) == 0 {
 		return nil, nil
 	}
-	policies, err := t.ListMaskingPolicies()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, policy := range policies {
-		if policy.Name.L == policyName.L {
-			return policy, nil
-		}
-	}
-	return nil, nil
+	return policies[0], nil
 }
 
-func getMaskingPolicyByTableColumn(infoCache *infoschema.InfoCache, t *meta.Mutator, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
-	currVer, err := t.GetSchemaVersion()
+func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %? AND column_id = %?", tableID, columnID)
 	if err != nil {
 		return nil, err
 	}
-
-	is := infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		policy, ok := is.MaskingPolicyByTableColumn(tableID, columnID)
-		if ok {
-			return policy, nil
-		}
+	if len(policies) == 0 {
 		return nil, nil
 	}
-	policies, err := t.ListMaskingPolicies()
+	return policies[0], nil
+}
+
+func (w *worker) getMaskingPolicyByIDFromSysTable(ctx context.Context, policyID int64) (*model.MaskingPolicyInfo, error) {
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "policy_id = %?", policyID)
+	if err != nil {
+		return nil, err
+	}
+	if len(policies) == 0 {
+		return nil, nil
+	}
+	return policies[0], nil
+}
+
+func (w *worker) getMaskingPoliciesByTableIDFromSysTable(ctx context.Context, tableID int64) ([]*model.MaskingPolicyInfo, error) {
+	return w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %?", tableID)
+}
+
+func (w *worker) getMaskingPoliciesByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) ([]*model.MaskingPolicyInfo, error) {
+	return w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %? AND column_id = %?", tableID, columnID)
+}
+
+func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, whereClause string, args ...any) ([]*model.MaskingPolicyInfo, error) {
+	query := `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+		FROM mysql.tidb_masking_policy`
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+	query += " ORDER BY policy_id"
+	rows, err := w.sess.Execute(ctx, query, "query-masking-policy", args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, policy := range policies {
-		if policy.TableID == tableID && policy.ColumnID == columnID {
-			return policy, nil
+	policies := make([]*model.MaskingPolicyInfo, 0, len(rows))
+	for _, row := range rows {
+		policy, err := maskingPolicyFromSysTableRow(row)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		policies = append(policies, policy)
 	}
-	return nil, nil
+	return policies, nil
 }
 
 func validateMaskingPolicyTarget(ctx context.Context, infoCache *infoschema.InfoCache, policy *model.MaskingPolicyInfo) error {
@@ -405,10 +405,9 @@ func maskingPolicyTypeFromExpr(expr ast.ExprNode) model.MaskingPolicyType {
 
 func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
 	const insertSQL = `INSERT INTO mysql.tidb_masking_policy
-		(policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
-		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`
+		(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
+		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`
 	_, err := w.sess.Execute(jobCtx.stepCtx, insertSQL, "create-masking-policy",
-		policy.ID,
 		policy.Name.O,
 		policy.DBName.O,
 		policy.TableName.O,
@@ -423,7 +422,18 @@ func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *mod
 		policy.UpdatedAt,
 		policy.CreatedBy,
 	)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, err := w.sess.Execute(jobCtx.stepCtx, "SELECT LAST_INSERT_ID()", "last-insert-id-masking-policy")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) != 1 {
+		return errors.Errorf("unexpected last insert id row count: %d", len(rows))
+	}
+	policy.ID = rows[0].GetInt64(0)
+	return nil
 }
 
 func (w *worker) updateMaskingPolicyInSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
@@ -476,17 +486,11 @@ func (w *worker) deleteMaskingPolicyFromSysTable(jobCtx *jobContext, policyID in
 }
 
 func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) error {
-	policies, err := jobCtx.metaMut.ListMaskingPolicies()
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
-		if policy.TableID != tableID {
-			continue
-		}
-		if err := jobCtx.metaMut.DropMaskingPolicy(policy.ID); err != nil {
-			return errors.Trace(err)
-		}
 		if err := w.deleteMaskingPolicyFromSysTable(jobCtx, policy.ID); err != nil {
 			return errors.Trace(err)
 		}
@@ -495,17 +499,11 @@ func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) e
 }
 
 func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, columnID int64) error {
-	policies, err := jobCtx.metaMut.ListMaskingPolicies()
+	policies, err := w.getMaskingPoliciesByTableColumnFromSysTable(jobCtx.stepCtx, tableID, columnID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
-		if policy.TableID != tableID || policy.ColumnID != columnID {
-			continue
-		}
-		if err := jobCtx.metaMut.DropMaskingPolicy(policy.ID); err != nil {
-			return errors.Trace(err)
-		}
 		if err := w.deleteMaskingPolicyFromSysTable(jobCtx, policy.ID); err != nil {
 			return errors.Trace(err)
 		}
@@ -523,7 +521,7 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 		return nil
 	}
 
-	policies, err := jobCtx.metaMut.ListMaskingPolicies()
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -548,14 +546,96 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 		}
 		newPolicy.UpdatedAt = time.Now()
 
-		if err := jobCtx.metaMut.UpdateMaskingPolicy(newPolicy); err != nil {
-			return errors.Trace(err)
-		}
 		if err := w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func maskingPolicyFromSysTableRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
+	status, err := maskingPolicyStatusFromString(row.GetString(8))
+	if err != nil {
+		return nil, err
+	}
+	restrictOps, err := maskingPolicyRestrictOpsFromString(row.GetString(10))
+	if err != nil {
+		return nil, err
+	}
+	createdAt, err := row.GetTime(11).GoTime(time.Local)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	updatedAt, err := row.GetTime(12).GoTime(time.Local)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &model.MaskingPolicyInfo{
+		ID:          row.GetInt64(0),
+		Name:        ast.NewCIStr(row.GetString(1)),
+		DBName:      ast.NewCIStr(row.GetString(2)),
+		TableName:   ast.NewCIStr(row.GetString(3)),
+		TableID:     row.GetInt64(4),
+		ColumnName:  ast.NewCIStr(row.GetString(5)),
+		ColumnID:    row.GetInt64(6),
+		Expression:  row.GetString(7),
+		Status:      status,
+		MaskingType: maskingPolicyTypeFromString(row.GetString(9)),
+		RestrictOps: restrictOps,
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+		CreatedBy:   row.GetString(13),
+		State:       model.StatePublic,
+	}, nil
+}
+
+func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, error) {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "ENABLE", "ENABLED":
+		return model.MaskingPolicyStatusEnable, nil
+	case "DISABLE", "DISABLED":
+		return model.MaskingPolicyStatusDisable, nil
+	default:
+		return model.MaskingPolicyStatusDisable, errors.Errorf("unknown masking policy status: %s", status)
+	}
+}
+
+func maskingPolicyTypeFromString(tp string) model.MaskingPolicyType {
+	switch model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp))) {
+	case model.MaskingPolicyTypeFull,
+		model.MaskingPolicyTypePartial,
+		model.MaskingPolicyTypeNull,
+		model.MaskingPolicyTypeDate,
+		model.MaskingPolicyTypeCustom:
+		return model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
+	default:
+		return model.MaskingPolicyTypeCustom
+	}
+}
+
+func maskingPolicyRestrictOpsFromString(restrictOn string) (ast.MaskingPolicyRestrictOps, error) {
+	restrictOn = strings.TrimSpace(strings.ToUpper(restrictOn))
+	if restrictOn == "" || restrictOn == "NONE" {
+		return ast.MaskingPolicyRestrictOpNone, nil
+	}
+	ops := ast.MaskingPolicyRestrictOpNone
+	for _, token := range strings.Split(restrictOn, ",") {
+		switch strings.TrimSpace(token) {
+		case ast.MaskingPolicyRestrictNameInsertIntoSelect:
+			ops |= ast.MaskingPolicyRestrictOpInsertIntoSelect
+		case ast.MaskingPolicyRestrictNameUpdateSelect:
+			ops |= ast.MaskingPolicyRestrictOpUpdateSelect
+		case ast.MaskingPolicyRestrictNameDeleteSelect:
+			ops |= ast.MaskingPolicyRestrictOpDeleteSelect
+		case ast.MaskingPolicyRestrictNameCTAS:
+			ops |= ast.MaskingPolicyRestrictOpCTAS
+		case "NONE", "":
+			// No-op.
+		default:
+			return ast.MaskingPolicyRestrictOpNone, errors.Errorf("unknown masking policy restrict option: %s", token)
+		}
+	}
+	return ops, nil
 }
 
 type renameMaskingExprVisitor struct {

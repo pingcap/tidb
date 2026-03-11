@@ -790,7 +790,7 @@ const (
 
 	// CreateMaskingPolicyTable stores column masking policy metadata.
 	CreateMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
-		policy_id bigint(64) NOT NULL,
+		policy_id bigint(64) NOT NULL AUTO_INCREMENT,
 		policy_name varchar(64) NOT NULL,
 		db_name varchar(64) NOT NULL,
 		table_name varchar(64) NOT NULL,

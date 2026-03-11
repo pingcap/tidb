@@ -388,7 +388,8 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	maskingPolicies, err := do.fetchMaskingPolicies(m)
+	maskingPolicyTable := findSystemTableInfoByName(schemas, mysql.SystemDB, "tidb_masking_policy")
+	maskingPolicies, err := do.fetchMaskingPolicies(m, maskingPolicyTable)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -472,12 +473,31 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (*Domain) fetchMaskingPolicies(m meta.Reader) ([]*model.MaskingPolicyInfo, error) {
-	allMaskingPolicies, err := m.ListMaskingPolicies()
+func (do *Domain) fetchMaskingPolicies(m meta.Reader, policyTblInfo *model.TableInfo) ([]*model.MaskingPolicyInfo, error) {
+	bootstrapVersion, err := m.GetBootstrapVersion()
 	if err != nil {
 		return nil, err
 	}
-	return allMaskingPolicies, nil
+	// mysql.tidb_masking_policy is introduced in bootstrap version 224.
+	if bootstrapVersion < 224 {
+		return nil, nil
+	}
+	return infoschema.LoadMaskingPolicies(do.sysFacHack, policyTblInfo)
+}
+
+func findSystemTableInfoByName(schemas []*model.DBInfo, dbName, tableName string) *model.TableInfo {
+	for _, dbInfo := range schemas {
+		if !strings.EqualFold(dbInfo.Name.L, dbName) {
+			continue
+		}
+		for _, tblInfo := range dbInfo.Deprecated.Tables {
+			if strings.EqualFold(tblInfo.Name.L, tableName) {
+				return tblInfo
+			}
+		}
+		break
+	}
+	return nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {

@@ -6409,14 +6409,44 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	return e.createMaskingPolicyWithInfo(ctx, schema.ID, policyInfo, OnExistError)
 }
 
+func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
+	if policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName); ok {
+		return policy, nil
+	}
+	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		nil,
+		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+FROM mysql.tidb_masking_policy
+WHERE LOWER(policy_name) = %?
+ORDER BY policy_id
+LIMIT 1`,
+		policyName.L,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	policy, err := maskingPolicyFromSysTableRow(rows[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return policy, nil
+}
+
 func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
-	if !ok {
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if policy == nil {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 	if policy.TableID != tbl.Meta().ID {
@@ -6467,8 +6497,11 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
-	if !ok {
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if policy == nil {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 	if policy.TableID != tbl.Meta().ID {
@@ -6511,8 +6544,11 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
-	if !ok {
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if policy == nil {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 	if policy.TableID != tbl.Meta().ID {
@@ -6559,12 +6595,6 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, schemaID 
 	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
 		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 	}
-
-	policyID, err := e.genMaskingPolicyID()
-	if err != nil {
-		return err
-	}
-	policy.ID = policyID
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
@@ -6971,19 +7001,6 @@ func (e *executor) genPlacementPolicyID() (int64, error) {
 		m := meta.NewMutator(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
-		return err
-	})
-
-	return ret, err
-}
-
-func (e *executor) genMaskingPolicyID() (int64, error) {
-	var ret int64
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		var err error
-		ret, err = m.GenMaskingPolicyID()
 		return err
 	})
 
