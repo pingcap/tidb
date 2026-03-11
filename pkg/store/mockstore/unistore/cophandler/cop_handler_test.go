@@ -15,6 +15,7 @@
 package cophandler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -22,6 +23,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -620,5 +623,56 @@ func BenchmarkExecutors(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+type mockExchSenderChildExec struct{}
+
+func (*mockExchSenderChildExec) open() error                                   { return nil }
+func (*mockExchSenderChildExec) next() (*chunk.Chunk, error)                   { return nil, nil }
+func (*mockExchSenderChildExec) stop() error                                   { return nil }
+func (*mockExchSenderChildExec) getChildren() []mppExec                        { return nil }
+func (*mockExchSenderChildExec) getIntermediateFieldTypes() []*types.FieldType { return nil }
+func (*mockExchSenderChildExec) takeIntermediateResults() []*chunk.Chunk       { return nil }
+func (*mockExchSenderChildExec) getFieldTypes() []*types.FieldType             { return nil }
+func (*mockExchSenderChildExec) buildSummary() *tipb.ExecutorExecutionSummary  { return nil }
+
+func TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	tunnel := &ExchangerTunnel{
+		DataCh:      make(chan *tipb.Chunk, 1),
+		connectedCh: make(chan struct{}),
+		ErrCh:       make(chan error, 1),
+	}
+	t.Cleanup(func() {
+		select {
+		case <-tunnel.connectedCh:
+		default:
+			close(tunnel.connectedCh)
+		}
+	})
+
+	exec := &exchSenderExec{
+		baseMPPExec: baseMPPExec{
+			sctx:     flagsAndTzToSessionContext(0, time.UTC),
+			mppCtx:   &MPPCtx{Ctx: ctx},
+			children: []mppExec{&mockExchSenderChildExec{}},
+		},
+		tunnels: []*ExchangerTunnel{tunnel},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = exec.next()
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("exchSenderExec.next blocks on connectedCh even when context is canceled")
 	}
 }

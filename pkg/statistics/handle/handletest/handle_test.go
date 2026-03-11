@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -401,7 +400,7 @@ func TestMergeIdxHist(t *testing.T) {
 			partition p0 values less than (10),
 			partition p1 values less than (20))`)
 	tk.MustExec("set @@tidb_analyze_version=2")
-	defer tk.MustExec("set @@tidb_analyze_version=1")
+	defer tk.MustExec("set @@tidb_analyze_version=default")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
@@ -490,22 +489,20 @@ func TestDuplicateFMSketch(t *testing.T) {
 }
 
 func TestIndexFMSketch(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("analyze table t index ia")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	// Version 2 analyze collects full stats even when only indexes are specified.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("analyze table t index ibc")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("drop table if exists t")
@@ -517,14 +514,16 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
+	// Clustered primary key also records fm_sketch for the primary index in v2.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 	tk.MustExec("drop table if exists t")
 	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
 	// test NDV
 	checkNDV := func(rows, ndv int) {
 		tk.MustExec("analyze table t")
-		rs := tk.MustQuery("select value from mysql.stats_fm_sketch").Rows()
+		// Exclude extra handle stats (hist_id < 0) from the NDV checks.
+		rs := tk.MustQuery("select value from mysql.stats_fm_sketch where hist_id > 0").Rows()
 		require.Len(t, rs, rows)
 		for i := range rs {
 			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
@@ -548,9 +547,9 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
 	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2001-01-01'), ('2001-01-01', '2001-01-01'), ('2002-01-01', '2001-01-01')")
-	checkNDV(6, 1)
+	checkNDV(9, 1)
 	tk.MustExec("insert into t values ('1999-01-01', '1998-01-01'), ('1997-01-02', '1999-01-02'), ('1998-01-03', '1999-01-03')")
-	checkNDV(6, 2)
+	checkNDV(9, 2)
 }
 
 func TestLoadHistogramWithCollate(t *testing.T) {
@@ -707,7 +706,7 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.StatsHandle().SetLease(0)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")

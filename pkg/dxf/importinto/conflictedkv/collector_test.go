@@ -116,7 +116,7 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		var sharedSize atomic.Int64
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB),
+			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), nil,
 		)
 		rowCount := 48
 		for i := range rowCount {

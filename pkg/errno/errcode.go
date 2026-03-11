@@ -1078,6 +1078,7 @@ const (
 	ErrInvalidOptionVal                    = 8164
 	ErrDuplicateOption                     = 8165
 	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataDuplicateKeyConflict        = 8167
 	ErrLoadDataJobNotFound                 = 8170
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
