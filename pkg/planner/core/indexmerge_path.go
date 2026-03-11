@@ -1295,25 +1295,9 @@ func PrepareIdxColsAndUnwrapArrayType(
 	var virColNum = 0
 	for i := range idxInfo.Columns {
 		colOffset := idxInfo.Columns[i].Offset
-<<<<<<< HEAD
-		colMeta := colInfos[colOffset]
-=======
-<<<<<<< HEAD
-		colMeta := tableInfo.Cols()[colOffset]
->>>>>>> 638c2e570e (This is an automated cherry-pick of #64115)
-		var col *expression.Column
-		for _, c := range tblCols {
-			if c.ID == colMeta.ID {
-				col = c
-				break
-			}
-		}
-		if col == nil { // unexpected, no vir-col on this MVIndex
-=======
 		colMeta := colInfos[colOffset]
 		col, found := tblColsByID[colMeta.ID]
 		if !found { // unexpected, no vir-col on this MVIndex
->>>>>>> b04017c7611 (planner: optimize column lookups in PrepareIdxColsAndUnwrapArrayType with a map (#64115))
 			return nil, false
 		}
 		if col.GetStaticType().IsArray() {
