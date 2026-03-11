@@ -782,7 +782,6 @@ func GeneratedColumnDependsOnTimestamp(genCol *model.ColumnInfo, allCols []*mode
 	return false
 }
 
-
 // ConvertTimestampDatumsToUTC converts all TIMESTAMP column values in the row from
 // session timezone to UTC. It returns a restore function that converts them back.
 // This is used to ensure generated column expressions are evaluated in UTC context.
