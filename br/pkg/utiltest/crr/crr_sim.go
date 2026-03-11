@@ -112,6 +112,24 @@ func (w *CRRWorker) ReplicateBuffered(ctx context.Context, limit int) (int, erro
 	return replicated, nil
 }
 
+// ReplicateBufferedRandom replicates up to limit buffered events in random order.
+func (w *CRRWorker) ReplicateBufferedRandom(
+	ctx context.Context,
+	limit int,
+	intN func(int) int,
+) (int, error) {
+	if intN == nil {
+		return 0, fmt.Errorf("random replicate buffered: nil intN")
+	}
+	if len(w.buffer) >= 2 {
+		for i := len(w.buffer) - 1; i > 0; i-- {
+			j := intN(i + 1)
+			w.buffer[i], w.buffer[j] = w.buffer[j], w.buffer[i]
+		}
+	}
+	return w.ReplicateBuffered(ctx, limit)
+}
+
 func (w *CRRWorker) replicateOne(ctx context.Context, name string) error {
 	exists, err := w.upstream.FileExists(ctx, name)
 	if err != nil {

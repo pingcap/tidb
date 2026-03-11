@@ -31,10 +31,11 @@ import (
 type FlushSim struct {
 	mu      sync.Mutex
 	pd      *PDSim
-	rng     *deterministicRNG
+	seed    int64
 	storage storeapi.Storage
 	seq     uint64
 	records []FlushRecord
+	stores  map[uint64]*sync.Mutex
 }
 
 type regionFiles struct {
@@ -48,8 +49,9 @@ type regionFiles struct {
 func NewFlushSimWithTestContext(pd *PDSim, storage storeapi.Storage, tc *TestContext) *FlushSim {
 	return &FlushSim{
 		pd:      pd,
-		rng:     tc.RNG("flush-sim"),
+		seed:    tc.Seed(),
 		storage: storage,
+		stores:  make(map[uint64]*sync.Mutex),
 	}
 }
 
@@ -85,6 +87,7 @@ func (f *FlushSim) buildRegionFiles(
 	globalCheckpoint uint64,
 	latestTS uint64,
 	states []RegionState,
+	rng *deterministicRNG,
 ) (regionFiles, error) {
 	result := regionFiles{
 		groups:    make([]*backuppb.DataFileGroup, 0, len(states)),
@@ -94,7 +97,7 @@ func (f *FlushSim) buildRegionFiles(
 	}
 
 	for _, state := range states {
-		rMinTS, rMaxTS := pickRegionTSRange(f.rng, globalCheckpoint, latestTS)
+		rMinTS, rMaxTS := pickRegionTSRange(rng, globalCheckpoint, latestTS)
 		if rMinTS < result.minTS {
 			result.minTS = rMinTS
 		}
@@ -126,6 +129,43 @@ func (f *FlushSim) buildRegionFiles(
 		})
 	}
 	return result, nil
+}
+
+func (f *FlushSim) lockStore(storeID uint64) func() {
+	f.mu.Lock()
+	storeMu, ok := f.stores[storeID]
+	if !ok {
+		storeMu = &sync.Mutex{}
+		f.stores[storeID] = storeMu
+	}
+	f.mu.Unlock()
+
+	storeMu.Lock()
+	return storeMu.Unlock
+}
+
+func (f *FlushSim) nextFlushSequence() uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seq++
+	return f.seq
+}
+
+func (f *FlushSim) flushRNG(storeID, flushSeq uint64) *deterministicRNG {
+	return newDeterministicRNG(f.seed, fmt.Sprintf("flush-sim-store-%d-flush-%d", storeID, flushSeq))
+}
+
+func (f *FlushSim) appendRecord(record FlushRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	insertAt := len(f.records)
+	for insertAt > 0 && f.records[insertAt-1].Sequence > record.Sequence {
+		insertAt--
+	}
+	f.records = append(f.records, FlushRecord{})
+	copy(f.records[insertAt+1:], f.records[insertAt:])
+	f.records[insertAt] = record
 }
 
 func (f *FlushSim) writeBackupMeta(
@@ -170,8 +210,8 @@ func (f *FlushSim) flushRegions(
 func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord, error) {
 	failpoint.InjectCall("begin-flush-store")
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	unlockStore := f.lockStore(storeID)
+	defer unlockStore()
 
 	states, err := f.pd.RegionSnapshotsOnStore(storeID)
 	if err != nil {
@@ -185,9 +225,16 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 	latestTS := flushTS
 	globalCheckpoint := f.pd.GlobalCheckpoint()
 
-	f.seq++
-	flushSeq := f.seq
-	files, err := f.buildRegionFiles(ctx, storeID, flushSeq, globalCheckpoint, latestTS, states)
+	flushSeq := f.nextFlushSequence()
+	files, err := f.buildRegionFiles(
+		ctx,
+		storeID,
+		flushSeq,
+		globalCheckpoint,
+		latestTS,
+		states,
+		f.flushRNG(storeID, flushSeq),
+	)
 	if err != nil {
 		return FlushRecord{}, err
 	}
@@ -214,7 +261,7 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 		MetadataPath: metaPath,
 		LogPaths:     files.logPaths,
 	}
-	f.records = append(f.records, record)
+	f.appendRecord(record)
 	return record.clone(), nil
 }
 

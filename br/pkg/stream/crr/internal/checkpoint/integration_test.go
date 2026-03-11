@@ -394,10 +394,11 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 		ScatterChancePercent:           3,
 		MaxScatterRegionsPerRound:      3,
 		ReplicateChancePercent:         90,
-		MaxReplicateBatchPerRound:      12,
-		RestartCalculatorChancePercent: 8,
-		GlobalProgressCheckEvery:       3,
-		CatchUpEvery:                   50,
+		MaxReplicateBatchPerRound:      20,
+		MaxBufferedFiles:               32,
+		RestartCalculatorChancePercent: 10,
+		GlobalProgressCheckEvery:       13,
+		CatchUpEvery:                   299,
 		ComputeTimeout:                 2 * time.Millisecond,
 		CatchUpTimeout:                 100 * time.Millisecond,
 		CalculatorPollInterval:         time.Millisecond,
@@ -474,6 +475,7 @@ type randomizedCRRSimulationConfig struct {
 	MaxScatterRegionsPerRound      int
 	ReplicateChancePercent         int
 	MaxReplicateBatchPerRound      int
+	MaxBufferedFiles               int
 	RestartCalculatorChancePercent int
 	GlobalProgressCheckEvery       int
 	CatchUpEvery                   int
@@ -531,25 +533,29 @@ func (s *randomizedCRRSimulation) runRound(
 	lastValidatedCheckpoint *uint64,
 ) {
 	roundLog := randomizedCRRRoundLog{}
-	roundLog.flushedStores = s.flushRandomStores()
-	roundLog.replicatedFiles = s.replicateRandomBufferedFiles()
-	roundLog.restartedCalculator = s.restartCalculatorIfNeeded()
+	wg := new(sync.WaitGroup)
+	wg.Go(func() { roundLog.flushedStores = s.flushRandomStores() })
+	wg.Go(func() { roundLog.replicatedFiles = s.replicateRandomBufferedFiles() })
+	wg.Go(func() {
+		roundLog.restartedCalculator = s.restartCalculatorIfNeeded()
+		checkpoint, advanced := s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
+		roundLog.checkpoint = checkpoint
+		roundLog.advanced = advanced
+	})
+	wg.Wait()
 
-	checkpoint, advanced := s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
-	roundLog.checkpoint = checkpoint
-	roundLog.advanced = advanced
-	if advanced {
+	if roundLog.advanced {
 		require.GreaterOrEqualf(
 			s.h.t,
-			checkpoint,
+			roundLog.checkpoint,
 			*lastSafeCheckpoint,
 			"calculator checkpoint regressed at round %d, state=%s",
 			round,
 			s.describeState(),
 		)
-		s.requireCheckpointRangeSafe(*lastValidatedCheckpoint, checkpoint)
-		*lastSafeCheckpoint = checkpoint
-		*lastValidatedCheckpoint = checkpoint
+		s.requireCheckpointRangeSafe(*lastValidatedCheckpoint, roundLog.checkpoint)
+		*lastSafeCheckpoint = roundLog.checkpoint
+		*lastValidatedCheckpoint = roundLog.checkpoint
 	} else {
 		require.GreaterOrEqualf(
 			s.h.t,
@@ -693,7 +699,7 @@ func (s *randomizedCRRSimulation) replicateRandomBufferedFiles() int {
 	if count == 0 {
 		return 0
 	}
-	replicated, err := s.h.Replicate(s.h.ctx, count)
+	replicated, err := s.h.CRRWorker.ReplicateBufferedRandom(s.h.ctx, count, s.rng.IntN)
 	require.NoError(s.h.t, err)
 	require.Equal(s.h.t, count, replicated)
 	return replicated
@@ -729,7 +735,7 @@ func (s *randomizedCRRSimulation) replicateAllPending() {
 			require.Zero(s.h.t, pulled)
 			return
 		}
-		replicated, err := s.h.Replicate(s.h.ctx, 0)
+		replicated, err := s.h.CRRWorker.ReplicateBufferedRandom(s.h.ctx, 0, s.rng.IntN)
 		require.NoError(s.h.t, err)
 		require.Equal(s.h.t, buffered, replicated)
 	}
@@ -854,7 +860,13 @@ func (s *randomizedCRRSimulation) sampleOptionalCount(chancePercent, maxCount, l
 }
 
 func (s *randomizedCRRSimulation) samplePartialReplicateCount(buffered int) int {
-	if buffered <= 0 || !s.rollPercent(s.cfg.ReplicateChancePercent) {
+	if buffered <= 0 {
+		return 0
+	}
+	if s.cfg.MaxBufferedFiles > 0 && buffered > s.cfg.MaxBufferedFiles {
+		return buffered - s.cfg.MaxBufferedFiles
+	}
+	if !s.rollPercent(s.cfg.ReplicateChancePercent) {
 		return 0
 	}
 	limit := min(buffered, s.cfg.MaxReplicateBatchPerRound)
