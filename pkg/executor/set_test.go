@@ -1721,6 +1721,11 @@ func TestSetClusterConfigJSONData(t *testing.T) {
 		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
 		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
 		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("24MB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"24MiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("24MiB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"24MiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("1GB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"1GiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("512KB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"512KiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("2TB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"2TiB"}`, true},
 		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
 		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
 		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
