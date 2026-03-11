@@ -398,6 +398,7 @@ type Cluster struct {
 	OnGetClient               func(uint64) error
 	OnClearCache              func(uint64) error
 	ServiceGCSafePoint        uint64
+	ServiceGCSafePointSet     bool
 	ServiceGCSafePointDeleted bool
 	CurrentTS                 uint64
 }
@@ -533,6 +534,7 @@ func (f *Cluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 		)
 	}
 	f.ServiceGCSafePoint = at
+	f.ServiceGCSafePointSet = true
 	return at, nil
 }
 
