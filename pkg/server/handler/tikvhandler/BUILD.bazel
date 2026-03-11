@@ -19,6 +19,7 @@ go_library(
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/storage",
+        "//pkg/dxf/importinto/jobhistory",
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/infoschema/context",

@@ -26,44 +26,44 @@ import (
 func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 	f.Add(uint64(10), uint64(11), uint64(5), uint64(10), uint64(30), byte('x'))
 
-	f.Fuzz(func(t *testing.T, flushTs, storeID, minDefaultTs, minTs, maxTs uint64, extraTag byte) {
+	f.Fuzz(func(t *testing.T, flushTs, storeID, minBeginTsInDefaultCf, minTs, maxTs uint64, extraTag byte) {
 		if !isASCIIAlphanumeric(extraTag) ||
-			extraTag == backupmetas.NameMinBeginTSTag ||
+			extraTag == backupmetas.NameMinBeginTsInDefaultCfTag ||
 			extraTag == backupmetas.NameMinTSTag ||
 			extraTag == backupmetas.NameMaxTSTag {
 			extraTag = 'x'
 		}
 
-		legacyFileName := fmt.Sprintf("%016x-%016x-%016x-%016x", flushTs, minDefaultTs, minTs, maxTs)
+		legacyFileName := fmt.Sprintf("%016x-%016x-%016x-%016x", flushTs, minBeginTsInDefaultCf, minTs, maxTs)
 		legacyParsed, err := backupmetas.ParseName(legacyFileName)
 		require.NoError(t, err)
 		require.Equal(t, backupmetas.ParsedName{
-			FlushTS:      flushTs,
-			MinDefaultTS: minDefaultTs,
-			MinTS:        minTs,
-			MaxTS:        maxTs,
+			FlushTS:               flushTs,
+			MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+			MinTS:                 minTs,
+			MaxTS:                 maxTs,
 		}, legacyParsed)
 
 		taggedFileName := fmt.Sprintf(
 			"%016X%016X-%c%016Xd%016Xu%016Xl%016X",
-			flushTs, storeID, extraTag, uint64(0), minDefaultTs, maxTs, minTs,
+			flushTs, storeID, extraTag, uint64(0), minBeginTsInDefaultCf, maxTs, minTs,
 		)
 		taggedParsed, err := backupmetas.ParseName(taggedFileName)
 		require.NoError(t, err)
 		require.Equal(t, backupmetas.ParsedName{
-			FlushTS:      flushTs,
-			StoreID:      storeID,
-			MinDefaultTS: minDefaultTs,
-			MinTS:        minTs,
-			MaxTS:        maxTs,
+			FlushTS:               flushTs,
+			StoreID:               storeID,
+			MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+			MinTS:                 minTs,
+			MaxTS:                 maxTs,
 		}, taggedParsed)
 
 		tagValues := map[byte]uint64{
-			backupmetas.NameMinBeginTSTag: minDefaultTs,
-			backupmetas.NameMinTSTag:      minTs,
-			backupmetas.NameMaxTSTag:      maxTs,
+			backupmetas.NameMinBeginTsInDefaultCfTag: minBeginTsInDefaultCf,
+			backupmetas.NameMinTSTag:                 minTs,
+			backupmetas.NameMaxTSTag:                 maxTs,
 		}
-		tagOrder := []byte{backupmetas.NameMinBeginTSTag, backupmetas.NameMaxTSTag, backupmetas.NameMinTSTag}
+		tagOrder := []byte{backupmetas.NameMinBeginTsInDefaultCfTag, backupmetas.NameMaxTSTag, backupmetas.NameMinTSTag}
 		for _, missingTag := range tagOrder {
 			segments := make([]string, 0, len(tagOrder)-1)
 			for _, tag := range tagOrder {

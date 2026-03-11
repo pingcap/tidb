@@ -209,12 +209,15 @@ func TestGCServiceSafePoint(t *testing.T) {
 
 	req.NoError(adv.OnTick(ctx))
 	req.Equal(env.ServiceGCSafePoint, cp-1)
+	env.Cluster.Mu.Lock()
+	req.True(env.ServiceGCSafePointSet)
+	env.Cluster.Mu.Unlock()
 
 	env.unregisterTask()
 	req.Eventually(func() bool {
-		env.Mu.Lock()
-		defer env.Mu.Unlock()
-		return env.ServiceGCSafePoint != 0 && env.ServiceGCSafePointDeleted
+		env.Cluster.Mu.Lock()
+		defer env.Cluster.Mu.Unlock()
+		return env.ServiceGCSafePointDeleted
 	}, 3*time.Second, 100*time.Millisecond)
 }
 

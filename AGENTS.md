@@ -28,7 +28,7 @@ This file provides guidance to agents working in this repository.
 | RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
-| Before finishing | MUST run `make bazel_lint_changed` if there are code changes. SHOULD self-review diff quality before finishing. |
+ Before finishing | MUST run `make lint` if there are code changes. SHOULD self-review diff quality before finishing. |
 
 ### Skills
 
@@ -87,8 +87,9 @@ make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
 git fetch origin --prune
-make bazel_lint_changed # Optional: skip this step if the resolved Bazel target is //:all.
 ```
+
+`make bazel_lint_changed` is intentionally excluded from the default local flow because it can be slow and resource-intensive on local macOS environments. Agents MUST NOT run `make bazel_lint_changed` unless the user explicitly requests it.
 
 ## Task -> Validation Matrix
 

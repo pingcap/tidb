@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -368,9 +368,5 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 
 // TaskKey returns the task key for a job.
 func TaskKey(jobID int64) string {
-	if kerneltype.IsNextGen() {
-		ks := keyspace.GetKeyspaceNameBySettings()
-		return fmt.Sprintf("%s/%s/%d", ks, proto.ImportInto, jobID)
-	}
-	return fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
+	return taskkey.ForJob(jobID)
 }

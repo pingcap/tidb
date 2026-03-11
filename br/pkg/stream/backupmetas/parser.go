@@ -26,9 +26,12 @@ const (
 	legacyBackupMetaPartCount = 4
 	taggedMetaTagValueLen     = 17
 
-	NameMinBeginTSTag byte = 'd'
-	NameMinTSTag      byte = 'l'
-	NameMaxTSTag      byte = 'u'
+	// tagged file name format: <32-hex-flush-and-store-id>-[<tag><16-hex-value>]*...
+	// below are tags definition.
+
+	NameMinBeginTsInDefaultCfTag byte = 'd'
+	NameMinTSTag                 byte = 'l'
+	NameMaxTSTag                 byte = 'u'
 )
 
 var (
@@ -38,11 +41,11 @@ var (
 )
 
 type ParsedName struct {
-	FlushTS      uint64
-	StoreID      uint64
-	MinDefaultTS uint64
-	MinTS        uint64
-	MaxTS        uint64
+	FlushTS               uint64
+	StoreID               uint64
+	MinBeginTsInDefaultCf uint64
+	MinTS                 uint64
+	MaxTS                 uint64
 }
 
 func ParseName(fileName string) (ParsedName, error) {
@@ -66,7 +69,7 @@ func parseLegacyBackupMetaFileName(fileName string) (ParsedName, error) {
 	if err != nil {
 		return ParsedName{}, err
 	}
-	minDefaultTs, err := parseBackupMetaHexU64(fileName, "minDefaultTs", parts[1])
+	minBeginTsInDefaultCf, err := parseBackupMetaHexU64(fileName, "minBeginTsInDefaultCf", parts[1])
 	if err != nil {
 		return ParsedName{}, err
 	}
@@ -80,10 +83,10 @@ func parseLegacyBackupMetaFileName(fileName string) (ParsedName, error) {
 	}
 
 	return ParsedName{
-		FlushTS:      flushTs,
-		MinDefaultTS: minDefaultTs,
-		MinTS:        minTs,
-		MaxTS:        maxTs,
+		FlushTS:               flushTs,
+		MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+		MinTS:                 minTs,
+		MaxTS:                 maxTs,
 	}, nil
 }
 
@@ -106,10 +109,10 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 	}
 
 	var (
-		minDefaultTs uint64
-		minTs        uint64
-		maxTs        uint64
-		seenTags     [256]bool
+		minBeginTsInDefaultCf uint64
+		minTs                 uint64
+		maxTs                 uint64
+		seenTags              [256]bool
 	)
 	for pos := 0; pos < len(suffix); {
 		remain := len(suffix) - pos
@@ -130,8 +133,8 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 		}
 		seenTags[tag] = true
 		switch tag {
-		case NameMinBeginTSTag:
-			minDefaultTs = value
+		case NameMinBeginTsInDefaultCfTag:
+			minBeginTsInDefaultCf = value
 		case NameMinTSTag:
 			minTs = value
 		case NameMaxTSTag:
@@ -140,7 +143,7 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 		pos += taggedMetaTagValueLen
 	}
 
-	required := []byte{NameMinBeginTSTag, NameMinTSTag, NameMaxTSTag}
+	required := []byte{NameMinBeginTsInDefaultCfTag, NameMinTSTag, NameMaxTSTag}
 	for _, tag := range required {
 		if !seenTags[tag] {
 			return ParsedName{}, errors.Errorf("missing %q tag in %s", tag, fileName)
@@ -148,11 +151,11 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 	}
 
 	return ParsedName{
-		FlushTS:      flushTs,
-		StoreID:      storeID,
-		MinDefaultTS: minDefaultTs,
-		MinTS:        minTs,
-		MaxTS:        maxTs,
+		FlushTS:               flushTs,
+		StoreID:               storeID,
+		MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+		MinTS:                 minTs,
+		MaxTS:                 maxTs,
 	}, nil
 }
 

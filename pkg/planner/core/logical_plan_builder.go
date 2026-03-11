@@ -893,6 +893,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	copy(names[len(lNames):], rNames[commonLen:])
 
 	conds := make([]expression.Expression, 0, commonLen)
+	redundantColMappings := make([][2]*expression.Column, 0, commonLen)
 	for i := range commonLen {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
@@ -904,14 +905,26 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			// since FullSchema is derived from left and right schema in upper layer, so rc/lc must be in FullSchema.
 			if joinTp == ast.RightJoin {
 				p.FullNames[p.FullSchema.ColumnIndex(lc)].Redundant = true
+				// Right join keeps right side as canonical output for USING/NATURAL common columns.
+				redundantColMappings = append(redundantColMappings, [2]*expression.Column{lc, rc})
 			} else {
 				p.FullNames[p.FullSchema.ColumnIndex(rc)].Redundant = true
+				// For inner/left join, left side is the canonical visible output.
+				redundantColMappings = append(redundantColMappings, [2]*expression.Column{rc, lc})
 			}
 		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.SetOutputNames(names)
+	// UPDATE/DELETE paths restore schema/names to merged child outputs after
+	// coalescing. Skip index-based redundant mapping registration here to avoid
+	// stale output-index mappings.
+	if !b.inUpdateStmt && !b.inDeleteStmt {
+		for _, pair := range redundantColMappings {
+			p.RegisterRedundantColumnMapping(pair[0], pair[1])
+		}
+	}
 
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
@@ -1216,10 +1229,19 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findColFromNaturalUsingJoin(p.Children()[0], col)
+	case *logicalop.LogicalApply:
+		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {
 			idx := x.FullSchema.ColumnIndex(col)
-			return x.FullNames[idx]
+			if idx >= 0 && idx < len(x.FullNames) {
+				return x.FullNames[idx]
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedName := findColFromNaturalUsingJoin(child, col); mappedName != nil {
+				return mappedName
+			}
 		}
 	}
 	return nil
@@ -2107,7 +2129,7 @@ func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (cou
 	return count, offset, nil
 }
 
-func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit, targetQB ...int) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
 	if b.buildingCTE {
@@ -2124,8 +2146,12 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
+	targetQBOffset := b.getSelectOffset()
+	if len(targetQB) > 0 {
+		targetQBOffset = targetQB[0]
+	}
 	if offset+count == 0 {
-		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, targetQBOffset)
 		tableDual.SetSchema(src.Schema())
 		tableDual.SetOutputNames(src.OutputNames())
 		return tableDual, nil
@@ -2133,7 +2159,7 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 	li := logicalop.LogicalLimit{
 		Offset: offset,
 		Count:  count,
-	}.Init(b.ctx, b.getSelectOffset())
+	}.Init(b.ctx, targetQBOffset)
 	if hint := b.TableHints(); hint != nil {
 		li.PreferLimitToCop = hint.PreferLimitToCop
 	}
@@ -2250,6 +2276,16 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
 	}
 	name := outputNames[idx]
+	if join, ok := p.(*logicalop.LogicalJoin); ok &&
+		name != nil &&
+		name.Redundant &&
+		name.OrigTblName.L != "" {
+		// ORDER BY/HAVING name resolution may still be based on FullNames. Remap
+		// redundant qualified base-table columns to canonical join outputs.
+		if mappedCol, mappedName := join.ResolveRedundantColumn(col); mappedCol != nil {
+			col, name = mappedCol, mappedName
+		}
+	}
 	newColName := &ast.ColumnName{
 		Schema: name.DBName,
 		Table:  name.TblName,
@@ -3685,7 +3721,7 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 }
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
-	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
+	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel, b.hintState)
 	sessionVars := b.ctx.GetSessionVars()
 	currentDB := sessionVars.CurrentDB
 	warnHandler := sessionVars.StmtCtx
@@ -4495,7 +4531,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
 				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
 				currentViewHints[qbName] = b.hintProcessor.ViewQBNameToHints[qbName]
-				b.hintProcessor.ViewQBNameUsed[qbName] = struct{}{}
+				b.hintProcessor.MarkViewQBNameUsed(qbName, b.hintState)
 			}
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
@@ -4995,18 +5031,21 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 
 	hintProcessor.ViewQBNameToTable = qbNameMap4View
 	hintProcessor.ViewQBNameToHints = viewHints
-	hintProcessor.ViewQBNameUsed = make(map[string]struct{})
-	hintProcessor.QBOffsetToHints = currentQbHints
 	hintProcessor.QBNameToSelOffset = currentQbNameMap
+	hintState := hintProcessor.NewBuildState()
+	hintState.QBOffsetToHints = currentQbHints
 
 	originHintProcessor := b.hintProcessor
+	originHintState := b.hintState
 	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	b.hintProcessor = hintProcessor
+	b.hintState = hintState
 	newPlannerSelectBlockAsName := make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
 	defer func() {
-		b.hintProcessor.HandleUnusedViewHints()
+		b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 		b.hintProcessor = originHintProcessor
+		b.hintState = originHintState
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	}()
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
