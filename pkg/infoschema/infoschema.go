@@ -207,11 +207,11 @@ func newInfoSchema() *infoSchema {
 			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:    map[int64]*placement.Bundle{},
 		},
-		schemaMap:             map[string]*schemaTables{},
-		schemaID2Name:         map[int64]string{},
-		sortedTablesBuckets:   make([]sortedTables, bucketCount),
-		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-		maskingPolicyMap:      make(map[string]*model.MaskingPolicyInfo),
+		schemaMap:                   map[string]*schemaTables{},
+		schemaID2Name:               map[int64]string{},
+		sortedTablesBuckets:         make([]sortedTables, bucketCount),
+		referredForeignKeyMap:       make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		maskingPolicyMap:            make(map[string]*model.MaskingPolicyInfo),
 		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
 	}
 }

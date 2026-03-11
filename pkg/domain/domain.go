@@ -387,6 +387,11 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+
+	maskingPolicies, err := do.fetchMaskingPolicies(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := do.infoCache.Data
@@ -404,6 +409,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	builder.InitMaskingPolicies(maskingPolicies)
 	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
@@ -464,6 +470,14 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 		return nil, err
 	}
 	return allResourceGroups, nil
+}
+
+func (*Domain) fetchMaskingPolicies(m meta.Reader) ([]*model.MaskingPolicyInfo, error) {
+	allMaskingPolicies, err := m.ListMaskingPolicies()
+	if err != nil {
+		return nil, err
+	}
+	return allMaskingPolicies, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {

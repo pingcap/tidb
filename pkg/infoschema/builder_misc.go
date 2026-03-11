@@ -113,3 +113,10 @@ func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model
 		info.setResourceGroup(group)
 	}
 }
+
+// InitMaskingPolicies initializes masking policy metadata for a full infoschema load.
+func (b *Builder) InitMaskingPolicies(maskingPolicies []*model.MaskingPolicyInfo) {
+	for _, policy := range maskingPolicies {
+		b.infoSchema.setMaskingPolicy(policy)
+	}
+}

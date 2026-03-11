@@ -1762,10 +1762,10 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			} else {
 				lockStmt := &ast.LockTablesStmt{
 					TableLocks: []ast.TableLock{
-							{
-								Table: tName,
-								Type:  ast.TableLockReadOnly,
-							},
+						{
+							Table: tName,
+							Type:  ast.TableLockReadOnly,
+						},
 					},
 				}
 				err = e.LockTables(sctx, lockStmt)
@@ -5637,7 +5637,7 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 
-			err = checkTableLocked(t.Meta(), pmodel.TableLockType(tl.Type), sessionInfo)
+		err = checkTableLocked(t.Meta(), pmodel.TableLockType(tl.Type), sessionInfo)
 		if err != nil {
 			return err
 		}
@@ -5645,7 +5645,7 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
 		}
 		uniqueTableID[t.Meta().ID] = struct{}{}
-			lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: pmodel.TableLockType(tl.Type)})
+		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: pmodel.TableLockType(tl.Type)})
 		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
 			Database: schema.Name.L,
 			Table:    t.Meta().Name.L,
@@ -6355,7 +6355,7 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		if schemaName == "" {
 			return errors.Trace(plannererrors.ErrNoDB)
 		}
-			tableIdent.Schema = pmodel.NewCIStr(schemaName)
+		tableIdent.Schema = pmodel.NewCIStr(schemaName)
 	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(tableIdent)
 	if err != nil {
@@ -6366,8 +6366,8 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		ctx,
 		schema,
 		tbl,
-			ast.CIStr(stmt.PolicyName),
-			ast.CIStr(stmt.Column.Name),
+		ast.CIStr(stmt.PolicyName),
+		ast.CIStr(stmt.Column.Name),
 		stmt.Expr,
 		stmt.RestrictOps,
 		stmt.MaskingPolicyState,
@@ -6385,7 +6385,7 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	default:
 		onExist = OnExistError
 	}
-	return e.createMaskingPolicyWithInfo(ctx, policyInfo, onExist)
+	return e.createMaskingPolicyWithInfo(ctx, schema.ID, policyInfo, onExist)
 }
 
 func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -6397,8 +6397,8 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 		ctx,
 		schema,
 		tbl,
-			ast.CIStr(spec.MaskingPolicyName),
-			ast.CIStr(spec.MaskingPolicyColumn.Name),
+		ast.CIStr(spec.MaskingPolicyName),
+		ast.CIStr(spec.MaskingPolicyColumn.Name),
 		spec.MaskingPolicyExpr,
 		spec.MaskingPolicyRestrictOps,
 		spec.MaskingPolicyState,
@@ -6406,11 +6406,11 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.createMaskingPolicyWithInfo(ctx, policyInfo, OnExistError)
+	return e.createMaskingPolicyWithInfo(ctx, schema.ID, policyInfo, OnExistError)
 }
 
 func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6441,7 +6441,7 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
-		SchemaID:       policy.ID,
+		SchemaID:       schema.ID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,
@@ -6462,7 +6462,7 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6485,7 +6485,7 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
-		SchemaID:       policy.ID,
+		SchemaID:       schema.ID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,
@@ -6506,7 +6506,7 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 }
 
 func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6521,7 +6521,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
-		SchemaID:       policy.ID,
+		SchemaID:       schema.ID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,
@@ -6541,7 +6541,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 
-func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *model.MaskingPolicyInfo, onExist OnExist) error {
+func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, schemaID int64, policy *model.MaskingPolicyInfo, onExist OnExist) error {
 	is := e.infoCache.GetLatest()
 	if existPolicy, ok := is.MaskingPolicyByName(pmodel.CIStr(policy.Name)); ok {
 		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
@@ -6568,6 +6568,7 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
+		SchemaID:       schemaID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,

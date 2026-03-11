@@ -90,7 +90,6 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 			return ver, errors.Trace(err)
 		}
 
-		job.SchemaID = replacePolicy.ID
 		ver, err = updateSchemaVersion(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -116,7 +115,6 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 			return ver, errors.Trace(err)
 		}
 
-		job.SchemaID = policyInfo.ID
 		ver, err = updateSchemaVersion(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -354,10 +352,10 @@ func buildMaskingPolicyInfo(
 	}
 	return &model.MaskingPolicyInfo{
 		Name:        policyName,
-			DBName:      ast.CIStr(schema.Name),
-			TableName:   ast.CIStr(tblInfo.Name),
+		DBName:      ast.CIStr(schema.Name),
+		TableName:   ast.CIStr(tblInfo.Name),
 		TableID:     tblInfo.ID,
-			ColumnName:  ast.CIStr(col.Name),
+		ColumnName:  ast.CIStr(col.Name),
 		ColumnID:    col.ID,
 		Expression:  exprStr,
 		Status:      status,

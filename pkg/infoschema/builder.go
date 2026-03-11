@@ -611,7 +611,10 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 
 func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionDropTable,
+	case model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy,
+		model.ActionDropTable,
 		model.ActionDropColumn,
 		model.ActionModifyColumn,
 		model.ActionRenameTable,
@@ -1037,6 +1040,14 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	b.infoSchema.maskingPolicyMap = maps.Clone(oldIS.maskingPolicyMap)
+	if b.infoSchema.maskingPolicyMap == nil {
+		b.infoSchema.maskingPolicyMap = make(map[string]*model.MaskingPolicyInfo)
+	}
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
+	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
+		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
+	}
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil

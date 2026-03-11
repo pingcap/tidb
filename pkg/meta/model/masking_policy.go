@@ -33,9 +33,9 @@ const (
 func (s MaskingPolicyStatus) String() string {
 	switch s {
 	case MaskingPolicyStatusDisable:
-		return "DISABLE"
+		return "DISABLED"
 	case MaskingPolicyStatusEnable:
-		return "ENABLE"
+		return "ENABLED"
 	default:
 		return ""
 	}

@@ -787,6 +787,27 @@ const (
         status varchar(128),
         description text,
         primary key(module, name))`
+
+	// CreateMaskingPolicyTable stores column masking policy metadata.
+	CreateMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
+		policy_id bigint(64) NOT NULL,
+		policy_name varchar(64) NOT NULL,
+		db_name varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		column_name varchar(64) NOT NULL,
+		column_id bigint(64) NOT NULL,
+		expression text NOT NULL,
+		status varchar(16) NOT NULL,
+		masking_type varchar(32) NOT NULL,
+		restrict_on varchar(256) NOT NULL DEFAULT 'NONE',
+		created_at datetime(6) NOT NULL,
+		updated_at datetime(6) NOT NULL,
+		created_by varchar(288) NOT NULL DEFAULT '',
+		PRIMARY KEY(policy_id),
+		UNIQUE KEY uk_policy_name(policy_name),
+		UNIQUE KEY uk_table_column(table_id, column_id)
+	)`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1238,6 +1259,10 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
+	// version 224
+	//   create `mysql.tidb_masking_policy` table
+	version224 = 224
+
 	// ...
 	// [version223, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1247,7 +1272,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version224
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1426,6 +1451,7 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer224,
 	}
 )
 
@@ -3302,6 +3328,13 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, CreateMaskingPolicyTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3454,6 +3487,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// create mysql.tidb_masking_policy
+	mustExecute(s, CreateMaskingPolicyTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
