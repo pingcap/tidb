@@ -92,3 +92,20 @@ func TestNormalizeOrWrapErr(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, berrors.Is(err, ErrInvalidArgument))
 }
+
+func TestErrCastValueRedact(t *testing.T) {
+	originalMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalMode) })
+
+	errors.RedactLogEnabled.Store(errors.RedactLogDisable)
+	err := ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	require.EqualError(t, err, "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: \"BAD\". Reason: out of range.")
+
+	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
+	err = ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	require.EqualError(t, err, "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: ?. Reason: out of range.")
+
+	errors.RedactLogEnabled.Store(errors.RedactLogMarker)
+	err = ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	require.EqualError(t, err, "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: ‹\"BAD\"›. Reason: out of range.")
+}
