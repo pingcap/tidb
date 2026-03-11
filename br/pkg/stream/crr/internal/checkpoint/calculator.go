@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	defaultPollInterval        = 2 * time.Second
-	defaultMetaReadConcurrency = 16
+	DefaultPollInterval        = 2 * time.Second
+	DefaultMetaReadConcurrency = 16
 )
 
 // EventType identifies a checkpoint calculation progress event.
@@ -89,6 +89,7 @@ type DownstreamObjectChecker interface {
 // CheckpointCalculatorConfig controls checkpoint calculation behavior.
 type CheckpointCalculatorConfig struct {
 	TaskName            string
+	InitialSyncedTS     uint64
 	PollInterval        time.Duration
 	MetaReadConcurrency int
 }
@@ -129,10 +130,10 @@ func NewCalculator(
 		return nil, fmt.Errorf("task name must not be empty")
 	}
 	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = defaultPollInterval
+		cfg.PollInterval = DefaultPollInterval
 	}
 	if cfg.MetaReadConcurrency <= 0 {
-		cfg.MetaReadConcurrency = defaultMetaReadConcurrency
+		cfg.MetaReadConcurrency = DefaultMetaReadConcurrency
 	}
 
 	return &Calculator{
@@ -140,6 +141,7 @@ func NewCalculator(
 		cfg:      cfg,
 		observer: observer,
 		state: calculatorState{
+			syncedTS:      cfg.InitialSyncedTS,
 			syncedByStore: map[uint64]uint64{},
 		},
 	}, nil

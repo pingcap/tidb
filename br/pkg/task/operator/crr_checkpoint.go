@@ -85,9 +85,12 @@ func NewCRRCheckpointService(
 		},
 		service.Config{
 			CalculatorConfig: service.CalculatorConfig{
-				TaskName: cfg.TaskName,
+				TaskName:            cfg.CRRConfig.TaskName,
+				InitialSyncedTS:     cfg.CRRConfig.InitialSyncedTS,
+				PollInterval:        cfg.CRRConfig.PollInterval,
+				MetaReadConcurrency: cfg.CRRConfig.MetaReadConcurrency,
 			},
-			RetryInterval: 0,
+			RetryInterval: cfg.CRRConfig.RetryInterval,
 		},
 	)
 	if err != nil {

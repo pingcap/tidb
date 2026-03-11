@@ -32,7 +32,7 @@ import (
 
 func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	h := newServiceHarness(t, ctx)
+	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 
 	svc, err := New(
@@ -82,7 +82,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 
 func TestServiceTracksFailures(t *testing.T) {
 	ctx := context.Background()
-	h := newServiceHarness(t, ctx)
+	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 
 	svc, err := New(
@@ -125,7 +125,7 @@ func TestServiceTracksFailures(t *testing.T) {
 
 func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 	ctx := context.Background()
-	h := newServiceHarness(t, ctx)
+	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 
 	svc, err := New(
@@ -180,7 +180,7 @@ func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 
 func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 	ctx := context.Background()
-	h := newServiceHarness(t, ctx)
+	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 
 	pd := &watchErrorPDSim{
@@ -283,7 +283,7 @@ type serviceHarness struct {
 	*testutil.TestHarness
 }
 
-func newServiceHarness(t *testing.T, ctx context.Context) *serviceHarness {
+func newServiceHarness(ctx context.Context, t *testing.T) *serviceHarness {
 	t.Helper()
 
 	boundaries, err := testutil.BuildRegionLayout(

@@ -1,9 +1,10 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "testutil",
+    name = "crr",
     srcs = [
         "builder.go",
+        "crr_sim.go",
         "flush_sim.go",
         "harness.go",
         "pd_sim.go",
@@ -21,29 +22,21 @@ go_library(
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
-        "//pkg/util/codec",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/logbackuppb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
-        "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//metadata",
-        "@org_golang_google_grpc//status",
     ],
 )
 
 go_test(
-    name = "testutil_test",
+    name = "crr_test",
     timeout = "short",
     srcs = ["builder_test.go"],
-    embed = [":testutil"],
+    embed = [":crr"],
     flaky = True,
-    shard_count = 5,
-    deps = [
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-    ],
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
 )

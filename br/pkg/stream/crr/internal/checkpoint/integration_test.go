@@ -39,7 +39,7 @@ func TestPartialCRRReplicationFailsRestoreValidationEvenIfCheckpointMatches(t *t
 	)
 	require.NoError(t, err)
 
-	h := newIntegrationHarness(t, ctx, boundaries)
+	h := newIntegrationHarness(ctx, t, boundaries)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint(stores, 3)
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
@@ -67,7 +67,7 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	h := newIntegrationHarness(t, ctx, boundaries)
+	h := newIntegrationHarness(ctx, t, boundaries)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint(stores, 3)
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
@@ -125,7 +125,7 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 
 func TestCheckpointCalculatorConcurrentFlushInterleavings(t *testing.T) {
 	ctx := context.Background()
-	h := newSingleStoreIntegrationHarness(t, ctx)
+	h := newSingleStoreIntegrationHarness(ctx, t)
 
 	initialCheckpoint := h.requireInitialCheckpointByTick()
 	stableCheckpoint := h.computeStableCheckpoint(initialCheckpoint)
@@ -237,8 +237,8 @@ type integrationHarness struct {
 }
 
 func newIntegrationHarness(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	boundaries []testutil.RegionBoundary,
 ) *integrationHarness {
 	t.Helper()
@@ -253,7 +253,7 @@ func newIntegrationHarness(
 	}
 }
 
-func newSingleStoreIntegrationHarness(t *testing.T, ctx context.Context) *integrationHarness {
+func newSingleStoreIntegrationHarness(ctx context.Context, t *testing.T) *integrationHarness {
 	t.Helper()
 
 	boundaries, err := testutil.BuildRegionLayout(
@@ -261,7 +261,7 @@ func newSingleStoreIntegrationHarness(t *testing.T, ctx context.Context) *integr
 	)
 	require.NoError(t, err)
 
-	h := newIntegrationHarness(t, ctx, boundaries)
+	h := newIntegrationHarness(ctx, t, boundaries)
 	h.calculator, err = checkpoint.NewCalculator(
 		checkpoint.CalculatorDeps{
 			PD:         h.PDSim,

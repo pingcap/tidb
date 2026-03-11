@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/pdutil",
         "//br/pkg/restore/log_client",
         "//br/pkg/stream",
+        "//br/pkg/stream/crr/config",
         "//br/pkg/stream/crr/service",
         "//br/pkg/streamhelper",
         "//br/pkg/task",

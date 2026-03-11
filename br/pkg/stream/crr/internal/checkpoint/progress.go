@@ -24,6 +24,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -228,23 +230,51 @@ func (c *Calculator) advanceSyncedState(
 	}
 
 	syncedCandidate := uint64(math.MaxUint64)
-	consideredStores := 0
+	missingStores := make([]uint64, 0)
 	for storeID := range aliveStores {
 		storeSyncedTS, ok := c.state.syncedByStore[storeID]
 		if !ok {
+			missingStores = append(missingStores, storeID)
 			continue
 		}
-		consideredStores++
 		if storeSyncedTS < syncedCandidate {
 			syncedCandidate = storeSyncedTS
 		}
 	}
-	if consideredStores == 0 {
+	if len(missingStores) > 0 {
+		c.warnUnsafeSyncedTS(missingStores, "alive store has no observed flush ts yet")
+		return
+	}
+	if syncedCandidate < c.state.syncedTS {
+		behindStores := make([]uint64, 0)
+		for storeID, storeSyncedTS := range c.state.syncedByStore {
+			if storeSyncedTS < c.state.syncedTS {
+				behindStores = append(behindStores, storeID)
+			}
+		}
+		c.warnUnsafeSyncedTS(behindStores, "alive store flush ts is behind current synced-ts")
 		return
 	}
 	if syncedCandidate > c.state.syncedTS {
 		c.state.syncedTS = syncedCandidate
 	}
+}
+
+func (c *Calculator) warnUnsafeSyncedTS(storeIDs []uint64, reason string) {
+	if c.state.syncedTS == 0 {
+		return
+	}
+	if len(storeIDs) == 0 {
+		return
+	}
+	log.Warn(
+		"crr checkpoint calculator cannot safely advance synced-ts",
+		zap.String("category", "crr checkpoint"),
+		zap.String("task", c.cfg.TaskName),
+		zap.Uint64s("store-ids", storeIDs),
+		zap.Uint64("synced-ts", c.state.syncedTS),
+		zap.String("reason", reason),
+	)
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {

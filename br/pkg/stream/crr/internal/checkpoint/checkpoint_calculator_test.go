@@ -88,6 +88,54 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	)
 }
 
+func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	firstFlush, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	secondFlush, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.Greater(t, secondFlush.FlushTS, firstFlush.FlushTS)
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, h.PDSim.CurrentTSO()))
+	require.Greater(t, h.PullMessages(0), 0)
+	_, err = h.Replicate(ctx, 0)
+	require.NoError(t, err)
+
+	upstream := &recordingUpstreamStorage{inner: h.Upstream}
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   upstream,
+			Downstream: h.Downstream,
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:        "drr_test_task",
+			InitialSyncedTS: firstFlush.FlushTS,
+			PollInterval:    5 * time.Millisecond,
+		},
+		nil,
+	)
+	require.NoError(t, err)
+
+	computedCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Greater(t, computedCheckpoint, uint64(0))
+	require.Len(t, upstream.walkOpts, 1)
+	require.Equal(
+		t,
+		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstFlush.FlushTS, "ffffffffffffffff~"),
+		upstream.walkOpts[0].StartAfter,
+	)
+}
+
 func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
 	ctx := context.Background()
 	stores := testutil.StoreIDRange(1, 4)
@@ -233,6 +281,59 @@ func TestCheckpointCalculatorReturnsCurrentCheckpointWhenUpstreamUnchanged(t *te
 	secondCheckpoint, err := calculator.ComputeNextCheckpoint(unchangedCtx)
 	require.NoError(t, err)
 	require.Equal(t, firstCheckpoint, secondCheckpoint)
+}
+
+func TestCheckpointCalculatorDoesNotAdvanceSyncedTSWhenNewAliveStoreHasNoFlush(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: 5 * time.Millisecond,
+		},
+		nil,
+	)
+	require.NoError(t, err)
+
+	firstFlush, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, h.PDSim.CurrentTSO()))
+	require.Greater(t, h.PullMessages(0), 0)
+	_, err = h.Replicate(ctx, 0)
+	require.NoError(t, err)
+
+	firstCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Greater(t, firstCheckpoint, uint64(0))
+	require.Equal(t, firstFlush.FlushTS, calculator.SyncedTS())
+
+	h.PDSim.EnsureStore(2, 1)
+
+	secondFlush, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.Greater(t, secondFlush.FlushTS, firstFlush.FlushTS)
+	require.NoError(t, h.UploadGlobalCheckpoint(ctx, h.PDSim.CurrentTSO()))
+	require.Greater(t, h.PullMessages(0), 0)
+	_, err = h.Replicate(ctx, 0)
+	require.NoError(t, err)
+
+	secondCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Greater(t, secondCheckpoint, firstCheckpoint)
+	require.Equal(t, firstFlush.FlushTS, calculator.SyncedTS())
 }
 
 func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {

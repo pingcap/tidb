@@ -9,11 +9,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/service",
     visibility = ["//visibility:public"],
-    deps = [
-        "//br/pkg/stream/crr/internal/checkpoint",
-        "//br/pkg/streamhelper",
-        "//pkg/objstore/storeapi",
-    ],
+    deps = ["//br/pkg/stream/crr/internal/checkpoint"],
 )
 
 go_test(
@@ -22,9 +18,10 @@ go_test(
     srcs = ["service_test.go"],
     embed = [":service"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 6,
     deps = [
         "//br/pkg/stream/crr/internal/checkpoint",
+        "//br/pkg/streamhelper/config",
         "//br/pkg/utiltest/crr",
         "@com_github_stretchr_testify//require",
     ],

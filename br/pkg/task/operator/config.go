@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
@@ -225,14 +226,14 @@ func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 
 type CRRCheckpointConfig struct {
 	task.Config
+	CRRConfig crrconfig.Config
 
-	TaskName          string
 	UpstreamStorage   string
 	DownstreamStorage string
 }
 
 func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
-	flags.String(flagTaskName, "", "The name of the upstream log backup task.")
+	crrconfig.DefineFlags(flags)
 	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
 	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI.")
 }
@@ -241,12 +242,11 @@ func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err := cfg.Config.ParseFromFlags(flags); err != nil {
 		return err
 	}
-
-	var err error
-	cfg.TaskName, err = flags.GetString(flagTaskName)
-	if err != nil {
+	if err := cfg.CRRConfig.Parse(flags); err != nil {
 		return err
 	}
+
+	var err error
 	cfg.UpstreamStorage, err = flags.GetString(flagUpstreamStorage)
 	if err != nil {
 		return err
@@ -256,7 +256,7 @@ func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return err
 	}
 
-	if cfg.TaskName == "" {
+	if cfg.CRRConfig.TaskName == "" {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagTaskName)
 	}
 	if cfg.UpstreamStorage == "" {

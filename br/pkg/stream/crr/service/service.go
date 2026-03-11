@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 )
 
-const defaultRetryInterval = time.Second
+const DefaultRetryInterval = time.Second
 
 // Config controls the outer worker loop and embedded checkpoint calculator behavior.
 type Config struct {
@@ -62,7 +62,7 @@ func New(
 	cfg Config,
 ) (*Service, error) {
 	if cfg.RetryInterval <= 0 {
-		cfg.RetryInterval = defaultRetryInterval
+		cfg.RetryInterval = DefaultRetryInterval
 	}
 	if deps.Watcher == nil {
 		return nil, fmt.Errorf("checkpoint watcher must not be nil")

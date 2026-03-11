@@ -526,7 +526,11 @@ func (f *Cluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
 	if f.ServiceGCSafePoint > at {
-		return f.ServiceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.ServiceGCSafePoint, at)
+		return f.ServiceGCSafePoint, errors.Errorf(
+			"minimal safe point %d is greater than the target %d",
+			f.ServiceGCSafePoint,
+			at,
+		)
 	}
 	f.ServiceGCSafePoint = at
 	return at, nil
