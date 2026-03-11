@@ -168,7 +168,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 				OldTableID:    oldTableID,
 				IsRefreshMeta: true,
 			}
-			return applyDropSchema(b, schemaDiff), nil
+			return applyDropSchema(b, m, schemaDiff), nil
 		}
 
 		// Schema exists in kv but not in infoschema, create it to infoschema

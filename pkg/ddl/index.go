@@ -93,8 +93,6 @@ const (
 	MaxCommentLength = 1024
 )
 
-var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
-
 // DefaultCumulativeTimeout is the default cumulative timeout for analyze operation.
 // exported for testing.
 var DefaultCumulativeTimeout = 1 * time.Minute
@@ -1159,8 +1157,6 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	}
 	loadCloudStorageURI(w, job)
 	if reorgTp.NeedMergeProcess() {
-		// Increase telemetryAddIndexIngestUsage
-		telemetryAddIndexIngestUsage.Inc()
 		for _, indexInfo := range idxInfos {
 			indexInfo.BackfillState = model.BackfillStateRunning
 		}

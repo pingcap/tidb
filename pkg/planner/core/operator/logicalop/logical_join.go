@@ -356,7 +356,7 @@ func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr exp
 			return true
 		}
 
-		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond)
+		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond, false)
 		if err != nil {
 			return false
 		}

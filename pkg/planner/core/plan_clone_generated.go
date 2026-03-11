@@ -406,20 +406,6 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalLocalIndexLookUp) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalLocalIndexLookUp)
-	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.physicalSchemaProducer = *basePlan
-	cloned.IndexHandleOffsets = make([]uint32, len(op.IndexHandleOffsets))
-	copy(cloned.IndexHandleOffsets, op.IndexHandleOffsets)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexMergeReader)
 	*cloned = *op
