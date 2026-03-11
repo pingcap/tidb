@@ -447,10 +447,35 @@ func (e *unionEmptyExec) Close() error {
 	return nil
 }
 
+type unionPanicExec struct {
+	*exec.BaseExecutor
+	nextEntered chan struct{}
+	panicCh     <-chan struct{}
+}
+
+func (e *unionPanicExec) Open(context.Context) error {
+	return nil
+}
+
+func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
+	close(e.nextEntered)
+	<-e.panicCh
+	panic("union exec panic during close")
+}
+
+func (e *unionPanicExec) Close() error {
+	return nil
+}
+
 func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
 	fp := "github.com/pingcap/tidb/pkg/executor/unionexec/pauseUnionExecResultPuller"
 	require.NoError(t, failpoint.Enable(fp, "pause"))
-	t.Cleanup(func() { _ = failpoint.Disable(fp) })
+	fpEnabled := true
+	t.Cleanup(func() {
+		if fpEnabled {
+			require.NoError(t, failpoint.Disable(fp))
+		}
+	})
 
 	ctx := mock.NewContext()
 	schema := expression.NewSchema()
@@ -490,6 +515,7 @@ func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Disable(fp))
+	fpEnabled = false
 
 	select {
 	case <-closeDone:
@@ -501,6 +527,67 @@ func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
 	case <-nextDone:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("union Next did not return after Close")
+	}
+}
+
+func TestUnionExecCloseReturnsAfterWorkerPanicDuringShutdown(t *testing.T) {
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	panicCh := make(chan struct{})
+	nextEntered := make(chan struct{})
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionPanicExec{
+		BaseExecutor: &childBase,
+		nextEntered:  nextEntered,
+		panicCh:      panicCh,
+	}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &unionexec.UnionExec{
+		BaseExecutor: unionBase,
+		Concurrency:  1,
+	}
+
+	require.NoError(t, exec.Open(context.Background(), union))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union worker did not enter Next")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	// Close closes finished before waiting, so once it is blocked here the worker
+	// will hit the sendResult(false) path when it panics.
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned before worker panic")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(panicCh)
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not return after worker panic")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after worker panic")
 	}
 }
 
