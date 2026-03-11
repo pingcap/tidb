@@ -1052,7 +1052,6 @@ func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV254, fromVersion)
-	require.NoError(t, err)
 
 	is := dom.InfoSchema()
 	policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
