@@ -58,7 +58,7 @@ func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, suffixTo
 		"%016x%016x-%c%016x%c%016x%c%016x%c%016x.meta",
 		flushTS,
 		storeID,
-		backupmetas.NameMinBeginTSTag,
+		backupmetas.NameMinBeginTsInDefaultCfTag,
 		minDefaultTS,
 		backupmetas.NameMinTSTag,
 		minTS,
