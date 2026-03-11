@@ -57,6 +57,8 @@ func LoadMaskingPolicies(
 
 	query, args := buildLoadMaskingPoliciesQuery(tableIDs)
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// Drop any pending txn state on this pooled internal session before querying.
+	sctx.RollbackTxn(internalCtx)
 	// Use current internal session directly to avoid re-entering session pool creation path.
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		internalCtx,

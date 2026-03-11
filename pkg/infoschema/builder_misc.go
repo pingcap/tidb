@@ -72,21 +72,20 @@ func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
 }
 
 func applyCreateMaskingPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
-	policy, err := m.GetMaskingPolicy(diff.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
+	if !tableIDIsValid(diff.TableID) {
+		return nil
 	}
-	b.infoSchema.setMaskingPolicy(policy)
-	return nil
+	return errors.Trace(refreshMaskingPoliciesForTableIDs(b, diff.TableID))
 }
 
 func applyAlterMaskingPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
-	policy, err := m.GetMaskingPolicy(diff.SchemaID)
-	if err != nil {
+	if !tableIDIsValid(diff.TableID) {
+		return []int64{}, nil
+	}
+	if err := refreshMaskingPoliciesForTableIDs(b, diff.TableID); err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.infoSchema.setMaskingPolicy(policy)
-	return []int64{}, nil
+	return []int64{diff.TableID}, nil
 }
 
 func applyDropMaskingPolicy(b *Builder, policyID int64) []int64 {
