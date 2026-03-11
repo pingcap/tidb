@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/tidb"
@@ -139,7 +140,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        CIStr
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -175,7 +176,7 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 CIStr
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
@@ -237,7 +238,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     CIStr
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -264,7 +265,7 @@ func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackDatabaseStmt struct {
 	ddlNode
 
-	DBName  CIStr
+	DBName  model.CIStr
 	NewName string
 }
 
@@ -404,13 +405,13 @@ func (n *ReferenceDef) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SIMPLE")
 		}
 	}
-	if n.OnDelete.ReferOpt != ReferOptionNoOption {
+	if n.OnDelete.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnDelete.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnDelete")
 		}
 	}
-	if n.OnUpdate.ReferOpt != ReferOptionNoOption {
+	if n.OnUpdate.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnUpdate.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnUpdate")
@@ -456,12 +457,12 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 // OnDeleteOpt is used for optional on delete clause.
 type OnDeleteOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON DELETE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -481,12 +482,12 @@ func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
 // OnUpdateOpt is used for optional on update clause.
 type OnUpdateOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON UPDATE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -561,7 +562,7 @@ type ColumnOption struct {
 	Enforced bool
 	// Name is only used for Check Constraint name.
 	ConstraintName      string
-	PrimaryKeyTp        PrimaryKeyType
+	PrimaryKeyTp        model.PrimaryKeyType
 	SecondaryEngineAttr string
 }
 
@@ -740,11 +741,11 @@ type IndexOption struct {
 	node
 
 	KeyBlockSize               uint64
-	Tp                         IndexType
+	Tp                         model.IndexType
 	Comment                    string
-	ParserName                 CIStr
+	ParserName                 model.CIStr
 	Visibility                 IndexVisibility
-	PrimaryKeyTp               PrimaryKeyType
+	PrimaryKeyTp               model.PrimaryKeyType
 	Global                     bool
 	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	SecondaryEngineAttr        string
@@ -755,9 +756,9 @@ type IndexOption struct {
 // IsEmpty is true if only default options are given
 // and it should not be added to the output
 func (n *IndexOption) IsEmpty() bool {
-	if n.PrimaryKeyTp != PrimaryKeyTypeDefault ||
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault ||
 		n.KeyBlockSize > 0 ||
-		n.Tp != IndexTypeInvalid ||
+		n.Tp != model.IndexTypeInvalid ||
 		len(n.ParserName.O) > 0 ||
 		n.Comment != "" ||
 		n.Global ||
@@ -779,7 +780,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
-	if n.PrimaryKeyTp != PrimaryKeyTypeDefault {
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
@@ -795,7 +796,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
-	if n.Tp != IndexTypeInvalid {
+	if n.Tp != model.IndexTypeInvalid {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
@@ -902,11 +903,29 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*IndexOption)
 	if n.SplitOpt != nil {
-		node, ok := n.SplitOpt.Accept(v)
-		if !ok {
-			return n, false
+		for i, val := range n.SplitOpt.Lower {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SplitOpt.Lower[i] = node.(ExprNode)
 		}
-		n.SplitOpt = node.(*SplitOption)
+		for i, val := range n.SplitOpt.Upper {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SplitOpt.Upper[i] = node.(ExprNode)
+		}
+		for i, list := range n.SplitOpt.ValueLists {
+			for j, val := range list {
+				node, ok := val.Accept(v)
+				if !ok {
+					return n, false
+				}
+				n.SplitOpt.ValueLists[i][j] = node.(ExprNode)
+			}
+		}
 	}
 	return v.Leave(n)
 }
@@ -1408,7 +1427,7 @@ type DropPlacementPolicyStmt struct {
 	ddlNode
 
 	IfExists   bool
-	PolicyName CIStr
+	PolicyName model.CIStr
 }
 
 // Restore implements Restore interface.
@@ -1438,7 +1457,7 @@ type DropResourceGroupStmt struct {
 	ddlNode
 
 	IfExists          bool
-	ResourceGroupName CIStr
+	ResourceGroupName model.CIStr
 }
 
 // Restore implements Restore interface.
@@ -1628,9 +1647,9 @@ type CreateViewStmt struct {
 
 	OrReplace   bool
 	ViewName    *TableName
-	Cols        []CIStr
+	Cols        []model.CIStr
 	Select      StmtNode
-	SchemaCols  []CIStr
+	SchemaCols  []model.CIStr
 	Algorithm   ViewAlgorithm
 	Definer     *auth.UserIdentity
 	Security    ViewSecurity
@@ -1720,7 +1739,7 @@ type CreatePlacementPolicyStmt struct {
 
 	OrReplace        bool
 	IfNotExists      bool
-	PolicyName       CIStr
+	PolicyName       model.CIStr
 	PlacementOptions []*PlacementOption
 }
 
@@ -1831,7 +1850,7 @@ type CreateMaskingPolicyStmt struct {
 
 	OrReplace          bool
 	IfNotExists        bool
-	PolicyName         CIStr
+	PolicyName         model.CIStr
 	Table              *TableName
 	Column             *ColumnName
 	Expr               ExprNode
@@ -1914,7 +1933,7 @@ type CreateResourceGroupStmt struct {
 	ddlNode
 
 	IfNotExists             bool
-	ResourceGroupName       CIStr
+	ResourceGroupName       model.CIStr
 	ResourceGroupOptionList []*ResourceGroupOption
 }
 
@@ -2573,7 +2592,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp           RunawayOptionType
+	Tp           model.RunawayOptionType
 	RuleOption   *ResourceGroupRunawayRuleOption
 	ActionOption *ResourceGroupRunawayActionOption
 	WatchOption  *ResourceGroupRunawayWatchOption
@@ -2581,11 +2600,11 @@ type ResourceGroupRunawayOption struct {
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
-	case RunawayRule:
+	case model.RunawayRule:
 		n.RuleOption.restore(ctx)
-	case RunawayAction:
+	case model.RunawayAction:
 		n.ActionOption.Restore(ctx)
-	case RunawayWatch:
+	case model.RunawayWatch:
 		n.WatchOption.restore(ctx)
 	default:
 		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
@@ -2630,8 +2649,8 @@ func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
 // ResourceGroupRunawayActionOption is used for parsing the resource group runaway action.
 type ResourceGroupRunawayActionOption struct {
 	node
-	Type            RunawayActionType
-	SwitchGroupName CIStr
+	Type            model.RunawayActionType
+	SwitchGroupName model.CIStr
 }
 
 // Restore implements Node interface.
@@ -2639,9 +2658,9 @@ func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error
 	ctx.WriteKeyWord("ACTION ")
 	ctx.WritePlain("= ")
 	switch n.Type {
-	case RunawayActionNone, RunawayActionDryRun, RunawayActionCooldown, RunawayActionKill:
+	case model.RunawayActionNone, model.RunawayActionDryRun, model.RunawayActionCooldown, model.RunawayActionKill:
 		ctx.WriteKeyWord(n.Type.String())
-	case RunawayActionSwitchGroup:
+	case model.RunawayActionSwitchGroup:
 		switchGroup := n.SwitchGroupName.String()
 		if len(switchGroup) == 0 {
 			return errors.New("SWITCH_GROUP runaway watch action requires a non-empty group name")
@@ -2665,7 +2684,7 @@ func (n *ResourceGroupRunawayActionOption) Accept(v Visitor) (Node, bool) {
 
 // ResourceGroupRunawayWatchOption is used for parsing the resource group runaway watch.
 type ResourceGroupRunawayWatchOption struct {
-	Type     RunawayWatchType
+	Type     model.RunawayWatchType
 	Duration string
 }
 
@@ -3504,7 +3523,7 @@ type AlterTableSpec struct {
 
 	Tp                       AlterTableType
 	Name                     string
-	IndexName                CIStr
+	IndexName                model.CIStr
 	Constraint               *Constraint
 	Options                  []*TableOption
 	OrderByList              []*AlterOrderItem
@@ -3517,10 +3536,10 @@ type AlterTableSpec struct {
 	LockType                 LockType
 	Algorithm                AlgorithmType
 	Comment                  string
-	FromKey                  CIStr
-	ToKey                    CIStr
+	FromKey                  model.CIStr
+	ToKey                    model.CIStr
 	Partition                *PartitionOptions
-	PartitionNames           []CIStr
+	PartitionNames           []model.CIStr
 	PartDefinitions          []*PartitionDefinition
 	WithValidation           bool
 	Num                      uint64
@@ -3528,7 +3547,7 @@ type AlterTableSpec struct {
 	TiFlashReplica           *TiFlashReplicaSpec
 	Writeable                bool
 	Statistics               *StatisticsSpec
-	MaskingPolicyName        CIStr
+	MaskingPolicyName        model.CIStr
 	MaskingPolicyColumn      *ColumnName
 	MaskingPolicyExpr        ExprNode
 	MaskingPolicyRestrictOps MaskingPolicyRestrictOps
@@ -4388,7 +4407,7 @@ var (
 )
 
 type SubPartitionDefinition struct {
-	Name    CIStr
+	Name    model.CIStr
 	Options []*TableOption
 }
 
@@ -4615,7 +4634,7 @@ func (*PartitionDefinitionClauseHistory) Validate(pt PartitionType, _ int) error
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	Name    CIStr
+	Name    model.CIStr
 	Clause  PartitionDefinitionClause
 	Options []*TableOption
 	Sub     []*SubPartitionDefinition
@@ -5006,7 +5025,7 @@ type FlashBackToTimestampStmt struct {
 	FlashbackTS  ExprNode
 	FlashbackTSO uint64
 	Tables       []*TableName
-	DBName       CIStr
+	DBName       model.CIStr
 }
 
 // Restore implements Node interface
@@ -5164,7 +5183,7 @@ func (n *StatsOptionsSpec) Accept(v Visitor) (Node, bool) {
 type AlterPlacementPolicyStmt struct {
 	ddlNode
 
-	PolicyName       CIStr
+	PolicyName       model.CIStr
 	IfExists         bool
 	PlacementOptions []*PlacementOption
 }
@@ -5213,7 +5232,7 @@ func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupR
 	for _, op := range ops {
 		if op.Tp == newOp.Tp {
 			// support multiple runaway rules.
-			if op.Tp == RunawayRule {
+			if op.Tp == model.RunawayRule {
 				continue
 			}
 			return false
@@ -5235,7 +5254,7 @@ func CheckBackgroundAppend(ops []*ResourceGroupBackgroundOption, newOp *Resource
 type AlterResourceGroupStmt struct {
 	ddlNode
 
-	ResourceGroupName       CIStr
+	ResourceGroupName       model.CIStr
 	IfExists                bool
 	ResourceGroupOptionList []*ResourceGroupOption
 }

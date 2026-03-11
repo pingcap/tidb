@@ -1594,7 +1594,7 @@ func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldNa
 	}
 	dbName := name.DBName
 	if dbName.L == "" {
-		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		dbName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	if dbName.L == "" {
 		return nil, nil, nil

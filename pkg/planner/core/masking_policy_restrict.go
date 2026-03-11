@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -168,7 +169,7 @@ func (b *PlanBuilder) findMaskingPolicyByFieldName(ctx context.Context, name *ty
 	}
 	dbName := name.DBName
 	if dbName.L == "" {
-		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		dbName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	if dbName.L == "" {
 		return nil, nil, nil

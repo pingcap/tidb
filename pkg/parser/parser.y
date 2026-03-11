@@ -1945,7 +1945,7 @@ DirectResourceGroupOption:
 	}
 |	"RU_PER_SEC" EqOpt "UNLIMITED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, Burstable: ast.BurstableUnlimited}
 	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
@@ -1953,11 +1953,15 @@ DirectResourceGroupOption:
 	}
 |	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
 	}
 |	"BURSTABLE" EqOpt Boolean
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: $3.(bool)}
+		burstable := ast.BurstableDisable
+		if $3.(bool) {
+			burstable = ast.BurstableModerated
+		}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: burstable}
 	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
@@ -2369,8 +2373,8 @@ AlterTableSpec:
 		state := $12.(*ast.MaskingPolicyState)
 		$$ = &ast.AlterTableSpec{
 			Tp:                       ast.AlterTableAddMaskingPolicy,
-			MaskingPolicyName:        ast.NewCIStr($4),
-			MaskingPolicyColumn:      &ast.ColumnName{Name: ast.NewCIStr($7)},
+			MaskingPolicyName:        model.NewCIStr($4),
+			MaskingPolicyColumn:      &ast.ColumnName{Name: model.NewCIStr($7)},
 			MaskingPolicyExpr:        $10,
 			MaskingPolicyRestrictOps: $11.(ast.MaskingPolicyRestrictOps),
 			MaskingPolicyState:       *state,
@@ -2380,21 +2384,21 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:                ast.AlterTableEnableMaskingPolicy,
-			MaskingPolicyName: ast.NewCIStr($4),
+			MaskingPolicyName: model.NewCIStr($4),
 		}
 	}
 |	"DISABLE" "MASKING" "POLICY" PolicyName
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:                ast.AlterTableDisableMaskingPolicy,
-			MaskingPolicyName: ast.NewCIStr($4),
+			MaskingPolicyName: model.NewCIStr($4),
 		}
 	}
 |	"DROP" "MASKING" "POLICY" PolicyName
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:                ast.AlterTableDropMaskingPolicy,
-			MaskingPolicyName: ast.NewCIStr($4),
+			MaskingPolicyName: model.NewCIStr($4),
 		}
 	}
 |	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier EqOpt Expression
@@ -2405,7 +2409,7 @@ AlterTableSpec:
 		}
 		$$ = &ast.AlterTableSpec{
 			Tp:                ast.AlterTableModifyMaskingPolicyExpression,
-			MaskingPolicyName: ast.NewCIStr($4),
+			MaskingPolicyName: model.NewCIStr($4),
 			MaskingPolicyExpr: $8,
 		}
 	}
@@ -2413,7 +2417,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
-			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyName:        model.NewCIStr($4),
 			MaskingPolicyRestrictOps: $9.(ast.MaskingPolicyRestrictOps),
 		}
 	}
@@ -2421,7 +2425,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
-			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyName:        model.NewCIStr($4),
 			MaskingPolicyRestrictOps: ast.MaskingPolicyRestrictOpNone,
 		}
 	}
@@ -4459,7 +4463,7 @@ IndexKeyTypeOpt:
 	}
 |	"FULLTEXT"
 	{
-		$$ = ast.IndexKeyTypeFullText
+		$$ = ast.IndexKeyTypeFulltext
 	}
 |	"VECTOR"
 	{
@@ -4729,7 +4733,7 @@ SubPartitionMethod:
 	{
 		keyAlgorithm, _ := $3.(*ast.PartitionKeyAlgorithm)
 		$$ = &ast.PartitionMethod{
-			Tp:           model.PartitionTypeKey,
+			Tp:           ast.PartitionTypeKey,
 			Linear:       len($1) != 0,
 			ColumnNames:  $5.([]*ast.ColumnName),
 			KeyAlgorithm: keyAlgorithm,
@@ -4738,7 +4742,7 @@ SubPartitionMethod:
 |	LinearOpt "HASH" '(' BitExpr ')'
 	{
 		$$ = &ast.PartitionMethod{
-			Tp:     model.PartitionTypeHash,
+			Tp:     ast.PartitionTypeHash,
 			Linear: len($1) != 0,
 			Expr:   $4.(ast.ExprNode),
 		}
@@ -4767,7 +4771,7 @@ PartitionMethod:
 	{
 		partitionInterval, _ := $5.(*ast.PartitionInterval)
 		$$ = &ast.PartitionMethod{
-			Tp:       model.PartitionTypeRange,
+			Tp:       ast.PartitionTypeRange,
 			Expr:     $3.(ast.ExprNode),
 			Interval: partitionInterval,
 		}
@@ -4776,7 +4780,7 @@ PartitionMethod:
 	{
 		partitionInterval, _ := $6.(*ast.PartitionInterval)
 		$$ = &ast.PartitionMethod{
-			Tp:          model.PartitionTypeRange,
+			Tp:          ast.PartitionTypeRange,
 			ColumnNames: $4.([]*ast.ColumnName),
 			Interval:    partitionInterval,
 		}
@@ -4784,21 +4788,21 @@ PartitionMethod:
 |	"LIST" '(' BitExpr ')'
 	{
 		$$ = &ast.PartitionMethod{
-			Tp:   model.PartitionTypeList,
+			Tp:   ast.PartitionTypeList,
 			Expr: $3.(ast.ExprNode),
 		}
 	}
 |	"LIST" FieldsOrColumns '(' ColumnNameList ')'
 	{
 		$$ = &ast.PartitionMethod{
-			Tp:          model.PartitionTypeList,
+			Tp:          ast.PartitionTypeList,
 			ColumnNames: $4.([]*ast.ColumnName),
 		}
 	}
 |	"SYSTEM_TIME" "INTERVAL" Expression TimeUnit
 	{
 		$$ = &ast.PartitionMethod{
-			Tp:   model.PartitionTypeSystemTime,
+			Tp:   ast.PartitionTypeSystemTime,
 			Expr: $3.(ast.ExprNode),
 			Unit: $4.(ast.TimeUnitType),
 		}
@@ -4806,14 +4810,14 @@ PartitionMethod:
 |	"SYSTEM_TIME" "LIMIT" LengthNum
 	{
 		$$ = &ast.PartitionMethod{
-			Tp:    model.PartitionTypeSystemTime,
+			Tp:    ast.PartitionTypeSystemTime,
 			Limit: $3.(uint64),
 		}
 	}
 |	"SYSTEM_TIME"
 	{
 		$$ = &ast.PartitionMethod{
-			Tp: model.PartitionTypeSystemTime,
+			Tp: ast.PartitionTypeSystemTime,
 		}
 	}
 
@@ -5186,18 +5190,18 @@ CreateViewStmt:
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
 			Select:    selStmt,
-			Algorithm: $3.(model.ViewAlgorithm),
+			Algorithm: $3.(ast.ViewAlgorithm),
 			Definer:   $4.(*auth.UserIdentity),
-			Security:  $5.(model.ViewSecurity),
+			Security:  $5.(ast.ViewSecurity),
 		}
 		if $8 != nil {
 			x.Cols = $8.([]model.CIStr)
 		}
 		if $11 != nil {
-			x.CheckOption = $11.(model.ViewCheckOption)
+			x.CheckOption = $11.(ast.ViewCheckOption)
 			endOffset = parser.startOffset(&yyS[yypt])
 		} else {
-			x.CheckOption = model.CheckOptionCascaded
+			x.CheckOption = ast.CheckOptionCascaded
 		}
 		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		$$ = x
@@ -5216,19 +5220,19 @@ OrReplace:
 ViewAlgorithm:
 	/* EMPTY */
 	{
-		$$ = model.AlgorithmUndefined
+		$$ = ast.AlgorithmUndefined
 	}
 |	"ALGORITHM" "=" "UNDEFINED"
 	{
-		$$ = model.AlgorithmUndefined
+		$$ = ast.AlgorithmUndefined
 	}
 |	"ALGORITHM" "=" "MERGE"
 	{
-		$$ = model.AlgorithmMerge
+		$$ = ast.AlgorithmMerge
 	}
 |	"ALGORITHM" "=" "TEMPTABLE"
 	{
-		$$ = model.AlgorithmTemptable
+		$$ = ast.AlgorithmTemptable
 	}
 
 ViewDefiner:
@@ -5244,15 +5248,15 @@ ViewDefiner:
 ViewSQLSecurity:
 	/* EMPTY */
 	{
-		$$ = model.SecurityDefiner
+		$$ = ast.SecurityDefiner
 	}
 |	"SQL" "SECURITY" "DEFINER"
 	{
-		$$ = model.SecurityDefiner
+		$$ = ast.SecurityDefiner
 	}
 |	"SQL" "SECURITY" "INVOKER"
 	{
-		$$ = model.SecurityInvoker
+		$$ = ast.SecurityInvoker
 	}
 
 ViewName:
@@ -5285,11 +5289,11 @@ ViewCheckOption:
 	}
 |	"WITH" "CASCADED" "CHECK" "OPTION"
 	{
-		$$ = model.CheckOptionCascaded
+		$$ = ast.CheckOptionCascaded
 	}
 |	"WITH" "LOCAL" "CHECK" "OPTION"
 	{
-		$$ = model.CheckOptionLocal
+		$$ = ast.CheckOptionLocal
 	}
 
 /******************************************************************
@@ -15287,26 +15291,26 @@ TableLock:
 	{
 		$$ = ast.TableLock{
 			Table: $1.(*ast.TableName),
-			Type:  $2.(model.TableLockType),
+			Type:  $2.(ast.TableLockType),
 		}
 	}
 
 LockType:
 	"READ"
 	{
-		$$ = model.TableLockRead
+		$$ = ast.TableLockRead
 	}
 |	"READ" "LOCAL"
 	{
-		$$ = model.TableLockReadLocal
+		$$ = ast.TableLockReadLocal
 	}
 |	"WRITE"
 	{
-		$$ = model.TableLockWrite
+		$$ = ast.TableLockWrite
 	}
 |	"WRITE" "LOCAL"
 	{
-		$$ = model.TableLockWriteLocal
+		$$ = ast.TableLockWriteLocal
 	}
 
 TableLockList:
@@ -15592,9 +15596,9 @@ CreateMaskingPolicyStmt:
 		$$ = &ast.CreateMaskingPolicyStmt{
 			OrReplace:           $2.(bool),
 			IfNotExists:         $5.(bool),
-			PolicyName:          ast.NewCIStr($6),
+			PolicyName:          model.NewCIStr($6),
 			Table:               $8.(*ast.TableName),
-			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Column:              &ast.ColumnName{Name: model.NewCIStr($10)},
 			Expr:                $13,
 			RestrictOps:         $14.(ast.MaskingPolicyRestrictOps),
 			MaskingPolicyState:  *state,

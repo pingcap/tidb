@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -216,7 +217,7 @@ func getMaskingPolicyByName(infoCache *infoschema.InfoCache, t *meta.Mutator, po
 
 	is := infoCache.GetLatest()
 	if is != nil && is.SchemaMetaVersion() == currVer {
-		policy, ok := is.MaskingPolicyByName(policyName)
+		policy, ok := is.MaskingPolicyByName(pmodel.CIStr(policyName))
 		if ok {
 			return policy, nil
 		}
@@ -262,11 +263,11 @@ func getMaskingPolicyByTableColumn(infoCache *infoschema.InfoCache, t *meta.Muta
 
 func validateMaskingPolicyTarget(ctx context.Context, infoCache *infoschema.InfoCache, policy *model.MaskingPolicyInfo) error {
 	is := infoCache.GetLatest()
-	dbInfo, ok := is.SchemaByName(policy.DBName)
+	dbInfo, ok := is.SchemaByName(pmodel.CIStr(policy.DBName))
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(policy.DBName)
 	}
-	tbl, err := is.TableByName(ctx, policy.DBName, policy.TableName)
+	tbl, err := is.TableByName(ctx, pmodel.CIStr(policy.DBName), pmodel.CIStr(policy.TableName))
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(policy.DBName, policy.TableName)
 	}
@@ -353,10 +354,10 @@ func buildMaskingPolicyInfo(
 	}
 	return &model.MaskingPolicyInfo{
 		Name:        policyName,
-		DBName:      schema.Name,
-		TableName:   tblInfo.Name,
+			DBName:      ast.CIStr(schema.Name),
+			TableName:   ast.CIStr(tblInfo.Name),
 		TableID:     tblInfo.ID,
-		ColumnName:  col.Name,
+			ColumnName:  ast.CIStr(col.Name),
 		ColumnID:    col.ID,
 		Expression:  exprStr,
 		Status:      status,
@@ -537,11 +538,11 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 		}
 
 		newPolicy := policy.Clone()
-		newPolicy.TableName = tblInfo.Name
+		newPolicy.TableName = ast.CIStr(tblInfo.Name)
 		newPolicy.ColumnID = newCol.ID
-		newPolicy.ColumnName = newCol.Name
+		newPolicy.ColumnName = ast.CIStr(newCol.Name)
 		if policy.ColumnName.L != newCol.Name.L {
-			newExpr, err := rewriteMaskingPolicyExprColumnName(policy.Expression, policy.ColumnName, newCol.Name)
+			newExpr, err := rewriteMaskingPolicyExprColumnName(policy.Expression, policy.ColumnName, ast.CIStr(newCol.Name))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -572,7 +573,7 @@ func (v *renameMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
 	if colExpr.Name.Name.L != v.oldCol.L {
 		return in, false
 	}
-	colExpr.Name.Name = v.newCol
+	colExpr.Name.Name = pmodel.CIStr(v.newCol)
 	return in, false
 }
 

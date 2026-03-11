@@ -1688,6 +1688,6 @@ func BuildViewInfo(s *ast.CreateViewStmt) (*model.ViewInfo, error) {
 		return nil, err
 	}
 
-	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
+	return &model.ViewInfo{Definer: s.Definer, Algorithm: pmodel.ViewAlgorithm(s.Algorithm),
+		Security: pmodel.ViewSecurity(s.Security), SelectStmt: sb.String(), CheckOption: pmodel.ViewCheckOption(s.CheckOption), Cols: nil}, nil
 }

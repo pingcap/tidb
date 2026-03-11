@@ -1762,10 +1762,10 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			} else {
 				lockStmt := &ast.LockTablesStmt{
 					TableLocks: []ast.TableLock{
-						{
-							Table: tName,
-							Type:  pmodel.TableLockReadOnly,
-						},
+							{
+								Table: tName,
+								Type:  ast.TableLockReadOnly,
+							},
 					},
 				}
 				err = e.LockTables(sctx, lockStmt)
@@ -4909,7 +4909,7 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
-	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
+	if keyType == ast.IndexKeyTypeFulltext || keyType == ast.IndexKeyTypeSpatial {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	}
 	if keyType == ast.IndexKeyTypeVector {
@@ -5637,7 +5637,7 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 
-		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
+			err = checkTableLocked(t.Meta(), pmodel.TableLockType(tl.Type), sessionInfo)
 		if err != nil {
 			return err
 		}
@@ -5645,7 +5645,7 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
 		}
 		uniqueTableID[t.Meta().ID] = struct{}{}
-		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
+			lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: pmodel.TableLockType(tl.Type)})
 		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
 			Database: schema.Name.L,
 			Table:    t.Meta().Name.L,
@@ -6355,7 +6355,7 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		if schemaName == "" {
 			return errors.Trace(plannererrors.ErrNoDB)
 		}
-		tableIdent.Schema = ast.NewCIStr(schemaName)
+			tableIdent.Schema = pmodel.NewCIStr(schemaName)
 	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(tableIdent)
 	if err != nil {
@@ -6366,8 +6366,8 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		ctx,
 		schema,
 		tbl,
-		stmt.PolicyName,
-		stmt.Column.Name,
+			ast.CIStr(stmt.PolicyName),
+			ast.CIStr(stmt.Column.Name),
 		stmt.Expr,
 		stmt.RestrictOps,
 		stmt.MaskingPolicyState,
@@ -6397,8 +6397,8 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 		ctx,
 		schema,
 		tbl,
-		spec.MaskingPolicyName,
-		spec.MaskingPolicyColumn.Name,
+			ast.CIStr(spec.MaskingPolicyName),
+			ast.CIStr(spec.MaskingPolicyColumn.Name),
 		spec.MaskingPolicyExpr,
 		spec.MaskingPolicyRestrictOps,
 		spec.MaskingPolicyState,
@@ -6543,7 +6543,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *model.MaskingPolicyInfo, onExist OnExist) error {
 	is := e.infoCache.GetLatest()
-	if existPolicy, ok := is.MaskingPolicyByName(policy.Name); ok {
+	if existPolicy, ok := is.MaskingPolicyByName(pmodel.CIStr(policy.Name)); ok {
 		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}

@@ -1250,8 +1250,8 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = max(p.Num, uint64(len(p.Definitions)))
 		b.Ti.PartitionTelemetry.UseTablePartition = true
 
-		switch p.Tp {
-		case pmodel.PartitionTypeRange:
+			switch p.Tp {
+			case ast.PartitionTypeRange:
 			if p.Sub == nil {
 				if len(p.ColumnNames) > 0 {
 					b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
@@ -1271,11 +1271,11 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 					b.Ti.PartitionTelemetry.UseCreateIntervalPartition = true
 				}
 			}
-		case pmodel.PartitionTypeHash:
+			case ast.PartitionTypeHash:
 			if p.Sub == nil {
 				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
 			}
-		case pmodel.PartitionTypeList:
+			case ast.PartitionTypeList:
 			if p.Sub == nil {
 				if len(p.ColumnNames) > 0 {
 					b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true

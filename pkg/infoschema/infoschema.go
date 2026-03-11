@@ -71,6 +71,10 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+	// maskingPolicyMap stores masking policy metadata by lower-case policy name.
+	maskingPolicyMap map[string]*model.MaskingPolicyInfo
+	// maskingPolicyTableColumnMap stores masking policy metadata by table and column IDs.
+	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
 }
 
 type infoSchemaMisc struct {
@@ -207,6 +211,8 @@ func newInfoSchema() *infoSchema {
 		schemaID2Name:         map[int64]string{},
 		sortedTablesBuckets:   make([]sortedTables, bucketCount),
 		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		maskingPolicyMap:      make(map[string]*model.MaskingPolicyInfo),
+		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
 	}
 }
 

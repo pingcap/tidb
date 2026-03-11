@@ -11,6 +11,7 @@ go_library(
         "flag.go",
         "functions.go",
         "misc.go",
+        "model.go",
         "procedure.go",
         "stats.go",
         "util.go",
@@ -29,6 +30,7 @@ go_library(
         "//pkg/parser/types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tidb_pkg_parser//util:go_default_library",
     ],
 )
 
