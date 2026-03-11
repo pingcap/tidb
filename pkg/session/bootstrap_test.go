@@ -2628,6 +2628,9 @@ func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo225(t *testing.T) {
 
 	// upgrade to current version
 	dom.Close()
+	storeBootstrappedLock.Lock()
+	delete(storeBootstrapped, store.UUID())
+	storeBootstrappedLock.Unlock()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
