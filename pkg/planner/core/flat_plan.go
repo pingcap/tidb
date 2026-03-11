@@ -300,7 +300,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		case *PhysicalLocalIndexLookUp:
 			label[0] = BuildSide
 			label[1] = ProbeSide
+<<<<<<< HEAD
 			indexOfINLProbeChild = 1
+=======
+>>>>>>> release-7.1.8-5.5
 		}
 
 		children := make([]base.PhysicalPlan, len(physPlan.Children()))

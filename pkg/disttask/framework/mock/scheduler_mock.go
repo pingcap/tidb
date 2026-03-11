@@ -130,6 +130,21 @@ func (mr *MockSchedulerMockRecorder) IsRetryableErr(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableErr", reflect.TypeOf((*MockScheduler)(nil).IsRetryableErr), arg0)
 }
 
+// ModifyMeta mocks base method.
+func (m *MockScheduler) ModifyMeta(arg0 []byte, arg1 []proto.Modification) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ModifyMeta", arg0, arg1)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ModifyMeta indicates an expected call of ModifyMeta.
+func (mr *MockSchedulerMockRecorder) ModifyMeta(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifyMeta", reflect.TypeOf((*MockScheduler)(nil).ModifyMeta), arg0, arg1)
+}
+
 // OnDone mocks base method.
 func (m *MockScheduler) OnDone(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -369,6 +384,21 @@ func (mr *MockTaskManagerMockRecorder) GetAllSubtasksByStepAndState(arg0, arg1, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtasksByStepAndState), arg0, arg1, arg2, arg3)
 }
 
+// GetAllTasks mocks base method.
+func (m *MockTaskManager) GetAllTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllTasks", arg0)
+	ret0, _ := ret[0].([]*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllTasks indicates an expected call of GetAllTasks.
+func (mr *MockTaskManagerMockRecorder) GetAllTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllTasks", reflect.TypeOf((*MockTaskManager)(nil).GetAllTasks), arg0)
+}
+
 // GetSubtaskCntGroupByStates mocks base method.
 func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.SubtaskState]int64, error) {
 	m.ctrl.T.Helper()
@@ -449,6 +479,21 @@ func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTasksInStates", reflect.TypeOf((*MockTaskManager)(nil).GetTasksInStates), varargs...)
 }
 
+// GetTopNoNeedResourceTasks mocks base method.
+func (m *MockTaskManager) GetTopNoNeedResourceTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTopNoNeedResourceTasks", arg0)
+	ret0, _ := ret[0].([]*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTopNoNeedResourceTasks indicates an expected call of GetTopNoNeedResourceTasks.
+func (mr *MockTaskManagerMockRecorder) GetTopNoNeedResourceTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTopNoNeedResourceTasks", reflect.TypeOf((*MockTaskManager)(nil).GetTopNoNeedResourceTasks), arg0)
+}
+
 // GetTopUnfinishedTasks mocks base method.
 func (m *MockTaskManager) GetTopUnfinishedTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
 	m.ctrl.T.Helper()
@@ -477,6 +522,20 @@ func (m *MockTaskManager) GetUsedSlotsOnNodes(arg0 context.Context) (map[string]
 func (mr *MockTaskManagerMockRecorder) GetUsedSlotsOnNodes(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsedSlotsOnNodes", reflect.TypeOf((*MockTaskManager)(nil).GetUsedSlotsOnNodes), arg0)
+}
+
+// ModifiedTask mocks base method.
+func (m *MockTaskManager) ModifiedTask(arg0 context.Context, arg1 *proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ModifiedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ModifiedTask indicates an expected call of ModifiedTask.
+func (mr *MockTaskManagerMockRecorder) ModifiedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifiedTask", reflect.TypeOf((*MockTaskManager)(nil).ModifiedTask), arg0, arg1)
 }
 
 // PauseTask mocks base method.

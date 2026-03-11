@@ -34,6 +34,7 @@ import (
 
 	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
@@ -1116,6 +1117,12 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -1159,6 +1166,10 @@ type SessionVars struct {
 	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
+
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel bool
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
@@ -1467,6 +1478,13 @@ type SessionVars struct {
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
 
+	// EnableDDLAnalyze is a sysVar to indicate create index or reorg index with embedded analyze.
+	EnableDDLAnalyze bool
+
+	// EnableDDLAnalyzeExecOpt is a internal flag to notify internal session whether we do ddl analyze.
+	// It is not controlled by user behavior, and is always default off.
+	EnableDDLAnalyzeExecOpt bool
+
 	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
@@ -1733,6 +1751,15 @@ type SessionVars struct {
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
+
 	// database name +"."+procedure_name as key , *RoutineCacahe as value.
 	ProcedurePlanCache map[string]any
 	// LastProcedureErrorStr is used to save last handler command.
@@ -1749,9 +1776,15 @@ type SessionVars struct {
 	EnableSPParamSubstitute bool
 	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	CreateFromSelectUsingImport bool
+<<<<<<< HEAD
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo         *stmtsummary.StmtExecInfo
 	EnableIndexLookUpPushDown bool
+=======
+
+	// PlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	PlanCacheMaxDecimalParamNums int
+>>>>>>> release-7.1.8-5.5
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -1876,8 +1909,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		sc.Reset()
+		succ := sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
+		if !succ {
+			sc = stmtctx.NewStmtCtx()
+		}
 	} else {
 		sc = stmtctx.NewStmtCtx()
 	}
@@ -2170,6 +2206,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
+<<<<<<< HEAD
 		UserVars:                               NewUserVars(),
 		systems:                                make(map[string]string),
 		PreparedStmts:                          make(map[uint32]any),
@@ -2299,6 +2336,133 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:                    DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:                      DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:                DefOptEnableProjectionPushDown,
+=======
+		UserVars:                      NewUserVars(),
+		systems:                       make(map[string]string),
+		PreparedStmts:                 make(map[uint32]any),
+		PreparedStmtNameToID:          make(map[string]uint32),
+		PlanCacheParams:               NewPlanCacheParamList(),
+		TxnCtx:                        &TransactionContext{},
+		RetryInfo:                     &RetryInfo{},
+		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
+		AutoIncrementIncrement:        DefAutoIncrementIncrement,
+		AutoIncrementOffset:           DefAutoIncrementOffset,
+		StmtCtx:                       stmtctx.NewStmtCtx(),
+		AllowAggPushDown:              false,
+		AllowCartesianBCJ:             DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
+		RetryLimit:                    DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:              kv.PriorityLow,
+		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          DefOptCorrelationThreshold,
+		CorrelationExpFactor:          DefOptCorrelationExpFactor,
+		cpuFactor:                     DefOptCPUFactor,
+		copCPUFactor:                  DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 DefOptNetworkFactor,
+		scanFactor:                    DefOptScanFactor,
+		descScanFactor:                DefOptDescScanFactor,
+		seekFactor:                    DefOptSeekFactor,
+		memoryFactor:                  DefOptMemoryFactor,
+		diskFactor:                    DefOptDiskFactor,
+		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableForceInlineCTE:          DefOptForceInlineCTE,
+		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		IndexScanCostFactor:           DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:         DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:         DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:       DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:    DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:         DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          DefOptIndexMergeCostFactor,
+		SortCostFactor:                DefOptSortCostFactor,
+		TopNCostFactor:                DefOptTopNCostFactor,
+		LimitCostFactor:               DefOptLimitCostFactor,
+		StreamAggCostFactor:           DefOptStreamAggCostFactor,
+		HashAggCostFactor:             DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
+		CommandValue:                  uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughSel:  DefTiDBOptJoinReorderThroughSel,
+		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
+		enableIndexMerge:              DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		replicaRead:                   kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:              DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:           false,
+		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:              DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                 NewSequenceState(),
+		WindowingUseHighPrecision:     true,
+		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
+		FoundInPlanCache:              DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:            DefTiDBFoundInBinding,
+		FoundInBinding:                DefTiDBFoundInBinding,
+		SelectLimit:                   math.MaxUint64,
+		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
+		EnableParallelApply:           DefTiDBEnableParallelApply,
+		ShardAllocateStep:             DefTiDBShardAllocateStep,
+		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                      kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
+		Enable1PC:                     DefTiDBEnable1PC,
+		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
+		TMPTableSize:                  DefTiDBTmpTableMaxSize,
+		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
+		Rng:                           mathutil.NewWithTime(),
+		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:              DefMaxAllowedPacket,
+		TiFlashFastScan:               DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt: true,
+		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
+		HookContext:                   hctx,
+		EnableReuseChunk:              DefTiDBEnableReusechunk,
+		preUseChunkAlloc:              DefTiDBUseAlloc,
+		chunkPool:                     nil,
+		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
+		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		GroupConcatMaxLen:             DefGroupConcatMaxLen,
+		EnableRedactLog:               DefTiDBRedactLog,
+		EnableWindowFunction:          DefEnableWindowFunction,
+		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		CostModelVersion:              DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
+>>>>>>> release-7.1.8-5.5
 		inCallProcedure: struct {
 			inCall bool
 			num    int
@@ -2432,8 +2596,33 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
-// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	// For test purpose, you can enable this failpoint to get the unadjusted replica read.
+	failpoint.Inject("GetReplicaReadUnadjusted", func(_ failpoint.Value) {
+		failpoint.Return(s.replicaRead)
+	})
+	// Replica read only works for read-only statements.
+	if !s.StmtCtx.IsReadOnly {
+		if s.StmtCtx.HasReplicaReadHint {
+			const warnMsg = "Ignore replica read hint for non-read-only statement"
+			existWarnings := s.StmtCtx.GetWarnings()
+			hasWarning := false
+			for _, warn := range existWarnings {
+				if warn.Err.Error() == warnMsg {
+					hasWarning = true
+					break
+				}
+			}
+			if !hasWarning {
+				s.StmtCtx.AppendWarning(errors.New(warnMsg))
+			}
+		}
+		return kv.ReplicaReadLeader
+	}
+	if s.StmtCtx.RCCheckTS || s.RcWriteCheckTS {
+		return kv.ReplicaReadLeader
+	}
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
@@ -3419,6 +3608,10 @@ const (
 	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
 	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
+	// SlowLogStorageFromKV is used to indicate whether the statement read data from TiKV.
+	SlowLogStorageFromKV = "Storage_from_kv"
+	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
+	SlowLogStorageFromMPP = "Storage_from_mpp"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3479,6 +3672,8 @@ type SlowQueryLogItems struct {
 	WRU               float64
 	WaitRUDuration    time.Duration
 	CPUUsages         ppcpuusage.CPUUsages
+	StorageKV         bool // query read from TiKV
+	StorageMPP        bool // query read from TiFlash
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3695,6 +3890,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.CPUUsages.TikvCPUTime > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogTikvCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TikvCPUTime.Seconds(), 'f', -1, 64))
 	}
+	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
+	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

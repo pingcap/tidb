@@ -212,6 +212,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
@@ -230,6 +231,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][6])
+	tk.MustExec("set @@global.tidb_enable_auto_analyze=DEFAULT")
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {
@@ -247,7 +249,6 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }

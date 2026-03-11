@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/config",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/streamhelper/config",
         "//pkg/parser/terror",
         "//pkg/util/logutil",
         "//pkg/util/tiflashcompute",
@@ -37,7 +36,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 26,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",

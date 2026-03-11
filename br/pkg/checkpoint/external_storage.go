@@ -31,8 +31,44 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	CheckpointRestoreDirFormat                = CheckpointDir + "/restore-%s"
+	CheckpointDataDirForRestoreFormat         = CheckpointRestoreDirFormat + "/data"
+	CheckpointChecksumDirForRestoreFormat     = CheckpointRestoreDirFormat + "/checksum"
+	CheckpointMetaPathForRestoreFormat        = CheckpointRestoreDirFormat + "/checkpoint.meta"
+	CheckpointProgressPathForRestoreFormat    = CheckpointRestoreDirFormat + "/progress.meta"
+	CheckpointIngestIndexPathForRestoreFormat = CheckpointRestoreDirFormat + "/ingest_index.meta"
+)
+
+func flushPathForRestore(taskName string) flushPath {
+	return flushPath{
+		CheckpointDataDir:     getCheckpointDataDirByName(taskName),
+		CheckpointChecksumDir: getCheckpointChecksumDirByName(taskName),
+	}
+}
+
+func getCheckpointMetaPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointMetaPathForRestoreFormat, taskName)
+}
+
+func getCheckpointDataDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointDataDirForRestoreFormat, taskName)
+}
+
+func getCheckpointChecksumDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName)
+}
+
+func getCheckpointProgressPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointProgressPathForRestoreFormat, taskName)
+}
+
+func getCheckpointIngestIndexPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointIngestIndexPathForRestoreFormat, taskName)
+}
+
 type externalCheckpointStorage struct {
-	flushPosition
+	flushPath
 	storage storage.ExternalStorage
 
 	lockId uint64
@@ -43,11 +79,12 @@ func newExternalCheckpointStorage(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	timer GlobalTimer,
+	flushPath flushPath,
 ) (*externalCheckpointStorage, error) {
 	checkpointStorage := &externalCheckpointStorage{
-		flushPosition: flushPositionForBackup(),
-		storage:       s,
-		timer:         timer,
+		flushPath: flushPath,
+		storage:   s,
+		timer:     timer,
 	}
 	if timer != nil {
 		if err := checkpointStorage.initialLock(ctx); err != nil {
@@ -186,13 +223,4 @@ func (s *externalCheckpointStorage) updateLock(ctx context.Context) error {
 	})
 
 	return nil
-}
-
-func (s *externalCheckpointStorage) deleteLock(ctx context.Context) {
-	if s.lockId > 0 {
-		err := s.storage.DeleteFile(ctx, s.CheckpointLockPath)
-		if err != nil {
-			log.Warn("failed to remove the checkpoint lock", zap.Error(err))
-		}
-	}
 }

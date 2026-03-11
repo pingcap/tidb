@@ -371,7 +371,11 @@ func useChunkEncoding(chk *chunk.Chunk, fields []*types.FieldType, outputOffsets
 	if outputOffsets != nil {
 		offsets := make([]int, len(outputOffsets))
 		newFields := make([]*types.FieldType, len(outputOffsets))
+<<<<<<< HEAD
 		for i := range outputOffsets {
+=======
+		for i := 0; i < len(outputOffsets); i++ {
+>>>>>>> release-7.1.8-5.5
 			offset := outputOffsets[i]
 			offsets[i] = int(offset)
 			newFields[i] = fields[offset]

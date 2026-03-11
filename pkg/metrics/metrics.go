@@ -99,6 +99,10 @@ func InitMetrics() {
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
+	// For now, those metrics are initialized but not registered.
+	// They will be printed to log during restoring...
+	InitBRMetrics()
+
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -314,8 +318,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskGauge)
-	prometheus.MustRegister(DistTaskStartTimeGauge)
 	prometheus.MustRegister(DistTaskUsedSlotsGauge)
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
@@ -341,6 +343,10 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+<<<<<<< HEAD
+=======
+
+>>>>>>> release-7.1.8-5.5
 	// IndexLookup
 	prometheus.MustRegister(IndexLookUpExecutorDuration)
 	prometheus.MustRegister(IndexLookRowsCounter)

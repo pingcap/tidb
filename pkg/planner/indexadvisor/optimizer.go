@@ -251,7 +251,7 @@ func (opt *optimizerImpl) EstIndexSize(db, table string, cols ...string) (indexS
 		return 0, err
 	}
 	stats := domain.GetDomain(opt.sctx).StatsHandle()
-	tblStats := stats.GetTableStats(tbl.Meta())
+	tblStats := stats.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	for _, colName := range cols {
 		colStats := tblStats.ColumnByName(colName)
 		if colStats == nil { // might be not loaded

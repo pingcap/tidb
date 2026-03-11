@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -660,6 +661,12 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	if e.indexLookUpPushDown {
+<<<<<<< HEAD
+=======
+		// For index lookup push down, needPartitionHandle should always return false because
+		// global index or keep order for partition table is not supported now.
+		intest.Assert(!e.index.Global && !e.keepOrder)
+>>>>>>> release-7.1.8-5.5
 		return false, nil
 	}
 
@@ -748,6 +755,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				}
 			}
 			if tblScanIdxForRewritePartitionID < 0 {
+<<<<<<< HEAD
+=======
+				intest.Assert(false)
+>>>>>>> release-7.1.8-5.5
 				return errors.New("cannot find table scan executor in for partition index lookup push down")
 			}
 		}
@@ -858,6 +869,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		_ = worker.fetchHandles(ctx1, selResultList, indexTypes)
 		cancel()
 		selResultList.Close()
+<<<<<<< HEAD
+=======
+		close(workCh)
+>>>>>>> release-7.1.8-5.5
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
 	})
@@ -929,10 +944,14 @@ func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
 			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+<<<<<<< HEAD
 			var indexScanCopTasks int32
 			if copStats := e.stmtRuntimeStatsColl.GetCopStats(e.getIndexPlanRootID()); copStats != nil {
 				indexScanCopTasks = copStats.GetTasks()
 			}
+=======
+			indexScanCopTasks, _ := e.stmtRuntimeStatsColl.GetCopCountAndRows(e.getIndexPlanRootID())
+>>>>>>> release-7.1.8-5.5
 			if e.indexLookUpPushDown {
 				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
 				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
@@ -1151,7 +1170,7 @@ func (l selectResultList) Close() {
 func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, indexTps []*types.FieldType) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -1212,8 +1231,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
 			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
 			// for non-keep-order request, the completed rows can be sent to resultCh directly.
+<<<<<<< HEAD
 			completedTask = w.buildCompletedTask(taskID, completedRows)
 			taskID++
+=======
+			completedTask = w.buildCompletedTask(completedRows)
+>>>>>>> release-7.1.8-5.5
 		}
 
 		var tableLookUpTask *lookupTableTask
@@ -1223,11 +1246,18 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			} else {
 				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
 			}
+<<<<<<< HEAD
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
 				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 			}
 			taskID++
+=======
+			tableLookUpTask = w.buildTableTask(handles, retChunk)
+			if w.idxLookup.partitionTableMode {
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+			}
+>>>>>>> release-7.1.8-5.5
 		}
 
 		finishBuild := time.Now()
@@ -1238,6 +1268,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			return nil
 		default:
 			if completedTask != nil {
+<<<<<<< HEAD
 				w.resultCh <- completedTask
 			}
 
@@ -1255,6 +1286,26 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 					}
 				})
 				w.resultCh <- tableLookUpTask
+=======
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-w.finished:
+					return nil
+				case w.resultCh <- completedTask:
+				}
+			}
+
+			if tableLookUpTask != nil {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-w.finished:
+					return nil
+				case w.workCh <- tableLookUpTask:
+					w.resultCh <- tableLookUpTask
+				}
+>>>>>>> release-7.1.8-5.5
 			}
 		}
 		if w.idxLookup.stats != nil {
@@ -1286,6 +1337,10 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 }
 
 func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, iter distsql.SelectResultIter, handleOffset []int) (rows []chunk.Row, handles []kv.Handle, exhausted bool, err error) {
+<<<<<<< HEAD
+=======
+	intest.Assert(w.checkIndexValue == nil, "CheckIndex or CheckTable should not use index lookup push down")
+>>>>>>> release-7.1.8-5.5
 	const channelIdxIndex = 0
 	const channelIdxRow = 1
 
@@ -1403,9 +1458,14 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	return handles, retChk, nil
 }
 
+<<<<<<< HEAD
 func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
 	task := &lookupTableTask{
 		id:     taskID,
+=======
+func (*indexWorker) buildCompletedTask(rows []chunk.Row) *lookupTableTask {
+	task := &lookupTableTask{
+>>>>>>> release-7.1.8-5.5
 		rows:   rows,
 		doneCh: make(chan error, 1),
 	}
@@ -1413,7 +1473,11 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 	return task
 }
 
+<<<<<<< HEAD
 func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
+=======
+func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
+>>>>>>> release-7.1.8-5.5
 	var indexOrder *kv.HandleMap
 	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
@@ -1796,7 +1860,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			if ctx.Err() != context.Canceled {
-				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+				logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
 			}
 			return err
 		}

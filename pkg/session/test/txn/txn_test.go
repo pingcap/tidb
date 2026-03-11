@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -582,6 +584,7 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 	tk.MustExec("commit")
 }
 
+<<<<<<< HEAD
 func TestTxnTableDeltaMap(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -632,4 +635,26 @@ func TestHasDirtyContent(t *testing.T) {
 		tk.MustExec(ca.sql)
 		require.Equal(t, ca.hasDirty, tk.Session().HasDirtyContent(tb.Meta().ID))
 	}
+=======
+func TestPanicOnRollbackKilledTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	mockTracker := memory.NewTracker(-1, -1)
+	mockTracker.IsRootTrackerOfSess = true
+	mockTracker.Killer = &sqlkiller.SQLKiller{}
+	tk.Session().GetSessionVars().MemTracker.AttachTo(mockTracker)
+	mockTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	tk.Session().Close()
+>>>>>>> release-7.1.8-5.5
 }

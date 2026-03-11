@@ -55,7 +55,7 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -105,7 +105,7 @@ func TestSlowStatsSaving(t *testing.T) {
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	// Get stats version from mysql.stats_meta.
@@ -122,7 +122,7 @@ func TestSlowStatsSaving(t *testing.T) {
 		"select version from mysql.stats_histograms where table_id = ?",
 		tableInfo.ID,
 	).Rows()
-	require.Equal(t, 2, len(rows))
+	require.Equal(t, 3, len(rows))
 	histVersion := rows[0][0].(string)
 	histVersionUint64, err := strconv.ParseUint(histVersion, 10, 64)
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestSlowStatsSavingForPartitionedTable(t *testing.T) {
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	// Note: We deliberately focus on checking the global stats version here.

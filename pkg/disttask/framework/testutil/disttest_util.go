@@ -25,43 +25,49 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
-// RegisterTaskMetaWithDXFCtx initialize mock components for dist task.
-func RegisterTaskMetaWithDXFCtx(c *TestDXFContext, schedulerExt scheduler.Extension, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
-	RegisterTaskMeta(c.T, c.MockCtrl, schedulerExt, c.TestContext, runSubtaskFn)
-}
-
-// RegisterTaskMeta initialize mock components for dist task.
-func RegisterTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+// GetCommonTaskExecutorExt returns a common task executor extension.
+func GetCommonTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error)) *mock.MockExtension {
 	executorExt := mock.NewMockExtension(ctrl)
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockStepExecutor := GetMockStepExecutor(ctrl)
-	if runSubtaskFn == nil {
-		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(_ context.Context, subtask *proto.Subtask) error {
-				switch subtask.Step {
-				case proto.StepOne, proto.StepTwo:
-					testContext.CollectSubtask(subtask)
-				default:
-					panic("invalid step")
-				}
-				return nil
-			}).AnyTimes()
-	} else {
-		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
-	}
-	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).DoAndReturn(getStepExecFn).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
+	return executorExt
 }
 
-func registerTaskMetaInner(t testing.TB, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {
+// GetCommonStepExecutor returns one mock subtaskExecutor.
+func GetCommonStepExecutor(ctrl *gomock.Controller, step proto.Step, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) *mockexecute.MockStepExecutor {
+	executor := mockexecute.NewMockStepExecutor(ctrl)
+	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
+	executor.EXPECT().GetStep().Return(step).AnyTimes()
+	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
+	return executor
+}
+
+// GetCommonCleanUpRoutine returns a common cleanup routine.
+func GetCommonCleanUpRoutine(ctrl *gomock.Controller) scheduler.CleanUpRoutine {
+	r := mock.NewMockCleanUpRoutine(ctrl)
+	r.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return r
+}
+
+// RegisterExampleTask register example task.
+func RegisterExampleTask(
+	t testing.TB,
+	schedulerExt scheduler.Extension,
+	executorExt taskexecutor.Extension,
+	mockCleanup scheduler.CleanUpRoutine,
+) {
+	registerTaskType(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanup)
+}
+
+func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {
 	t.Cleanup(func() {
 		scheduler.ClearSchedulerFactory()
 		scheduler.ClearSchedulerCleanUpFactory()
@@ -72,42 +78,32 @@ func registerTaskMetaInner(t testing.TB, taskType proto.TaskType, schedulerExt s
 			baseScheduler := scheduler.NewBaseScheduler(ctx, task, param)
 			baseScheduler.Extension = schedulerExt
 			return baseScheduler
-		})
+		},
+	)
 
-	scheduler.RegisterSchedulerCleanUpFactory(taskType,
-		func() scheduler.CleanUpRoutine {
-			return mockCleanup
-		})
+	scheduler.RegisterSchedulerCleanUpFactory(taskType, func() scheduler.CleanUpRoutine {
+		return mockCleanup
+	})
 
 	taskexecutor.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, task, param)
 			s.Extension = executorExt
 			return s
 		},
 	)
 }
 
-// RegisterRollbackTaskMeta register rollback task meta.
-func RegisterRollbackTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext) {
-	executorExt := mock.NewMockExtension(ctrl)
-	stepExecutor := mockexecute.NewMockStepExecutor(ctrl)
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	stepExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
-	stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	stepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, subtask *proto.Subtask) error {
-			testContext.CollectSubtask(subtask)
-			return nil
-		}).AnyTimes()
-	stepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
-	stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(stepExecutor, nil).AnyTimes()
-	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
-
-	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
+// RegisterTaskTypeForRollback register rollback task meta.
+func RegisterTaskTypeForRollback(t testing.TB, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext) {
+	subtaskRunFn := func(_ context.Context, subtask *proto.Subtask) error {
+		testContext.CollectSubtask(subtask)
+		return nil
+	}
+	executorExt := GetCommonTaskExecutorExt(ctrl, func(task *proto.Task) (execute.StepExecutor, error) {
+		return GetCommonStepExecutor(ctrl, task.Step, subtaskRunFn), nil
+	})
+	RegisterExampleTask(t, schedulerExt, executorExt, GetCommonCleanUpRoutine(ctrl))
 }
 
 // SubmitAndWaitTask schedule one task.

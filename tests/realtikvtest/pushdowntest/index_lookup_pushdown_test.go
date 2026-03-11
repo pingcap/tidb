@@ -232,17 +232,32 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 			"id2 bigint, " +
 			"a bigint, " +
 			"b bigint, " +
+<<<<<<< HEAD
 			"primary key(" + primaryKey + "), " +
+=======
+			"primary key(" + primaryKey + ") CLUSTERED, " +
+>>>>>>> release-7.1.8-5.5
 			uniquePrefix + "index " + v.indexName + "(a)" +
 			") charset=" + charset + " collate=" + collation)
 		tk.MustExec("insert into " + v.tableName + " values " +
 			"('abcA', 1, 99, 199), " +
+<<<<<<< HEAD
 			"('aBCE', 2, 98, 198), " +
 			"('ABdd', 1, 97, 197), " +
 			"('abdc', 2, 96, 196), " +
 			"('Defb', 1, 95, 195), " +
 			"('defa', 2, 94, 194), " +
 			"('efga', 1, 93, 193)",
+=======
+			"('abCE', 2, 98, 198), " +
+			"('ABdd', 1, 97, 197), " +
+			"('aBdc', 2, 96, 196), " +
+			"('Defb', 1, 95, 195), " +
+			"('defa', 2, 94, 194), " +
+			"('efga', 1, 93, 193), " +
+			"('aabb', 1, NULL, 192), " +
+			"('bbaa', 2, NULL, 191)",
+>>>>>>> release-7.1.8-5.5
 		)
 	}
 
@@ -263,15 +278,25 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 				prepareTable(v, unique, charset, collation, "id1, id2")
 				v.RunSelectWithCheck("1", 0, -1)
 				v.RunSelectWithCheck("a > 93 and b < 199", 0, 10)
+<<<<<<< HEAD
 				v.RunSelectWithCheck("a > 93 and b < 199 and id1 != 'abd'", 0, 10)
 				// check the TopN push down
 				result := v.RunSelectWithCheck("1 order by id2, id1", 0, 5)
 				require.Contains(t, result.AnalyzeRows[2][0], "LocalIndexLookUp")
 				require.Contains(t, result.AnalyzeRows[3][0], "TopN")
+=======
+				v.RunSelectWithCheck("a > 93 and b < 199 and id1 != 'abdc'", 0, 10)
+				// check the TopN push down
+				result := v.RunSelectWithCheck("a > 0 and id1 not in ('efga', 'ABdd') order by id2, id1", 0, 4)
+				require.Contains(t, result.AnalyzeRows[2][0], "LocalIndexLookUp")
+				require.Contains(t, result.AnalyzeRows[3][0], "TopN")
+				require.Contains(t, result.AnalyzeRows[4][0], "Selection")
+>>>>>>> release-7.1.8-5.5
 				require.Equal(t, "cop[tikv]", result.AnalyzeRows[3][3])
 				if strings.Contains(collation, "_ci") {
 					require.Equal(t, [][]any{
 						{"abcA", "1", "99", "199"},
+<<<<<<< HEAD
 						{"ABdd", "1", "97", "197"},
 						{"Defb", "1", "95", "195"},
 						{"efga", "1", "93", "193"},
@@ -284,6 +309,18 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 						{"abcA", "1", "99", "199"},
 						{"efga", "1", "93", "193"},
 						{"aBCE", "2", "98", "198"},
+=======
+						{"Defb", "1", "95", "195"},
+						{"abCE", "2", "98", "198"},
+						{"aBdc", "2", "96", "196"},
+					}, result.Rows)
+				} else {
+					require.Equal(t, [][]any{
+						{"Defb", "1", "95", "195"},
+						{"abcA", "1", "99", "199"},
+						{"aBdc", "2", "96", "196"},
+						{"abCE", "2", "98", "198"},
+>>>>>>> release-7.1.8-5.5
 					}, result.Rows)
 				}
 			})

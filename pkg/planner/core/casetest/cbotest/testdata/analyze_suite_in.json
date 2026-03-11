@@ -255,5 +255,18 @@
       // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
       "explain format = 'brief' select * from t where a >= 999900 order by b limit 1"
     ]
+  },
+  {
+    "name": "TestIssue61792",
+    "cases": [
+      "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';"
+    ]
+  },
+  {
+    "name": "TestIssue62438",
+    "cases": [
+      "explain format = 'cost_trace' \nSELECT\n  /*+ QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
+      "explain format = 'cost_trace' \nSELECT\n  /*+ limit_to_cop(), QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;"
+    ]
   }
 ]

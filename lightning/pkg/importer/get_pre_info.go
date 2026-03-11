@@ -485,7 +485,10 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, dataFileMeta.Path)
+		parser, err = mydump.NewParquetParser(
+			ctx, p.srcStorage, reader,
+			dataFileMeta.Path, mydump.ParquetFileMeta{},
+		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -509,7 +512,10 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 			}
 			break
 		}
-		lastRowDatums := append([]types.Datum{}, parser.LastRow().Row...)
+		lastRowDatums := make([]types.Datum, 0, len(parser.LastRow().Row))
+		for _, d := range parser.LastRow().Row {
+			lastRowDatums = append(lastRowDatums, *d.Clone())
+		}
 		rows = append(rows, lastRowDatums)
 	}
 	return parser.Columns(), rows, nil
@@ -661,7 +667,10 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, sampleFile.Path)
+		parser, err = mydump.NewParquetParser(
+			ctx, p.srcStorage, reader,
+			sampleFile.Path, mydump.ParquetFileMeta{},
+		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}

@@ -80,7 +80,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	topn := statistics.NewTopN(2)

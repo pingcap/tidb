@@ -15,8 +15,6 @@
 package cardinality
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -169,34 +167,17 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
-	if matched {
+	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
+	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	// also check if this last bucket end value is underrepresented
+	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
-	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
-	if histNDV <= 0 {
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
-		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
-		//
-		// If the table hasn't been modified, it's safe to return 0.
-		if modifyCount == 0 {
-			return 0, nil
-		}
-		// ELSE calculate an approximate estimate based upon newly inserted rows.
-		//
-		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
-		if c.Histogram.NDV > 0 {
-			histNDV = float64(c.Histogram.NDV)
-		} else {
-			histNDV = math.Sqrt(max(c.NotNullCount(), float64(realtimeRowCount)))
-		}
-		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
-		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-		totalRowCount := min(c.NotNullCount(), float64(realtimeRowCount)-c.NotNullCount())
-		return max(1, totalRowCount/histNDV), nil
-	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return c.Histogram.NotNullCount() / histNDV, nil
+	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
+	// or all values assumed to be contained within TopN.
+	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
+	return rowEstimate, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -322,7 +303,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, histNDV, increaseFactor)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
 		}
 
 		if debugTrace {

@@ -1099,18 +1099,24 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
+<<<<<<< HEAD
 		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
 		it.liteWorker.tryCopLiteWorker.CompareAndSwap(1, 0)
+=======
+>>>>>>> release-7.1.8-5.5
 		if resp == nil {
 			it.actionOnExceed.close()
 			return nil, nil
 		}
+<<<<<<< HEAD
 		if len(it.tasks) > 0 && len(it.liteWorker.batchCopRespList) == 0 && resp.err == nil {
 			// if there are remain tasks to be processed, we need to run worker concurrently to avoid blocking.
 			// see more detail in https://github.com/pingcap/tidb/issues/58658 and TestDMLWithLiteCopWorker.
 			it.liteWorker.runWorkerConcurrently(it)
 			it.liteWorker = nil
 		}
+=======
+>>>>>>> release-7.1.8-5.5
 		it.actionOnExceed.destroyTokenIfNeeded(func() {})
 		memTrackerConsumeResp(it.memTracker, resp)
 	} else if it.respChan != nil {
@@ -1195,6 +1201,13 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		} else {
 			it.tasks = it.tasks[1:]
 		}
+<<<<<<< HEAD
+=======
+		if len(it.tasks) == 0 {
+			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
+			w.tryCopLiteWorker.Store(0)
+		}
+>>>>>>> release-7.1.8-5.5
 		if result != nil {
 			if result.resp != nil {
 				w.batchCopRespList = result.batchRespList
@@ -1210,6 +1223,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 	return nil
 }
 
+<<<<<<< HEAD
 func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
 	taskCh := make(chan *copTask, 1)
 	worker := w.worker
@@ -1238,6 +1252,8 @@ func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
 	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
+=======
+>>>>>>> release-7.1.8-5.5
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
 type HasUnconsumedCopRuntimeStats interface {
 	// CollectUnconsumedCopRuntimeStats returns unconsumed CopRuntimeStats.
@@ -1278,7 +1294,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.BgLogger().Error("copIteratorWork meet panic",
+			logutil.BgLogger().Warn("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: util2.GetRecoverError(r)}
@@ -1948,36 +1964,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	if resp == nil {
 		return nil
 	}
-	sd := &util.ScanDetail{}
-	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if pbDetails.TimeDetail != nil || pbDetails.TimeDetailV2 != nil {
-			td.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
+			copStats.ScanDetail.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(nil, timeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(nil, timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
+				copStats.ScanDetail.ProcessedKeys = scanDetail.Write.Processed
+				copStats.ScanDetail.TotalKeys = scanDetail.Write.Total
 			}
 		}
 	}
-	copStats.ScanDetail = sd
-	copStats.TimeDetail = td
 
 	if worker.req.RunawayChecker != nil {
 		var ruDetail *util.RUDetails
 		if ruDetailRaw := bo.GetCtx().Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			ruDetail = ruDetailRaw.(*util.RUDetails)
 		}
-		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, sd.ProcessedKeys, nil); err != nil {
+		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, copStats.ScanDetail.ProcessedKeys, nil); err != nil {
 			return err
 		}
 	}
@@ -1985,6 +1997,12 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+<<<<<<< HEAD
+=======
+	if rpcCtx != nil {
+		copStats.CalleeAddress = rpcCtx.Addr
+	}
+>>>>>>> release-7.1.8-5.5
 	if worker.kvclient.Stats == nil {
 		return
 	}
@@ -1993,6 +2011,7 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}()
 	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
+<<<<<<< HEAD
 	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
 	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
@@ -2002,6 +2021,16 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}
 	if rpcCtx != nil {
 		copStats.CalleeAddress = rpcCtx.Addr
+=======
+	if len(backoffTimes) > 0 {
+		copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+		copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+		copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
+		for backoff := range backoffTimes {
+			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
+			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+		}
+>>>>>>> release-7.1.8-5.5
 	}
 }
 
@@ -2017,7 +2046,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
-	execdetails.ExecDetails
+	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
 	CoprCacheHit bool

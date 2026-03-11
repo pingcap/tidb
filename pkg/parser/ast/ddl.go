@@ -2645,6 +2645,9 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
+	/* Some options are not cherry-picked from master, reserve the options */
+
+	TableOptionAffinity        = 47
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2688,6 +2691,28 @@ const (
 	TableOptionCharsetWithoutConvertTo uint64 = 0
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
+
+const (
+	// TableAffinityLevelNone means no affinity.
+	TableAffinityLevelNone = "none"
+	// TableAffinityLevelTable means table-level affinity.
+	TableAffinityLevelTable = "table"
+	// TableAffinityLevelPartition means partition-level affinity.
+	TableAffinityLevelPartition = "partition"
+)
+
+// NormalizeTableAffinityLevel normalizes the affinity level to lower case and checks if it's valid.
+func NormalizeTableAffinityLevel(s string) (string, bool) {
+	lower := strings.ToLower(s)
+	switch lower {
+	case TableAffinityLevelNone, TableAffinityLevelTable, TableAffinityLevelPartition:
+		return lower, true
+	case "":
+		return TableAffinityLevelNone, true
+	default:
+		return s, false
+	}
+}
 
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
@@ -3006,6 +3031,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionTTLJobInterval:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 			return nil

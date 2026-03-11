@@ -1867,6 +1867,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1931,7 +1932,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2163,11 +2164,15 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
 		if err == nil && prepareStmt.PreparedAst != nil {
+<<<<<<< HEAD
 			stmtLabel = prepareStmt.PreparedAst.StmtType
+=======
+			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
+>>>>>>> release-7.1.8-5.5
 		}
 	}
 	if stmtLabel == "" {
-		stmtLabel = ast.GetStmtLabel(stmtNode)
+		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
@@ -2582,6 +2587,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: params,
 		PrepStmt:   stmt,
+		PrepStmtId: stmtID,
 	}
 	return s.ExecuteStmt(ctx, execStmt)
 }
@@ -2880,6 +2886,15 @@ func (s *session) Close() {
 	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
+	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
 	}
 }
 
@@ -3860,8 +3875,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	)
 	taskexecutor.RegisterTaskType(
 		proto.ImportInto,
-		func(ctx context.Context, id string, task *proto.Task, table taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return importinto.NewImportExecutor(ctx, id, task, table, store)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, task, param, store)
 		},
 	)
 
@@ -3904,14 +3919,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -3928,6 +3935,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before some other internal SQLs.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
 	if err != nil {
 		return nil, err
 	}
@@ -4119,13 +4134,20 @@ func runInBootstrapSession(store kv.Storage, ver, verEE int64) ddl.StartMode {
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	if startMode == ddl.Bootstrap {
+	switch startMode {
+	case ddl.Bootstrap:
 		bootstrap(s)
-	} else if startMode == ddl.Upgrade {
+	case ddl.Upgrade:
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)

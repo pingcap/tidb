@@ -117,6 +117,10 @@ import (
 	hintOrderIndex            "ORDER_INDEX"
 	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintIndexLookUpPushDown   "INDEX_LOOKUP_PUSHDOWN"
+<<<<<<< HEAD
+=======
+	hintNoIndexLookUpPushDown "NO_INDEX_LOOKUP_PUSHDOWN"
+>>>>>>> release-7.1.8-5.5
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -675,6 +679,10 @@ SupportedIndexLevelOptimizerHintName:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
+<<<<<<< HEAD
+=======
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
+>>>>>>> release-7.1.8-5.5
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -779,6 +787,10 @@ Identifier:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
+<<<<<<< HEAD
+=======
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
+>>>>>>> release-7.1.8-5.5
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

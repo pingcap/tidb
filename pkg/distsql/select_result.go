@@ -350,6 +350,38 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 }
 
 func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
+<<<<<<< HEAD
+=======
+	defer func() {
+		if r.stats != nil {
+			// Ignore internal sql.
+			if !r.ctx.InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
+				ratio := r.stats.calcCacheHit()
+				if ratio >= 1 {
+					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+				}
+				if ratio >= 0.8 {
+					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
+				}
+				if ratio >= 0.4 {
+					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				}
+				if ratio >= 0.2 {
+					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+				}
+				if ratio >= 0.1 {
+					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+				}
+				if ratio >= 0.01 {
+					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+				}
+				if ratio >= 0 {
+					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
+				}
+			}
+		}
+	}()
+>>>>>>> release-7.1.8-5.5
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -413,11 +445,10 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
+				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime(), false); err != nil {
 					return err
 				}
-				copStats.CopTime = duration
-				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -550,36 +581,55 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // FillDummySummariesForTiFlashTasks fills dummy execution summaries for mpp tasks which lack summaries
+<<<<<<< HEAD
 func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, callee string, storeType kv.StoreType, allPlanIDs []int, recordedPlanIDs map[int]int) {
+=======
+func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, storeType kv.StoreType, allPlanIDs []int, recordedPlanIDs map[int]int) {
+>>>>>>> release-7.1.8-5.5
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
 		if _, ok := recordedPlanIDs[planID]; !ok {
+<<<<<<< HEAD
 			runtimeStatsColl.RecordOneCopTask(planID, storeType, callee, dummySummary)
+=======
+			runtimeStatsColl.RecordOneCopTask(planID, storeType, dummySummary)
+>>>>>>> release-7.1.8-5.5
 		}
 	}
 }
 
 // recordExecutionSummariesForTiFlashTasks records mpp task execution summaries
+<<<<<<< HEAD
 func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeType kv.StoreType, allPlanIDs []int) {
+=======
+func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, storeType kv.StoreType, allPlanIDs []int) {
+>>>>>>> release-7.1.8-5.5
 	var recordedPlanIDs = make(map[int]int)
 	for _, detail := range executionSummaries {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			recordedPlanIDs[runtimeStatsColl.
+<<<<<<< HEAD
 				RecordOneCopTask(-1, storeType, callee, detail)] = 0
 		}
 	}
 	FillDummySummariesForTiFlashTasks(runtimeStatsColl, callee, storeType, allPlanIDs, recordedPlanIDs)
+=======
+				RecordOneCopTask(-1, storeType, detail)] = 0
+		}
+	}
+	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
+>>>>>>> release-7.1.8-5.5
 }
 
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration, forUnconsumedStats bool) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || len(copStats.ReqStats.RPCStats) == 0)) {
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
 	}
 
-	if copStats.ScanDetail != nil {
+	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
 		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
@@ -588,8 +638,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
-			backoffSleep:       make(map[string]time.Duration),
-			reqStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
 		if ci, ok := r.resp.(copr.CopInfo); ok {
@@ -600,6 +648,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
+<<<<<<< HEAD
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
 		r.ctx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail)
 	}
@@ -607,6 +656,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.TimeDetail)
 	}
 
+=======
+>>>>>>> release-7.1.8-5.5
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
 	for _, detail := range r.selectResp.GetExecutionSummaries() {
@@ -628,26 +679,44 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
 	if hasExecutor {
+<<<<<<< HEAD
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType, r.copPlanIDs)
+=======
+		if len(r.copPlanIDs) > 0 {
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.ScanDetail, copStats.TimeDetail, nil)
+		}
+		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
+>>>>>>> release-7.1.8-5.5
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
 			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
 			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
 			// not trigger an error log in this case.
-			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
-				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+			if !forUnconsumedStats && !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
 					zap.Int("expected", len(r.copPlanIDs)),
 					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 			}
 			return
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
+			var summary *tipb.ExecutorExecutionSummary
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
+<<<<<<< HEAD
 				planID := r.copPlanIDs[i]
 				r.ctx.RuntimeStatsColl.
 					RecordOneCopTask(planID, r.storeType, callee, detail)
+=======
+				summary = detail
+			}
+			planID := r.copPlanIDs[i]
+			if i == len(r.copPlanIDs)-1 {
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, &copStats.ScanDetail, copStats.TimeDetail, summary)
+			} else if summary != nil {
+				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
+>>>>>>> release-7.1.8-5.5
 			}
 		}
 	}
@@ -693,8 +762,8 @@ func (r *selectResult) close() error {
 		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
 			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
 			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
-				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 			}
 		}
 	}
@@ -929,15 +998,22 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	if copStats.ScanDetail != nil {
-		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
-	} else {
-		s.procKeys.Add(0)
+	s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	if len(copStats.BackoffSleep) > 0 {
+		if s.backoffSleep == nil {
+			s.backoffSleep = make(map[string]time.Duration)
+		}
+		maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	}
-	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	s.reqStat.Merge(copStats.ReqStats)
+	if copStats.ReqStats != nil {
+		if s.reqStat == nil {
+			s.reqStat = copStats.ReqStats
+		} else {
+			s.reqStat.Merge(copStats.ReqStats)
+		}
+	}
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
@@ -975,8 +1051,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.copRespTime.MergePercentile(&other.copRespTime)
 	s.procKeys.MergePercentile(&other.procKeys)
 
-	for k, v := range other.backoffSleep {
-		s.backoffSleep[k] += v
+	if len(other.backoffSleep) > 0 {
+		if s.backoffSleep == nil {
+			s.backoffSleep = make(map[string]time.Duration)
+		}
+		for k, v := range other.backoffSleep {
+			s.backoffSleep[k] += v
+		}
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime

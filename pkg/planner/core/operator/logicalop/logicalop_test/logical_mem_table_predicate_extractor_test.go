@@ -475,13 +475,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(t, "2019-10-10 10:10:10"),
-			patterns:  []string{".*a.*"},
+			patterns:  []string{"^.*a.*$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message like '%a%' and message regexp '^b'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{".*a.*", "^b"},
+			patterns:  []string{"^.*a.*$", "^b"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='gc'",
@@ -505,13 +505,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet("tidb", "pd"),
 			instances: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info", "error"),
-			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
+			patterns:  []string{"^.*coprocessor.*$", ".*txn=123.*"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+			patterns:  []string{".*pd.*|.*tidb.*|^.*tikv.*$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
@@ -2069,5 +2069,95 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+	}
+}
+
+// TestTableRegionsExtractor verifies that TableRegionsExtractor can correctly extract
+// schema and table names from the WHERE clause.
+func TestTableRegionsExtractor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id int)`)
+	tk.MustExec(`create table p (id int) partition by hash(id) partitions 4`)
+
+	var cases = []struct {
+		sql             string
+		expectDBName    string
+		expectTableName string
+		explainInfo     string
+	}{
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where db_name = 'test' and table_name = 't'",
+			expectDBName:    "test",
+			expectTableName: "t",
+			explainInfo:     "schema name: test, table name: t",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where table_name = 't' and db_name = 'test'",
+			expectDBName:    "test",
+			expectTableName: "t",
+			explainInfo:     "schema name: test, table name: t",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where db_name = 'test' and table_name = 'p'",
+			expectDBName:    "test",
+			expectTableName: "p",
+			explainInfo:     "schema name: test, table name: p",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where db_name = 'test'",
+			expectDBName:    "",
+			expectTableName: "",
+			explainInfo:     "",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where table_name = 't'",
+			expectDBName:    "",
+			expectTableName: "",
+			explainInfo:     "",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where db_name in ('test', 'mysql') and table_name = 't'",
+			expectDBName:    "",
+			expectTableName: "",
+			explainInfo:     "",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS where db_name = 'test' or table_name = 't'",
+			expectDBName:    "",
+			expectTableName: "",
+			explainInfo:     "",
+		},
+		{
+			sql:             "select * from information_schema.TABLE_REGIONS",
+			expectDBName:    "",
+			expectTableName: "",
+			explainInfo:     "",
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor, "Extractor should not be nil for SQL: %s", ca.sql)
+
+		tre, ok := logicalMemTable.Extractor.(*plannercore.TableRegionsExtractor)
+		require.True(t, ok, "Extractor should be of type *plannercore.TableRegionsExtractor")
+
+		dbName := tre.GetSchemaName().L
+		tableName := tre.GetTableName().L
+
+		require.Equal(t, ca.expectDBName, dbName, "Mismatch in extracted DB name for SQL: %s", ca.sql)
+		require.Equal(t, ca.expectTableName, tableName, "Mismatch in extracted table name for SQL: %s", ca.sql)
+
+		// Assuming getLogicalMemTable also triggers the extraction and population of schemaName and tableName
+		// we can then check the ExplainInfo result.
+		explain := tre.ExplainInfo(nil) // The argument is not used in the method
+		require.Equal(t, ca.explainInfo, explain, "Mismatch in ExplainInfo for SQL: %s", ca.sql)
 	}
 }

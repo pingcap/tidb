@@ -1141,6 +1141,8 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
+	ErrProtectedTableMode                 = 8258
+	ErrInvalidTableModeSet                = 8259
 
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
@@ -1151,12 +1153,16 @@ const (
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 
+<<<<<<< HEAD
 	// TableGroup errors.
 	ErrTableGroupExists               = 8280
 	ErrTableGroupNotExists            = 8281
 	ErrTableGroupNotSupported         = 8282
 	ErrTableGroupPartitionNumNotMatch = 8283
 	ErrDuplicateTable                 = 8284
+=======
+	ErrInvalidAffinityOption = 8266
+>>>>>>> release-7.1.8-5.5
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

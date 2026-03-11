@@ -52,6 +52,9 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.AnnIndexExtra != nil {
 		return nil, false
 	}
+	if op.TableSplit != nil {
+		return nil, false
+	}
 	return cloned, true
 }
 
@@ -206,9 +209,17 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
+<<<<<<< HEAD
 	cloned.TablePlans = FlattenListPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+=======
+	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
+	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+>>>>>>> release-7.1.8-5.5
 	if op.TableScanAndPartitionInfos != nil {
+		return nil, false
+	}
+	if op.TableSplit != nil {
 		return nil, false
 	}
 	return cloned, true
@@ -230,9 +241,15 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
 	}
+<<<<<<< HEAD
 	cloned.IndexPlans = FlattenListPushDownPlan(cloned.indexPlan)
 	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+=======
+	cloned.IndexPlans = flattenListPushDownPlan(cloned.indexPlan)
+	cloned.OutputColumns = util.CloneColumns(op.OutputColumns)
+	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+>>>>>>> release-7.1.8-5.5
 	return cloned, true
 }
 
@@ -375,9 +392,15 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
 	if cloned.IndexLookUpPushDown {
+<<<<<<< HEAD
 		cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(cloned.indexPlan)
 	} else {
 		cloned.IndexPlans = FlattenListPushDownPlan(cloned.indexPlan)
+=======
+		cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = flattenTreePushDownPlan(cloned.indexPlan)
+	} else {
+		cloned.IndexPlans = flattenListPushDownPlan(cloned.indexPlan)
+>>>>>>> release-7.1.8-5.5
 	}
 	if op.IndexPlansUnNatureOrders != nil {
 		cloned.IndexPlansUnNatureOrders = make(map[int]int, len(op.IndexPlansUnNatureOrders))
@@ -385,7 +408,11 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 			cloned.IndexPlansUnNatureOrders[k] = v
 		}
 	}
+<<<<<<< HEAD
 	cloned.TablePlans = FlattenListPushDownPlan(cloned.tablePlan)
+=======
+	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
+>>>>>>> release-7.1.8-5.5
 	if op.ExtraHandleCol != nil {
 		if op.ExtraHandleCol.SafeToShareAcrossSession() {
 			cloned.ExtraHandleCol = op.ExtraHandleCol
@@ -396,6 +423,20 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 	cloned.PushedLimit = op.PushedLimit.Clone()
 	cloned.CommonHandleCols = cloneColumnsForPlanCache(op.CommonHandleCols, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalLocalIndexLookUp) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalLocalIndexLookUp)
+	*cloned = *op
+	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *basePlan
+	cloned.IndexHandleOffsets = make([]uint32, len(op.IndexHandleOffsets))
+	copy(cloned.IndexHandleOffsets, op.IndexHandleOffsets)
 	return cloned, true
 }
 
@@ -424,10 +465,17 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	}
 	cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))
 	for i, plan := range cloned.partialPlans {
+<<<<<<< HEAD
 		cloned.PartialPlans[i] = FlattenListPushDownPlan(plan)
 	}
 	cloned.TablePlans = FlattenListPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+=======
+		cloned.PartialPlans[i] = flattenListPushDownPlan(plan)
+	}
+	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
+	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+>>>>>>> release-7.1.8-5.5
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
 	}
@@ -564,5 +612,18 @@ func (op *PhysicalUnionAll) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *basePlan
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalTableDual) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalTableDual)
+	*cloned = *op
+	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *basePlan
+	cloned.names = util.CloneFieldNames(op.names)
 	return cloned, true
 }

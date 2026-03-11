@@ -322,6 +322,7 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	require.Less(t, time.Since(start), time.Millisecond*150)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
 }
+<<<<<<< HEAD
 
 func TestDMLWithLiteCopWorker(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -349,3 +350,5 @@ func TestDMLWithLiteCopWorker(t *testing.T) {
 	tk.MustQuery("split table t1 by (3), (6), (9);").Check(testkit.Rows("3 1"))
 	tk.MustQuery("select b from t1 order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8"))
 }
+=======
+>>>>>>> release-7.1.8-5.5

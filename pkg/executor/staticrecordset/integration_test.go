@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -246,4 +247,38 @@ func TestFinishStmtError(t *testing.T) {
 	_, ok, err := drs.TryDetach()
 	require.True(t, ok)
 	require.Error(t, err)
+}
+
+func TestDDLInsideTXNNotBlockMinStartTS(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	ch := make(chan struct{})
+	ddl.MockDMLExecution = func() {
+		<-ch
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+
+	tk2.MustExec("begin")
+	ddlTs := tk2.Session().GetSessionVars().TxnCtx.StartTS
+	go func() {
+		tk2.Exec("alter table test.t add index idx(id)")
+	}()
+
+	tk.Exec("begin")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tkTs := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Greater(t, tkTs, ddlTs)
+
+	infoSyncer := dom.InfoSyncer()
+	require.Eventually(t, func() bool {
+		infoSyncer.ReportMinStartTS(store)
+		return infoSyncer.GetMinStartTS() == tkTs
+	}, time.Second*5, time.Millisecond*100)
+	close(ch)
 }

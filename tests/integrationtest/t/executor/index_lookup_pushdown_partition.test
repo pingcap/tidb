@@ -6,13 +6,32 @@ set @@tidb_partition_prune_mode = 'dynamic';
 select @@tidb_partition_prune_mode;
 
 # int handle
+<<<<<<< HEAD
 create table tp1 (a int primary key, b int, c int, key b(b), key c(c)) partition by hash(a) partitions 4;
+=======
+create table tp1 (a int primary key, b int, c int, key b(b), key c(c) global) partition by hash(a) partitions 4;
+>>>>>>> release-7.1.8-5.5
 insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
 explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
 select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
 explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
 select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
 
+<<<<<<< HEAD
+=======
+# test tidb_index_lookup_pushdown_policy
+select @@tidb_index_lookup_pushdown_policy;
+explain select * from tp1 where b=20;
+set @@tidb_index_lookup_pushdown_policy='force';
+explain select * from tp1 where b=20;
+set @@tidb_index_lookup_pushdown_policy='affinity-force';
+explain select * from tp1 where b=20;
+alter table tp1 affinity = 'partition';
+explain select * from tp1 where b=20;
+set @@tidb_index_lookup_pushdown_policy='hint-only';
+select @@tidb_index_lookup_pushdown_policy;
+
+>>>>>>> release-7.1.8-5.5
 # global index not supported
 --enable_warnings
 explain select /*+ index_lookup_pushdown(tp1, c) */ * from tp1;
@@ -24,7 +43,11 @@ create table tp2 (
     id2 int,
     a int,
     b int,
+<<<<<<< HEAD
     primary key (id1, id2),
+=======
+    primary key (id1, id2) CLUSTERED,
+>>>>>>> release-7.1.8-5.5
     index a(a)
 )
 PARTITION BY RANGE COLUMNS (id1) (
@@ -73,3 +96,7 @@ select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
 # restore tidb_scatter_region and prune mode
 set @@tidb_scatter_region=default;
 set @@tidb_partition_prune_mode = default;
+<<<<<<< HEAD
+=======
+
+>>>>>>> release-7.1.8-5.5

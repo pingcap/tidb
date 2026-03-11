@@ -89,10 +89,17 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 		startTS:     b.dagCtx.startTS,
 		kvRanges:    ranges,
 		dbReader:    reader,
+<<<<<<< HEAD
 		//counts:      b.counts,
 		//ndvs:        b.ndvs,
 		desc:   pb.Desc,
 		paging: b.paging,
+=======
+		counts:      b.counts,
+		ndvs:        b.ndvs,
+		desc:        pb.Desc,
+		paging:      b.paging,
+>>>>>>> release-7.1.8-5.5
 	}
 	if b.dagCtx != nil {
 		ts.lockStore = b.dagCtx.lockStore

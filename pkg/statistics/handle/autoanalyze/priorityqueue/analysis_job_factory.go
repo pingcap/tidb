@@ -339,15 +339,14 @@ func NewPartitionIDAndName(name string, id int64) PartitionIDAndName {
 // GetPartitionStats gets the partition stats.
 func GetPartitionStats(
 	statsHandle statstypes.StatsHandle,
-	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
 ) map[PartitionIDAndName]*statistics.Table {
 	partitionStats := make(map[PartitionIDAndName]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		stats := statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, def.ID)
+		stats, found := statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
 		// Ignore the partition if it's not ready to analyze.
-		if !stats.IsEligibleForAnalysis() {
+		if !found || !stats.IsEligibleForAnalysis() {
 			continue
 		}
 		d := NewPartitionIDAndName(def.Name.O, def.ID)

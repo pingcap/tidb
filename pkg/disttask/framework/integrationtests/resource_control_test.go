@@ -80,7 +80,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c.TestDXFContext, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c.TestDXFContext, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		ch := c.enterSubtask(subtask)
 		defer c.leaveSubtask(subtask)
 		select {

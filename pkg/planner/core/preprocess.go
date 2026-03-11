@@ -830,6 +830,16 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 			p.checkSetOprSelectList(s)
 		}
 	}
+	last := stmt.Selects[len(stmt.Selects)-1]
+	switch s := last.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")
+			return
+		}
+	case *ast.SetOprSelectList:
+		p.checkSetOprSelectList(s)
+	}
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
@@ -1881,7 +1891,6 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 
 func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
-	shouldLockMDL := false
 	var lockedID int64
 
 	defer func() {
@@ -1896,8 +1905,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			}
 		}
 
-		if shouldLockMDL && err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		if err == nil {
+			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[retTbl.Meta().ID] = struct{}{}
 		}
 
 		if lockedID != 0 && err != nil {
@@ -1928,7 +1937,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {

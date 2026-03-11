@@ -1062,7 +1062,7 @@ func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
 	tk.MustExec("use test_db_state")
 
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
-	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a char(16);"
 
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)

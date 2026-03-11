@@ -54,11 +54,11 @@ count(*)
 3
 desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#26
+HashAgg	1.00	root		funcs:count(1)->Column#28
 └─MemTableScan	10000.00	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#26
+HashAgg	1.00	root		funcs:count(1)->Column#28
 └─MemTableScan	10000.00	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 count(*)
@@ -135,6 +135,7 @@ InnoDB	NONCLUSTERED
 drop table infoschema__infoschema.t4;
 drop table infoschema__infoschema.t5;
 create table caseSensitive (a int);
+create table caseSensitive2 (a int);
 create table unrelatedTable (a int);
 select table_schema, table_name from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
 table_schema	table_name
@@ -142,7 +143,17 @@ infoschema__infoschema	caseSensitive
 select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
 table_schema	table_name	tidb_pk_type
 infoschema__infoschema	caseSensitive	NONCLUSTERED
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema like '%infoschema__infoschem%' and table_name like '%aseSensitive%' and table_name like '%aseSensitive%';
+table_schema	table_name	tidb_pk_type
+infoschema__infoschema	caseSensitive	NONCLUSTERED
+infoschema__infoschema	caseSensitive2	NONCLUSTERED
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_name like '%Sensitive' and table_name like '%aseSensitive%';
+table_schema	table_name	tidb_pk_type
+infoschema__infoschema	caseSensitive	NONCLUSTERED
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_name like '%aseSensitive%' and table_name like '%fake_table%';
+table_schema	table_name	tidb_pk_type
 drop table caseSensitive;
+drop table caseSensitive2;
 drop table unrelatedTable;
 create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
 create table pt2(a int primary key, b int) partition by hash(a) partitions 4;
@@ -490,3 +501,11 @@ sequence_schema	sequence_name
 Db1	s1
 drop database db1;
 drop database db2;
+create database test_db_080;
+select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';
+SCHEMA_NAME
+test_db_080
+desc format=brief select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#2
+└─MemTableScan	10000.00	root	table:SCHEMATA	schema_name_pattern:[test_db_0[0-8][0-7]]

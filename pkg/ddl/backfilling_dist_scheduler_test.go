@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ import (
 
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sch, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -124,11 +125,17 @@ func TestCalculateRegionBatch(t *testing.T) {
 
 	// Test calculate in local storage.
 	batchCnt = ddl.CalculateRegionBatch(100, 8, true)
-	require.Equal(t, 13, batchCnt)
+	require.Equal(t, 100, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(2, 8, true)
-	require.Equal(t, 1, batchCnt)
+	require.Equal(t, 2, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(24, 8, true)
-	require.Equal(t, 3, batchCnt)
+	require.Equal(t, 24, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 8, true)
+	require.Equal(t, 334, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 2, true)
+	require.Equal(t, 500, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(200, 3, true)
+	require.Equal(t, 100, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -139,7 +146,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := context.WithValue(baseCtx, "etcd", true)
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
@@ -154,9 +163,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	task := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
 
 	sch := schManager.MockScheduler(task)
-	ext, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
-	ext.(*ddl.BackfillingSchedulerExt).GlobalSort = true
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	sch.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", task.Meta)
@@ -263,7 +272,7 @@ func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
-	ext := &ddl.BackfillingSchedulerExt{}
+	ext := &ddl.LitBackfillScheduler{}
 
 	// 1. local mode
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
@@ -271,7 +280,7 @@ func TestGetNextStep(t *testing.T) {
 		task.Step = nextStep
 	}
 	// 2. global sort mode
-	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
+	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
@@ -301,7 +310,7 @@ func createAddIndexTask(t *testing.T,
 			ReorgMeta: &model.DDLReorgMeta{
 				SQLMode:     defaultSQLMode,
 				Location:    &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
-				ReorgTp:     model.ReorgTypeLitMerge,
+				ReorgTp:     model.ReorgTypeIngest,
 				IsDistReorg: true,
 			},
 		},
@@ -309,7 +318,8 @@ func createAddIndexTask(t *testing.T,
 		EleTypeKey: meta.IndexElementKey,
 	}
 	if useGlobalSort {
-		taskMeta.CloudStorageURI = "gs://sort-bucket"
+		// We will not really use cloud storage in test, so just use a dummy URI here.
+		taskMeta.CloudStorageURI = fmt.Sprintf("file://%s", t.TempDir())
 	}
 
 	taskMetaBytes, err := json.Marshal(taskMeta)
@@ -317,10 +327,11 @@ func createAddIndexTask(t *testing.T,
 
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
-			ID:    time.Now().UnixMicro(),
-			Type:  taskType,
-			Step:  proto.StepInit,
-			State: proto.TaskStatePending,
+			ID:          time.Now().UnixMicro(),
+			Type:        taskType,
+			Step:        proto.StepInit,
+			State:       proto.TaskStatePending,
+			Concurrency: 16,
 		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),
@@ -328,4 +339,16 @@ func createAddIndexTask(t *testing.T,
 	}
 
 	return task
+}
+
+func TestBackfillTaskMetaVersion(t *testing.T) {
+	// Test the default version.
+	meta := &ddl.BackfillTaskMeta{}
+	require.Equal(t, ddl.BackfillTaskMetaVersion0, meta.Version)
+
+	// Test the new version.
+	meta = &ddl.BackfillTaskMeta{
+		Version: ddl.BackfillTaskMetaVersion1,
+	}
+	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
 }

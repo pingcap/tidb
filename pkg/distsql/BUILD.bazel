@@ -66,7 +66,11 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 32,
+=======
+    shard_count = 33,
+>>>>>>> release-7.1.8-5.5
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",
