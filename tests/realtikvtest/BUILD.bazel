@@ -6,6 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/tests/realtikvtest",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errno",
+        "//pkg/parser/terror",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
@@ -21,6 +23,7 @@ go_library(
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
