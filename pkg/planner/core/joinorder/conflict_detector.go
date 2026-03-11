@@ -16,9 +16,11 @@ package joinorder
 
 import (
 	"maps"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -754,11 +756,12 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	//   After reorder, (t1 left t2 on t1.c1 = t2.c1) left t3 on t2.c2 = t3.c2;
 	//   We should make sure there is no NOT_NULL flag in `t2.c1`.
 	for i, cond := range alignedEQConds {
-		alignedEQConds[i] = alignNotNullWithSchema(cond, join.Schema()).(*expression.ScalarFunction)
+		newCond, _ := alignNotNullWithSchema(cond, join.Schema())
+		alignedEQConds[i] = newCond.(*expression.ScalarFunction)
 	}
 	alignedNonEQConds := make([]expression.Expression, len(e.nonEQConds))
 	for i, cond := range e.nonEQConds {
-		alignedNonEQConds[i] = alignNotNullWithSchema(cond, join.Schema())
+		alignedNonEQConds[i], _ = alignNotNullWithSchema(cond, join.Schema())
 	}
 	join.EqualConditions = alignedEQConds
 	for _, cond := range alignedNonEQConds {
@@ -777,31 +780,61 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 
 // alignNotNullWithSchema update the columns in expression with the one from schema,
 // whose NOT_NULL flag has already been updated by LogicalJoin.MergeSchema().
-func alignNotNullWithSchema(expr expression.Expression, schema *expression.Schema) expression.Expression {
+func alignNotNullWithSchema(expr expression.Expression, schema *expression.Schema) (expression.Expression, bool) {
 	if schema == nil || expr == nil {
-		return expr
+		return expr, false
+	}
+	tryUpdateNotNullFlag := func(dstCol, srcCol *expression.Column) (*expression.Column, bool) {
+		srcNotNullFlag := mysql.HasNotNullFlag(srcCol.RetType.GetFlag())
+		dstNotNullFlag := mysql.HasNotNullFlag(dstCol.RetType.GetFlag())
+		if srcNotNullFlag != dstNotNullFlag {
+			newTp := dstCol.RetType.DeepCopy()
+			// Make sure NOT_NULL flag of dstCol be same with srcCol.
+			if srcNotNullFlag {
+				newTp.AddFlag(mysql.NotNullFlag)
+			} else {
+				newTp.DelFlag(mysql.NotNullFlag)
+			}
+			newCol := dstCol.Clone().(*expression.Column)
+			newCol.RetType = newTp
+			return newCol, true
+		}
+		return dstCol, false
 	}
 	switch e := expr.(type) {
 	case *expression.Column:
 		if schemaCol := schema.RetrieveColumn(e); schemaCol != nil {
-			return schemaCol
+			return tryUpdateNotNullFlag(e, schemaCol)
 		}
-		return e
+		return e, false
 	case *expression.CorrelatedColumn:
 		if schemaCol := schema.RetrieveColumn(&e.Column); schemaCol != nil {
-			clone := e.Clone().(*expression.CorrelatedColumn)
-			clone.Column = *schemaCol
-			return clone
+			if newCol, updated := tryUpdateNotNullFlag(&e.Column, schemaCol); updated {
+				clone := e.Clone().(*expression.CorrelatedColumn)
+				clone.Column = *newCol
+				return clone, true
+			}
 		}
-		return e
+		return e, false
 	case *expression.ScalarFunction:
-		clone := e.Clone().(*expression.ScalarFunction)
-		for i, arg := range clone.GetArgs() {
-			clone.GetArgs()[i] = alignNotNullWithSchema(arg, schema)
+		var needClone bool
+		newArgs := slices.Clone(e.GetArgs())
+		for i, arg := range newArgs {
+			if newArg, updated := alignNotNullWithSchema(arg, schema); updated {
+				newArgs[i] = newArg
+				needClone = true
+			}
 		}
-		return clone
+		if needClone {
+			clone := e.Clone().(*expression.ScalarFunction)
+			for i, arg := range newArgs {
+				clone.GetArgs()[i] = arg
+			}
+			return clone, true
+		}
+		return e, false
 	default:
-		return expr
+		return expr, false
 	}
 }
 
