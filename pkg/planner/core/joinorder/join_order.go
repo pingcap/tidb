@@ -481,6 +481,10 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		// and the first round of greedy enumeration is not allowed to use non-eq edges.
 		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
+		// Clamp to 1 to avoid cumCost*0=0 making non-EQ joins appear free.
+		if cartesianFactor <= 0 {
+			cartesianFactor = 1
+		}
 		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
 			return nil, err
 		}
