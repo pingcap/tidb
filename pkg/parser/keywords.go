@@ -664,7 +664,6 @@ var Keywords = []KeywordsType{
 	{"NODE_STATE", false, "tidb"},
 	{"OPTIMISTIC", false, "tidb"},
 	{"PESSIMISTIC", false, "tidb"},
-	{"POLICIES", false, "tidb"},
 	{"REGION", false, "tidb"},
 	{"REGIONS", false, "tidb"},
 	{"RESET", false, "tidb"},
