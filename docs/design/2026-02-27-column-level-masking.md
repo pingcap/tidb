@@ -206,6 +206,7 @@ CREATE TABLE mysql.tidb_masking_policy (
   policy_name VARCHAR(64) NOT NULL,
   masking_type VARCHAR(32) NOT NULL DEFAULT 'CUSTOM',
   expression TEXT NOT NULL,
+  restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
   status ENUM('ENABLED', 'DISABLED') DEFAULT 'ENABLED',
   created_at TIMESTAMP DEFAULT NOW(),
   created_by VARCHAR(128),

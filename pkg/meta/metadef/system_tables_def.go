@@ -794,7 +794,7 @@ const (
 
 	// CreateTiDBMaskingPolicyTable is a table to store masking policy metadata.
 	CreateTiDBMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
-		policy_id BIGINT PRIMARY KEY,
+		policy_id BIGINT PRIMARY KEY AUTO_INCREMENT,
 		db_name VARCHAR(64) NOT NULL,
 		table_name VARCHAR(64) NOT NULL,
 		table_id BIGINT NOT NULL,
@@ -804,7 +804,7 @@ const (
 		masking_type VARCHAR(32) NOT NULL DEFAULT 'CUSTOM',
 		expression TEXT NOT NULL,
 		status ENUM('ENABLED', 'DISABLED') DEFAULT 'ENABLED',
-		restrict_on VARCHAR(128) NOT NULL DEFAULT 'NONE',
+		restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		created_by VARCHAR(128),
 		updated_by VARCHAR(128),

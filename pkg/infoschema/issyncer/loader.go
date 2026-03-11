@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -254,7 +255,8 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	maskingPolicies, err := l.fetchMaskingPolicies(m)
+	maskingPolicyTable := findSystemTableInfoByName(schemas, "mysql", "tidb_masking_policy")
+	maskingPolicies, err := l.fetchMaskingPolicies(m, maskingPolicyTable)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -483,12 +485,31 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (*Loader) fetchMaskingPolicies(m meta.Reader) ([]*model.MaskingPolicyInfo, error) {
-	allPolicies, err := m.ListMaskingPolicies()
+func (l *Loader) fetchMaskingPolicies(m meta.Reader, policyTblInfo *model.TableInfo) ([]*model.MaskingPolicyInfo, error) {
+	bootstrapVersion, err := m.GetBootstrapVersion()
 	if err != nil {
 		return nil, err
 	}
-	return allPolicies, nil
+	// mysql.tidb_masking_policy is introduced in bootstrap version 224.
+	if bootstrapVersion < 224 {
+		return nil, nil
+	}
+	return infoschema.LoadMaskingPolicies(l.sysExecutorFactory, policyTblInfo)
+}
+
+func findSystemTableInfoByName(schemas []*model.DBInfo, dbName, tableName string) *model.TableInfo {
+	for _, dbInfo := range schemas {
+		if !strings.EqualFold(dbInfo.Name.L, dbName) {
+			continue
+		}
+		for _, tblInfo := range dbInfo.Deprecated.Tables {
+			if strings.EqualFold(tblInfo.Name.L, tableName) {
+				return tblInfo
+			}
+		}
+		break
+	}
+	return nil
 }
 
 func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {

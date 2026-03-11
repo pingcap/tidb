@@ -615,7 +615,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 		}
 	}
 	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
-		if err := refreshMaskingPoliciesForTableIDs(b, m, oldTableID, newTableID); err != nil {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -635,7 +635,7 @@ func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 	}
 }
 
-func refreshMaskingPoliciesForTableIDs(b *Builder, m meta.Reader, tableIDs ...int64) error {
+func refreshMaskingPoliciesForTableIDs(b *Builder, tableIDs ...int64) error {
 	targetIDs := make(map[int64]struct{}, len(tableIDs))
 	for _, tableID := range tableIDs {
 		if !tableIDIsValid(tableID) {
@@ -648,8 +648,10 @@ func refreshMaskingPoliciesForTableIDs(b *Builder, m meta.Reader, tableIDs ...in
 	}
 
 	targetIS := b.infoSchema
-	if b.enableV2 && b.infoschemaV2.infoSchema != nil {
-		targetIS = b.infoschemaV2.infoSchema
+	tableLookupIS := InfoSchema(targetIS)
+	if b.enableV2 {
+		// In infoschema v2, table lookup must go through infoschemaV2 data instead of base infoSchema.
+		tableLookupIS = &b.infoschemaV2
 	}
 
 	existingNames := make([]string, 0)
@@ -666,7 +668,17 @@ func refreshMaskingPoliciesForTableIDs(b *Builder, m meta.Reader, tableIDs ...in
 		targetIS.deleteMaskingPolicy(name)
 	}
 
-	policies, err := m.ListMaskingPolicies()
+	policySystemTable, err := tableLookupIS.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+	if err != nil {
+		// Older schema versions may not have mysql.tidb_masking_policy.
+		return nil
+	}
+
+	idList := make([]int64, 0, len(targetIDs))
+	for tableID := range targetIDs {
+		idList = append(idList, tableID)
+	}
+	policies, err := LoadMaskingPolicies(b.factory, policySystemTable.Meta(), idList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

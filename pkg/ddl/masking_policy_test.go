@@ -65,6 +65,18 @@ func TestMaskingPolicyCaseExpression(t *testing.T) {
 		Check(testkit.Rows("1"))
 }
 
+func TestMaskingPolicyCreateWithRestrictOn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_restrict_on")
+	tk.MustExec("create table t_restrict_on (c char(120))")
+
+	tk.MustExec("create masking policy p_restrict_on on t_restrict_on(c) as c restrict on (insert_into_select, ctas) disable")
+	tk.MustQuery("select status, restrict_on from mysql.tidb_masking_policy where policy_name = 'p_restrict_on'").
+		Check(testkit.Rows("DISABLED INSERT_INTO_SELECT,CTAS"))
+}
+
 func TestMaskingPolicyModifyExpressionAndRestrictOn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -1600,7 +1600,7 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 		}
 	}
 	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
-		if err := refreshMaskingPoliciesForTableIDs(b, m, oldTableID, newTableID); err != nil {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
