@@ -16,13 +16,18 @@ package checkpoint_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	streamhelperconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
-	"github.com/pingcap/tidb/br/pkg/utiltest/crr"
+	testutil "github.com/pingcap/tidb/br/pkg/utiltest/crr"
 	"github.com/pingcap/tidb/br/pkg/utiltest/syncpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,19 +85,7 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 	require.Greater(t, replicated, 0)
 	require.Less(t, replicated, pulled)
 
-	calculator, err := checkpoint.NewCalculator(
-		checkpoint.CalculatorDeps{
-			PD:         h.PDSim,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
-		},
-		checkpoint.CheckpointCalculatorConfig{
-			TaskName:     "drr_test_task",
-			PollInterval: 5 * time.Millisecond,
-		},
-		nil,
-	)
-	require.NoError(t, err)
+	calculator := h.newCalculator()
 
 	type calcResult struct {
 		checkpoint uint64
@@ -121,6 +114,175 @@ func TestCheckpointCalculatorWaitsUntilRoundFullySynced(t *testing.T) {
 	require.NoError(t, result.err)
 	require.Equal(t, upstreamCheckpoint, result.checkpoint)
 	require.NoError(t, h.AssertDownstreamCanRestoreTo(ctx, result.checkpoint))
+}
+
+func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
+	ctx := context.Background()
+	h := newSingleStoreIntegrationHarness(ctx, t)
+
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	upstream := &recordingUpstreamStorage{inner: h.Upstream}
+	calculator := h.newCalculator(
+		withUpstream(upstream),
+	)
+
+	firstCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, firstCheckpoint)
+	h.requireReplicateAllPending()
+
+	computedCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, firstCheckpoint, computedCheckpoint)
+	require.Len(t, upstream.walkOpts, 1)
+	require.Empty(t, upstream.walkOpts[0].StartAfter)
+
+	secondCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(firstCheckpoint, secondCheckpoint)
+	h.requireReplicateAllPending()
+
+	computedCheckpoint, err = calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, secondCheckpoint, computedCheckpoint)
+	require.Len(t, upstream.walkOpts, 2)
+	require.Equal(
+		t,
+		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstCheckpoint, "ffffffffffffffff~"),
+		upstream.walkOpts[1].StartAfter,
+	)
+}
+
+func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
+	ctx := context.Background()
+	h := newSingleStoreIntegrationHarness(ctx, t)
+
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	firstFlushTS := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	secondCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	require.Greater(t, secondCheckpoint, firstFlushTS)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, secondCheckpoint)
+	h.requireReplicateAllPending()
+
+	upstream := &recordingUpstreamStorage{inner: h.Upstream}
+	calculator := h.newCalculator(
+		withCalculatorConfig(checkpoint.CheckpointCalculatorConfig{InitialSyncedTS: firstFlushTS}),
+		withUpstream(upstream),
+	)
+
+	computedCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, secondCheckpoint, computedCheckpoint)
+	require.Len(t, upstream.walkOpts, 1)
+	require.Equal(
+		t,
+		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstFlushTS, "ffffffffffffffff~"),
+		upstream.walkOpts[0].StartAfter,
+	)
+}
+
+func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
+	ctx := context.Background()
+	stores := testutil.StoreIDRange(1, 4)
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(8, stores...),
+	)
+	require.NoError(t, err)
+
+	h := newIntegrationHarness(ctx, t, boundaries)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint(stores, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+	h.requireReplicateAllPending()
+
+	var started atomic.Int32
+	firstTwoStarted := make(chan struct{})
+	releaseFirstTwo := make(chan struct{})
+	var closeStarted sync.Once
+	testfailpoint.EnableCall(t, checkpointSyncPath+"/before-read-meta", func(_ string) {
+		current := started.Add(1)
+		if current == 2 {
+			closeStarted.Do(func() { close(firstTwoStarted) })
+		}
+		if current <= 2 {
+			<-releaseFirstTwo
+		}
+	})
+
+	calculator := h.newCalculator(
+		withCalculatorConfig(checkpoint.CheckpointCalculatorConfig{MetaReadConcurrency: 2}),
+	)
+
+	resultCh := make(chan calcResult, 1)
+	go func() {
+		checkpoint, err := calculator.ComputeNextCheckpoint(ctx)
+		resultCh <- calcResult{checkpoint: checkpoint, err: err}
+	}()
+
+	<-firstTwoStarted
+	require.Equal(t, int32(2), started.Load())
+
+	select {
+	case result := <-resultCh:
+		require.FailNowf(t, "checkpoint should still wait for blocked meta readers", "unexpected result: %+v", result)
+	default:
+	}
+
+	close(releaseFirstTwo)
+
+	result := h.requireCalcResult(resultCh)
+	require.NoError(t, result.err)
+	require.Equal(t, upstreamCheckpoint, result.checkpoint)
+	require.GreaterOrEqual(t, started.Load(), int32(2))
+}
+
+func TestCheckpointCalculatorReturnsCurrentCheckpointWhenUpstreamUnchanged(t *testing.T) {
+	ctx := context.Background()
+	h := newSingleStoreIntegrationHarness(ctx, t)
+
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	nextCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, nextCheckpoint)
+	h.requireReplicateAllPending()
+
+	result, err := h.calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, nextCheckpoint, result)
+
+	unchangedCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+
+	result, err = h.calculator.ComputeNextCheckpoint(unchangedCtx)
+	require.NoError(t, err)
+	require.Equal(t, nextCheckpoint, result)
+}
+
+func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {
+	ctx := context.Background()
+	h := newSingleStoreIntegrationHarness(ctx, t)
+
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+	h.requireReplicateAllPending()
+
+	observer := &recordingObserver{}
+	calculator := h.newCalculator(
+		withObserver(observer),
+	)
+
+	safeCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, upstreamCheckpoint, safeCheckpoint)
+
+	events := observer.Events()
+	require.Len(t, events, 3)
+	require.Equal(t, checkpoint.EventUpstreamAdvanced, events[0].Type)
+	require.Equal(t, upstreamCheckpoint, events[0].UpstreamCheckpoint)
+	require.Equal(t, checkpoint.EventRoundPlanned, events[1].Type)
+	require.Equal(t, 1, events[1].AliveStoreCount)
+	require.Greater(t, events[1].PendingFileCount, 0)
+	require.Equal(t, checkpoint.EventCheckpointAdvanced, events[2].Type)
+	require.Equal(t, upstreamCheckpoint, events[2].SafeCheckpoint)
+	require.Equal(t, calculator.SyncedTS(), events[2].SyncedTS)
 }
 
 func TestCheckpointCalculatorConcurrentFlushInterleavings(t *testing.T) {
@@ -262,19 +424,7 @@ func newSingleStoreIntegrationHarness(ctx context.Context, t *testing.T) *integr
 	require.NoError(t, err)
 
 	h := newIntegrationHarness(ctx, t, boundaries)
-	h.calculator, err = checkpoint.NewCalculator(
-		checkpoint.CalculatorDeps{
-			PD:         h.PDSim,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
-		},
-		checkpoint.CheckpointCalculatorConfig{
-			TaskName:     "drr_test_task",
-			PollInterval: 5 * time.Millisecond,
-		},
-		nil,
-	)
-	require.NoError(t, err)
+	h.calculator = h.newCalculator()
 	return h
 }
 
@@ -355,6 +505,62 @@ func configureAdvancerForSubscriptionDrivenTick(h *testutil.TestHarness) {
 		CheckPointLagLimit:     streamhelperconfig.DefaultCheckPointLagLimit,
 		OwnershipCycleInterval: streamhelperconfig.DefaultOwnershipCycleInterval,
 	})
+}
+
+type calculatorParams struct {
+	deps     checkpoint.CalculatorDeps
+	cfg      checkpoint.CheckpointCalculatorConfig
+	observer checkpoint.Observer
+}
+
+type calculatorOption func(*calculatorParams)
+
+func withCalculatorConfig(cfg checkpoint.CheckpointCalculatorConfig) calculatorOption {
+	return func(params *calculatorParams) {
+		params.cfg = cfg
+	}
+}
+
+func withUpstream(upstream checkpoint.UpstreamStorageReader) calculatorOption {
+	return func(params *calculatorParams) {
+		params.deps.Upstream = upstream
+	}
+}
+
+func withDownstream(downstream checkpoint.DownstreamObjectChecker) calculatorOption {
+	return func(params *calculatorParams) {
+		params.deps.Downstream = downstream
+	}
+}
+
+func withObserver(observer checkpoint.Observer) calculatorOption {
+	return func(params *calculatorParams) {
+		params.observer = observer
+	}
+}
+
+func (h *integrationHarness) newCalculator(
+	opts ...calculatorOption,
+) *checkpoint.Calculator {
+	params := calculatorParams{
+		deps: checkpoint.CalculatorDeps{
+			PD:         h.PDSim,
+			Upstream:   h.Upstream,
+			Downstream: h.Downstream,
+		},
+	}
+	for _, opt := range opts {
+		opt(&params)
+	}
+	if params.cfg.TaskName == "" {
+		params.cfg.TaskName = "drr_test_task"
+	}
+	if params.cfg.PollInterval == 0 {
+		params.cfg.PollInterval = 5 * time.Millisecond
+	}
+	calculator, err := checkpoint.NewCalculator(params.deps, params.cfg, params.observer)
+	require.NoError(h.t, err)
+	return calculator
 }
 
 func (h *integrationHarness) flushRoundsAndGetCheckpoint(stores []uint64, rounds int) uint64 {
