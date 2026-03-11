@@ -141,12 +141,56 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	}
 
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
+<<<<<<< HEAD
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
 		for i := 0; i < e.concurrency; i++ {
 			e.workerWg.Add(1)
 			workID := i
 			go e.innerWorker(ctx, workID)
+=======
+		// workerCtx is a cancellable child of ctx. Close() calls
+		// cancelWorkers() to abort in-flight inner/outer workers
+		// (e.g. for LIMIT queries). Coordination goroutines
+		// (notifyWorker, bridge) use the parent ctx instead, since
+		// they must outlive the workers to perform cleanup.
+		workerCtx, cancelWorkers := context.WithCancel(ctx)
+		e.cancelWorkers = cancelWorkers
+		e.workerWg.Add(1)
+		go e.outerWorker(workerCtx)
+		if e.keepOrder {
+			for i := range e.concurrency {
+				e.workerWg.Add(1)
+				// Uses workerCtx so Close() → cancelWorkers() aborts
+				// in-flight inner-side scans immediately.
+				go e.innerWorkerOrdered(workerCtx, i)
+			}
+			// Bridge goroutine: when all outer+inner workers finish,
+			// close orderedResultCh so the reorder worker can drain and exit.
+			e.notifyWg.Add(1)
+			go func() {
+				defer e.handleWorkerPanic(workerCtx, &e.notifyWg)
+				e.workerWg.Wait()
+				close(e.orderedResultCh)
+			}()
+			// The reorder worker is tracked by notifyWg so that
+			// Close() waits for it to fully exit before returning.
+			e.notifyWg.Add(1)
+			go e.reorderWorker(workerCtx)
+		} else {
+			for i := range e.concurrency {
+				e.workerWg.Add(1)
+				workID := i
+				// Uses workerCtx so Close() → cancelWorkers() aborts
+				// in-flight inner-side scans immediately.
+				go e.innerWorker(workerCtx, workID)
+			}
+			e.notifyWg.Add(1)
+			// Uses parent ctx (not workerCtx) because notifyWorker
+			// calls workerWg.Wait() and must outlive the workers to
+			// send the EOF result after they have all exited.
+			go e.notifyWorker(ctx)
+>>>>>>> 9a618ad7336 (executor: cancel inner inflight workers bug fix (#66887))
 		}
 		e.notifyWg.Add(1)
 		go e.notifyWorker(ctx)
