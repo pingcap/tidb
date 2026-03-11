@@ -75,6 +75,8 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
+	// Fix63487 controls the threshold for determining the access path in skyline pruning based on seek cost differences.
+	Fix63487 uint64 = 63487
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
