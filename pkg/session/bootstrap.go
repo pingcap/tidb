@@ -591,6 +591,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -613,6 +614,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -1241,11 +1243,15 @@ const (
 	version223 = 223
 
 	// version 224
-	//   insert `cluster_id` into the `mysql.tidb` table.
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
 	version224 = 224
 
+	// version 225
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	version225 = 225
+
 	// ...
-	// [version223, version238] is the version range reserved for patches of 8.5.x
+	// [version226, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
@@ -1253,7 +1259,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version224
+var currentBootstrapVersion int64 = version225
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1427,7 +1433,13 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
+		upgradeToVer219,
+		upgradeToVer220,
+		upgradeToVer221,
+		upgradeToVer222,
+		upgradeToVer223,
 		upgradeToVer224,
+		upgradeToVer225,
 	}
 )
 
@@ -3304,6 +3316,14 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+}
+
 // writeClusterID writes cluster id into mysql.tidb
 func writeClusterID(s sessiontypes.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
@@ -3320,8 +3340,8 @@ func writeClusterID(s sessiontypes.Session) {
 	)
 }
 
-func upgradeToVer224(s sessiontypes.Session, ver int64) {
-	if ver >= version224 {
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
 		return
 	}
 

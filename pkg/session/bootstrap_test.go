@@ -2592,7 +2592,7 @@ func TestTiDBUpgradeToVer219(t *testing.T) {
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
 }
 
-func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo225(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2608,24 +2608,23 @@ func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 	require.NoError(t, r.Close())
 	se.Close()
 
-	// bootstrap as version241
-	ver241 := version241
-	seV241 := CreateSessionAndSetID(t, store)
+	// bootstrap as version224
+	ver224 := version224
+	seV224 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver241))
+	err = m.FinishBootstrap(int64(ver224))
 	require.NoError(t, err)
-	revertVersionAndVariables(t, seV241, ver241)
+	revertVersionAndVariables(t, seV224, ver224)
 	// remove the cluster_id entry from mysql.tidb table
-	MustExec(t, seV241, "delete from mysql.tidb where variable_name='cluster_id'")
+	MustExec(t, seV224, "delete from mysql.tidb where variable_name='cluster_id'")
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
-	store.SetOption(StoreBootstrappedKey, nil)
-	ver, err := getBootstrapVersion(seV241)
+	ver, err := getBootstrapVersion(seV224)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver241), ver)
-	seV241.Close()
+	require.Equal(t, int64(ver224), ver)
+	seV224.Close()
 
 	// upgrade to current version
 	dom.Close()

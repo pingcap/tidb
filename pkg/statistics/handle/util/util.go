@@ -188,6 +188,28 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
+
+	// timezone setting
+	// timezone used to datetime/timestamp conversion when collecting stats.
+	globalTZ, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TimeZone)
+	if err != nil {
+		return err
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(variable.TimeZone, globalTZ); err != nil {
+		return err
+	}
+	sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
+
+	// sync innodb_lock_wait_timeout
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InnodbLockWaitTimeout)
+	if err != nil {
+		return err
+	}
+	lockWaitSec, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().LockWaitTimeout = lockWaitSec * 1000
 	return nil
 }
 

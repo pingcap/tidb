@@ -45,7 +45,7 @@ go_test(
     ],
     embed = [":reporter"],
     flaky = True,
-    shard_count = 36,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/testkit/testsetup",
