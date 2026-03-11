@@ -717,22 +717,42 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 
-	// If any generated column depends on a TIMESTAMP column, evaluate all generated
-	// columns in UTC to ensure consistent results regardless of session timezone.
+	// Pre-compute UTC eval context if any stored generated column depends on TIMESTAMP.
+	// Only stored (non-virtual) generated columns need UTC evaluation to ensure consistent
+	// stored values regardless of session timezone. Virtual columns must use session TZ
+	// to match partition definitions and expression index semantics.
+	// Skip UTC evaluation on partitioned tables: partition boundaries are defined using
+	// session-TZ values at CREATE TABLE time, so changing the evaluation TZ breaks routing.
 	// See https://github.com/pingcap/tidb/issues/66753
-	needUTC := table.HasGeneratedColumnDependingOnTimestamp(tbl)
+	var utcEvalCtx exprctx.EvalContext
 	var sessionLoc *time.Location
-	if needUTC {
-		sessionLoc = evalCtx.Location()
-		restore := table.ConvertTimestampDatumsToUTC(row, tbl.Columns, sessionLoc)
-		defer restore()
-		evalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
+	if tbl.GetPartitionInfo() == nil {
+		for _, gCol := range gCols {
+			if !gCol.IsVirtualGenerated() && table.GeneratedColumnDependsOnTimestamp(gCol.ColumnInfo, tbl.Columns) {
+				sessionLoc = evalCtx.Location()
+				utcEvalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
+				break
+			}
+		}
 	}
 
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(evalCtx, chunk.MutRowFromDatums(row).ToRow())
+		// For stored generated columns depending on TIMESTAMP, temporarily convert
+		// TIMESTAMP inputs to UTC, evaluate in UTC context, then restore.
+		useUTC := utcEvalCtx != nil && !gCol.IsVirtualGenerated() &&
+			table.GeneratedColumnDependsOnTimestamp(gCol.ColumnInfo, tbl.Columns)
+		curEvalCtx := evalCtx
+		var restoreFn func()
+		if useUTC {
+			restoreFn = table.ConvertTimestampDatumsToUTC(row, tbl.Columns, sessionLoc)
+			curEvalCtx = utcEvalCtx
+		}
+		val, err := e.GenExprs[i].Eval(curEvalCtx, chunk.MutRowFromDatums(row).ToRow())
+		if restoreFn != nil {
+			restoreFn()
+		}
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
@@ -743,7 +763,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		// If the generated column result type is TIMESTAMP and we evaluated in UTC,
 		// convert the result back from UTC to session TZ. The storage layer will later
 		// convert from session TZ to UTC, so this avoids a double-conversion.
-		if needUTC && gCol.GetType() == mysql.TypeTimestamp && !row[colIdx].IsNull() && row[colIdx].Kind() == types.KindMysqlTime {
+		if useUTC && gCol.GetType() == mysql.TypeTimestamp && !row[colIdx].IsNull() && row[colIdx].Kind() == types.KindMysqlTime {
 			t := row[colIdx].GetMysqlTime()
 			if convErr := t.ConvertTimeZone(time.UTC, sessionLoc); convErr == nil {
 				row[colIdx].SetMysqlTime(t)

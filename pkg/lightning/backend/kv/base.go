@@ -311,7 +311,7 @@ func (e *BaseKVEncoder) IsAutoRandomCol(col *model.ColumnInfo) bool {
 // EvalGeneratedColumns evaluates the generated columns.
 func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum,
 	cols []*table.Column) (errCol *model.ColumnInfo, err error) {
-	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols)
+	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols, e.table.Meta())
 }
 
 // LogKVConvertFailed logs the error when converting a row to KV pair failed.
@@ -367,48 +367,64 @@ func (e *BaseKVEncoder) TruncateWarns() {
 }
 
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
-	genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
+	genCols []GeneratedCol, tblInfo *model.TableInfo) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	evalCtx := se.GetExprCtx().GetEvalCtx()
 	var castCtx exprctx.BuildContext = se.GetExprCtx()
 
-	// If any generated column depends on a TIMESTAMP column, evaluate in UTC
-	// to ensure consistent results regardless of session timezone.
+	// Pre-compute UTC eval context if any stored generated column depends on TIMESTAMP.
+	// Only stored (non-virtual) generated columns need UTC evaluation.
+	// Skip UTC on partitioned tables: partition boundaries use session-TZ values.
 	// See https://github.com/pingcap/tidb/issues/66753
 	colInfos := make([]*model.ColumnInfo, len(cols))
 	for i, c := range cols {
 		colInfos[i] = c.ToInfo()
 	}
-	needUTC := false
-	for _, gc := range genCols {
-		if table.GeneratedColumnDependsOnTimestamp(colInfos[gc.Index], colInfos) {
-			needUTC = true
-			break
-		}
-	}
+	var utcCastCtx exprctx.BuildContext
+	var utcEvalCtx exprctx.EvalContext
 	var sessionLoc *time.Location
-	if needUTC {
-		sessionLoc = evalCtx.Location()
-		restore := table.ConvertTimestampDatumsToUTC(record, colInfos, sessionLoc)
-		defer restore()
-		mutRow = chunk.MutRowFromDatums(record)
-		castCtx = exprctx.CtxWithUTCLocation(castCtx)
-		evalCtx = castCtx.GetEvalCtx()
+	if tblInfo == nil || tblInfo.GetPartitionInfo() == nil {
+		for _, gc := range genCols {
+			col := colInfos[gc.Index]
+			if !col.IsVirtualGenerated() && table.GeneratedColumnDependsOnTimestamp(col, colInfos) {
+				sessionLoc = evalCtx.Location()
+				utcCastCtx = exprctx.CtxWithUTCLocation(castCtx)
+				utcEvalCtx = utcCastCtx.GetEvalCtx()
+				break
+			}
+		}
 	}
 
 	for _, gc := range genCols {
 		col := colInfos[gc.Index]
-		evaluated, err := gc.Expr.Eval(evalCtx, mutRow.ToRow())
+		// For stored generated columns depending on TIMESTAMP, temporarily convert
+		// TIMESTAMP inputs to UTC, evaluate in UTC context, then restore.
+		useUTC := utcEvalCtx != nil && !col.IsVirtualGenerated() &&
+			table.GeneratedColumnDependsOnTimestamp(col, colInfos)
+		curEvalCtx := evalCtx
+		curCastCtx := castCtx
+		var restoreFn func()
+		if useUTC {
+			restoreFn = table.ConvertTimestampDatumsToUTC(record, colInfos, sessionLoc)
+			mutRow = chunk.MutRowFromDatums(record)
+			curEvalCtx = utcEvalCtx
+			curCastCtx = utcCastCtx
+		}
+		evaluated, err := gc.Expr.Eval(curEvalCtx, mutRow.ToRow())
+		if restoreFn != nil {
+			restoreFn()
+			mutRow = chunk.MutRowFromDatums(record)
+		}
 		if err != nil {
 			return col, err
 		}
-		value, err := table.CastColumnValue(castCtx, evaluated, col, false, false)
+		value, err := table.CastColumnValue(curCastCtx, evaluated, col, false, false)
 		if err != nil {
 			return col, err
 		}
 		// If the generated column result type is TIMESTAMP and we evaluated in UTC,
 		// convert back from UTC to session TZ to avoid double-conversion by the storage layer.
-		if needUTC && col.GetType() == mysql.TypeTimestamp && !value.IsNull() && value.Kind() == types.KindMysqlTime {
+		if useUTC && col.GetType() == mysql.TypeTimestamp && !value.IsNull() && value.Kind() == types.KindMysqlTime {
 			mt := value.GetMysqlTime()
 			if convErr := mt.ConvertTimeZone(time.UTC, sessionLoc); convErr == nil {
 				value.SetMysqlTime(mt)

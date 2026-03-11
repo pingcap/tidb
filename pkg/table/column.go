@@ -782,16 +782,6 @@ func GeneratedColumnDependsOnTimestamp(genCol *model.ColumnInfo, allCols []*mode
 	return false
 }
 
-// HasGeneratedColumnDependingOnTimestamp returns true if any generated column
-// in the table depends on a TIMESTAMP column.
-func HasGeneratedColumnDependingOnTimestamp(tblInfo *model.TableInfo) bool {
-	for _, col := range tblInfo.Columns {
-		if col.IsGenerated() && GeneratedColumnDependsOnTimestamp(col, tblInfo.Columns) {
-			return true
-		}
-	}
-	return false
-}
 
 // ConvertTimestampDatumsToUTC converts all TIMESTAMP column values in the row from
 // session timezone to UTC. It returns a restore function that converts them back.
