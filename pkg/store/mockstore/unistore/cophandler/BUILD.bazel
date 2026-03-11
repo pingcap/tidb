@@ -69,7 +69,7 @@ go_test(
     ],
     embed = [":cophandler"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/expression",
         "//pkg/kv",
@@ -81,6 +81,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/rowcodec",

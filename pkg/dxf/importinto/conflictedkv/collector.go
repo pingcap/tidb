@@ -93,6 +93,7 @@ func NewCollector(
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
 	globalSet, localSet *BoundedHandleSet,
+	trafficRec TrafficRecorder,
 ) *Collector {
 	collector := &Collector{
 		logger:         logger,
@@ -107,7 +108,7 @@ func NewCollector(
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
-		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store), NewHandleFilter(globalSet))
+		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), NewHandleFilter(globalSet))
 	}
 	collector.handler = h
 	return collector

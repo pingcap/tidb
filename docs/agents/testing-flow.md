@@ -3,6 +3,15 @@
 This document provides command playbooks for test execution.
 Root `AGENTS.md` is the source of truth for policy-level requirements; this file is operational guidance.
 Use `AGENTS.md` -> `Task -> Validation Matrix` first, run the smallest valid command set, and report exact commands.
+Detailed command snippets in this file are the canonical operational reference; skills under `.agents/skills/` should point here rather than duplicating long command blocks.
+
+Operational skill entry points:
+
+- `.agents/skills/tidb-verify-profile`
+- `.agents/skills/tidb-bazel-prepare-gate`
+- `.agents/skills/tidb-failpoint-test-runner`
+- `.agents/skills/tidb-integrationtest-recorder`
+- `.agents/skills/tidb-realtikv-runner`
 
 ## Unit tests (`/pkg/...`)
 
@@ -33,12 +42,18 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 - `-tags=intest,deadlock` does not enable failpoints.
 
 ```bash
-make failpoint-enable && (
+(
+  enabled=0
+  cleanup() { [ "${enabled}" -eq 1 ] && make failpoint-disable; }
+  trap cleanup EXIT INT TERM
+
+  make failpoint-enable
+  enabled=1
+
   pushd pkg/<package_name>
   go test -run <TestName> -tags=intest,deadlock
   rc=$?
   popd
-  make failpoint-disable
   exit $rc
 )
 ```
@@ -122,6 +137,27 @@ rm -rf "${HOME}/.tiup/data/realtikvtest"
 
 ```bash
 # Cleanup check: PD endpoint should be unreachable after teardown.
+! curl -sf "http://${PD_ADDR}/pd/api/v1/version"
+```
+
+Cleanup-safe template (recommended for long local debug runs):
+
+```bash
+PD_ADDR=127.0.0.1:2379
+(
+  cleanup() {
+    [ -n "${PLAYGROUND_PID:-}" ] && kill "${PLAYGROUND_PID}" 2>/dev/null || true
+    [ -n "${PLAYGROUND_PID:-}" ] && wait "${PLAYGROUND_PID}" 2>/dev/null || true
+    rm -rf "${HOME}/.tiup/data/realtikvtest"
+  }
+  trap cleanup EXIT INT TERM
+
+  tiup playground --mode tikv-slim --tag realtikvtest &
+  PLAYGROUND_PID=$!
+
+  until curl -sf "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; do sleep 1; done
+  go test -run <TestName> -tags=intest,deadlock ./tests/realtikvtest/<dir>/...
+)
 ! curl -sf "http://${PD_ADDR}/pd/api/v1/version"
 ```
 

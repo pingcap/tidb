@@ -356,21 +356,6 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 		require.NotNil(t, col)
 		// It doesn't have stats.
 		require.False(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
-
-		testKit.MustExec("set tidb_analyze_version=1")
-		testKit.MustExec("analyze table t")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 analyzing columnar index is not supported, skip idx",
-			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
-		testKit.MustExec("analyze table t index idx")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 analyzing columnar index is not supported, skip idx"))
-		testKit.MustExec("analyze table t index a")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows())
-		testKit.MustExec("analyze table t index a, idx, idx2")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 analyzing columnar index is not supported, skip idx",
-			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	})
 }
 

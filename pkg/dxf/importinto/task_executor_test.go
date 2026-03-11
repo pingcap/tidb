@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -71,9 +72,14 @@ func TestImportTaskExecutor(t *testing.T) {
 
 func TestGetOnDupForKVGroup(t *testing.T) {
 	t.Run("data-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup)
+		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
+	})
+	t.Run("data-kv-group-error", func(t *testing.T) {
+		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeError)
+		require.NoError(t, err)
+		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	indicesGenKV := map[int64]importer.GenKVIndex{
@@ -82,27 +88,61 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	}
 
 	t.Run("unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1))
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
+	t.Run("unique-index-error", func(t *testing.T) {
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeError)
+		require.NoError(t, err)
+		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
+	})
 
 	t.Run("non-unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2))
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRemove, onDup)
+
+		onDup, err = getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeError)
+		require.NoError(t, err)
+		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	t.Run("unknown-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3))
+		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3), importer.OnDupKeyModeCapture)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 		require.ErrorContains(t, err, "unknown index 3")
 	})
 
 	t.Run("invalid-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number")
+		onDup, err := getOnDupForKVGroup(indicesGenKV, "not-a-number", importer.OnDupKeyModeCapture)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
+	})
+}
+
+func TestNormalizeSubtaskErr(t *testing.T) {
+	dupErr := errors.Normalize(
+		"found duplicate key '%s', value '%s'",
+		errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"),
+	).FastGenByArgs([]byte{0x80, 0x81}, []byte{0x01})
+
+	t.Run("duplicate-key-always-converted", func(t *testing.T) {
+		err := normalizeSubtaskErr(dupErr)
+		require.ErrorContains(t, err, "[executor:8167]")
+		require.NotContains(t, err.Error(), "found duplicate key")
+		require.NotContains(t, err.Error(), "\\x80")
+	})
+
+	t.Run("wrapped-duplicate-key", func(t *testing.T) {
+		err := normalizeSubtaskErr(errors.Trace(dupErr))
+		require.ErrorContains(t, err, "[executor:8167]")
+	})
+
+	t.Run("other-error-not-converted", func(t *testing.T) {
+		otherErr := errors.New("some other error")
+		err := normalizeSubtaskErr(otherErr)
+		require.Equal(t, otherErr, err)
 	})
 }

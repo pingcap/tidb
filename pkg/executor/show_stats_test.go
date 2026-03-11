@@ -23,10 +23,8 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -151,16 +149,13 @@ func TestShowStatsHistograms(t *testing.T) {
 }
 
 func TestShowStatsBuckets(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	// Simple behavior testing. Version=1 is enough.
-	tk.MustExec("set @@tidb_analyze_version=1")
+	// Simple behavior testing. Use version 2.
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create index idx on t(a,b)")
 	tk.MustExec("insert into t values (1,1)")
@@ -218,9 +213,6 @@ func TestShowStatsBucketWithDateNullValue(t *testing.T) {
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -228,12 +220,12 @@ func TestShowStatsHasNullValue(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, index idx(a))")
 	tk.MustExec("insert into t values(NULL)")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table t with 0 topn")
 	// Null values are excluded from histogram for single-column index.
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values(1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn")
 	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
 		"test t  a 0 0 1 1 1 1 0",
 		"test t  idx 1 0 1 1 1 1 0",
@@ -241,37 +233,40 @@ func TestShowStatsHasNullValue(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(NULL, NULL)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn")
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  idx 1 0 1 1 (NULL, NULL) (NULL, NULL) 0"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
-	res := tk.MustQuery("show stats_histograms where table_name = 't'")
+	res := tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
 	require.Len(t, res.Rows(), 0)
 	tk.MustExec("analyze table t index idx_b")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
 	require.Len(t, res.Rows(), 1)
 	require.Equal(t, "4", res.Rows()[0][7])
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'b'")
-	require.Len(t, res.Rows(), 0)
+	require.Len(t, res.Rows(), 1)
 	tk.MustExec("analyze table t index idx_c_a")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_c_a'")
 	require.Len(t, res.Rows(), 1)
 	require.Equal(t, "0", res.Rows()[0][7])
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'c'")
-	require.Len(t, res.Rows(), 0)
+	require.Len(t, res.Rows(), 1)
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'a'")
-	require.Len(t, res.Rows(), 0)
+	require.Len(t, res.Rows(), 1)
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
 	res = tk.MustQuery("show stats_histograms where table_name = 't'")
 	require.Len(t, res.Rows(), 0)
 	tk.MustExec("analyze table t index")
-	res = tk.MustQuery("show stats_histograms where table_name = 't'").Sort()
-	require.Len(t, res.Rows(), 2)
-	require.Equal(t, "4", res.Rows()[0][7])
-	require.Equal(t, "0", res.Rows()[1][7])
+	rows := tk.MustQuery("show stats_histograms where table_name = 't'").Rows()
+	require.Len(t, rows, 5)
+	colNames := make([]string, 0, len(rows))
+	for _, row := range rows {
+		colNames = append(colNames, row[3].(string))
+	}
+	require.ElementsMatch(t, []string{"a", "b", "c", "idx_b", "idx_c_a"}, colNames)
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
 	tk.MustExec("analyze table t")
@@ -282,55 +277,6 @@ func TestShowStatsHasNullValue(t *testing.T) {
 	require.Equal(t, "1", res.Rows()[2][7])
 	require.Equal(t, "4", res.Rows()[3][7])
 	require.Equal(t, "0", res.Rows()[4][7])
-}
-
-func TestShowPartitionStats(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	testkit.WithPruneMode(tk, variable.Static, func() {
-		// Version2 is tested in TestGlobalStatsData1/2/3 and TestAnalyzeGlobalStatsWithOpts.
-		tk.MustExec("set @@session.tidb_analyze_version=1")
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
-						PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))`
-		tk.MustExec(createTable)
-		tk.MustExec(`insert into t values (1, 1)`)
-		tk.MustExec("analyze table t")
-
-		result := tk.MustQuery("show stats_meta")
-		require.Len(t, result.Rows(), 1)
-		require.Equal(t, "test", result.Rows()[0][0])
-		require.Equal(t, "t", result.Rows()[0][1])
-		require.Equal(t, "p0", result.Rows()[0][2])
-
-		result = tk.MustQuery("show stats_histograms").Sort()
-		require.Len(t, result.Rows(), 3)
-		require.Equal(t, "p0", result.Rows()[0][2])
-		require.Equal(t, "a", result.Rows()[0][3])
-		require.Equal(t, "p0", result.Rows()[1][2])
-		require.Equal(t, "b", result.Rows()[1][3])
-		require.Equal(t, "p0", result.Rows()[2][2])
-		require.Equal(t, "idx", result.Rows()[2][3])
-
-		result = tk.MustQuery("show stats_buckets").Sort()
-		result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 b 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
-
-		result = tk.MustQuery("show stats_healthy")
-		result.Check(testkit.Rows("test t p0 100"))
-		result = tk.MustQuery("show stats_healthy like 'test%'")
-		result.Check(testkit.Rows("test t p0 100"))
-		result = tk.MustQuery("show stats_healthy like 'TEST%'")
-		result.Check(testkit.Rows("test t p0 100"))
-		result = tk.MustQuery("show stats_healthy like 'test'")
-		result.Check(testkit.Rows("test t p0 100"))
-		result = tk.MustQuery("show stats_healthy like 'TEST'")
-		result.Check(testkit.Rows("test t p0 100"))
-	})
 }
 
 func TestShowStatusSnapshot(t *testing.T) {
@@ -431,49 +377,26 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][10])
 
 	tk.MustExec("delete from mysql.analyze_jobs")
-	if kerneltype.IsNextGen() {
-		t.Log("analyze V1 cannot support in the next gen")
-		return
-	}
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	rows = tk.MustQuery("show analyze status").Sort().Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "test", rows[0][0])
-	require.Equal(t, "t", rows[0][1])
-	require.Equal(t, "", rows[0][2])
-	require.Equal(t, "analyze columns", rows[0][3])
-	require.Equal(t, "2", rows[0][4])
-	checkTime(rows[0][5])
-	checkTime(rows[0][6])
-	require.Equal(t, "finished", rows[0][7])
-	require.Equal(t, "test", rows[1][0])
-	require.Equal(t, "<nil>", rows[0][8])
-	require.Equal(t, addr, rows[0][9])
-	require.Equal(t, "<nil>", rows[0][10])
-	require.Equal(t, "t", rows[1][1])
-	require.Equal(t, "", rows[1][2])
-	require.Equal(t, "analyze index idx", rows[1][3])
-	require.Equal(t, "2", rows[1][4])
-	checkTime(rows[1][5])
-	checkTime(rows[1][6])
-	require.Equal(t, "finished", rows[1][7])
-	require.Equal(t, "<nil>", rows[1][8])
-	require.Equal(t, addr, rows[1][9])
-	require.Equal(t, "<nil>", rows[1][10])
-
-	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("create table t2 (a int, b int, primary key(a)) PARTITION BY RANGE ( a )(PARTITION p0 VALUES LESS THAN (6))")
 	tk.MustExec(`insert into t2 values (1, 1), (2, 2)`)
 	tk.MustExec("analyze table t2")
 	rows = tk.MustQuery("show analyze status").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, "merge global stats for test.t2 columns", rows[0][3])
+	jobInfos := []string{rows[0][3].(string), rows[1][3].(string)}
+	require.ElementsMatch(t, []string{
+		"merge global stats for test.t2 columns",
+		"analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+	}, jobInfos)
 
 	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("alter table t2 add index idx(b)")
 	tk.MustExec("analyze table t2 index idx")
 	rows = tk.MustQuery("show analyze status").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "merge global stats for test.t2's index idx", rows[0][3])
+	require.Len(t, rows, 3)
+	jobInfos = []string{rows[0][3].(string), rows[1][3].(string), rows[2][3].(string)}
+	require.ElementsMatch(t, []string{
+		"merge global stats for test.t2's index idx",
+		"merge global stats for test.t2 columns",
+		"analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate",
+	}, jobInfos)
 }
