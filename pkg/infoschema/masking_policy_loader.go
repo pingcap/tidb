@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // LoadMaskingPolicies loads masking policy metadata from mysql.tidb_masking_policy.
@@ -56,7 +57,12 @@ func LoadMaskingPolicies(
 
 	query, args := buildLoadMaskingPoliciesQuery(tableIDs)
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(internalCtx, nil, query, args...)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		internalCtx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		query,
+		args...,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
