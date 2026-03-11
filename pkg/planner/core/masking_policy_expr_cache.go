@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
@@ -86,7 +85,7 @@ func buildMaskingPolicyExpr(
 	if policy == nil || tblInfo == nil || colInfo == nil {
 		return nil, nil, errors.New("masking policy expression requires policy/table/column info")
 	}
-	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, pmodel.CIStr(policy.DBName), tblInfo.Name, []*model.ColumnInfo{colInfo}, tblInfo)
+	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, policy.DBName, tblInfo.Name, []*model.ColumnInfo{colInfo}, tblInfo)
 	if err != nil {
 		return nil, nil, err
 	}
