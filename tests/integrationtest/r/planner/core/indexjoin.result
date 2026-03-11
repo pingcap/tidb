@@ -142,16 +142,15 @@ a	b
 1	2
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a +1 as a1, b from t group by a, b ) tmp, t1 where tmp.a1=t1.a;
 id	task	access object	operator info
-Projection	root		Column, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.a, Column)]
-  ├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column, planner__core__indexjoin.t.b
-  │ └─HashAgg	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
-  │   └─IndexReader	root		index:HashAgg
-  │     └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
-  │       └─Selection	cop[tikv]		not(isnull(plus(planner__core__indexjoin.t.a, 1)))
-  │         └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	root		index:IndexFullScan
-    └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(Column, planner__core__indexjoin.t1.a)]
+├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column, planner__core__indexjoin.t.b
+│ └─HashAgg	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+│   └─IndexReader	root		index:HashAgg
+│     └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+│       └─Selection	cop[tikv]		not(isnull(plus(planner__core__indexjoin.t.a, 1)))
+│         └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
 create table t3 (a int, b float, index idx (b));
 create table t4 (a int, b double);
 insert into t3 values (1, 1.0), (1, 2.0), (2, 3.0);

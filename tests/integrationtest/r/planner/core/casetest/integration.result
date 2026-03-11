@@ -193,15 +193,14 @@ Projection	root		planner__core__casetest__integration.t.a
 explain format='plan_tree' select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1;
 id	task	access object	operator info
 TopN	root		Column, offset:0, count:1
-└─Projection	root		Column, planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b
-  └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__integration.t.b, Column)]
-    ├─Projection(Build)	root		plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)->Column
-    │ └─TableReader	root		data:Selection
-    │   └─Selection	cop[tikv]		not(isnull(plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)))
-    │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.b))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(Column, planner__core__casetest__integration.t.b)]
+  ├─Projection(Build)	root		plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)->Column
+  │ └─TableReader	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)))
+  │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.b))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 insert into t values(1, 1), (2, 1), (3, 2), (4, 2), (5, 2);
@@ -1811,17 +1810,18 @@ create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,
 explain format='plan_tree' update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
 id	task	access object	operator info
 Update	root		N/A
-└─IndexJoin	root		inner join, inner:TableReader, outer key:Column, Column, inner key:test.tt.c, test.tt.d, equal cond:eq(Column, test.tt.c), eq(Column, test.tt.d)
-  ├─Union(Build)	root		
-  │ ├─Projection	root		1->Column, 2->Column, 3->Column, 4->Column
-  │ │ └─TableDual	root		rows:1
-  │ ├─Projection	root		2->Column, 3->Column, 4->Column, 5->Column
-  │ │ └─TableDual	root		rows:1
-  │ └─Projection	root		3->Column, 4->Column, 5->Column, 6->Column
-  │   └─TableDual	root		rows:1
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
-      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo
+└─Projection	root		test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column, Column, Column, Column
+  └─IndexJoin	root		inner join, inner:TableReader, outer key:Column, Column, inner key:test.tt.c, test.tt.d, equal cond:eq(Column, test.tt.c), eq(Column, test.tt.d)
+    ├─Union(Build)	root		
+    │ ├─Projection	root		1->Column, 2->Column, 3->Column, 4->Column
+    │ │ └─TableDual	root		rows:1
+    │ ├─Projection	root		2->Column, 3->Column, 4->Column, 5->Column
+    │ │ └─TableDual	root		rows:1
+    │ └─Projection	root		3->Column, 4->Column, 5->Column, 6->Column
+    │   └─TableDual	root		rows:1
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
+        └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo
 CREATE TABLE test_62564(c0 DECIMAL);
 INSERT INTO test_62564 VALUES (0);
 SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
