@@ -25,14 +25,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -279,7 +282,19 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 		}
 		for _, table := range tables {
-			tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+			err := tk.ExecToErr(fmt.Sprintf("alter table %s nocache", table))
+			if err != nil {
+				tErr, ok := errors.Cause(err).(*terror.Error)
+				if !ok {
+					require.NoError(t, err)
+					continue
+				}
+				sqlErr := terror.ToSQLError(tErr)
+				if sqlErr.Code == errno.ErrNoSuchTable {
+					continue
+				}
+				require.NoError(t, err)
+			}
 		}
 		if len(tables) > 0 {
 			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
