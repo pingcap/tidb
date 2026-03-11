@@ -591,6 +591,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -613,6 +614,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -1238,8 +1240,12 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
+	// version 224
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version224 = 224
+
 	// ...
-	// [version223, version238] is the version range reserved for patches of 8.5.x
+	// [version225, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
@@ -1247,7 +1253,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version224
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1426,6 +1432,7 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer224,
 	}
 )
 
@@ -3300,6 +3307,14 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

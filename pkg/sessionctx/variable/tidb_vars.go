@@ -25,12 +25,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"go.uber.org/atomic"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -229,6 +231,13 @@ const (
 
 	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
 	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
+
+	// TiDBSlowLogRules defines multi-dimensional trigger rules for flexible slow log control.
+	TiDBSlowLogRules = "tidb_slow_log_rules"
+
+	// TiDBSlowLogMaxPerSec is the maximum number of slow logs that can be recorded per second in the server.
+	// The default value is 0, which means no rate limiting is applied.
+	TiDBSlowLogMaxPerSec = "tidb_slow_log_max_per_sec"
 
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
@@ -1089,6 +1098,8 @@ const (
 	TiDBAutoAnalyzeConcurrency = "tidb_auto_analyze_concurrency"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
+	// TiDBMaxDistTaskNodes indicates the max node count that could be used by distributed execution framework.
+	TiDBMaxDistTaskNodes = "tidb_max_dist_task_nodes"
 	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
 	TiDBEnableFastCreateTable = "tidb_enable_fast_create_table"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
@@ -1508,6 +1519,7 @@ const (
 	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
 	DefTiDBEnableDistTask                             = true
+	DefTiDBMaxDistTaskNodes                           = -1
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
@@ -1665,7 +1677,10 @@ var (
 	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	DDLSlowOprThreshold = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	GlobalSlowLogRules  = atomic.NewPointer[slowlogrule.GlobalSlowLogRules](
+		&slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)})
+	GlobalSlowLogRateLimiter             = rate.NewLimiter(rate.Inf, 1)
 	ForcePriority                        = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket         uint64 = 1073741824
 	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold

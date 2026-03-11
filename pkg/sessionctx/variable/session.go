@@ -43,6 +43,7 @@ import (
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -353,7 +354,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item := tc.TableDeltaMap[physicalTableID]
 	item.Delta += delta
 	item.Count += count
-	item.TableID = physicalTableID
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -1162,7 +1162,7 @@ type SessionVars struct {
 
 	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
 	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
-	SlowLogRules *SlowLogRules
+	SlowLogRules *slowlogrule.SessionSlowLogRules
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
@@ -2035,7 +2035,7 @@ func (p *PlanCacheParamList) String() string {
 		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+	return " [arguments: " + types.DatumsToStrNoErrSmart(p.paramValues) + "]"
 }
 
 // Append appends a parameter value to the PlanCacheParams.
@@ -2320,6 +2320,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 	vars.LoadBindingTimeout = DefTiDBLoadBindingTimeout
+	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(nil)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2988,7 +2989,17 @@ type TableDelta struct {
 	Delta    int64
 	Count    int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
-	TableID  int64
+}
+
+// MergeFrom merges another delta into the receiver and keeps the earliest InitTime.
+func (td *TableDelta) MergeFrom(incoming TableDelta) {
+	td.Delta += incoming.Delta
+	td.Count += incoming.Count
+	if td.InitTime.IsZero() {
+		td.InitTime = incoming.InitTime
+	} else if !incoming.InitTime.IsZero() && incoming.InitTime.Before(td.InitTime) { // This can happen when merges arrive out of order (e.g., overlapping dump/merge runs).
+		td.InitTime = incoming.InitTime
+	}
 }
 
 // Clone returns a cloned TableDelta.
@@ -2997,7 +3008,6 @@ func (td TableDelta) Clone() TableDelta {
 		Delta:    td.Delta,
 		Count:    td.Count,
 		InitTime: td.InitTime,
-		TableID:  td.TableID,
 	}
 }
 

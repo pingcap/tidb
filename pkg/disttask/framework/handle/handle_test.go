@@ -49,7 +49,7 @@ func TestHandle(t *testing.T) {
 	storage.SetTaskManager(mgr)
 
 	// no scheduler registered
-	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
+	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, "", 0, proto.EmptyMeta)
 	require.NoError(t, err)
 	waitedTaskBase, err := handle.WaitTask(ctx, task.ID, func(task *proto.TaskBase) bool {
 		return task.IsDone()
@@ -72,12 +72,12 @@ func TestHandle(t *testing.T) {
 
 	require.NoError(t, handle.CancelTask(ctx, "1"))
 
-	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, "", 0, proto.EmptyMeta)
 	require.NoError(t, err)
 	require.Equal(t, "2", task.Key)
 
 	// submit same task.
-	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, "", 0, proto.EmptyMeta)
 	require.Nil(t, task)
 	require.ErrorIs(t, err, storage.ErrTaskAlreadyExists)
 	// pause and resume task.
@@ -85,10 +85,10 @@ func TestHandle(t *testing.T) {
 	require.NoError(t, handle.ResumeTask(ctx, "2"))
 
 	// submit task with same key
-	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
+	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, "", 0, proto.EmptyMeta)
 	require.NoError(t, err)
 	require.NoError(t, mgr.TransferTasks2History(ctx, []*proto.Task{task}))
-	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
+	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, "", 0, proto.EmptyMeta)
 	require.Nil(t, task)
 	require.ErrorIs(t, err, storage.ErrTaskAlreadyExists)
 }
