@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
+	"github.com/pingcap/tidb/br/pkg/utiltest/crr"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"

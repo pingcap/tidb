@@ -22,7 +22,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/streamhelper/fakecluster"
+	"github.com/pingcap/tidb/br/pkg/utiltest/fakecluster"
 	"github.com/tikv/client-go/v2/oracle"
 )
 

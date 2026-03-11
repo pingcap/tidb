@@ -3,11 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "syncpoint",
     srcs = ["syncpoint.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil/syncpoint",
-    visibility = [
-        "//br/pkg/stream/crr/internal/checkpoint:__pkg__",
-        "//br/pkg/stream/crr/internal/testutil:__pkg__",
-    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/utiltest/syncpoint",
+    visibility = ["//visibility:public"],
     deps = [
         "//pkg/testkit/testfailpoint",
         "@com_github_stretchr_testify//require",

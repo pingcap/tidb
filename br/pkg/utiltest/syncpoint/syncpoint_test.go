@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const syncScriptTestPath = "github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil/syncpoint"
+const syncScriptTestPath = "github.com/pingcap/tidb/br/pkg/utiltest/syncpoint"
 
 func TestSequence(t *testing.T) {
 	script := New(t)

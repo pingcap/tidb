@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/testutil"
 	streamhelperconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/br/pkg/utiltest/crr"
 	"github.com/stretchr/testify/require"
 )
 

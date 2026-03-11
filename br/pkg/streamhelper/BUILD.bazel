@@ -19,7 +19,6 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
-        "//br/pkg/streamhelper/fakecluster",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
@@ -79,6 +78,7 @@ go_test(
         "//br/pkg/logutil",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/spans",
+        "//br/pkg/utiltest/fakecluster",
         "//br/pkg/utils",
         "//pkg/kv",
         "//pkg/objstore",
