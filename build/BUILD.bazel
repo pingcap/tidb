@@ -147,6 +147,7 @@ nogo(
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
                "//build/linter/bootstrap",
+               "//build/linter/constructor",
                "//build/linter/copyloopvar",
                "//build/linter/deferrecover",
                "//build/linter/durationcheck",
@@ -170,7 +171,6 @@ nogo(
            select({
                "//build:with_nogo": [
                    "//build/linter/allrevive",
-                   "//build/linter/constructor",
                    "//build/linter/errcheck",
                    "//build/linter/lll",
                    "//build/linter/revive",

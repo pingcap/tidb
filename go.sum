@@ -822,8 +822,8 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260311172720-1b359c2c78ee h1:uMkiKmWI0M9K+Jba62O2A3i0Yqs9XJvrWsR1QB9yjRk=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260311172720-1b359c2c78ee/go.mod h1:EPYN3/hzyWA2l6cfuu3PS6UwE4yASBOBezJO1hyJdHE=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260312072847-a078cb5d8305 h1:Wg82NT8zvgYEg24aj3iAXrabP2pJNN1heeA4EDs7MlA=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260312072847-a078cb5d8305/go.mod h1:EPYN3/hzyWA2l6cfuu3PS6UwE4yASBOBezJO1hyJdHE=
 git.pingcap.net/pingkai/kvproto v0.0.0-20260310042541-b713c0a2eb21 h1:mcBZ5GsI3gTT4voRh92h1BGyGaAGeTnrYmtLA97qDy4=
 git.pingcap.net/pingkai/kvproto v0.0.0-20260310042541-b713c0a2eb21/go.mod h1:ICbWU4o0oOr07fGDhcZP1zDg5IXgzfiXwHSQlZO428k=
 git.pingcap.net/pingkai/pd/client v0.0.0-20251219084741-029eb6e7d5d0 h1:37Sz6FfavmYn2+Wk6isBP6jMC6yPX9I7wfMN/xopmNk=

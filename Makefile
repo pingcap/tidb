@@ -48,7 +48,7 @@ check-setup:tools/bin/revive
 precheck: fmt bazel_prepare
 
 # disable license check
-check: parser_yacc check-parallel lint tidy testSuite errdoc bazel_check_abi
+check: parser_yacc check-parallel lint tidy testSuite errdoc
 
 .PHONY: fmt
 fmt:

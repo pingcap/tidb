@@ -43,7 +43,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/logutil",
-        "@com_github_phayes_freeport//:freeport",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
@@ -53,6 +52,7 @@ go_test(
         "@io_etcd_go_etcd_server_v3//embed",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_x_exp//rand",
         "@org_uber_go_goleak//:goleak",
     ],
 )

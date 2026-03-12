@@ -12,11 +12,11 @@ go_library(
         "//pkg/meta/model",
         "//pkg/util/dbutil",
         "//pkg/util/engine",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_pd_client//:client",
-        "@net_pingcap_git_pingkai_semver//coreos/semver",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -31,10 +31,10 @@ go_test(
     deps = [
         "//br/pkg/version/build",
         "//pkg/meta/model",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
-        "@net_pingcap_git_pingkai_semver//coreos/semver",
     ],
 )

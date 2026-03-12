@@ -25,9 +25,8 @@ go_test(
     timeout = "short",
     srcs = ["integration_test.go"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 7,
     deps = [
-        "//pkg/ddl",
         "//pkg/parser/mysql",
         "//pkg/session/cursor",
         "//pkg/testkit",

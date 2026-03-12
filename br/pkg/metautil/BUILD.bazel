@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "metautil",
     srcs = [
-        "debug.go",
         "load.go",
         "metafile.go",
         "statsfile.go",
@@ -39,7 +38,6 @@ go_test(
     name = "metautil_test",
     timeout = "short",
     srcs = [
-        "debug_test.go",
         "load_test.go",
         "main_test.go",
         "metafile_test.go",
@@ -47,7 +45,7 @@ go_test(
     ],
     embed = [":metautil"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 9,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/utils",
@@ -58,7 +56,6 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "//pkg/util",
-        "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",

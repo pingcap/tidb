@@ -52,7 +52,6 @@ go_test(
         "//pkg/executor/aggfuncs",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
-        "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/parser/ast",

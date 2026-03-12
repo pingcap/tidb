@@ -9,6 +9,7 @@ go_library(
         "//pkg/ddl/notifier",
         "//pkg/infoschema",
         "//pkg/meta/model",
+        "//pkg/owner",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

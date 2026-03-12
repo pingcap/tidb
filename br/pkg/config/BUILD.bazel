@@ -12,9 +12,9 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/storage",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_masterminds_semver//:semver",
         "@com_github_pingcap_errors//:errors",
         "@io_k8s_api//core/v1:core",
-        "@net_pingcap_git_pingkai_semver//masterminds/semver",
     ],
 )
 
