@@ -974,3 +974,10 @@ Projection	155937656.25	root		1->Column#17
       └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.a))
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_join_reorder_threshold=default;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int) partition by hash(a) partitions 2;
+insert into t1 value(1,1);
+insert into t2 value(1,1);
+delete t1, t2 from t1, t2 where t1.a = t2.a;
+drop table t1, t2;

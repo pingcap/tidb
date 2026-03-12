@@ -600,7 +600,9 @@ func NewBackend(
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	// Use pdAddrs (from pdSvcDiscovery or config.PDAddr) so etcd gets the same endpoints as the PD client.
+	// When called from DDL ingest, config.PDAddr is never set; pdAddrs comes from pdSvcDiscovery.GetServiceURLs().
+	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}

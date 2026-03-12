@@ -836,6 +836,11 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1021,6 +1026,11 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
