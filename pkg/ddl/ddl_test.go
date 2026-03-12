@@ -481,3 +481,18 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		require.EqualValues(t, 7, iterateCnt)
 	})
 }
+
+func TestSetGlobalIndexVersionFlag(t *testing.T) {
+	tblInfo := &model.TableInfo{} // non-clustered (zero value)
+	idxInfo := &model.IndexInfo{Global: true, Unique: false}
+
+	model.SetGlobalIndexV1Supported(false)
+	t.Cleanup(func() { model.SetGlobalIndexV1Supported(false) })
+
+	setGlobalIndexVersion(tblInfo, idxInfo)
+	require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
+
+	model.SetGlobalIndexV1Supported(true)
+	setGlobalIndexVersion(tblInfo, idxInfo)
+	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+}
