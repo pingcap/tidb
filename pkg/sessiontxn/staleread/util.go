@@ -64,19 +64,41 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 
 	// If datetime conversion failed, try to parse as a TiDB TSO (not a Unix timestamp).
 	// A TiDB TSO encodes a physical timestamp (ms since epoch) in the high bits and a logical
-	// counter in the low 18 bits. We validate that the physical component represents a
-	// reasonable time (after 2013-01-01).
-	if tsVal.Kind() == types.KindString || tsVal.Kind() == types.KindBytes {
-		if tso, err := strconv.ParseUint(tsVal.GetString(), 10, 64); err == nil {
-			physicalMS := oracle.ExtractPhysical(tso)
-			// 1356998400000 ms = 2013-01-01T00:00:00Z, a reasonable lower bound for any TiDB TSO.
-			if physicalMS > 1356998400000 {
-				return tso, nil
-			}
+	// counter in the low 18 bits
+	tso, tsoErr := tsoFromDatum(tsVal)
+	if tsoErr != nil {
+		return 0, datetimeErr
+	}
+	physicalMS := oracle.ExtractPhysical(tso)
+	// 1356998400000 ms = 2013-01-01T00:00:00Z, a reasonable lower bound for any TiDB TSO
+	if physicalMS <= 1356998400000 {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("invalid TSO timestamp: TSO is before 2013-01-01")
+	}
+	// Validate that the TSO does not exceed the current PD timestamp to preserve
+	// linearizability when async commit is enabled
+	if err := sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), tso, true); err != nil {
+		return 0, err
+	}
+	return tso, nil
+}
+
+// tsoFromDatum extracts a uint64 TSO value from a Datum.
+func tsoFromDatum(d types.Datum) (uint64, error) {
+	switch d.Kind() {
+	case types.KindString, types.KindBytes:
+		if tso, err := strconv.ParseUint(d.GetString(), 10, 64); err == nil {
+			return tso, nil
+		}
+	case types.KindInt64:
+		if v := d.GetInt64(); v > 0 {
+			return uint64(v), nil
+		}
+	case types.KindUint64:
+		if v := d.GetUint64(); v > 0 {
+			return v, nil
 		}
 	}
-
-	return 0, datetimeErr
+	return 0, plannererrors.ErrAsOf.FastGenWithCause("cannot parse AS OF TIMESTAMP expression as TSO")
 }
 
 // parseTsExprAsDatetime tries to parse the value as a datetime and convert it to TSO.

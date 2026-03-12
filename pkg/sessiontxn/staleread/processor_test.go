@@ -300,8 +300,8 @@ func TestStaleReadInvalidExpression(t *testing.T) {
 		{"not-a-date", "Incorrect datetime value: 'not-a-date'"},
 		{"2024-13-01 00:00:00", "Incorrect time value"},                            // invalid month
 		{"2024-01-32 00:00:00", "Incorrect datetime value: '2024-01-32 00:00:00'"}, // invalid day
-		{"42", "Incorrect time value: '42'"},     // small integer, not a valid TSO
-		{"0", "Incorrect time value: '0'"},      // zero is not a valid TSO
+		{"42", "invalid TSO timestamp: TSO is before 2013-01-01"}, // small integer, not a valid TSO
+		{"0", "invalid TSO timestamp: TSO is before 2013-01-01"}, // zero is not a valid TSO
 	}
 
 	for _, tc := range testCases {

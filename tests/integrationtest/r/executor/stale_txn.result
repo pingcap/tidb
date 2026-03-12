@@ -64,3 +64,7 @@ select count(*) as count_from_txn from t1;
 count_from_txn
 2
 commit;
+set @int_tso = cast(@last_commit_ts as unsigned);
+select count(*) as int_tso_count from t1 as of timestamp @int_tso;
+int_tso_count
+2
