@@ -81,6 +81,7 @@ func testReadAndCompare(
 			curEnd,
 			bufPool,
 			bufPool,
+			ConcurrentReaderBufferSizePerConc,
 			loaded,
 		)
 		require.NoError(t, err)

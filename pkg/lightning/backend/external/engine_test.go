@@ -326,6 +326,43 @@ func TestEngineOnDup(t *testing.T) {
 	})
 }
 
+func TestExternalEngineUsesDedicatedReadBufferSize(t *testing.T) {
+	sharedBackup := ConcurrentReaderBufferSizePerConc
+	ingestBackup := IngestConcurrentReaderBufferSizePerConc
+	t.Cleanup(func() {
+		ConcurrentReaderBufferSizePerConc = sharedBackup
+		IngestConcurrentReaderBufferSizePerConc = ingestBackup
+	})
+
+	ConcurrentReaderBufferSizePerConc = 4 * 1024
+	IngestConcurrentReaderBufferSizePerConc = 64 * 1024
+
+	engine := NewExternalEngine(
+		context.Background(),
+		objstore.NewMemStorage(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		1,
+		1,
+		0,
+		0,
+		false,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyIgnore,
+		"",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, engine.Close())
+	})
+
+	require.Equal(t, IngestConcurrentReaderBufferSizePerConc, engine.getReadBufferSize())
+	require.NotEqual(t, ConcurrentReaderBufferSizePerConc, engine.getReadBufferSize())
+}
+
 type dummyWorker struct{}
 
 func (w *dummyWorker) Tune(int32, bool) {

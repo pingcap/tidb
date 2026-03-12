@@ -40,6 +40,7 @@ func readAllData(
 	startKey, endKey []byte,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
+	readBufferSize int,
 	output *memKVsAndBuffers,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
@@ -71,6 +72,7 @@ func readAllData(
 		statsFiles,
 		startKey,
 		endKey,
+		readBufferSize,
 	)
 	if err != nil {
 		return err
@@ -106,6 +108,7 @@ func readAllData(
 						concurrences[fileIdx],
 						smallBlockBuf,
 						largeBlockBuf,
+						readBufferSize,
 						output,
 					)
 					if err2 != nil {
@@ -136,6 +139,7 @@ func readOneFile(
 	concurrency uint64,
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
+	readBufferSize int,
 	output *memKVsAndBuffers,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
@@ -154,7 +158,7 @@ func readOneFile(
 			storage,
 			dataFile,
 			int(concurrency),
-			ConcurrentReaderBufferSizePerConc,
+			readBufferSize,
 			largeBlockBuf,
 		)
 		err = rd.byteReader.switchConcurrentMode(true)

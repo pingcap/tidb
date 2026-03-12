@@ -131,6 +131,7 @@ func MergeOverlappingFilesV2(
 			curEnd,
 			bufPool,
 			bufPool,
+			ConcurrentReaderBufferSizePerConc,
 			loaded,
 		)
 		if err1 != nil {

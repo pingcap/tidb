@@ -138,6 +138,7 @@ type Engine struct {
 	endKey            []byte
 	jobKeys           [][]byte
 	splitKeys         [][]byte
+	readBufferSize    int
 	smallBlockBufPool *membuf.Pool
 	largeBlockBufPool *membuf.Pool
 
@@ -188,6 +189,13 @@ const (
 	smallBlockSize = units.MiB
 )
 
+func (e *Engine) getReadBufferSize() int {
+	if e.readBufferSize > 0 {
+		return e.readBufferSize
+	}
+	return IngestConcurrentReaderBufferSizePerConc
+}
+
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	ctx context.Context,
@@ -216,13 +224,14 @@ func NewExternalEngine(
 	)
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
-		storage:    storage,
-		dataFiles:  dataFiles,
-		statsFiles: statsFiles,
-		startKey:   startKey,
-		endKey:     endKey,
-		jobKeys:    jobKeys,
-		splitKeys:  splitKeys,
+		storage:        storage,
+		dataFiles:      dataFiles,
+		statsFiles:     statsFiles,
+		startKey:       startKey,
+		endKey:         endKey,
+		jobKeys:        jobKeys,
+		splitKeys:      splitKeys,
+		readBufferSize: IngestConcurrentReaderBufferSizePerConc,
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
@@ -231,7 +240,7 @@ func NewExternalEngine(
 		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+			membuf.WithBlockSize(IngestConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:      checkHotspot,
 		workerConcurrency: *atomic.NewInt32(int32(workerConcurrency)),
@@ -252,6 +261,7 @@ func getFilesReadConcurrency(
 	storage storeapi.Storage,
 	statsFiles []string,
 	startKey, endKey []byte,
+	readBufferSize int,
 ) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
 	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
@@ -263,7 +273,7 @@ func getFilesReadConcurrency(
 	for i := range statsFiles {
 		size := endOffs[i] - startOffs[i]
 		totalFileSize += size
-		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
+		expectedConc := size / uint64(readBufferSize)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		expectedConc += 1
@@ -330,6 +340,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		endKey,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
+		e.getReadBufferSize(),
 		&e.memKVsAndBuffers,
 	)
 	if err != nil {
@@ -743,7 +754,7 @@ func (e *Engine) Reset() {
 		e.largeBlockBufPool = membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+			membuf.WithBlockSize(e.getReadBufferSize()),
 		)
 	}
 }

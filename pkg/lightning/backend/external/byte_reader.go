@@ -35,8 +35,11 @@ import (
 
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
-	// concurrency.
+	// concurrency on the shared merge/hotspot read path.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// IngestConcurrentReaderBufferSizePerConc is the dedicated buffer size for the
+	// external-engine ingest read path.
+	IngestConcurrentReaderBufferSizePerConc = int(64 * size.MB)
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
