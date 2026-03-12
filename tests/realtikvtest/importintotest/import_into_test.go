@@ -1480,14 +1480,12 @@ func (s *mockGCSSuite) TestTableMode() {
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 	query := "SELECT * FROM table_mode"
 
-	// Test import into clean up can alter table mode to Normal finally.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/skipPostProcessAlterTableMode", `return`)
+	// Table mode should be reset to Normal when the task is done.
 	s.tk.MustQuery(loadDataSQL)
 	s.checkMode(s.tk, query, "table_mode", true)
 	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/skipPostProcessAlterTableMode")
 
-	// Test import into post process will alter table mode to Normal.
+	// Table mode should still be Import during post process.
 	s.tk.MustExec("truncate table table_mode")
 	wg := sync.WaitGroup{}
 	wg.Add(2)

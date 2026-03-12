@@ -252,8 +252,8 @@ func enumeratePhysicalPlans4TaskHelper(
 func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
 	// check the root, cop, mpp task type matched the required property.
 	if childTask == nil || propRequired == nil {
-		// index join v1 may occur that propRequired is nil, and return task is nil too. Return true
-		// to make sure let it walk through the following logic.
+		// Some callers defer building a concrete child task until later, so treat the
+		// requirement as satisfied here and let the follow-up logic decide.
 		return true
 	}
 	_, isRoot := childTask.(*physicalop.RootTask)
@@ -689,8 +689,9 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 				// If the original property is not enforced and hint cannot
 				// work anyway, we give up `plansNeedEnforce` for efficiency.
 				//
-				// for special case, once we empty the sort item here, the more possible index join can be enumerated, which
-				// may lead the hint work only after child is built up under index join build mode v2. so here we tried
+				// Once we empty the sort item here, more index join candidates can be
+				// enumerated and a hint may only become applicable after the full inner
+				// plan tree is built, so keep the enforced branch in that case.
 				plansNeedEnforce = nil
 			}
 		}
@@ -1908,10 +1909,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		defer func() {
 			ds.StoreTask(prop, t)
 		}()
-		// when datasource leaf is in index join's inner side, build the task out with old
-		// index join build logic, we can't merge this with normal datasource's index range
-		// because normal index range is built on expression EQ/IN. while index join's inner
-		// has its special runtime constants detecting and filling logic.
+		// When a datasource is on the inner side of an index join, build it with the
+		// indexJoinProp-specific range logic instead of the normal EQ/IN range path,
+		// because the runtime constants are filled by the outer side at execution time.
 		return getBestIndexJoinInnerTaskByProp(ds, prop)
 	}
 	var unenforcedTask base.Task

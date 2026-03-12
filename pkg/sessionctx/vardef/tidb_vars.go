@@ -660,6 +660,9 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
@@ -1068,7 +1071,7 @@ const (
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
-	// TiDBOptIndexJoinBuild indicates which way to build index join.
+	// TiDBOptIndexJoinBuild is kept for compatibility. Index join build v2 is always enabled now.
 	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build_v2"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
@@ -1522,6 +1525,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptEnableAdvancedJoinReorder     = true
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
