@@ -1092,12 +1092,12 @@ func (e *executor) createTableGroupWithInfo(ctx sessionctx.Context, tgInfo *mode
 	}
 
 	job := &model.Job{
-		Version:             model.GetJobVerInUse(),
-		SchemaName:          tgInfo.Name.L,
-		Type:                model.ActionCreateTableGroup,
-		BinlogInfo:          &model.HistoryInfo{},
+		Version:    model.GetJobVerInUse(),
+		SchemaName: tgInfo.Name.L,
+		Type:       model.ActionCreateTableGroup,
+		BinlogInfo: &model.HistoryInfo{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			// todo: need to do something?
+			Policy: tgInfo.Name.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -1126,15 +1126,15 @@ func (e *executor) DropTableGroup(ctx sessionctx.Context, stmt *ast.DropTableGro
 		return infoschema.ErrTableGroupNotExists.GenWithStackByArgs(stmt.Name)
 	}
 	job := &model.Job{
-		Version:             model.GetJobVerInUse(),
-		SchemaID:            tgInfo.ID,
-		SchemaName:          tgInfo.Name.L,
-		SchemaState:         tgInfo.State,
-		Type:                model.ActionDropTableGroup,
-		BinlogInfo:          &model.HistoryInfo{},
-		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       tgInfo.ID,
+		SchemaName:     tgInfo.Name.L,
+		SchemaState:    tgInfo.State,
+		Type:           model.ActionDropTableGroup,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			// todo: need to do something?
+			Policy: tgInfo.Name.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -1189,15 +1189,15 @@ func (e *executor) AlterTableGroup(ctx sessionctx.Context, stmt *ast.AlterTableG
 	}
 
 	job := &model.Job{
-		Version:             model.GetJobVerInUse(),
-		SchemaID:            tgInfo.ID,
-		SchemaName:          tgInfo.Name.L,
-		SchemaState:         tgInfo.State,
-		Type:                model.ActionAlterTableGroup,
-		BinlogInfo:          &model.HistoryInfo{},
-		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       tgInfo.ID,
+		SchemaName:     tgInfo.Name.L,
+		SchemaState:    tgInfo.State,
+		Type:           model.ActionAlterTableGroup,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			// todo: need to do something?
+			Policy: tgInfo.Name.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}

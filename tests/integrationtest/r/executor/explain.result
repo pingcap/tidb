@@ -192,7 +192,7 @@ select @@last_plan_from_cache;
 0
 explain format = 'hint' select * from t;
 hint
-use_index(@`sel_1` `executor__explain`.`t` )
+use_index(@`sel_1` `executor__explain`.`t`)
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
