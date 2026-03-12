@@ -371,8 +371,8 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 
-	flags.String(flagPDAddr, "", "PD endpoints for controlling GC (comma-separated). Only for premium keyspace clusters")
-	flags.String(flagKeyspaceName, "", "Keyspace name for premium keyspace clusters. Will be validated against KEYSPACE_META")
+	flags.String(flagPDAddr, "", "PD endpoints for controlling GC (comma-separated). Use together with --keyspace-name for premium keyspace clusters")
+	flags.String(flagKeyspaceName, "", "Keyspace name for premium keyspace clusters. Use together with --pd and make sure it matches information_schema.KEYSPACE_META")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
