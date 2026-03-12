@@ -16,6 +16,7 @@ package tikvhandler
 
 import (
 	"context"
+	goerrors "errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -92,6 +94,52 @@ func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	handler.WriteData(w, summary)
+}
+
+// DXFImportIntoHistoryJobInfoHandler handles getting IMPORT INTO history job details.
+type DXFImportIntoHistoryJobInfoHandler struct{}
+
+// NewDXFImportIntoHistoryJobInfoHandler creates a new DXFImportIntoHistoryJobInfoHandler.
+func NewDXFImportIntoHistoryJobInfoHandler() *DXFImportIntoHistoryJobInfoHandler {
+	return &DXFImportIntoHistoryJobInfoHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (*DXFImportIntoHistoryJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+	params := mux.Vars(req)
+	targetKeyspace := params["keyspace"]
+	if targetKeyspace == "" || naming.CheckKeyspaceName(targetKeyspace) != nil {
+		handler.WriteError(w, errors.Errorf("invalid or empty target keyspace %s", targetKeyspace))
+		return
+	}
+	jobID, err := strconv.ParseInt(params["job_id"], 10, 64)
+	if err != nil || jobID <= 0 {
+		handler.WriteError(w, errors.Errorf("invalid job id %s", params["job_id"]))
+		return
+	}
+
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+	defer cancel()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	info, err := jobhistory.GetFromHistory(ctx, taskMgr, targetKeyspace, jobID)
+	if err != nil {
+		if goerrors.Is(err, storage.ErrTaskNotFound) {
+			handler.WriteErrorWithCode(w, http.StatusNotFound, err)
+			return
+		}
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, info)
 }
 
 // DXFScheduleHandler handles the DXF schedule actions.
