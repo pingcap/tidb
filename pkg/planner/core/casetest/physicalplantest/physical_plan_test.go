@@ -28,16 +28,20 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -1581,9 +1585,45 @@ func TestLimitPushdown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, key(c1));")
-	tk.MustExec("set @@cte_max_recursion_depth = 10000;")
-	tk.MustExec("insert into t1 with recursive cte1 as (select 1 cola, 1 colb union all select cola+1 as cola, colb+1 as colb from cte1 limit 5000) select * from cte1;")
-	tk.MustExec("analyze table t1 all columns;")
+
+	// Inject mock statistics to avoid flakiness from analyze sampling variance.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	const rowCount = 5000
+	histColl := *statistics.NewHistColl(tblInfo.ID, rowCount, 0, len(tblInfo.Columns), len(tblInfo.Indices))
+	statsTbl := &statistics.Table{
+		HistColl:              histColl,
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
+		Version:               1,
+	}
+	for _, col := range tblInfo.Columns {
+		hist := statistics.NewHistogram(col.ID, rowCount, 0, 0, &col.FieldType, 0, 0)
+		statsTbl.SetCol(col.ID, &statistics.Column{
+			Histogram:         *hist,
+			Info:              col,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			PhysicalID:        tblInfo.ID,
+			StatsVer:          2,
+		})
+		statsTbl.ColAndIdxExistenceMap.InsertCol(col.ID, true)
+	}
+	for _, idx := range tblInfo.Indices {
+		hist := statistics.NewHistogram(idx.ID, rowCount, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+		statsTbl.SetIdx(idx.ID, &statistics.Index{
+			Histogram:         *hist,
+			Info:              idx,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			PhysicalID:        tblInfo.ID,
+			StatsVer:          2,
+		})
+		statsTbl.ColAndIdxExistenceMap.InsertIndex(idx.ID, true)
+	}
+	dom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
 
 	var input []string
 	var output []struct {

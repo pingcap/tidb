@@ -150,19 +150,7 @@ func attach2Task4PhysicalIndexMergeJoin(pp base.PhysicalPlan, tasks ...base.Task
 	return t
 }
 
-func indexHashJoinAttach2TaskV1(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
-	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
-	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.InnerPlan)
-	} else {
-		p.SetChildren(p.InnerPlan, outerTask.Plan())
-	}
-	t := &physicalop.RootTask{}
-	t.SetPlan(p)
-	return t
-}
-
-func indexHashJoinAttach2TaskV2(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+func indexHashJoinAttach2Task(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	// only fill the wrapped physical index join is ok.
@@ -180,26 +168,10 @@ func indexHashJoinAttach2TaskV2(p *physicalop.PhysicalIndexHashJoin, tasks ...ba
 
 // attach2Task4PhysicalIndexHashJoin implements PhysicalPlan interface.
 func attach2Task4PhysicalIndexHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
-	p := pp.(*physicalop.PhysicalIndexHashJoin)
-	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
-		return indexHashJoinAttach2TaskV2(p, tasks...)
-	}
-	return indexHashJoinAttach2TaskV1(p, tasks...)
+	return indexHashJoinAttach2Task(pp.(*physicalop.PhysicalIndexHashJoin), tasks...)
 }
 
-func indexJoinAttach2TaskV1(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
-	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
-	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.InnerPlan)
-	} else {
-		p.SetChildren(p.InnerPlan, outerTask.Plan())
-	}
-	t := &physicalop.RootTask{}
-	t.SetPlan(p)
-	return t
-}
-
-func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
+func indexJoinAttach2Task(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*physicalop.RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
@@ -215,11 +187,7 @@ func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task)
 }
 
 func attach2Task4PhysicalIndexJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
-	p := pp.(*physicalop.PhysicalIndexJoin)
-	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
-		return indexJoinAttach2TaskV2(p, tasks...)
-	}
-	return indexJoinAttach2TaskV1(p, tasks...)
+	return indexJoinAttach2Task(pp.(*physicalop.PhysicalIndexJoin), tasks...)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.

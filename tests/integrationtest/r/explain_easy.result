@@ -108,7 +108,7 @@ HashJoin	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	task	access object	operator info
-Projection	root		ifnull(Column, 0)->Column
+Projection	root		if(ne(ifnull(Column, 0), 0), ifnull(Column, 0), <nil>)->Column
 └─MergeJoin	root		left outer join, left side:TableReader, left key:explain_easy.t1.c1, right key:explain_easy.t1.c1
   ├─Projection(Build)	root		1->Column, explain_easy.t1.c1
   │ └─TableReader	root		data:TableFullScan
