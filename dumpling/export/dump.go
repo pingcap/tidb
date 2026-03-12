@@ -1634,92 +1634,109 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 }
 
 func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
-	updateInterval := time.Duration(ttl/2) * time.Second
-	tick := time.NewTicker(updateInterval)
-	defer tick.Stop()
 	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
 	tctx.L().Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
-	defer func() {
-		// best-effort cleanup (TTL will also expire soon even if this fails)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, 0, 0)
-		if err != nil {
-			tctx.L().Debug("remove dumpling gc safePoint failed", log.ShortError(err), zap.String("id", dumplingServiceSafePointID))
-		}
-	}()
-
-	// Protect `snapshotTS` by keeping GC safe point below it.
-	safePointTS := snapshotTS
-	if safePointTS > 0 {
-		safePointTS--
-	}
-
-	for {
-		tctx.L().Debug("update PD safePoint limit with ttl",
-			zap.Uint64("safePoint", safePointTS),
-			zap.Int64("ttl", ttl))
-		for retryCnt := range 11 {
-			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, safePointTS)
-			if err == nil {
-				break
-			}
+	runGCProtectionUpdater(
+		tctx,
+		ttl,
+		snapshotTS,
+		func(protectTS uint64) {
+			tctx.L().Debug("update PD safePoint limit with ttl",
+				zap.Uint64("safePoint", protectTS),
+				zap.Int64("ttl", ttl))
+		},
+		func(ctx context.Context, protectTS uint64) error {
+			_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, ttl, protectTS)
+			return err
+		},
+		func(err error, retryCnt int) {
 			tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
-			select {
-			case <-tctx.Done():
-				return
-			case <-time.After(time.Second):
-			}
-		}
-		select {
-		case <-tctx.Done():
-			return
-		case <-tick.C:
-		}
-	}
+		},
+		func(ctx context.Context) error {
+			_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, 0, 0)
+			return err
+		},
+		func(err error) {
+			tctx.L().Debug("remove dumpling gc safePoint failed", log.ShortError(err), zap.String("id", dumplingServiceSafePointID))
+		},
+	)
 }
 
 func updateKeyspaceGCBarrier(tctx *tcontext.Context, pdClient pd.Client, keyspaceID uint32, ttl int64, snapshotTS uint64) {
-	updateInterval := time.Duration(ttl/2) * time.Second
-	tick := time.NewTicker(updateInterval)
-	defer tick.Stop()
 	barrierID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
 	tctx.L().Info("generate dumpling gc barrier id", zap.String("id", barrierID), zap.Uint32("keyspaceID", keyspaceID))
 
 	gcClient := pdClient.GetGCStatesClient(keyspaceID)
 	ttlDuration := time.Duration(ttl) * time.Second
 
-	// Protect `snapshotTS` by keeping txn safe point below it.
-	barrierTS := snapshotTS
-	if barrierTS > 0 {
-		barrierTS--
+	runGCProtectionUpdater(
+		tctx,
+		ttl,
+		snapshotTS,
+		func(protectTS uint64) {
+			tctx.L().Debug("set keyspace GC barrier with ttl",
+				zap.Uint32("keyspaceID", keyspaceID),
+				zap.Uint64("barrierTS", protectTS),
+				zap.Duration("ttl", ttlDuration))
+		},
+		func(ctx context.Context, protectTS uint64) error {
+			_, err := gcClient.SetGCBarrier(ctx, barrierID, protectTS, ttlDuration)
+			return err
+		},
+		func(err error, retryCnt int) {
+			tctx.L().Debug("set keyspace GC barrier failed", log.ShortError(err),
+				zap.Int("retryTime", retryCnt),
+				zap.Uint32("keyspaceID", keyspaceID))
+		},
+		func(ctx context.Context) error {
+			_, err := gcClient.DeleteGCBarrier(ctx, barrierID)
+			return err
+		},
+		func(err error) {
+			tctx.L().Debug("remove dumpling gc barrier failed", log.ShortError(err),
+				zap.String("id", barrierID),
+				zap.Uint32("keyspaceID", keyspaceID))
+		},
+	)
+}
+
+func runGCProtectionUpdater(
+	tctx *tcontext.Context,
+	ttl int64,
+	snapshotTS uint64,
+	logUpdate func(protectTS uint64),
+	update func(ctx context.Context, protectTS uint64) error,
+	logUpdateFailure func(err error, retryCnt int),
+	cleanup func(ctx context.Context) error,
+	logCleanupFailure func(err error),
+) {
+	updateInterval := time.Duration(ttl/2) * time.Second
+	tick := time.NewTicker(updateInterval)
+	defer tick.Stop()
+
+	// Protect `snapshotTS` by keeping the GC protection boundary below it.
+	protectTS := snapshotTS
+	if protectTS > 0 {
+		protectTS--
 	}
 
 	defer func() {
 		// best-effort cleanup (TTL will also expire soon even if this fails)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, err := gcClient.DeleteGCBarrier(ctx, barrierID)
-		if err != nil {
-			tctx.L().Debug("remove dumpling gc barrier failed", log.ShortError(err),
-				zap.String("id", barrierID),
-				zap.Uint32("keyspaceID", keyspaceID))
+		if err := cleanup(ctx); err != nil {
+			logCleanupFailure(err)
 		}
 	}()
 
 	for {
-		tctx.L().Debug("set keyspace GC barrier with ttl",
-			zap.Uint32("keyspaceID", keyspaceID),
-			zap.Uint64("barrierTS", barrierTS),
-			zap.Duration("ttl", ttlDuration))
+		logUpdate(protectTS)
 		for retryCnt := range 11 {
-			_, err := gcClient.SetGCBarrier(tctx, barrierID, barrierTS, ttlDuration)
+			err := update(tctx, protectTS)
 			if err == nil {
 				break
 			}
-			tctx.L().Debug("set keyspace GC barrier failed", log.ShortError(err),
-				zap.Int("retryTime", retryCnt),
-				zap.Uint32("keyspaceID", keyspaceID))
+			logUpdateFailure(err, retryCnt)
 			select {
 			case <-tctx.Done():
 				return
