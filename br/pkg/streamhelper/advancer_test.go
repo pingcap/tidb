@@ -689,6 +689,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
 	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	env.putTask()
 
 	// wait for the task to be added
@@ -710,6 +713,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
 	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	env.putTask()
 	// wait for the task to be add
 	require.Eventually(t, func() bool {
