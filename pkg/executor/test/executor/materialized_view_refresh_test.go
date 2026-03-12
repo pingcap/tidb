@@ -272,6 +272,49 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	))
 }
 
+func TestMaterializedViewRefreshFastMinMaxWhereSeparateIndexes(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t_mv_fast_minmax_where (
+		id bigint not null primary key,
+		g1 int not null,
+		v1 bigint not null,
+		v2 decimal(10,2) not null,
+		c1 int not null,
+		f1 int not null,
+		key idx_g1(g1),
+		key idx_f1(f1)
+	)`)
+	tk.MustExec("create materialized view log on t_mv_fast_minmax_where (id, g1, v1, v2, c1, f1) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec(`create materialized view mv_fast_minmax_where (g1, cnt, s_v1, min_v2, max_v2, cnt_c1)
+		refresh fast next now() as
+		select g1, count(*), sum(v1), min(v2), max(v2), count(c1)
+		from t_mv_fast_minmax_where
+		where f1 = 1
+		group by g1`)
+
+	tk.MustExec("insert into t_mv_fast_minmax_where values (19001, 1, 1, 1.00, 1, 1), (19002, 2, 2, 2.00, 1, 1)")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
+		"1 1 1 1.00 1.00 1",
+		"2 1 2 2.00 2.00 1",
+	))
+
+	tk.MustExec("update t_mv_fast_minmax_where set g1 = 2, v1 = 10, f1 = 2, v2 = 9.00, c1 = 1 where id = 19001")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
+		"2 1 2 2.00 2.00 1",
+	))
+
+	tk.MustExec("update t_mv_fast_minmax_where set f1 = 1 where id = 19001")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
+		"2 2 12 2.00 9.00 2",
+	))
+}
+
 func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
