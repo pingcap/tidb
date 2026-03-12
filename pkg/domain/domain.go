@@ -714,7 +714,16 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	return do.infoCache.GetLatest()
+	is := do.infoCache.GetLatest()
+	if is == nil {
+		logutil.BgLogger().Warn("Domain.InfoSchema returns nil, using empty InfoSchema")
+		// Return a basic empty InfoSchema to prevent nil interface panic
+		// when callers do type assertion: .(infoschema.InfoSchema)
+		return &infoschema.SessionExtendedInfoSchema{
+			InfoSchema: infoschema.MockInfoSchema(nil),
+		}
+	}
+	return is
 }
 
 // GetSnapshotInfoSchema gets a snapshot information schema.

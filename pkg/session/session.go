@@ -4358,10 +4358,6 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
-	if is == nil {
-		logutil.BgLogger().Warn("GetDomainInfoSchema returns nil")
-		return nil
-	}
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }
