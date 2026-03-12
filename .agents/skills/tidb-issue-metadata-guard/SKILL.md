@@ -22,6 +22,9 @@ Before creating an issue, read the matching file under `.github/ISSUE_TEMPLATE/`
 4. If you create an issue with `gh issue create`, add labels explicitly when the GitHub UI would normally auto-apply them.
    - Add at least one `component/*` label.
    - For bug or regression issues, add `severity/*` and affected-version labels when appropriate.
+   - Severity labeling rule:
+     - Wrong-result bugs: use `severity/major`.
+     - Query fails to execute on valid SQL, for example an internal planner or runtime error: use `severity/major`.
    - If label permissions are missing, include `Suggested labels: ...` in the issue body.
 5. Prefer file-based edits for GitHub metadata.
    - Materialize the intended issue body in a local Markdown file.
