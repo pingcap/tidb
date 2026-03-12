@@ -544,13 +544,13 @@ insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;
 split statement examples
-INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t`)*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
+INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
 batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;
 split statement examples
-INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t`)*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;
 split statement examples
-DELETE /*+ USE_INDEX(`t`)*/ FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
+DELETE /*+ USE_INDEX(`t` )*/ FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
 set @@tidb_max_chunk_size=35;
 set @@tidb_read_staleness=-100;
 drop table if exists t, t1;
