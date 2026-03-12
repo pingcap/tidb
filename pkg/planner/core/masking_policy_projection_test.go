@@ -39,6 +39,34 @@ func TestMaskingPolicyProjection(t *testing.T) {
 	require.Len(t, rows, 0)
 }
 
+func TestMaskingPolicyPointGet(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_pointget")
+	tk.MustExec("create table t_pointget(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_pointget values (1, 'secret'), (2, 'hidden')")
+	tk.MustExec("create masking policy p_pointget on t_pointget(c) as mask_full(c, '*') enable")
+
+	// Test Point_Get with primary key lookup
+	tk.MustQuery("select c from t_pointget where id = 1").Check(testkit.Rows("******"))
+	tk.MustQuery("select c from t_pointget where id = 2").Check(testkit.Rows("******"))
+
+	// Test Point_Get with multiple columns
+	tk.MustQuery("select id, c from t_pointget where id = 1").Check(testkit.Rows("1 ******"))
+
+	// Test Point_Get with expression using masked column
+	tk.MustQuery("select concat(c, '-') from t_pointget where id = 1").Check(testkit.Rows("******-"))
+
+	// Test Point_Get with unique index lookup
+	tk.MustExec("create unique index idx_c on t_pointget(c)")
+	tk.MustQuery("select c from t_pointget where c = 'secret'").Check(testkit.Rows("******"))
+
+	// Predicate should still use original value
+	rows := tk.MustQuery("select c from t_pointget where c = '******'").Rows()
+	require.Len(t, rows, 0)
+}
+
 func TestMaskingPolicyBlobAndClob(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
