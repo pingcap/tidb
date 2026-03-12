@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -245,7 +246,10 @@ func normalizeSizeUnit(s string) string {
 	}
 	for _, r := range replacements {
 		if strings.HasSuffix(s, r.from) && !strings.HasSuffix(s, "i"+r.from) {
-			return s[:len(s)-len(r.from)] + r.to
+			prefix := strings.TrimSpace(s[:len(s)-len(r.from)])
+			if _, err := strconv.ParseFloat(prefix, 64); err == nil {
+				return prefix + r.to
+			}
 		}
 	}
 	return s
