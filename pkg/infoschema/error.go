@@ -108,4 +108,8 @@ var (
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
+	// ErrProtectedTableMode returns for accessing table in import/restore mode.
+	ErrProtectedTableMode = dbterror.ClassSchema.NewStd(mysql.ErrProtectedTableMode)
+	// ErrInvalidTableModeSet returns for invalid TableMode conversion.
+	ErrInvalidTableModeSet = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeSet)
 )

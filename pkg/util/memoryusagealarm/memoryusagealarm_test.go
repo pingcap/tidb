@@ -15,18 +15,50 @@
 package memoryusagealarm
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
 )
 
+// MockConfigProvider implements ConfigProvider for testing
+type MockConfigProvider struct {
+	ratio         float64
+	keepNum       int64
+	logDir        string
+	componentName string
+}
+
+func (p *MockConfigProvider) GetMemoryUsageAlarmRatio() float64 {
+	return p.ratio
+}
+
+func (p *MockConfigProvider) GetMemoryUsageAlarmKeepRecordNum() int64 {
+	return p.keepNum
+}
+
+func (p *MockConfigProvider) GetLogDir() string {
+	if p.logDir == "" {
+		return os.TempDir()
+	}
+	return p.logDir
+}
+
+func (p *MockConfigProvider) GetComponentName() string {
+	if p.componentName == "" {
+		return "test-component"
+	}
+	return p.componentName
+}
+
 func TestIfNeedDoRecord(t *testing.T) {
-	record := memoryUsageAlarm{}
+	record := memoryUsageAlarm{
+		configProvider: &MockConfigProvider{ratio: 0.7, keepNum: 5, componentName: "test-component"},
+	}
 	record.initMemoryUsageAlarmRecord()
 
 	// mem usage ratio < 70% will not be recorded
@@ -77,7 +109,9 @@ func genTime(sec int64) time.Time {
 }
 
 func TestGetTop10Sql(t *testing.T) {
-	record := memoryUsageAlarm{}
+	record := memoryUsageAlarm{
+		configProvider: &MockConfigProvider{ratio: 0.7, keepNum: 5, componentName: "test-component"},
+	}
 	record.initMemoryUsageAlarmRecord()
 	record.lastCheckTime = genTime(123456)
 
@@ -119,27 +153,29 @@ func genMockProcessInfoList(memConsumeList []int64, startTimeList []time.Time, s
 }
 
 func TestUpdateVariables(t *testing.T) {
-	variable.MemoryUsageAlarmRatio.Store(0.3)
-	variable.MemoryUsageAlarmKeepRecordNum.Store(3)
+	mockConfig := &MockConfigProvider{ratio: 0.3, keepNum: 3, componentName: "test-component"}
 	memory.ServerMemoryLimit.Store(1024)
 
-	record := memoryUsageAlarm{}
+	record := memoryUsageAlarm{
+		configProvider: mockConfig,
+	}
 
 	record.initMemoryUsageAlarmRecord()
-	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
-	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
+	assert.Equal(t, 0.3, record.configProvider.GetMemoryUsageAlarmRatio())
+	assert.Equal(t, int64(3), record.configProvider.GetMemoryUsageAlarmKeepRecordNum())
 	assert.Equal(t, uint64(1024), record.serverMemoryLimit)
-	variable.MemoryUsageAlarmRatio.Store(0.6)
-	variable.MemoryUsageAlarmKeepRecordNum.Store(6)
+
+	mockConfig.ratio = 0.6
+	mockConfig.keepNum = 6
 	memory.ServerMemoryLimit.Store(2048)
 
 	record.updateVariable()
-	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
-	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
+	assert.Equal(t, 0.6, record.configProvider.GetMemoryUsageAlarmRatio())
+	assert.Equal(t, int64(6), record.configProvider.GetMemoryUsageAlarmKeepRecordNum())
 	assert.Equal(t, uint64(1024), record.serverMemoryLimit)
 	record.lastUpdateVariableTime = record.lastUpdateVariableTime.Add(-60 * time.Second)
 	record.updateVariable()
-	assert.Equal(t, 0.6, record.memoryUsageAlarmRatio)
-	assert.Equal(t, int64(6), record.memoryUsageAlarmKeepRecordNum)
+	assert.Equal(t, 0.6, record.configProvider.GetMemoryUsageAlarmRatio())
+	assert.Equal(t, int64(6), record.configProvider.GetMemoryUsageAlarmKeepRecordNum())
 	assert.Equal(t, uint64(2048), record.serverMemoryLimit)
 }

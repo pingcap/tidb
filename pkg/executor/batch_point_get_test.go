@@ -194,11 +194,11 @@ func TestCacheSnapShot(t *testing.T) {
 	cacheTableSnapShot := executor.MockNewCacheTableSnapShot(nil, memBuffer)
 	get, err := cacheTableSnapShot.Get(ctx, keys[0])
 	require.NoError(t, err)
-	require.Equal(t, get, []byte("1111"))
+	require.Equal(t, get, kv.NewValueEntry([]byte("1111"), 0))
 	batchGet, err := cacheTableSnapShot.BatchGet(ctx, keys)
 	require.NoError(t, err)
-	require.Equal(t, batchGet[string(keys[0])], []byte("1111"))
-	require.Equal(t, batchGet[string(keys[1])], []byte("2222"))
+	require.Equal(t, batchGet[string(keys[0])], kv.NewValueEntry([]byte("1111"), 0))
+	require.Equal(t, batchGet[string(keys[1])], kv.NewValueEntry([]byte("2222"), 0))
 }
 
 func TestPointGetForTemporaryTable(t *testing.T) {

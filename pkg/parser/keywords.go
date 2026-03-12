@@ -260,6 +260,7 @@ var Keywords = []KeywordsType{
 	{"ACCOUNT", false, "unreserved"},
 	{"ACTION", false, "unreserved"},
 	{"ADVISE", false, "unreserved"},
+	{"AFFINITY", false, "unreserved"},
 	{"AFTER", false, "unreserved"},
 	{"AGAINST", false, "unreserved"},
 	{"AGO", false, "unreserved"},

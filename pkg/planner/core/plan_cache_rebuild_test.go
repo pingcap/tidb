@@ -77,6 +77,14 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
+	// IndexLookUp push-down
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ index_lookup_pushdown(t, b) */ * from t where b<=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ index_lookup_pushdown(t, b) */ * from t where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ index_lookup_pushdown(t, b) */ * from t where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
 	// IndexMerge
 	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a=? or b=1'",
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)

@@ -17,6 +17,7 @@ package temptable
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -288,10 +289,10 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		val, err := getSessionKey(ctx, localTb.Meta(), retriever, c.Key)
 		if len(c.Value) == 0 || string(c.Value) == "non-exist-key" {
 			require.True(t, kv.ErrNotExist.Equal(err), i)
-			require.Nil(t, val, i)
+			require.Equal(t, kv.ValueEntry{}, val, i)
 		} else {
 			require.NoError(t, err, i)
-			require.Equal(t, c.Value, val, i)
+			require.Equal(t, c.Value, val.Value, i)
 		}
 		invokes := retriever.GetInvokes()
 		require.Equal(t, 1, len(invokes), i)
@@ -302,27 +303,27 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		// test for nil session
 		val, err = getSessionKey(ctx, localTb.Meta(), nil, c.Key)
 		require.True(t, kv.ErrNotExist.Equal(err), i)
-		require.Nil(t, val, i)
+		require.Equal(t, kv.ValueEntry{}, val, i)
 		require.Equal(t, 0, len(retriever.GetInvokes()), i)
 	}
 
 	// test global temporary table should return empty data directly
 	val, err := getSessionKey(ctx, globalTb.Meta(), retriever, encodeTableKey(3))
 	require.True(t, kv.ErrNotExist.Equal(err))
-	require.Nil(t, val)
+	require.Equal(t, kv.ValueEntry{}, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 
 	// test normal table should not be allowed
 	val, err = getSessionKey(ctx, normalTb.Meta(), retriever, encodeTableKey(1))
-	require.Error(t, err, "Cannot get normal table key from session")
-	require.Nil(t, val)
+	require.ErrorContains(t, err, "Cannot get normal table key from session")
+	require.Equal(t, kv.ValueEntry{}, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 
 	// test for other errors
 	injectedErr := errors.New("err")
 	retriever.InjectMethodError("Get", injectedErr)
 	val, err = getSessionKey(ctx, localTb.Meta(), retriever, encodeTableKey(5))
-	require.Nil(t, val)
+	require.Equal(t, kv.ValueEntry{}, val)
 	require.Equal(t, injectedErr, err)
 }
 
@@ -432,10 +433,10 @@ func TestInterceptorOnGet(t *testing.T) {
 			val, err := inter.OnGet(ctx, snap, c.Key)
 			if string(c.Value) == "non-exist-key" {
 				require.True(t, kv.ErrNotExist.Equal(err), i)
-				require.Nil(t, val, i)
+				require.Equal(t, kv.ValueEntry{}, val, i)
 			} else {
 				require.NoError(t, err, i)
-				require.Equal(t, c.Value, val, i)
+				require.Equal(t, c.Value, val.Value, i)
 			}
 			require.Equal(t, 0, len(retriever.GetInvokes()))
 			invokes := snap.GetInvokes()
@@ -446,22 +447,59 @@ func TestInterceptorOnGet(t *testing.T) {
 		}
 	}
 
+	testOnGetSnapshotDataCase := func(i int, emptyRetriever bool, returnCommitTS bool) {
+		c := cases[i]
+		inter := interceptor
+		if emptyRetriever {
+			inter = emptyRetrieverInterceptor
+		}
+		var entry kv.ValueEntry
+		var err error
+		var commitTS uint64
+		if returnCommitTS {
+			commitTS = mockCommitTS
+			entry, err = inter.OnGet(ctx, snap, c.Key, kv.WithReturnCommitTS())
+		} else {
+			entry, err = inter.OnGet(ctx, snap, c.Key)
+		}
+		if string(c.Value) == "non-exist-key" {
+			require.True(t, kv.ErrNotExist.Equal(err), i)
+			require.Equal(t, kv.ValueEntry{}, entry, i)
+		} else {
+			require.NoError(t, err, i)
+			require.Equal(t, kv.NewValueEntry(c.Value, commitTS), entry, i)
+		}
+		require.Equal(t, 0, len(retriever.GetInvokes()))
+		invokes := snap.GetInvokes()
+		require.Equal(t, 1, len(invokes), i)
+		require.Equal(t, "Get", invokes[0].Method, i)
+		require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
+		snap.ResetInvokes()
+	}
+
+	for i := range cases {
+		testOnGetSnapshotDataCase(i, false, false)
+		testOnGetSnapshotDataCase(i, false, true)
+		testOnGetSnapshotDataCase(i, true, false)
+		testOnGetSnapshotDataCase(i, true, true)
+	}
+
 	// test global temporary table should return kv.ErrNotExist
-	val, err := interceptor.OnGet(ctx, snap, encodeTableKey(3))
+	entry, err := interceptor.OnGet(ctx, snap, encodeTableKey(3))
 	require.True(t, kv.ErrNotExist.Equal(err))
-	require.Nil(t, val)
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
-	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
+	entry, err = interceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
 	require.True(t, kv.ErrNotExist.Equal(err))
-	require.Nil(t, val)
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
-	val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
+	entry, err = emptyRetrieverInterceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
 	require.True(t, kv.ErrNotExist.Equal(err))
-	require.Nil(t, val)
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
@@ -470,14 +508,22 @@ func TestInterceptorOnGet(t *testing.T) {
 		// also add a test case for key not exist in retriever
 		Key: encodeTableKey(5, 'n'), Value: []byte("non-exist-key"),
 	})
-	for i, c := range cases {
-		val, err = interceptor.OnGet(ctx, snap, c.Key)
+
+	testOnGetSessionDataCase := func(i int, returnCommitTS bool) {
+		c := cases[i]
+		var entry kv.ValueEntry
+		var err error
+		if returnCommitTS {
+			entry, err = interceptor.OnGet(ctx, snap, c.Key, kv.WithReturnCommitTS())
+		} else {
+			entry, err = interceptor.OnGet(ctx, snap, c.Key)
+		}
 		if len(c.Value) == 0 || string(c.Value) == "non-exist-key" {
 			require.True(t, kv.ErrNotExist.Equal(err), i)
-			require.Nil(t, val, i)
+			require.Equal(t, kv.ValueEntry{}, entry, i)
 		} else {
 			require.NoError(t, err, i)
-			require.Equal(t, c.Value, val, i)
+			require.Equal(t, kv.NewValueEntry(c.Value, 0), entry, i)
 		}
 		require.Equal(t, 0, len(snap.GetInvokes()), i)
 		invokes := retriever.GetInvokes()
@@ -486,24 +532,29 @@ func TestInterceptorOnGet(t *testing.T) {
 		require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
 
-		val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
+		entry, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
 		require.True(t, kv.ErrNotExist.Equal(err))
-		require.Nil(t, val)
+		require.Equal(t, kv.ValueEntry{}, entry)
 		require.Equal(t, 0, len(snap.GetInvokes()), i)
 		require.Equal(t, 0, len(retriever.GetInvokes()), i)
+	}
+
+	for i := range cases {
+		testOnGetSessionDataCase(i, false)
+		testOnGetSessionDataCase(i, true)
 	}
 
 	// test error cases
 	injectedErr := errors.New("err1")
 	snap.InjectMethodError("Get", injectedErr)
-	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(1))
-	require.Nil(t, val)
+	entry, err = interceptor.OnGet(ctx, snap, encodeTableKey(1))
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, injectedErr, err)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 1, len(snap.GetInvokes()))
 
-	val, err = interceptor.OnGet(ctx, snap, kv.Key("s"))
-	require.Nil(t, val)
+	entry, err = interceptor.OnGet(ctx, snap, kv.Key("s"))
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, injectedErr, err)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 2, len(snap.GetInvokes()))
@@ -512,8 +563,8 @@ func TestInterceptorOnGet(t *testing.T) {
 
 	injectedErr = errors.New("err2")
 	retriever.InjectMethodError("Get", injectedErr)
-	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(5))
-	require.Nil(t, val)
+	entry, err = interceptor.OnGet(ctx, snap, encodeTableKey(5))
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, injectedErr, err)
 	require.Equal(t, 0, len(snap.GetInvokes()))
 	require.Equal(t, 1, len(retriever.GetInvokes()))
@@ -674,7 +725,11 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 		if c.result == nil {
 			require.Nil(t, result, i)
 		} else {
-			require.Equal(t, c.result, result, i)
+			expected := make(map[string]kv.ValueEntry)
+			for k, v := range c.result {
+				expected[k] = kv.NewValueEntry(v, 0)
+			}
+			require.Equal(t, expected, result, i)
 		}
 
 		if c.nilSession {
@@ -862,15 +917,33 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 		},
 	}
 
-	for i, c := range cases {
+	testBatchGetCase := func(i int, returnCommitTS bool) {
+		c := cases[i]
 		inter := interceptor
 		if c.nilSession {
 			inter = emptyRetrieverInterceptor
 		}
-		result, err := inter.OnBatchGet(ctx, snap, c.keys)
+		var result map[string]kv.ValueEntry
+		var err error
+		if returnCommitTS {
+			result, err = inter.OnBatchGet(ctx, snap, c.keys, kv.WithReturnCommitTS())
+		} else {
+			result, err = inter.OnBatchGet(ctx, snap, c.keys)
+		}
 		require.NoError(t, err, i)
 		require.NotNil(t, result, i)
-		require.Equal(t, c.result, result, i)
+
+		expected := make(map[string]kv.ValueEntry)
+		for k, v := range c.result {
+			var commitTS uint64
+			if returnCommitTS && slices.ContainsFunc(c.snapKeys, func(key kv.Key) bool {
+				return key.Cmp(kv.Key(k)) == 0
+			}) {
+				commitTS = mockCommitTS
+			}
+			expected[k] = kv.NewValueEntry(v, commitTS)
+		}
+		require.Equal(t, expected, result, i)
 		if c.nilSession {
 			require.Equal(t, 0, len(retriever.GetInvokes()))
 		}
@@ -889,6 +962,11 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 
 		retriever.ResetInvokes()
 		snap.ResetInvokes()
+	}
+
+	for i := range cases {
+		testBatchGetCase(i, false)
+		testBatchGetCase(i, true)
 	}
 
 	// test session error occurs

@@ -28,6 +28,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//pkg/lightning/log",
         "//pkg/sessionctx/variable",
@@ -55,6 +56,7 @@ go_library(
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//bloberror",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//blockblob",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//container",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_go_resty_resty_v2//:resty",
         "@com_github_google_uuid//:uuid",
         "@com_github_klauspost_compress//gzip",
@@ -77,6 +79,7 @@ go_library(
         "@org_golang_google_api//transport/http",
         "@org_golang_x_net//http2",
         "@org_golang_x_oauth2//google",
+        "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",

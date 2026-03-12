@@ -1,0 +1,568 @@
+drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+set @@tidb_scatter_region='table';
+create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
+create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+create table t3 (
+id int primary key,
+a int,
+b int,
+index a(a)
+);
+create table t4(id int primary key, a int, b int, index a(a));
+alter table t4 cache;
+create temporary table tmp1(id int primary key, a int, b int, index a(a));
+create global temporary table tmp2(id int primary key, a int, b int, index a(a)) on commit delete rows;
+insert into t1 values
+(1, '9a', 10, 100),
+(2, '8b', 20, 200),
+(3, '7c', 30, 300),
+(4, '6d', 40, 400),
+(5, '5e', 50, 500),
+(6, '4f', 60, 600),
+(7, '3g', 70, 700),
+(8, '2h', 80, 800),
+(9, '1i', 90, 900),
+(10, '0j', 100, 1000);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t1, index:i(a, b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	a	b	c
+1	9a	10	100
+2	8b	20	200
+3	7c	30	300
+4	6d	40	400
+5	5e	50	500
+6	4f	60	600
+7	3g	70	700
+8	2h	80	800
+9	1i	90	900
+10	0j	100	1000
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '0j' limit 3;
+id	estRows	task	access object	operator info
+IndexLookUp_13	3.00	root		limit embedded(offset:0, count:3)
+├─LocalIndexLookUp_15(Build)	3.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_12(Build)	3.00	cop[tikv]		offset:0, count:3
+│ │ └─IndexRangeScan_10	3.00	cop[tikv]	table:t1, index:i(a, b)	range:("0j",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_14(Probe)	3.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '0j' limit 3;
+id	a	b	c
+7	3g	70	700
+8	2h	80	800
+9	1i	90	900
+explain select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 where a < '8' and b < 90 and c != 500 limit 4;
+id	estRows	task	access object	operator info
+Projection_7	4.00	root		executor__index_lookup_pushdown.t1.id, executor__index_lookup_pushdown.t1.a, plus(executor__index_lookup_pushdown.t1.b, 1)->Column#5, plus(executor__index_lookup_pushdown.t1.c, 2)->Column#6
+└─Limit_9	4.00	root		offset:0, count:4
+  └─IndexLookUp_15	4.00	root		
+    ├─Limit_16(Build)	4.00	cop[tikv]		offset:0, count:4
+    │ └─Selection_17	4.00	cop[tikv]		ne(executor__index_lookup_pushdown.t1.c, 500)
+    │   └─LocalIndexLookUp_19	6.01	cop[tikv]		index handle offsets:[2]
+    │     ├─Selection_12(Build)	6.01	cop[tikv]		lt(executor__index_lookup_pushdown.t1.b, 90)
+    │     │ └─IndexRangeScan_10	18.08	cop[tikv]	table:t1, index:i(a, b)	range:[-inf,"8"), keep order:false, stats:pseudo
+    │     └─TableRowIDScan_18(Probe)	6.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Limit_14(Probe)	0.00	cop[tikv]		offset:0, count:4
+      └─Selection_13	0.00	cop[tikv]		ne(executor__index_lookup_pushdown.t1.c, 500)
+        └─TableRowIDScan_11	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 where a < '8' and b < 90 and c != 500 limit 4;
+id	a	b + 1	c + 2
+3	7c	31	302
+4	6d	41	402
+6	4f	61	602
+7	3g	71	702
+explain select * from (select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '1i' LIMIT 1, 6) tx where tx.c != 500 LIMIT 4;
+id	estRows	task	access object	operator info
+Limit_15	4.00	root		offset:0, count:4
+└─Selection_16	4.00	root		ne(executor__index_lookup_pushdown.t1.c, 500)
+  └─IndexLookUp_22	6.00	root		limit embedded(offset:1, count:6)
+    ├─LocalIndexLookUp_24(Build)	7.00	cop[tikv]		index handle offsets:[2]
+    │ ├─Limit_21(Build)	7.00	cop[tikv]		offset:0, count:7
+    │ │ └─IndexRangeScan_19	7.00	cop[tikv]	table:t1, index:i(a, b)	range:("1i",+inf], keep order:false, stats:pseudo
+    │ └─TableRowIDScan_23(Probe)	7.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableRowIDScan_20(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from (select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '1i' LIMIT 1, 6) tx where tx.c != 500 LIMIT 4;
+id	a	b	c
+3	7c	30	300
+4	6d	40	400
+6	4f	60	600
+7	3g	70	700
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+id	estRows	task	access object	operator info
+IndexLookUp_13	4.00	root		limit embedded(offset:2, count:4)
+├─LocalIndexLookUp_15(Build)	6.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_12(Build)	6.00	cop[tikv]		offset:0, count:6
+│ │ └─IndexRangeScan_10	6.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_14(Probe)	6.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+id	a	b	c
+4	6d	40	400
+5	5e	50	500
+6	4f	60	600
+7	3g	70	700
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+id	estRows	task	access object	operator info
+IndexLookUp_13	4.00	root		limit embedded(offset:5, count:4)
+├─LocalIndexLookUp_15(Build)	9.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_12(Build)	9.00	cop[tikv]		offset:0, count:9
+│ │ └─IndexRangeScan_10	9.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_14(Probe)	9.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+id	a	b	c
+6	4f	60	600
+7	3g	70	700
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+id	estRows	task	access object	operator info
+IndexLookUp_13	0.00	root		limit embedded(offset:3, count:0)
+├─LocalIndexLookUp_15(Build)	3.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_12(Build)	3.00	cop[tikv]		offset:0, count:3
+│ │ └─IndexRangeScan_10	3.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_14(Probe)	3.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+id	a	b	c
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+id	estRows	task	access object	operator info
+IndexLookUp_13	1.00	root		limit embedded(offset:10, count:1)
+├─LocalIndexLookUp_15(Build)	11.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_12(Build)	11.00	cop[tikv]		offset:0, count:11
+│ │ └─IndexRangeScan_10	11.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_14(Probe)	11.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+id	a	b	c
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(executor__index_lookup_pushdown.t1.a, "x")
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified
+explain select /*+ NO_INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint NO_INDEX_LOOKUP_PUSH_DOWN is inapplicable, only table name without indexes is supported
+set @@tidb_index_lookup_pushdown_policy='force';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+force
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where a > 'x' and a < 'y' order by a;
+id	estRows	task	access object	operator info
+IndexLookUp_19	250.00	root		
+├─IndexRangeScan_17(Build)	250.00	cop[tikv]	table:t1, index:i(a, b)	range:("x","y"), keep order:true, stats:pseudo
+└─TableRowIDScan_18(Probe)	250.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='affinity-force';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+affinity-force
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+alter table t1 affinity = 'table';
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+alter table t1 affinity = 'none';
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='hint-only';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+hint-only
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ SET_VAR(tidb_index_lookup_pushdown_policy='force') */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy=default;
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+hint-only
+prepare stmt from 'select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > ? and c > ?';
+set @x1 = '1j';
+set @x2 = '5e';
+set @y1 = 100;
+set @y2 = 200;
+execute stmt using @x1, @y1;
+id	a	b	c
+2	8b	20	200
+3	7c	30	300
+4	6d	40	400
+5	5e	50	500
+6	4f	60	600
+7	3g	70	700
+8	2h	80	800
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @x2, @y2;
+id	a	b	c
+3	7c	30	300
+4	6d	40	400
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+explain select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
+id	estRows	task	access object	operator info
+HashAgg_12	1.00	root		funcs:count(Column#8)->Column#5
+└─IndexLookUp_13	1.00	root		
+  ├─HashAgg_14(Build)	1.00	cop[tikv]		funcs:count(1)->Column#8
+  │ └─Selection_15	1111.11	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
+  │   └─LocalIndexLookUp_17	3333.33	cop[tikv]		index handle offsets:[2]
+  │     ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t1, index:i(a, b)	range:("1i",+inf], keep order:false, stats:pseudo
+  │     └─TableRowIDScan_16(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_7(Probe)	0.00	cop[tikv]		funcs:count(1)->Column#8
+    └─Selection_11	0.00	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
+      └─TableRowIDScan_10	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
+count(1)
+5
+create table t5(a int unique, b int);
+insert into t5 values (501, 10), (402, 20), (303, 30), (204, 40), (105, 50);
+explain select /*+ index_lookup_pushdown(t5, a) */ * from t5;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t5, index:a(a)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t5, a) */ _tidb_rowid, a, b from t5;
+_tidb_rowid	a	b
+1	501	10
+2	402	20
+3	303	30
+4	204	40
+5	105	50
+create table t6(a int primary key nonclustered, b int);
+insert into t6 values (511, 10), (412, 20), (313, 30), (214, 40), (115, 50);
+explain select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t6, index:PRIMARY(a)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
+a	b
+511	10
+412	20
+313	30
+214	40
+115	50
+insert into t2 values
+('a', 1, 9010, 100, 90),
+('A', 2, 8020, 200, 80),
+('a', 3, 7030, 300, 70),
+('b', 1, 6040, 400, 60),
+('B', 2, 5050, 500, 50),
+('b', 3, 4060, 600, 40),
+('c', 1, 3070, 700, 30),
+('C', 2, 2080, 800, 20),
+('c', 3, 1090, 900, 10);
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+a	b	c	d	e
+a	1	9010	100	90
+A	2	8020	200	80
+a	3	7030	300	70
+b	1	6040	400	60
+B	2	5050	500	50
+b	3	4060	600	40
+c	1	3070	700	30
+C	2	2080	800	20
+c	3	1090	900	10
+explain select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t2, index:u(e)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+a	b	c	d	e
+a	1	9010	100	90
+A	2	8020	200	80
+a	3	7030	300	70
+b	1	6040	400	60
+B	2	5050	500	50
+b	3	4060	600	40
+c	1	3070	700	30
+C	2	2080	800	20
+c	3	1090	900	10
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+id	estRows	task	access object	operator info
+IndexLookUp_14	3.00	root		limit embedded(offset:0, count:3)
+├─LocalIndexLookUp_16(Build)	3.00	cop[tikv]		index handle offsets:[]
+│ ├─Limit_13(Build)	3.00	cop[tikv]		offset:0, count:3
+│ │ └─Selection_12	3.00	cop[tikv]		lt(executor__index_lookup_pushdown.t2.a, "c"), lt(executor__index_lookup_pushdown.t2.b, 3)
+│ │   └─IndexFullScan_10	27.16	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_15(Probe)	3.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+a	b	c	d	e
+A	2	8020	200	80
+b	1	6040	400	60
+B	2	5050	500	50
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+id	estRows	task	access object	operator info
+TopN_9	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
+└─IndexLookUp_17	4.00	root		
+  ├─LocalIndexLookUp_19(Build)	4.00	cop[tikv]		index handle offsets:[]
+  │ ├─TopN_16(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
+  │ │ └─Selection_15	6656.67	cop[tikv]		ne(executor__index_lookup_pushdown.t2.b, 3)
+  │ │   └─IndexFullScan_13	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_18(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+a	b	c	d	e
+C	2	2080	800	20
+c	1	3070	700	30
+B	2	5050	500	50
+b	1	6040	400	60
+create table t22(a varchar(32), b int, c int, d int, e int, primary key(a(2), b) CLUSTERED, index i(c)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert into t22 values
+('abc', 1, 9010, 100, 90),
+('Abc', 2, 8020, 200, 80),
+('abc', 3, 7030, 300, 70),
+('bcd', 1, 6040, 400, 60),
+('Bcd', 2, 5050, 500, 50),
+('bcd', 3, 4060, 600, 40),
+('cde', 1, 3070, 700, 30),
+('Cde', 2, 2080, 800, 20),
+('cde', 3, 1090, 900, 10);
+explain select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+id	estRows	task	access object	operator info
+IndexLookUp_13	5.00	root		limit embedded(offset:0, count:5)
+├─LocalIndexLookUp_15(Build)	5.00	cop[tikv]		index handle offsets:[]
+│ ├─Limit_12(Build)	5.00	cop[tikv]		offset:0, count:5
+│ │ └─IndexRangeScan_10	5.00	cop[tikv]	table:t22, index:i(c)	range:(2000,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_14(Probe)	5.00	cop[tikv]	table:t22	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t22	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+a	b	c	d	e
+bcd	1	6040	400	60
+Bcd	2	5050	500	50
+bcd	3	4060	600	40
+cde	1	3070	700	30
+Cde	2	2080	800	20
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > 'a' order by a asc;
+id	estRows	task	access object	operator info
+IndexLookUp_16	3333.33	root		
+├─IndexRangeScan_14(Build)	3333.33	cop[tikv]	table:t1, index:i(a, b)	range:("a",+inf], keep order:true, stats:pseudo
+└─TableRowIDScan_15(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.
+explain select /*+ index_lookup_pushdown(t4, a) */ * from t4 where a < 100;
+id	estRows	task	access object	operator info
+UnionScan_6	3323.33	root		lt(executor__index_lookup_pushdown.t4.a, 100)
+└─TableReader_9	3323.33	root		data:Selection_8
+  └─Selection_8	3323.33	cop[tikv]		lt(executor__index_lookup_pushdown.t4.a, 100)
+    └─TableFullScan_7	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, cached table is not supported
+explain select /*+ index_lookup_pushdown(tmp1, a) */ * from tmp1 where a < 100;
+id	estRows	task	access object	operator info
+UnionScan_6	3323.33	root		lt(executor__index_lookup_pushdown.tmp1.a, 100)
+└─TableReader_9	3323.33	root		data:Selection_8
+  └─Selection_8	3323.33	cop[tikv]		lt(executor__index_lookup_pushdown.tmp1.a, 100)
+    └─TableFullScan_7	10000.00	cop[tikv]	table:tmp1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, temporary table is not supported
+explain select /*+ index_lookup_pushdown(tmp2, a) */ * from tmp2 where a < 100;
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root		data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(executor__index_lookup_pushdown.tmp2.a, 100)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tmp2	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, temporary table is not supported
+explain select /*+ index_lookup_pushdown(t1) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified
+set @@tx_isolation='READ-COMMITTED';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, transaction isolation level is not REPEATABLE-READ
+begin pessimistic;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, transaction isolation level is not REPEATABLE-READ
+rollback;
+set @@tx_isolation='REPEATABLE-READ';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t1, index:i(a, b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_replica_read='follower';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='prefer-leader';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='leader-and-follower';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='closest-replicas';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='closest-adaptive';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='learner';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='leader';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t1, index:i(a, b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+do sleep(0.1);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 as of timestamp NOW(6) - interval 0.05 second;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, stale read is not supported
+start transaction read only as of timestamp now(6) - interval 0.05 second;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, stale read is not supported
+rollback;
+set transaction read only as of timestamp now(6) - interval 0.05 second;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, stale read is not supported
+insert ignore into mysql.tidb VALUES ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for index lookup push down test');
+set @@tidb_snapshot=(now(6) - interval 0.05 second);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, historical read is not supported
+set @@tidb_snapshot='';
+delete from mysql.tidb where VARIABLE_NAME='tikv_gc_safe_point' and COMMENT='mock for index lookup push down test';
+create table t7 (j json, index idx((cast(j->'$.path' as signed array))));
+explain select /*+ index_lookup_pushdown(t7, idx) */ * from t7 where (1 member of (j->'$.path'));
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		json_memberof(cast(1, json BINARY), json_extract(executor__index_lookup_pushdown.t7.j, "$.path"))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, multi-valued index is not supported
+set @@tidb_replica_read='learner';
+insert into t3 values(1, 2, 3);
+explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+id	a	b
+1	2	3
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_scatter_region=default;

@@ -14,6 +14,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/zap"
 )
 
@@ -123,8 +125,30 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
-			// if path not exists, we should return nil to continue.
-			return nil
+			log.Info("Local Storage Hint: WalkDir yields a tomestone, a race may happen.", zap.String("path", path))
+			if !opt.IncludeTombstone {
+				// if path not exists and the client doesn't require its tombstone,
+				// we should return nil to continue.
+				return nil
+			}
+			relativeToBase, err := filepath.Rel(base, path)
+			if err != nil {
+				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+					zap.String("path", path), zap.String("base", base), logutil.ShortError(err))
+			}
+			if !strings.HasPrefix(relativeToBase, opt.ObjPrefix) {
+				return nil
+			}
+
+			// Convert to relative path from l.base for consistency with cloud storage
+			path, err = filepath.Rel(l.base, path)
+			if err != nil {
+				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
+			}
+			// NOTE: This may cause a tombstone of the dir emit to the caller when
+			// call `Walk` in a non-exist dir.
+			return fn(path, TombstoneSize)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -141,12 +165,14 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			return nil
 		}
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
-		// so use Rel to convert to relative path to l.base
-		path, _ = filepath.Rel(l.base, path)
-
-		if !strings.HasPrefix(path, opt.ObjPrefix) {
+		// so use Rel to convert to relative path to the directory being walked (base)
+		relativeToBase, _ := filepath.Rel(base, path)
+		if !strings.HasPrefix(relativeToBase, opt.ObjPrefix) {
 			return nil
 		}
+
+		// Convert to relative path from l.base for consistency with cloud storage
+		path, _ = filepath.Rel(l.base, path)
 
 		size := f.Size()
 		// if not a regular file, we need to use os.stat to get the real file size
@@ -257,6 +283,19 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (*LocalStorage) Close() {}
+
+func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	sl, ok := e.(*LocalStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "expect source to be LocalStorage, got %T", e)
+	}
+	from := filepath.Join(sl.base, spec.From)
+	to := filepath.Join(l.base, spec.To)
+	if err := mkdirAll(filepath.Dir(to)); err != nil {
+		return errors.Trace(err)
+	}
+	return os.Link(from, to)
+}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)

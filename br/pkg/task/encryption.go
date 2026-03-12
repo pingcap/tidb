@@ -5,7 +5,6 @@ package task
 import (
 	"fmt"
 	"net/url"
-	"path"
 	"regexp"
 
 	"github.com/pingcap/errors"
@@ -61,7 +60,7 @@ func validateAndParseMasterKeyString(keyString string) (encryptionpb.MasterKey, 
 }
 
 func parseLocalDiskConfig(u *url.URL) (encryptionpb.MasterKey, error) {
-	if !path.IsAbs(u.Path) {
+	if len(u.Host) > 0 {
 		return encryptionpb.MasterKey{}, errors.New("local master key path must be absolute")
 	}
 	return encryptionpb.MasterKey{
@@ -95,6 +94,8 @@ func parseAwsKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
 		}
+	} else if len(accessKey) > 0 || len(secretAccessKey) > 0 {
+		return encryptionpb.MasterKey{}, errors.New("missing AWS KMS(access key or secret access key)")
 	}
 
 	return encryptionpb.MasterKey{
@@ -150,6 +151,10 @@ func parseGcpKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 	projectID, location, keyRing, keyName := matches[1], matches[2], matches[3], matches[4]
 	q := u.Query()
 
+	credential := q.Get(GCPCredentials)
+	if len(credential) == 0 {
+		return encryptionpb.MasterKey{}, errors.New("missing credential")
+	}
 	gcpKms := &encryptionpb.GcpKms{
 		Credential: q.Get(GCPCredentials),
 	}

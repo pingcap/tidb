@@ -628,6 +628,10 @@ func TestImportIntoSecureText(t *testing.T) {
 			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
 			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
 		},
+		{
+			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",
+			secured: `^IMPORT INTO .t. FROM \Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2} WITH cloud_storage_uri=\Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2}`,
+		},
 	}
 
 	p := parser.New()

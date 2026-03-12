@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -66,6 +67,14 @@ func Row2Task(r chunk.Row) *proto.Task {
 			task.Error = stdErr
 		}
 	}
+	if !r.IsNull(14) {
+		str := r.GetJSON(14).String()
+		if err := json.Unmarshal([]byte(str), &task.ModifyParam); err != nil {
+			logutil.BgLogger().Error("unmarshal task modify param", zap.Error(err))
+		}
+	}
+	maxNodeCnt := r.GetInt64(15)
+	task.MaxNodeCount = int(maxNodeCnt)
 	return task
 }
 

@@ -50,6 +50,9 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 
+	// SetID sets the ID
+	SetID(id int)
+
 	// TP get the plan type.
 	TP() string
 

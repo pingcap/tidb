@@ -166,6 +166,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/dbutil",
         "//pkg/util/disjointset",
         "//pkg/util/domainutil",
         "//pkg/util/execdetails",
@@ -338,6 +339,8 @@ go_test(
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
 

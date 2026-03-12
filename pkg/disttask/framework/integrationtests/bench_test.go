@@ -95,7 +95,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
-			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, "", taskMeta)
+			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, "", 0, taskMeta)
 			require.NoError(c.T, err)
 		}
 		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.
@@ -162,7 +162,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		select {
 		case <-ctx.Done():
 			taskManager, err := storage.GetTaskManager()

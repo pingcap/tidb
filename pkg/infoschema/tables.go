@@ -99,10 +99,13 @@ const (
 	TableConstraints = "TABLE_CONSTRAINTS"
 	tableTriggers    = "TRIGGERS"
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
-	TableUserPrivileges   = "USER_PRIVILEGES"
-	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
-	tableTablePrivileges  = "TABLE_PRIVILEGES"
-	tableColumnPrivileges = "COLUMN_PRIVILEGES"
+	TableUserPrivileges = "USER_PRIVILEGES"
+	// TableSchemaPrivileges provides information about schema privileges
+	TableSchemaPrivileges = "SCHEMA_PRIVILEGES"
+	// TableTablePrivileges provides information about table privileges
+	TableTablePrivileges = "TABLE_PRIVILEGES"
+	// TableColumnPrivileges provides information about column privileges
+	TableColumnPrivileges = "COLUMN_PRIVILEGES"
 	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table.
@@ -263,9 +266,9 @@ var tableIDMap = map[string]int64{
 	TableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
 	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
-	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
-	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
-	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
+	TableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
+	TableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
+	TableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
 	tableRoutines:                           autoid.InformationSchemaDBID + 24,
@@ -462,6 +465,8 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
+	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -635,6 +640,7 @@ var partitionsCols = []columnInfo{
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -959,6 +965,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogWaitRUDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogTidbCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogTikvCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogStorageFromKV, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogStorageFromMPP, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1403,6 +1411,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
+	{name: stmtsummary.StorageKVStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiKV"},
+	{name: stmtsummary.StorageMPPStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiFlash"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -2322,9 +2332,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
 	TableUserPrivileges:                     tableUserPrivilegesCols,
-	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
-	tableTablePrivileges:                    tableTablePrivilegesCols,
-	tableColumnPrivileges:                   tableColumnPrivilegesCols,
+	TableSchemaPrivileges:                   tableSchemaPrivilegesCols,
+	TableTablePrivileges:                    tableTablePrivilegesCols,
+	TableColumnPrivileges:                   tableColumnPrivilegesCols,
 	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
 	tableRoutines:                           tableRoutinesCols,

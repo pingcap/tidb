@@ -149,7 +149,6 @@ func TestDaemon(t *testing.T) {
 	ow.RetireOwner()
 	req.False(ow.IsOwner())
 	app.AssertNotRunning(1 * time.Second)
-	ow.CampaignOwner()
 	req.Eventually(func() bool {
 		return ow.IsOwner()
 	}, 1*time.Second, 100*time.Millisecond)

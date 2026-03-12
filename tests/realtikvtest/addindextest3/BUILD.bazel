@@ -23,6 +23,7 @@ go_test(
         "//pkg/lightning/backend/local",
         "//pkg/meta/model",
         "//pkg/parser/model",
+        "//pkg/resourcemanager/pool/workerpool",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",
@@ -35,7 +36,7 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

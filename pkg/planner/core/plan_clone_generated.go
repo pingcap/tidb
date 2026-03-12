@@ -216,7 +216,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
 	if op.TableScanAndPartitionInfos != nil {
 		return nil, false
@@ -240,7 +240,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
+	cloned.IndexPlans = flattenListPushDownPlan(cloned.indexPlan)
 	cloned.OutputColumns = util.CloneColumns(op.OutputColumns)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
 	return cloned, true
@@ -275,6 +275,10 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.AccessConditions = util.CloneExpressions(op.AccessConditions)
 	cloned.ctx = newCtx
+	cloned.unfoldFromWildCard = make([]bool, len(op.unfoldFromWildCard))
+	copy(cloned.unfoldFromWildCard, op.unfoldFromWildCard)
+	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
+	copy(cloned.colsInWhereClause, op.colsInWhereClause)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
 	return cloned, true
 }
@@ -301,6 +305,10 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
+	cloned.unfoldFromWildCard = make([]bool, len(op.unfoldFromWildCard))
+	copy(cloned.unfoldFromWildCard, op.unfoldFromWildCard)
+	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
+	copy(cloned.colsInWhereClause, op.colsInWhereClause)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
 	return cloned, true
 }
@@ -381,14 +389,38 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 		}
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	if cloned.IndexLookUpPushDown {
+		cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = flattenTreePushDownPlan(cloned.indexPlan)
+	} else {
+		cloned.IndexPlans = flattenListPushDownPlan(cloned.indexPlan)
+	}
+	if op.IndexPlansUnNatureOrders != nil {
+		cloned.IndexPlansUnNatureOrders = make(map[int]int, len(op.IndexPlansUnNatureOrders))
+		for k, v := range op.IndexPlansUnNatureOrders {
+			cloned.IndexPlansUnNatureOrders[k] = v
+		}
+	}
+	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
 	if op.ExtraHandleCol != nil {
 		cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
 	}
 	cloned.PushedLimit = op.PushedLimit.Clone()
 	cloned.CommonHandleCols = util.CloneColumns(op.CommonHandleCols)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalLocalIndexLookUp) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalLocalIndexLookUp)
+	*cloned = *op
+	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *basePlan
+	cloned.IndexHandleOffsets = make([]uint32, len(op.IndexHandleOffsets))
+	copy(cloned.IndexHandleOffsets, op.IndexHandleOffsets)
 	return cloned, true
 }
 
@@ -417,9 +449,9 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	}
 	cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))
 	for i, plan := range cloned.partialPlans {
-		cloned.PartialPlans[i] = flattenPushDownPlan(plan)
+		cloned.PartialPlans[i] = flattenListPushDownPlan(plan)
 	}
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
