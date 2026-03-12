@@ -40,6 +40,7 @@ Review gate:
 Validate these first because they caused prior drift/regressions:
 
 - [ ] Bazel metadata rule is explicit and unambiguous (no ambiguous wildcard wording).
+- [ ] PR requirements include the `Issue Number:` line with `close #<id>` or `ref #<id>`.
 - [ ] Notes update policy is consistent between `docs/agents/notes-guide.md` and planner notes.
 - [ ] Testing policy in `AGENTS.md` matches testing runbook guidance under `docs/agents/` (no contradiction).
 
@@ -50,7 +51,14 @@ Validate these first because they caused prior drift/regressions:
 - [ ] RealTiKV rule still requires background start and mandatory cleanup.
 - [ ] Bug-fix policy still requires regression tests with fail-before-fix/pass-after-fix evidence (or explicit infeasibility note).
 
-### 5) Reference and Path Hygiene
+### 5) PR/Issue Policy Consistency
+
+- [ ] PR title format rules are intact.
+- [ ] PR description still requires `.github/pull_request_template.md`.
+- [ ] HTML comment preservation requirement remains intact.
+- [ ] English language requirement remains intact for issues and PRs.
+
+### 6) Reference and Path Hygiene
 
 - [ ] Every mentioned path exists.
 - [ ] Removed files are not referenced anywhere.
@@ -65,6 +73,7 @@ Use from repository root.
 
 ```bash
 # Check critical policy anchors in AGENTS.md
+grep -n "Issue Number:" AGENTS.md
 grep -n "Task -> Validation Matrix\|Testing Policy\|make bazel_prepare" AGENTS.md
 
 # Ensure normative keywords are not wrapped in backticks in policy docs.
@@ -87,7 +96,7 @@ git diff --name-status <base_ref>...HEAD | \
 A review is complete only when all are true:
 
 - [ ] No policy contradiction across `AGENTS.md` and the changed docs under `docs/agents/`.
-- [ ] No ambiguous wording for critical rules (especially test/build gates).
+- [ ] No ambiguous wording for critical rules (especially test/build and PR gates).
 - [ ] No stale path references.
 - [ ] `AGENTS.md` preserves policy-level clarity and does not re-accumulate large runbook detail.
 - [ ] Final review comment includes concrete evidence (paths and exact commands run).
