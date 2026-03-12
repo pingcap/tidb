@@ -90,7 +90,7 @@ var (
 	ErrEncodeKV          = errors.Normalize("encode kv error in file %s at offset %d", errors.RFCCodeText("Lightning:Restore:ErrEncodeKV"))
 	ErrCastValue         = errors.Normalize(
 		"Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.",
-		errors.RFCCodeText("Lightning:Restore:ErrCastValue"),
+		errors.RFCCodeText("Import:ErrCastValue"),
 		errors.RedactArgs([]int{2}),
 	)
 	ErrAllocTableRowIDs     = errors.Normalize("allocate table row id error", errors.RFCCodeText("Lightning:Restore:ErrAllocTableRowIDs"))
@@ -135,8 +135,9 @@ func (w *withStack) Format(s fmt.State, verb rune) {
 }
 
 // NormalizeError converts an arbitrary error to *errors.Error based above predefined errors.
-// If the underlying err is already an *error.Error which is prefixed by "Lightning:", leave
-// error ID unchanged. Otherwise, converts the error ID to Lightning's predefined error IDs.
+// If the underlying err is already an *error.Error which is prefixed by "Lightning:" or
+// "Import:", leave error ID unchanged. Otherwise, converts the error ID to Lightning's
+// predefined error IDs.
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
@@ -178,7 +179,7 @@ func NormalizeError(err error) error {
 	}
 
 	if normalizedErr != nil {
-		if strings.HasPrefix(string(normalizedErr.ID()), "Lightning:") {
+		if strings.HasPrefix(string(normalizedErr.ID()), "Lightning:") || strings.HasPrefix(string(normalizedErr.ID()), "Import:") {
 			return err
 		}
 		// Convert BR error id to Lightning error id.

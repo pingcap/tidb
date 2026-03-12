@@ -118,7 +118,7 @@ func TestKVEncoderCastErrorMessage(t *testing.T) {
 
 	_, err = encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, 1)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason: [types:1690]constant 10000000 overflows tinyint")
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason: [types:1690]constant 10000000 overflows tinyint")
 }
 
 func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
@@ -151,6 +151,6 @@ func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
 
 	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("c")}, 1)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
 	require.Contains(t, err.Error(), "Data truncated")
 }

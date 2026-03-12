@@ -99,7 +99,7 @@ func TestEncode(t *testing.T) {
 	require.NoError(t, err)
 	pairs, err := strictMode.Encode(rows, 1, []int{0, 1}, 1234)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason:")
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason:")
 	require.Contains(t, err.Error(), "overflows tinyint")
 	require.Nil(t, pairs)
 
@@ -109,7 +109,7 @@ func TestEncode(t *testing.T) {
 	}
 	_, err = strictMode.Encode(rowsWithPk, 2, []int{0, 1}, 1234)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "[Lightning:Restore:ErrCastValue]Value conversion failed for column '_tidb_rowid'. Expected type: bigint(20), received value: \"invalid-pk\". Reason:")
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column '_tidb_rowid'. Expected type: bigint(20), received value: \"invalid-pk\". Reason:")
 	require.Contains(t, err.Error(), "Truncated incorrect")
 
 	rowsWithPk2 := []types.Datum{
