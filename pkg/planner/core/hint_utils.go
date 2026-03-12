@@ -200,6 +200,22 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				HintName: ast.NewCIStr(h.HintAggToCop),
 			})
 		}
+	case *physicalop.PhysicalApply:
+		if pp.NoDecorrelate {
+			children := pp.Children()
+			if len(children) > 1 {
+				innerOffset := children[1].QueryBlockOffset()
+				if innerOffset > 0 && innerOffset != pp.QueryBlockOffset() {
+					innerQB, err := h.GenerateQBName(nodeType, innerOffset)
+					if err == nil {
+						res = append(res, &ast.TableOptimizerHint{
+							QBName:   innerQB,
+							HintName: ast.NewCIStr(h.HintNoDecorrelate),
+						})
+					}
+				}
+			}
+		}
 	case *physicalop.PhysicalMergeJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),

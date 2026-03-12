@@ -187,7 +187,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		uid := uuid.New().String()
 		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
 		localSet := conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
-		collector := conflictedkv.NewCollector(e.tableImporter.Table, e.logger, objStore, e.store, filenamePrefix, kvGroup, encoder, e.sharedHandleSet, localSet)
+		collector := conflictedkv.NewCollector(e.tableImporter.Table, e.logger, objStore, e.store, filenamePrefix, kvGroup, encoder, e.sharedHandleSet, localSet, e.GetMeterRecorder())
 		eg.Go(func() (err error) {
 			defer func() {
 				err2 := collector.Close(egCtx)

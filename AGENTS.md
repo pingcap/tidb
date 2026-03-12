@@ -28,13 +28,18 @@ This file provides guidance to agents working in this repository.
 | RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
-| Before finishing | SHOULD run `make bazel_lint_changed`. |
+| During local coding iterations (not claiming completion) | SHOULD use the `WIP` verification profile from `.agents/skills/tidb-verify-profile` to run only scoped checks. |
+| Claiming task completion / PR readiness | MUST use the `Ready` verification profile from `.agents/skills/tidb-verify-profile`; if there are code changes, this includes `make lint`. `Ready` is mandatory before making final-status claims such as "fixed", "done", "all tests pass", "ready for review", or "ready for PR". |
+| Before finishing | SHOULD self-review diff quality before finishing. |
+| Expensive optional sweeps (for example `make bazel_lint_changed`, broad package runs) | MUST run only when required by change scope, CI reproduction, or explicit user request. |
 
 ### Skills
 
 - Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
 - Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
 - `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
+- Policy belongs in `AGENTS.md`; detailed command playbooks SHOULD live in `docs/agents/*`, and skills SHOULD provide entrypoint workflows that reference those playbooks.
+- Operational testing/build skills are indexed in `.agents/skills/README.md` to avoid duplicated lists drifting in multiple docs.
 
 ## Pre-flight Checklist
 
@@ -62,9 +67,9 @@ This file provides guidance to agents working in this repository.
 
 - Follow `docs/agents/notes-guide.md`.
 - DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/agents/ddl/`):
-  - **REQUIRED**: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
-  - Debugging: You may reference `docs/agents/ddl/*`, but you **MUST NOT** treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
-  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you **MUST** update the docs to match reality and call it out in the PR/issue. Do not defer.
+  - MUST: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
+  - Debugging: You MAY reference `docs/agents/ddl/*`, but you MUST NOT treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
+  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you MUST update the docs to match reality and call it out in the PR/issue. Do not defer.
 
 ## Build Flow
 
@@ -79,16 +84,24 @@ Run `make bazel_prepare` before building when any of the following is true:
 - UT or RealTiKV tests were added and Bazel test targets were updated (for example `_test.go` in `srcs`, `shard_count`, or `tests/realtikvtest/**/BUILD.bazel` updates).
 - Local Bazel dependency/toolchain errors occurred.
 
+For an operational decision checklist, use `.agents/skills/tidb-bazel-prepare-gate`.
+
 Recommended local build flow:
 
 ```bash
+# Conditional step: run only when required by this section or `.agents/skills/tidb-bazel-prepare-gate`.
 make bazel_prepare
+```
+
+```bash
+# Then continue with normal local build steps.
 make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
 git fetch origin --prune
-make bazel_lint_changed
 ```
+
+`make bazel_lint_changed` is intentionally excluded from the default local flow because it can be slow and resource-intensive on local macOS environments. Agents MUST NOT run `make bazel_lint_changed` unless the user explicitly requests it.
 
 ## Task -> Validation Matrix
 
@@ -112,6 +125,11 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 
 - Detailed command playbooks live in `docs/agents/testing-flow.md`.
 - Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands.
+- Use `.agents/skills/tidb-verify-profile` to pick a validation profile:
+  - `WIP`: local iteration loop, scoped checks only.
+  - `Ready`: completion gate and handoff/PR readiness checks.
+  - `Heavy`: expensive sweeps only when scope requires or user asks.
+- `Ready` is required before any final-status claim; trigger phrases are defined in `Quick Decision Matrix`.
 - Prefer targeted runs (`-run <TestName>`). Avoid package-wide runs unless needed for broad refactors, CI reproduction, or shared golden/testdata updates.
 - If a package uses failpoints, MUST enable failpoints before tests and disable them afterward.
 - Failpoint decision MUST follow `docs/agents/testing-flow.md`: if failpoint search checks have no matches, run without failpoint enable/disable and state the evidence in the final report.
@@ -123,11 +141,15 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 
 ### Go and backend code
 
+- Because TiDB is a complex system, code SHOULD remain maintainable for future readers with basic TiDB familiarity, including readers who are not experts in the specific subsystem/feature.
 - Follow existing package-local conventions first and keep style consistent with nearby files.
+- Code SHOULD be self-documenting through clear naming and structure.
+  - Example: when implementing a well-known algorithm, naming SHOULD be clear enough to make the approach recognizable; if naming alone may not make intent obvious, add a brief comment.
 - Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
-- For implementation details, add comments only for non-obvious intent, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs; avoid comments that only restate nearby code. Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
 - Keep error handling actionable and contextual; avoid silently swallowing errors.
 - For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
+- Comments SHOULD explain non-obvious intent, constraints, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs, and SHOULD NOT restate what the code already makes clear.
+- Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
 
 ### Tests and testdata
 
@@ -141,6 +163,7 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 
 - Commands in docs SHOULD be copy-pasteable from repository root unless explicitly scoped.
 - Use explicit placeholders such as `<package_name>`, `<TestName>`, and `<dir>`.
+- Documentation updates SHOULD keep terminology, policy wording, and command conventions consistent across related docs.
 - Keep guidance executable and concrete; avoid ambiguous phrasing.
 - Issues and PRs MUST be written in English (title and description).
 
@@ -174,6 +197,7 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 When finishing a task, report:
 
 1. Files changed.
-2. Risks: correctness, compatibility, performance.
-3. Exact commands run for validation.
-4. What was not verified locally.
+2. Validation profile used (`WIP`, `Ready`, or `Heavy`) and why.
+3. Risks: correctness, compatibility, performance.
+4. Exact commands run for validation.
+5. What was not verified locally.

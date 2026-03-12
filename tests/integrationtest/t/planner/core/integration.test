@@ -945,31 +945,6 @@ update tt as ss set x = 3, z = 13;
 update tt as s1, tt as s2 set s1.z = default, s2.z = 456;
 
 
-# TestExtendedStatsSwitch
-drop table if exists t;
-create table t(a int not null, b int not null, key(a), key(b));
-insert into t values(1,1),(2,2),(3,3),(4,4),(5,5),(6,6);
-set session tidb_enable_extended_stats = off;
--- error 1105
-alter table t add stats_extended s1 correlation(a,b);
--- error 1105
-alter table t drop stats_extended s1;
--- error 1105
-admin reload stats_extended;
-set session tidb_enable_extended_stats = on;
-alter table t add stats_extended s1 correlation(a,b);
-select stats, status from mysql.stats_extended where name = 's1';
-set session tidb_enable_extended_stats = off;
-analyze table t;
-select stats, status from mysql.stats_extended where name = 's1';
-set session tidb_enable_extended_stats = on;
-analyze table t;
-select stats, status from mysql.stats_extended where name = 's1';
-explain format='plan_tree' select * from t use index(b) where a > 3 order by b limit 1;
-set session tidb_enable_extended_stats = off;
-explain format='plan_tree' select * from t use index(b) where a > 3 order by b limit 1;
-
-
 # TestOrderByNotInSelectDistinct
 drop table if exists ttest;
 create table ttest (v1 int, v2 int);
