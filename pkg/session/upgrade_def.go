@@ -2058,14 +2058,20 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBAnalyzeVersion)
 	terror.MustNil(err)
 	// The value should normally never be null, but check defensively to avoid a potential panic.
-	if len(rows) == 0 || rows[0].IsNull(0) || rows[0].GetString(0) != "1" {
+	if len(rows) == 0 || rows[0].IsNull(0) {
 		return
 	}
 
+	oldValue := rows[0].GetString(0)
+	if oldValue != "1" {
+		return
+	}
+
+	// The current default value of tidb_analyze_version is 2.
 	newValue := strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
-	logutil.BgLogger().Warn("rewriting persisted tidb_analyze_version from 1 to 2 during upgrade",
-		zap.String("oldValue", rows[0].GetString(0)),
+	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue),
+		zap.String("oldValue", oldValue),
 		zap.String("newValue", newValue))
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, "1")
+		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
 }
