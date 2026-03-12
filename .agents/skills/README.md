@@ -15,6 +15,7 @@ Current operational workflow skills:
 - `tidb-realtikv-runner`: run RealTiKV tests with startup/cleanup discipline.
 - `tidb-test-diff-triage`: triage unexpected test diffs (failpoint vs upstream vs local regression).
 - `tidb-test-guidelines`: test placement, naming, writing conventions, and shard_count guidance.
+- `tidb-pr-metadata-guard`: create or update TiDB PR descriptions without breaking template-required HTML comments or bot-parsed checklist sections.
 
 Use `AGENTS.md` for repository policy, validation/reporting requirements, and the pre-flight checklist.
 Use `docs/agents/testing-flow.md` for canonical build/test command playbooks.
