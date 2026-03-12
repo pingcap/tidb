@@ -2279,3 +2279,27 @@ WHERE t1.id IN (SELECT MIN(id) FROM t1)`
 	err := tk.QueryToErr(sql)
 	require.NoError(t, err)
 }
+
+func TestIssue66619(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1), (2), (3), (4)")
+	tk.MustExec("insert into t2 values(1), (2)")
+
+	tk.MustQuery("select a, (select count(1) as cnt from t2 where t2.a = t1.a having cnt > 0) from t1 order by a").
+		Check(testkit.Rows("1 1", "2 1", "3 <nil>", "4 <nil>"))
+
+	tk.MustQuery("select a, (select /*+ NO_DECORRELATE() */ count(1) as cnt from t2 where t2.a = t1.a having cnt > 0) from t1 order by a").
+		Check(testkit.Rows("1 1", "2 1", "3 <nil>", "4 <nil>"))
+
+	tk.MustQuery("select a, (select count(1) as cnt from t2 where t2.a = t1.a having cnt < 1) from t1 order by a").
+		Check(testkit.Rows("1 <nil>", "2 <nil>", "3 0", "4 0"))
+
+	tk.MustQuery("select a, (select count(1) from t2 where t2.a = t1.a) from t1 order by a").
+		Check(testkit.Rows("1 1", "2 1", "3 0", "4 0"))
+}
