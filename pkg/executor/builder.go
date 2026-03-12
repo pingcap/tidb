@@ -1626,9 +1626,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	case *PointGetExecutor, *BatchPointGetExec,
-		// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
-		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
-		// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
+	// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+	// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+	// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		*TableDualExec,
 		*TableSampleExecutor:
 		return originReader
@@ -4876,12 +4876,12 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 		return nil
 	}
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
+	sctx := b.ctx.GetSessionVars().StmtCtx
 	hasGlobalIndex := false
 	for i := range v.PartialPlans {
 		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			assertByItemsAreColumns(is.ByItems)
 			ret.ranges = append(ret.ranges, is.Ranges)
-			sctx := b.ctx.GetSessionVars().StmtCtx
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 			if is.Index.Global {
 				hasGlobalIndex = true
@@ -4892,12 +4892,10 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 			ret.ranges = append(ret.ranges, partialTS.Ranges)
 			if ret.table.Meta().IsCommonHandle {
 				tblInfo := ret.table.Meta()
-				sctx := b.ctx.GetSessionVars().StmtCtx
 				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
 			}
 		}
 	}
-	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executor_metrics.ExecutorCounterIndexMergeReaderExecutor.Inc()
 
