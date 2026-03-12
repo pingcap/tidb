@@ -336,6 +336,11 @@ error = '''
 stream task has no storage
 '''
 
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
+'''
+
 ["Ingest:EpochNotMatch"]
 error = '''
 epoch not match
