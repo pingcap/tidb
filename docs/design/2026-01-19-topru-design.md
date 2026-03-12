@@ -55,6 +55,7 @@ Next-gen TiDB Cloud charges by RU (Request Unit). When cluster RU consumption is
 1. **TopRU RU ≠ Billing RU**: TopRU displays RU from `util.RUDetails` runtime observation, suitable for locating high-consumption SQLs; billing and reconciliation still use Billing RU, alignment work is not included in this phase
 2. **Complete Information for Executing SQLs**: Even if an executing SQL has consumed a large amount of RU, complete slow query / SQL statement information may not be available because the SQL has not finished
 3. **Anomaly Detection and Auto-Alerting**: Automatic detection of abnormal RU consumption and alert generation is not supported in this phase
+4. **Export Mode Scope**: TopRU in this design only supports the PubSubService subscription mode; exporting via SingleTargetDataSink (fixed-target gRPC push mode) is out of scope.
 
 ## Detailed Design
 
