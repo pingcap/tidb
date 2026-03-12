@@ -427,7 +427,9 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-	// We are now in version no lower than 5.x, tidb_enable_index_merge should be 1.
+	// This case upgrades from 3.0.0, where tidb_analyze_version does not exist.
+	// The old compatibility path initializes the missing value to 1, and version255 rewrites
+	// that persisted legacy value to 2 during upgrade.
 	res = session.MustExecToRecodeSet(t, seCurVer, "select @@tidb_analyze_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
@@ -435,7 +437,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, "1", row.GetString(0))
+	require.Equal(t, "2", row.GetString(0))
 }
 
 func TestAnalyzeVersionUpgradeRewritesLegacyV1To2(t *testing.T) {

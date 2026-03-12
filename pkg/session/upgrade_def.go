@@ -2062,7 +2062,7 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 	}
 
 	newValue := strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
-	logutil.BgLogger().Warn("tidb_analyze_version=1 is no longer supported; rewriting the persisted global value during upgrade",
+	logutil.BgLogger().Warn("rewriting persisted tidb_analyze_version from 1 to 2 during upgrade",
 		zap.String("oldValue", rows[0].GetString(0)),
 		zap.String("newValue", newValue))
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
