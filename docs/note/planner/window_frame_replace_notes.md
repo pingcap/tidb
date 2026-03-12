@@ -29,7 +29,7 @@ Implementation choice:
 - Extend `LogicalWindow.ReplaceExprColumns` to rewrite frame `CalcFuncs` and `CompareCols` together with `PartitionBy` and `OrderBy`.
 
 Regression coverage:
-- `TestWindowWithOuterJoinAndCTE` in `pkg/planner/core/casetest/windows/widow_with_exist_subquery_test.go`
+- `TestWindowWithOuterJoinAndCTE` in `pkg/planner/core/casetest/windows/window_with_exist_subquery_test.go`
   reproduces the reported `CTE + outer join + window + RANGE/current-row` shape and also covers
   a nearby `CURRENT ROW ... UNBOUNDED FOLLOWING` variant so both frame-bound replacement paths stay exercised.
 

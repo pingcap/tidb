@@ -89,8 +89,21 @@ func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expressi
 			return exprs[idx]
 		}
 	case *expression.ScalarFunction:
-		for i := range v.GetArgs() {
-			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], exprs, schema)
+		var cloned *expression.ScalarFunction
+		// Projection elimination may rewrite expressions that are still shared or
+		// already hashed, so keep the same copy-on-write rule as ResolveExprAndReplace.
+		for i, arg := range v.GetArgs() {
+			newArg := ReplaceColumnOfExpr(arg, exprs, schema)
+			if newArg == arg {
+				continue
+			}
+			if cloned == nil {
+				cloned = v.Clone().(*expression.ScalarFunction)
+			}
+			cloned.GetArgs()[i] = newArg
+		}
+		if cloned != nil {
+			return cloned
 		}
 	}
 	return expr

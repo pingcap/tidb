@@ -195,6 +195,10 @@ func (fb *FrameBound) Clone() *FrameBound {
 	for _, it := range fb.CalcFuncs {
 		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
 	}
+	cloned.CompareCols = make([]expression.Expression, 0, len(fb.CompareCols))
+	for _, it := range fb.CompareCols {
+		cloned.CompareCols = append(cloned.CompareCols, it.Clone())
+	}
 	cloned.CmpFuncs = fb.CmpFuncs
 
 	return cloned

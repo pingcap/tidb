@@ -162,7 +162,7 @@ WINDOW w2 AS (
     ORDER BY t0.k0, t0.k1 DESC
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 )
-ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC`)
+ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC`).Check(testkit.Rows())
 
 		tk.MustQuery(`WITH cte_0 AS (
     SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2
@@ -184,6 +184,6 @@ WINDOW w2 AS (
     ORDER BY t0.k0, t0.k1 DESC
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 )
-ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC`)
+ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC`).Check(testkit.Rows())
 	})
 }
