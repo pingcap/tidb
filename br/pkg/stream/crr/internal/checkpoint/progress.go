@@ -73,7 +73,6 @@ func (c *Calculator) loadAliveStores(ctx context.Context) (map[uint64]struct{}, 
 
 func (c *Calculator) planRound(
 	ctx context.Context,
-	upstreamCheckpoint uint64,
 	aliveStores map[uint64]struct{},
 ) (roundPlan, error) {
 	plan := roundPlan{
