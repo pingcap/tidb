@@ -64,7 +64,7 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
-    shard_count = 23,
+    shard_count = 21,
     deps = [
         "//pkg/ddl",
         "//pkg/errctx",
