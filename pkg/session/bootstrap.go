@@ -805,7 +805,7 @@ const (
 		updated_at datetime(6) NOT NULL,
 		created_by varchar(288) NOT NULL DEFAULT '',
 		PRIMARY KEY(policy_id),
-		UNIQUE KEY uk_policy_name(policy_name),
+		UNIQUE KEY uk_table_policy(table_id, policy_name),
 		UNIQUE KEY uk_table_column(table_id, column_id)
 	)`
 )
