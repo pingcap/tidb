@@ -838,6 +838,9 @@ func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, tab
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, fmt.Errorf("InfoSchema is nil when looking up table %s.%s", schema.O, table.O)
+	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 
