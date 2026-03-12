@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	streamhelperconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utiltest/syncpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 const (
@@ -127,7 +129,10 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 		withUpstream(upstream),
 	)
 
-	firstCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	firstRecord, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.Less(t, firstRecord.CheckpointTS, firstRecord.FlushTS)
+	firstCheckpoint := firstRecord.CheckpointTS
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, firstCheckpoint)
 	h.requireReplicateAllPending()
 
@@ -137,7 +142,9 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	require.Len(t, upstream.walkOpts, 1)
 	require.Empty(t, upstream.walkOpts[0].StartAfter)
 
-	secondCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	secondRecord, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	secondCheckpoint := secondRecord.CheckpointTS
 	h.requireCheckpointAdvancedByTick(firstCheckpoint, secondCheckpoint)
 	h.requireReplicateAllPending()
 
@@ -147,7 +154,7 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	require.Len(t, upstream.walkOpts, 2)
 	require.Equal(
 		t,
-		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstCheckpoint, "ffffffffffffffff~"),
+		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "ffffffffffffffff~"),
 		upstream.walkOpts[1].StartAfter,
 	)
 }
@@ -157,15 +164,19 @@ func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
 	h := newSingleStoreIntegrationHarness(ctx, t)
 
 	initialCheckpoint := h.requireInitialCheckpointByTick()
-	firstFlushTS := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
-	secondCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
-	require.Greater(t, secondCheckpoint, firstFlushTS)
+	firstRecord, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.Less(t, firstRecord.CheckpointTS, firstRecord.FlushTS)
+	secondRecord, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	secondCheckpoint := secondRecord.CheckpointTS
+	require.Greater(t, secondCheckpoint, firstRecord.CheckpointTS)
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, secondCheckpoint)
 	h.requireReplicateAllPending()
 
 	upstream := &recordingUpstreamStorage{inner: h.Upstream}
 	calculator := h.newCalculator(
-		withCalculatorConfig(checkpoint.CheckpointCalculatorConfig{InitialSyncedTS: firstFlushTS}),
+		withCalculatorConfig(checkpoint.CheckpointCalculatorConfig{InitialSyncedTS: firstRecord.FlushTS}),
 		withUpstream(upstream),
 	)
 
@@ -175,7 +186,7 @@ func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
 	require.Len(t, upstream.walkOpts, 1)
 	require.Equal(
 		t,
-		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstFlushTS, "ffffffffffffffff~"),
+		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "ffffffffffffffff~"),
 		upstream.walkOpts[0].StartAfter,
 	)
 }
@@ -360,6 +371,7 @@ func TestCheckpointCalculatorConcurrentFlushInterleavings(t *testing.T) {
 			}()
 
 			future := h.requireFlushResult(futureFlushCh)
+			require.Greater(h.t, future.record.CheckpointTS, currentCheckpoint)
 			require.Greater(h.t, future.record.FlushTS, currentCheckpoint)
 
 			h.requireReplicateAllPending()
@@ -368,44 +380,83 @@ func TestCheckpointCalculatorConcurrentFlushInterleavings(t *testing.T) {
 			require.NoError(h.t, result.err)
 			require.Equal(h.t, currentCheckpoint, result.checkpoint)
 			require.NoError(h.t, h.AssertDownstreamCanRestoreTo(h.ctx, result.checkpoint))
-			futureFlushTS := future.record.FlushTS
+			futureCheckpoint := future.record.CheckpointTS
 			script.EndSeq()
-			stableCheckpoint = h.advanceToStableCheckpoint(currentCheckpoint, futureFlushTS)
-			require.Equal(t, futureFlushTS, stableCheckpoint)
+			stableCheckpoint = h.advanceToStableCheckpoint(currentCheckpoint, futureCheckpoint)
+			require.Equal(t, futureCheckpoint, stableCheckpoint)
 			h.AssertDownstreamCanRestoreTo(ctx, stableCheckpoint)
 		})
 	}
+}
+
+func TestCheckpointCalculatorWaitsForFutureFlushMetaNeededByCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	h := newSingleStoreIntegrationHarness(ctx, t)
+
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	record, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	require.Less(t, record.CheckpointTS, record.FlushTS)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, record.CheckpointTS)
+
+	pulled := h.PullMessages(0)
+	require.Greater(t, pulled, 0)
+
+	replicated, err := h.Replicate(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, replicated)
+
+	err = h.AssertDownstreamCanRestoreTo(ctx, record.CheckpointTS)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "references unreadable log file")
+
+	computeCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+
+	checkpointTS, err := h.calculator.ComputeNextCheckpoint(computeCtx)
+	require.Zero(t, checkpointTS)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	h.requireReplicateAllPending()
+
+	checkpointTS, err = h.calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, record.CheckpointTS, checkpointTS)
+	require.NoError(t, h.AssertDownstreamCanRestoreTo(ctx, checkpointTS))
 }
 
 func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 	ctx := context.Background()
 	tc := testutil.NewTestContext(t)
 	cfg := randomizedCRRSimulationConfig{
-		Iterations:                     1000,
-		InitialStores:                  3,
-		MaxStores:                      12,
-		RegionCount:                    12,
-		MaxNonFlushStoresPerRound:      2,
-		StoreNoFlushChancePercent:      10,
-		AddStoreChancePercent:          12,
-		MaxAddStoresPerRound:           1,
-		RemoveStoreChancePercent:       10,
-		MaxRemoveStoresPerRound:        1,
-		ScatterChancePercent:           3,
-		MaxScatterRegionsPerRound:      3,
-		ReplicateChancePercent:         90,
-		MaxReplicateBatchPerRound:      20,
-		MaxBufferedFiles:               32,
-		RestartCalculatorChancePercent: 10,
-		GlobalProgressCheckEvery:       13,
-		CatchUpEvery:                   299,
-		ComputeTimeout:                 2 * time.Millisecond,
-		CatchUpTimeout:                 100 * time.Millisecond,
-		CalculatorPollInterval:         time.Millisecond,
+		Iterations:                        1000,
+		InitialStores:                     3,
+		MaxStores:                         12,
+		RegionCount:                       12,
+		MaxNonFlushStoresPerRound:         2,
+		StoreNoFlushChancePercent:         10,
+		AddStoreChancePercent:             12,
+		MaxAddStoresPerRound:              1,
+		RemoveStoreChancePercent:          10,
+		MaxRemoveStoresPerRound:           1,
+		ScatterChancePercent:              3,
+		MaxScatterRegionsPerRound:         3,
+		ReplicateChancePercent:            90,
+		MaxReplicateBatchPerRound:         20,
+		MaxBufferedFiles:                  32,
+		RestartCalculatorChancePercent:    10,
+		RestartCarrySyncedTSChancePercent: 85,
+		GlobalProgressCheckEvery:          13,
+		CatchUpEvery:                      299,
+		ComputeTimeout:                    2 * time.Millisecond,
+		CatchUpTimeout:                    100 * time.Millisecond,
+		CalculatorPollInterval:            time.Millisecond,
 	}
-	if testing.Verbose() {
-		t.Logf("randomized crr seed=%d config=%+v", tc.Seed(), cfg)
-	}
+	log.Info(
+		"randomized crr simulation seed",
+		zap.Int64("seed", tc.Seed()),
+		zap.Reflect("config", cfg),
+	)
 
 	stores := testutil.StoreIDRange(1, cfg.InitialStores)
 	boundaries, err := testutil.BuildRegionLayout(
@@ -428,7 +479,12 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 
 		if round%cfg.GlobalProgressCheckEvery == 0 {
 			lastGlobalCheckpoint = sim.requireGlobalCheckpointProgress(lastGlobalCheckpoint)
-			sim.logf("round=%d global-progress checkpoint=%d state=%s", round, lastGlobalCheckpoint, sim.describeState())
+			sim.log(
+				"randomized crr global progress",
+				zap.Int("round", round),
+				zap.Uint64("checkpoint", lastGlobalCheckpoint),
+				zap.String("state", sim.describeState()),
+			)
 		}
 
 		if round%cfg.CatchUpEvery == 0 {
@@ -440,7 +496,12 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 			sim.requireCheckpointRangeSafe(lastValidatedCheckpoint, checkpoint)
 			lastSafeCheckpoint = checkpoint
 			lastValidatedCheckpoint = checkpoint
-			sim.logf("round=%d catch-up checkpoint=%d state=%s", round, checkpoint, sim.describeState())
+			sim.log(
+				"randomized crr catch up",
+				zap.Int("round", round),
+				zap.Uint64("checkpoint", checkpoint),
+				zap.String("state", sim.describeState()),
+			)
 		}
 	}
 }
@@ -461,27 +522,28 @@ type concurrentRound struct {
 }
 
 type randomizedCRRSimulationConfig struct {
-	Iterations                     int
-	InitialStores                  int
-	MaxStores                      int
-	RegionCount                    int
-	StoreNoFlushChancePercent      int
-	MaxNonFlushStoresPerRound      int
-	AddStoreChancePercent          int
-	MaxAddStoresPerRound           int
-	RemoveStoreChancePercent       int
-	MaxRemoveStoresPerRound        int
-	ScatterChancePercent           int
-	MaxScatterRegionsPerRound      int
-	ReplicateChancePercent         int
-	MaxReplicateBatchPerRound      int
-	MaxBufferedFiles               int
-	RestartCalculatorChancePercent int
-	GlobalProgressCheckEvery       int
-	CatchUpEvery                   int
-	ComputeTimeout                 time.Duration
-	CatchUpTimeout                 time.Duration
-	CalculatorPollInterval         time.Duration
+	Iterations                        int
+	InitialStores                     int
+	MaxStores                         int
+	RegionCount                       int
+	StoreNoFlushChancePercent         int
+	MaxNonFlushStoresPerRound         int
+	AddStoreChancePercent             int
+	MaxAddStoresPerRound              int
+	RemoveStoreChancePercent          int
+	MaxRemoveStoresPerRound           int
+	ScatterChancePercent              int
+	MaxScatterRegionsPerRound         int
+	ReplicateChancePercent            int
+	MaxReplicateBatchPerRound         int
+	MaxBufferedFiles                  int
+	RestartCalculatorChancePercent    int
+	RestartCarrySyncedTSChancePercent int
+	GlobalProgressCheckEvery          int
+	CatchUpEvery                      int
+	ComputeTimeout                    time.Duration
+	CatchUpTimeout                    time.Duration
+	CalculatorPollInterval            time.Duration
 }
 
 type randomizedCRRSimulation struct {
@@ -492,6 +554,7 @@ type randomizedCRRSimulation struct {
 	cfg           randomizedCRRSimulationConfig
 	nextStoreID   uint64
 	readyStoreIDs []uint64
+	lastSyncedTS  uint64
 }
 
 type randomizedCRRRoundLog struct {
@@ -524,6 +587,7 @@ func newRandomizedCRRSimulation(
 		cfg:           cfg,
 		nextStoreID:   nextStoreID,
 		readyStoreIDs: append([]uint64(nil), h.PDSim.StoreIDs()...),
+		lastSyncedTS:  h.calculator.SyncedTS(),
 	}
 }
 
@@ -543,6 +607,26 @@ func (s *randomizedCRRSimulation) runRound(
 		roundLog.advanced = advanced
 	})
 	wg.Wait()
+	s.rememberSyncedTS()
+
+	roundLog.addedStores = s.addRandomStores()
+	roundLog.removedStores = s.removeRandomStores()
+	roundLog.scatteredRegions = s.scatterRandomRegions()
+	s.log(
+		"randomized crr round",
+		zap.Int("round", round),
+		zap.Uint64s("flushed-stores", roundLog.flushedStores),
+		zap.Int("replicated-files", roundLog.replicatedFiles),
+		zap.Bool("restarted-calculator", roundLog.restartedCalculator),
+		zap.Uint64s("added-stores", roundLog.addedStores),
+		zap.Uint64s("removed-stores", roundLog.removedStores),
+		zap.Uint64s("scattered-regions", roundLog.scatteredRegions),
+		zap.Bool("advanced", roundLog.advanced),
+		zap.Uint64("checkpoint", roundLog.checkpoint),
+		zap.Uint64("safe-checkpoint", *lastSafeCheckpoint),
+		zap.Uint64("validated-checkpoint", *lastValidatedCheckpoint),
+		zap.String("state", s.describeState()),
+	)
 
 	if roundLog.advanced {
 		require.GreaterOrEqualf(
@@ -567,30 +651,10 @@ func (s *randomizedCRRSimulation) runRound(
 		)
 	}
 
-	roundLog.addedStores = s.addRandomStores()
-	roundLog.removedStores = s.removeRandomStores()
-	roundLog.scatteredRegions = s.scatterRandomRegions()
-	s.logf(
-		"round=%d flush=%v replicate=%d restart=%t add=%v remove=%v scatter=%v advanced=%t checkpoint=%d safe=%d validated=%d state=%s",
-		round,
-		roundLog.flushedStores,
-		roundLog.replicatedFiles,
-		roundLog.restartedCalculator,
-		roundLog.addedStores,
-		roundLog.removedStores,
-		roundLog.scatteredRegions,
-		roundLog.advanced,
-		roundLog.checkpoint,
-		*lastSafeCheckpoint,
-		*lastValidatedCheckpoint,
-		s.describeState(),
-	)
 }
 
-func (s *randomizedCRRSimulation) logf(format string, args ...any) {
-	if testing.Verbose() {
-		s.h.t.Logf(format, args...)
-	}
+func (s *randomizedCRRSimulation) log(msg string, fields ...zap.Field) {
+	log.Info(msg, fields...)
 }
 
 func (s *randomizedCRRSimulation) flushRandomStores() []uint64 {
@@ -706,11 +770,16 @@ func (s *randomizedCRRSimulation) replicateRandomBufferedFiles() int {
 }
 
 func (s *randomizedCRRSimulation) restartCalculatorIfNeeded() bool {
+	s.rememberSyncedTS()
 	if !s.rollPercent(s.cfg.RestartCalculatorChancePercent) {
 		return false
 	}
+	cfg := checkpoint.CheckpointCalculatorConfig{PollInterval: s.cfg.CalculatorPollInterval}
+	if s.lastSyncedTS > 0 && s.rollPercent(s.cfg.RestartCarrySyncedTSChancePercent) {
+		cfg.InitialSyncedTS = s.lastSyncedTS
+	}
 	s.h.calculator = s.h.newCalculator(
-		withCalculatorConfig(checkpoint.CheckpointCalculatorConfig{PollInterval: s.cfg.CalculatorPollInterval}),
+		withCalculatorConfig(cfg),
 	)
 	return true
 }
@@ -753,7 +822,7 @@ func (s *randomizedCRRSimulation) requireCheckpointRangeSafe(previous, current u
 		return
 	}
 	for _, record := range s.h.FlushSim.RecordsUpTo(current) {
-		if record.FlushTS <= previous {
+		if record.CheckpointTS <= previous {
 			continue
 		}
 		_, err := s.h.Downstream.ReadFile(s.h.ctx, record.MetadataPath)
@@ -793,8 +862,8 @@ func (s *randomizedCRRSimulation) flushAllStoresAndGetCheckpoint() uint64 {
 	for _, storeID := range stores {
 		record, err := s.h.FlushSim.FlushStore(s.h.ctx, storeID)
 		require.NoError(s.h.t, err)
-		if record.FlushTS < checkpoint {
-			checkpoint = record.FlushTS
+		if record.CheckpointTS < checkpoint {
+			checkpoint = record.CheckpointTS
 		}
 	}
 	require.NotEqual(s.h.t, ^uint64(0), checkpoint)
@@ -884,6 +953,12 @@ func (s *randomizedCRRSimulation) rollPercent(chancePercent int) bool {
 		return true
 	}
 	return s.rng.IntN(100) < chancePercent
+}
+
+func (s *randomizedCRRSimulation) rememberSyncedTS() {
+	if syncedTS := s.h.calculator.SyncedTS(); syncedTS > s.lastSyncedTS {
+		s.lastSyncedTS = syncedTS
+	}
 }
 
 func pickUint64Subset(items []uint64, count int, intN func(int) int) []uint64 {
@@ -990,11 +1065,12 @@ func (h *integrationHarness) advanceToStableCheckpoint(lastCheckpoint uint64, ne
 }
 
 func (h *integrationHarness) requireReplicateAllPending() {
-	pulled := h.PullMessages(0)
-	require.Greater(h.t, pulled, 0)
+	h.PullMessages(0)
+	buffered := len(h.CRRWorker.BufferedMessages())
+	require.Greater(h.t, buffered, 0)
 	replicated, err := h.Replicate(h.ctx, 0)
 	require.NoError(h.t, err)
-	require.Greater(h.t, replicated, 0)
+	require.Equal(h.t, buffered, replicated)
 }
 
 func (h *integrationHarness) requireFlushResult(ch <-chan flushResult) flushResult {
@@ -1101,8 +1177,8 @@ func (h *integrationHarness) flushRoundsAndGetCheckpoint(stores []uint64, rounds
 		for _, storeID := range stores {
 			record, err := h.FlushSim.FlushStore(h.ctx, storeID)
 			require.NoError(h.t, err)
-			if record.FlushTS < roundCheckpoint {
-				roundCheckpoint = record.FlushTS
+			if record.CheckpointTS < roundCheckpoint {
+				roundCheckpoint = record.CheckpointTS
 			}
 		}
 	}

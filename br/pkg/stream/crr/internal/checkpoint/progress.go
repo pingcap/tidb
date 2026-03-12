@@ -73,6 +73,7 @@ func (c *Calculator) loadAliveStores(ctx context.Context) (map[uint64]struct{}, 
 
 func (c *Calculator) planRound(
 	ctx context.Context,
+	upstreamCheckpoint uint64,
 	aliveStores map[uint64]struct{},
 ) (roundPlan, error) {
 	plan := roundPlan{
@@ -94,11 +95,6 @@ func (c *Calculator) planRound(
 			cancel()
 			break
 		}
-		if metaFile.storeID != 0 {
-			if _, ok := aliveStores[metaFile.storeID]; !ok {
-				continue
-			}
-		}
 
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
@@ -107,16 +103,13 @@ func (c *Calculator) planRound(
 			if err != nil {
 				return err
 			}
-			if _, ok := aliveStores[loadedMeta.storeID]; !ok {
-				return nil
-			}
 
 			planMu.Lock()
 			plan.pendingPaths[loadedMeta.path] = struct{}{}
 			for _, logPath := range loadedMeta.dataFilePaths {
 				plan.pendingPaths[logPath] = struct{}{}
 			}
-			if loadedMeta.flushTS > plan.maxFlushTSByStore[loadedMeta.storeID] {
+			if _, ok := aliveStores[loadedMeta.storeID]; ok && loadedMeta.flushTS > plan.maxFlushTSByStore[loadedMeta.storeID] {
 				plan.maxFlushTSByStore[loadedMeta.storeID] = loadedMeta.flushTS
 			}
 			planMu.Unlock()

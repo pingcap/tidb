@@ -180,8 +180,13 @@ func (h *TestHarness) AssertDownstreamCanRestoreTo(ctx context.Context, tso uint
 		if err != nil {
 			return fmt.Errorf("parse backupmeta %s: %w", record.MetadataPath, err)
 		}
-		if parsed.FlushTS > tso {
-			return fmt.Errorf("backupmeta %s has flush ts %d > target %d", record.MetadataPath, parsed.FlushTS, tso)
+		if parsed.FlushTS != record.FlushTS {
+			return fmt.Errorf(
+				"backupmeta %s has flush ts %d, expected %d",
+				record.MetadataPath,
+				parsed.FlushTS,
+				record.FlushTS,
+			)
 		}
 
 		content, err := h.Downstream.ReadFile(ctx, record.MetadataPath)

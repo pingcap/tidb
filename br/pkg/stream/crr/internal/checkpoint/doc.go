@@ -17,8 +17,13 @@ Package checkpoint computes a downstream-safe checkpoint for CRR.
 
 The calculator advances in rounds. In each round it reads the current upstream
 global checkpoint `c`, scans new meta files with `flushTS > syncedTS`, waits
-until every file referenced by those meta files exists downstream, then returns
-`c`.
+until every file referenced by those meta files exists downstream, then
+returns `c`.
+
+CRR restore safety cannot be decided from `flushTS <= c` alone. A flush batch
+named by `flushTS` may still be required to restore a smaller checkpoint `c`,
+because the region checkpoint carried by that batch can be strictly smaller
+than the meta file's `flushTS`.
 
 `syncedTS` is the replication-complete checkpoint. It advances only after the
 calculator has verified that all files discovered in the round are already
@@ -30,6 +35,10 @@ The calculator tracks synced progress per store and publishes the global
 necessary because meta file names are globally ordered by
 `(flushTS, storeID, extraTags)`, while `flushTS` is only monotonic within each
 individual store.
+
+Retired stores are excluded from the `syncedTS` minimum, but their already
+published meta/log files must still be observed before a checkpoint can
+advance when they are needed to restore the current upstream checkpoint.
 
 For example:
 

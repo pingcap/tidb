@@ -173,6 +173,7 @@ func (f *FlushSim) writeBackupMeta(
 	storeID uint64,
 	flushSeq uint64,
 	flushTS uint64,
+	checkpointTS uint64,
 	files regionFiles,
 ) (string, error) {
 	metaPath := path.Join(
@@ -182,7 +183,7 @@ func (f *FlushSim) writeBackupMeta(
 	metadata := &backuppb.Metadata{
 		StoreId:    int64(storeID),
 		MinTs:      files.minTS,
-		MaxTs:      files.maxTS,
+		MaxTs:      checkpointTS,
 		FileGroups: files.groups,
 	}
 	payload, err := metadata.Marshal()
@@ -198,9 +199,9 @@ func (f *FlushSim) writeBackupMeta(
 func (f *FlushSim) flushRegions(
 	ctx context.Context,
 	storeID uint64,
-	flushTS uint64,
+	checkpointTS uint64,
 ) error {
-	if _, err := f.pd.flushStore(ctx, storeID, flushTS); err != nil {
+	if _, err := f.pd.flushStore(ctx, storeID, checkpointTS); err != nil {
 		return fmt.Errorf("flush store %d: %w", storeID, err)
 	}
 	return nil
@@ -221,8 +222,9 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 		return FlushRecord{}, fmt.Errorf("store %d has no regions to flush", storeID)
 	}
 
+	checkpointTS := f.pd.AllocTSO()
 	flushTS := f.pd.AllocTSO()
-	latestTS := flushTS
+	latestTS := checkpointTS
 	globalCheckpoint := f.pd.GlobalCheckpoint()
 
 	flushSeq := f.nextFlushSequence()
@@ -240,13 +242,13 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 	}
 
 	failpoint.InjectCall("before-write-flush-meta")
-	metaPath, err := f.writeBackupMeta(ctx, storeID, flushSeq, flushTS, files)
+	metaPath, err := f.writeBackupMeta(ctx, storeID, flushSeq, flushTS, checkpointTS, files)
 	if err != nil {
 		return FlushRecord{}, err
 	}
 	failpoint.InjectCall("after-write-flush-meta")
 
-	if err := f.flushRegions(ctx, storeID, flushTS); err != nil {
+	if err := f.flushRegions(ctx, storeID, checkpointTS); err != nil {
 		return FlushRecord{}, err
 	}
 	failpoint.InjectCall("after-flush-regions")
@@ -255,6 +257,7 @@ func (f *FlushSim) FlushStore(ctx context.Context, storeID uint64) (FlushRecord,
 		Sequence:     flushSeq,
 		StoreID:      storeID,
 		RegionIDs:    files.regionIDs,
+		CheckpointTS: checkpointTS,
 		FlushTS:      flushTS,
 		MinTS:        files.minTS,
 		MaxTS:        files.maxTS,
@@ -276,14 +279,14 @@ func (f *FlushSim) Records() []FlushRecord {
 	return result
 }
 
-// RecordsUpTo returns flush records with FlushTS <= tso.
+// RecordsUpTo returns flush records with CheckpointTS <= tso.
 func (f *FlushSim) RecordsUpTo(tso uint64) []FlushRecord {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	result := make([]FlushRecord, 0, len(f.records))
 	for _, r := range f.records {
-		if r.FlushTS <= tso {
+		if r.CheckpointTS <= tso {
 			result = append(result, r.clone())
 		}
 	}

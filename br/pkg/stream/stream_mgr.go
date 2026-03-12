@@ -298,7 +298,7 @@ func (m *MetadataHelper) ReadFile(
 func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error) {
 	meta := &backuppb.Metadata{}
 	err := meta.Unmarshal(rawMetaData)
-	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+	if meta.MetaVersion == backuppb.MetaVersion_V1 && len(meta.FileGroups) == 0 {
 		group := &backuppb.DataFileGroup{
 			// For MetaDataV2, file's path is stored in it.
 			Path: "",
@@ -318,7 +318,7 @@ func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, 
 func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metadata, error) {
 	meta := &backuppb.Metadata{}
 	err := meta.Unmarshal(rawMetaData)
-	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+	if meta.MetaVersion == backuppb.MetaVersion_V1 && len(meta.FileGroups) == 0 {
 		groups := make([]*backuppb.DataFileGroup, 0, len(meta.Files))
 		for _, d := range meta.Files {
 			groups = append(groups, &backuppb.DataFileGroup{

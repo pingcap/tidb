@@ -108,6 +108,7 @@ type FlushRecord struct {
 	Sequence     uint64
 	StoreID      uint64
 	RegionIDs    []uint64
+	CheckpointTS uint64
 	FlushTS      uint64
 	MinTS        uint64
 	MaxTS        uint64

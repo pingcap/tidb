@@ -19,10 +19,14 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utiltest/crr"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
@@ -79,27 +83,29 @@ func TestCheckpointCalculatorDoesNotAdvanceSyncedTSWhenNewAliveStoreHasNoFlush(t
 
 	firstFlush, err := h.FlushSim.FlushStore(ctx, 1)
 	require.NoError(t, err)
-	pd.Set(firstFlush.FlushTS, 1)
+	require.Less(t, firstFlush.CheckpointTS, firstFlush.FlushTS)
+	pd.Set(firstFlush.CheckpointTS, 1)
 	require.Greater(t, h.PullMessages(0), 0)
 	_, err = h.Replicate(ctx, 0)
 	require.NoError(t, err)
 
 	firstCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
 	require.NoError(t, err)
-	require.Equal(t, firstFlush.FlushTS, firstCheckpoint)
+	require.Equal(t, firstFlush.CheckpointTS, firstCheckpoint)
 	require.Equal(t, firstFlush.FlushTS, calculator.SyncedTS())
 
 	secondFlush, err := h.FlushSim.FlushStore(ctx, 1)
 	require.NoError(t, err)
 	require.Greater(t, secondFlush.FlushTS, firstFlush.FlushTS)
-	pd.Set(secondFlush.FlushTS, 1, 2)
+	require.Greater(t, secondFlush.CheckpointTS, firstFlush.CheckpointTS)
+	pd.Set(secondFlush.CheckpointTS, 1, 2)
 	require.Greater(t, h.PullMessages(0), 0)
 	_, err = h.Replicate(ctx, 0)
 	require.NoError(t, err)
 
 	secondCheckpoint, err := calculator.ComputeNextCheckpoint(ctx)
 	require.NoError(t, err)
-	require.Equal(t, secondFlush.FlushTS, secondCheckpoint)
+	require.Equal(t, secondFlush.CheckpointTS, secondCheckpoint)
 	require.Equal(t, firstFlush.FlushTS, calculator.SyncedTS())
 }
 
@@ -118,7 +124,7 @@ func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	pd := &fakePDMetaReader{}
-	pd.Set(record.FlushTS, 1)
+	pd.Set(record.CheckpointTS, 1)
 	observer := &recordingObserver{}
 	calculator, err := checkpoint.NewCalculator(
 		checkpoint.CalculatorDeps{
@@ -142,6 +148,44 @@ func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
 	require.Equal(t, checkpoint.EventCalculationFailed, events[2].Type)
 	require.Error(t, events[2].Err)
 	require.Contains(t, events[2].Err.Error(), "boom")
+}
+
+func TestCheckpointCalculatorWaitsForRemovedStoreFiles(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	meta1Path, log1Path := writeCheckpointTestMeta(t, ctx, upstream, 10, 1)
+	meta2Path, log2Path := writeCheckpointTestMeta(t, ctx, upstream, 20, 2)
+
+	pd := &fakePDMetaReader{}
+	pd.Set(20, 2)
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: upstream,
+			Downstream: fileExistenceMap{
+				meta1Path: true,
+				meta2Path: true,
+				log2Path:  true,
+			},
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: time.Millisecond,
+		},
+		nil,
+	)
+	require.NoError(t, err)
+
+	computeCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+
+	checkpointTS, err := calculator.ComputeNextCheckpoint(computeCtx)
+	require.Zero(t, checkpointTS)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotEmpty(t, log1Path)
 }
 
 type fakePDMetaReader struct {
@@ -231,4 +275,45 @@ type failingDownstreamChecker struct{}
 
 func (failingDownstreamChecker) FileExists(ctx context.Context, name string) (bool, error) {
 	return false, fmt.Errorf("boom for %s", name)
+}
+
+type fileExistenceMap map[string]bool
+
+func (m fileExistenceMap) FileExists(ctx context.Context, name string) (bool, error) {
+	return m[name], nil
+}
+
+func writeCheckpointTestMeta(
+	t *testing.T,
+	ctx context.Context,
+	storage storeapi.Storage,
+	flushTS uint64,
+	storeID uint64,
+) (string, string) {
+	t.Helper()
+
+	logPath := fmt.Sprintf("v1/log/store-%d/flush-%016x.log", storeID, flushTS)
+	metaPath := fmt.Sprintf(
+		"%s/%016x-%016x-%016x-%016x.meta",
+		stream.GetStreamBackupMetaPrefix(),
+		flushTS,
+		flushTS,
+		flushTS,
+		flushTS,
+	)
+	meta := &backuppb.Metadata{
+		StoreId: int64(storeID),
+		FileGroups: []*backuppb.DataFileGroup{
+			{
+				Path: logPath,
+				DataFilesInfo: []*backuppb.DataFileInfo{
+					{Path: logPath, MinTs: flushTS, MaxTs: flushTS},
+				},
+			},
+		},
+	}
+	payload, err := meta.Marshal()
+	require.NoError(t, err)
+	require.NoError(t, storage.WriteFile(ctx, metaPath, payload))
+	return metaPath, logPath
 }
