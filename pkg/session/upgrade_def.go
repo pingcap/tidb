@@ -2057,7 +2057,8 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBAnalyzeVersion)
 	terror.MustNil(err)
-	if len(rows) == 0 || rows[0].GetString(0) != "1" {
+	// The value should normally never be null, but check defensively to avoid a potential panic.
+	if len(rows) == 0 || rows[0].IsNull(0) || rows[0].GetString(0) != "1" {
 		return
 	}
 
