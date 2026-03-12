@@ -32,6 +32,20 @@
     }
   },
   {
+    "id": "P0-DDL-02b",
+    "scenario": "Database-scoped policy name uniqueness",
+    "coverage_cases": [
+      {
+        "name": "Same policy name allowed in different databases (unit test)",
+        "file": "pkg/ddl/masking_policy_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["ut_ddl"]
+    }
+  },
+  {
     "id": "P0-DDL-03",
     "scenario": "Enable / disable state transitions",
     "coverage_cases": [

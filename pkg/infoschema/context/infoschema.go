@@ -127,6 +127,7 @@ type Misc interface {
 	PolicyByName(name ast.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name ast.CIStr) (*model.ResourceGroupInfo, bool)
 	MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool)
+	MaskingPolicyByDBAndName(dbName, policyName string) (*model.MaskingPolicyInfo, bool)
 	MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)

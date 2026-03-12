@@ -6610,7 +6610,8 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *model.MaskingPolicyInfo, onExist OnExist) error {
 	is := e.infoCache.GetLatest()
-	if existPolicy, ok := is.MaskingPolicyByName(policy.Name); ok {
+	// Check database-scoped uniqueness: same name can exist in different databases
+	if existPolicy, ok := is.MaskingPolicyByDBAndName(policy.DBName.L, policy.Name.L); ok {
 		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
@@ -6623,6 +6624,7 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 			return err
 		}
 	}
+	// Also check if same table+column already has a different policy
 	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
 		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 	}

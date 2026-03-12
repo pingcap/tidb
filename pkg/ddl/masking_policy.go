@@ -52,7 +52,8 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	existPolicy, err := w.getMaskingPolicyByNameFromSysTable(jobCtx.stepCtx, policyInfo.Name)
+	// Use database-scoped uniqueness check
+	existPolicy, err := w.getMaskingPolicyByDBAndNameFromSysTable(jobCtx.stepCtx, policyInfo.DBName.L, policyInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -208,6 +209,18 @@ func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyN
 	return policies[0], nil
 }
 
+// getMaskingPolicyByDBAndNameFromSysTable queries masking policy by database name and policy name.
+func (w *worker) getMaskingPolicyByDBAndNameFromSysTable(ctx context.Context, dbName, policyName string) (*model.MaskingPolicyInfo, error) {
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "db_name = %? AND policy_name = %?", dbName, policyName)
+	if err != nil {
+		return nil, err
+	}
+	if len(policies) == 0 {
+		return nil, nil
+	}
+	return policies[0], nil
+}
+
 func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
 	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %? AND column_id = %?", tableID, columnID)
 	if err != nil {
@@ -249,6 +262,11 @@ func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, whereClau
 		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		WHERE policy_name = %?
+		ORDER BY policy_id`
+	case "db_name = %? AND policy_name = %?":
+		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
+		FROM mysql.tidb_masking_policy
+		WHERE db_name = %? AND policy_name = %?
 		ORDER BY policy_id`
 	case "policy_id = %?":
 		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by

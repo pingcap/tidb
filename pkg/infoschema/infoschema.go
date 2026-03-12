@@ -570,6 +570,16 @@ func (is *infoSchemaMisc) MaskingPolicyByName(name ast.CIStr) (*model.MaskingPol
 	return t, r
 }
 
+// MaskingPolicyByDBAndName is used to find the masking policy by database name and policy name.
+// This implements database-scoped uniqueness for masking policies.
+func (is *infoSchemaMisc) MaskingPolicyByDBAndName(dbName, policyName string) (*model.MaskingPolicyInfo, bool) {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	key := dbName + "." + policyName
+	t, r := is.maskingPolicyMap[key]
+	return t, r
+}
+
 // MaskingPolicyByTableColumn is used to find the masking policy by table/column id.
 func (is *infoSchemaMisc) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool) {
 	is.maskingPolicyMutex.RLock()
@@ -677,6 +687,7 @@ func (is *infoSchemaMisc) setResourceGroup(resourceGroup *model.ResourceGroupInf
 func (is *infoSchemaMisc) setMaskingPolicy(policy *model.MaskingPolicyInfo) {
 	is.maskingPolicyMutex.Lock()
 	defer is.maskingPolicyMutex.Unlock()
+	// Store by name (for backward compatibility)
 	if old := is.maskingPolicyMap[policy.Name.L]; old != nil {
 		if old.TableID != policy.TableID || old.ColumnID != policy.ColumnID {
 			if colMap, ok := is.maskingPolicyTableColumnMap[old.TableID]; ok {
@@ -688,6 +699,11 @@ func (is *infoSchemaMisc) setMaskingPolicy(policy *model.MaskingPolicyInfo) {
 		}
 	}
 	is.maskingPolicyMap[policy.Name.L] = policy
+
+	// Also store by db+name for database-scoped uniqueness
+	dbNameKey := policy.DBName.L + "." + policy.Name.L
+	is.maskingPolicyMap[dbNameKey] = policy
+
 	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
 	if !ok {
 		colMap = make(map[int64]*model.MaskingPolicyInfo)
