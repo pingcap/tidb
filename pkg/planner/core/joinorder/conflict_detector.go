@@ -943,7 +943,7 @@ var assocRuleTable = [][]ruleTableEntry{
 	//           INNER  LEFT   RIGHT  SEMI   ANTI
 	/* INNER  */ {1, 1, 0, 1, 1},
 	/* LEFT   */ {0, 1, 0, 0, 0}, // assoc(LEFT,LEFT)=1: see NOTE above.
-	/* RIGHT  */ {1, 1, 1, 0, 0}, // assoc(RIGHT,RIGHT)=1: see NOTE above.
+	/* RIGHT  */ {1, 1, 1, 1, 1}, // assoc(RIGHT,RIGHT)=1: see NOTE above.
 	/* SEMI   */ {0, 0, 0, 0, 0},
 	/* ANTI   */ {0, 0, 0, 0, 0},
 }
@@ -956,10 +956,10 @@ var assocRuleTable = [][]ruleTableEntry{
 var leftAsscomRuleTable = [][]ruleTableEntry{
 	//           INNER  LEFT   RIGHT  SEMI   ANTI
 	/* INNER  */ {1, 1, 0, 1, 1},
-	/* LEFT   */ {1, 1, 0, 1, 1},
-	/* RIGHT  */ {0, 0, 0, 0, 0},
-	/* SEMI   */ {1, 1, 1, 1, 1},
-	/* ANTI   */ {1, 1, 1, 1, 1},
+	/* LEFT   */ {1, 1, 1, 1, 1}, // l-asscom(LEFT, RIGHT)=1; see NOTE above.
+	/* RIGHT  */ {0, 1, 0, 0, 0}, // l-asscom(RIGHT, LEFT)=1; see NOTE above.
+	/* SEMI   */ {1, 1, 0, 1, 1},
+	/* ANTI   */ {1, 1, 0, 1, 1},
 }
 
 // rightAsscomRuleTable[e1][e2] indicates whether the right-asscom transformation
@@ -970,8 +970,8 @@ var leftAsscomRuleTable = [][]ruleTableEntry{
 var rightAsscomRuleTable = [][]ruleTableEntry{
 	//           INNER  LEFT   RIGHT  SEMI   ANTI
 	/* INNER  */ {1, 0, 1, 0, 0},
-	/* LEFT   */ {0, 0, 0, 0, 0},
-	/* RIGHT  */ {0, 1, 1, 0, 0},
+	/* LEFT   */ {0, 0, 1, 0, 0}, // r-asscom(LEFT, RIGHT)=1; see NOTE above.
+	/* RIGHT  */ {1, 1, 1, 0, 0}, // r-asscom(RIGHT, LEFT)=1; see NOTE above.
 	/* SEMI   */ {0, 0, 0, 0, 0},
 	/* ANTI   */ {0, 0, 0, 0, 0},
 }
