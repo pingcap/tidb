@@ -312,6 +312,19 @@ func dumpBuildNamingConventionArgsForRepo(repoName string) {
 	}
 }
 
+func mirrorURLExists(ctx context.Context, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 func dumpNewDepsBzl(
 	listed map[string]listedModule,
 	downloaded map[string]downloadedModule,
@@ -336,6 +349,15 @@ func dumpNewDepsBzl(
 		}
 	}
 	g, ctx := errgroup.WithContext(ctx)
+	mirrorAvailability := make(map[string]bool)
+	checkMirrorReady := func(url string) bool {
+		if ready, ok := mirrorAvailability[url]; ok {
+			return ready
+		}
+		ready := mirrorURLExists(ctx, url)
+		mirrorAvailability[url] = ready
+		return ready
+	}
 
 	// This uses a lot of fmt.Println to output the generated configuration to stdout,
 	// and the mirror will only be used under "make bazel_prepare", so it won't output
@@ -379,7 +401,8 @@ def go_deps():
 			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
 			slices.Contains(oldMirror.URL, expectedCDNURL) &&
 			slices.Contains(oldMirror.URL, expectedPublicURL) &&
-			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
+			slices.Contains(oldMirror.URL, expectedVPCPublicURL) &&
+			(isUpload || checkMirrorReady(expectedPublicURL)) {
 			// The URL matches, so just reuse the old mirror.
 			fmt.Printf(`        sha256 = "%s",
         strip_prefix = "%s@%s",
@@ -389,8 +412,8 @@ def go_deps():
 			"%s",
 			"%s",
         ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-		} else if isMirror {
+`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+		} else if isMirror && isUpload {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]
 			sha, err := getSha256OfFile(d.Zip)
@@ -413,21 +436,15 @@ def go_deps():
 				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
 			})
 		} else {
-			// We don't have a mirror and can't upload one, so just
-			// have Gazelle pull the repo for us.
+			// The mirror artifact doesn't exist yet. Fall back to module-proxy
+			// resolution so bazel_prepare / CI can still fetch the dependency.
+			// Upload mode above keeps the existing mirror workflow when the
+			// current environment is authorized to write into pingcapmirror.
 			d := downloaded[replaced.Path]
 			sum, version := d.Sum, d.Version
 			if mod.Replace != nil {
 				fmt.Printf("        replace = \"%s\",\n", replaced.Path)
 			}
-			artifact, ok := existingMirrors[replaced.Path]
-			if ok {
-				sum, version = artifact.Sha256, artifact.Version
-			}
-			// Note: `build/teamcity-check-genfiles.sh` checks for
-			// the presence of the "TODO: mirror this repo" comment.
-			// Don't update this comment without also updating the
-			// script.
 			fmt.Printf(`        sum = "%s",
         version = "%s",
 `, sum, version)
