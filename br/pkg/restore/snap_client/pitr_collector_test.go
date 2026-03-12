@@ -37,15 +37,25 @@ type pitrCollectorT struct {
 }
 
 func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
+	cb, err := p.RestoreAFileWithErr(fs)
+	require.NoError(p.t, err)
+	return cb
+}
+
+func (p pitrCollectorT) RestoreAFileWithErr(fs restore.BatchBackupFileSet) (func() error, error) {
 	for _, b := range fs {
 		for _, file := range b.SSTFiles {
-			require.NoError(p.t, p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")))
+			if err := p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	res, err := p.coll.onBatch(p.cx, fs)
-	require.NoError(p.t, err)
-	return res
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (p pitrCollectorT) Done() {
@@ -276,40 +286,55 @@ func TestConcurrency(t *testing.T) {
 
 	cnt := int64(0)
 	fence := make(chan struct{})
+	fenceOnce := sync.Once{}
+	closeFence := func() { fenceOnce.Do(func() { close(fence) }) }
 
-	failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst", func() {
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst", func() {
 		atomic.AddInt64(&cnt, 1)
 		<-fence
+	}))
+
+	type result struct {
+		cb  func() error
+		err error
+	}
+	const tasks = 10
+	results := make(chan result, tasks)
+	wg := sync.WaitGroup{}
+	wg.Add(tasks)
+
+	t.Cleanup(func() {
+		closeFence()
+		wg.Wait()
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst"))
 	})
 
-	cbs := []func() error{}
-	l := sync.Mutex{}
-	for i := range 10 {
+	for i := range tasks {
 		batch := restore.BatchBackupFileSet{
 			backupFileSet(withFile(nameFile(fmt.Sprintf("foo%02d.txt", i)))),
 		}
 
 		go func() {
-			cb := coll.RestoreAFile(batch)
-			l.Lock()
-			cbs = append(cbs, cb)
-			l.Unlock()
+			defer wg.Done()
+			cb, err := coll.RestoreAFileWithErr(batch)
+			results <- result{cb: cb, err: err}
 		}()
 	}
 
 	require.Eventually(t, func() bool {
 		return atomic.LoadInt64(&cnt) == 2
 	}, time.Second, 10*time.Millisecond)
-	close(fence)
+	closeFence()
+	wg.Wait()
 
-	func() {
-		l.Lock()
-		defer l.Unlock()
-
-		for _, cb := range cbs {
-			require.NoError(t, cb())
-		}
-	}()
-
+	cbs := make([]func() error, 0, tasks)
+	for i := 0; i < tasks; i++ {
+		res := <-results
+		require.NoError(t, res.err)
+		cbs = append(cbs, res.cb)
+	}
+	for _, cb := range cbs {
+		require.NoError(t, cb())
+	}
 	coll.Done()
 }
