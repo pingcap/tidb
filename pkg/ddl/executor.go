@@ -6579,22 +6579,12 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, schemaID int64, policy *model.MaskingPolicyInfo, onExist OnExist) error {
 	is := e.infoCache.GetLatest()
-	// Use database-scoped uniqueness check (db+name)
-	if existPolicy, ok := is.MaskingPolicyByDBAndName(policy.DBName.L, policy.Name.L); ok {
-		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
+	// Check if there's already a policy on the same table+column (table-scoped uniqueness)
+	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok {
+		if existPolicy.Name.L != policy.Name.L {
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
-		err := dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(policy.Name.O)
-		switch onExist {
-		case OnExistIgnore:
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		case OnExistError:
-			return err
-		}
-	}
-	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
-		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
+		// Same name on same table+column, allow for CREATE OR REPLACE case
 	}
 
 	job := &model.Job{

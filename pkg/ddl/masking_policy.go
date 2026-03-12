@@ -52,49 +52,44 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	existPolicy, err := w.getMaskingPolicyByDBAndNameFromSysTable(jobCtx.stepCtx, policyInfo.DBName.L, policyInfo.Name.L)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	existOnColumn, err := w.getMaskingPolicyByTableColumnFromSysTable(jobCtx.stepCtx, policyInfo.TableID, policyInfo.ColumnID)
+	existPolicy, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, policyInfo.TableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if existPolicy != nil {
-		if existPolicy.TableID != policyInfo.TableID || existPolicy.ColumnID != policyInfo.ColumnID {
-			job.State = model.JobStateCancelled
-			return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
-		}
-		if !replaceOnExist {
-			job.State = model.JobStateCancelled
-			return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
-		}
+	// Check if same name exists on this table
+	for _, p := range existPolicy {
+		if p.Name.L == policyInfo.Name.L {
+			if p.ColumnID != policyInfo.ColumnID {
+				// Same name on different column in same table - error
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(p.Name.O)
+			}
+			// Same name on same column - allow replace
+			if !replaceOnExist {
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(policyInfo.Name.O)
+			}
 
-		replacePolicy := existPolicy.Clone()
-		replacePolicy.Expression = policyInfo.Expression
-		replacePolicy.Status = policyInfo.Status
-		replacePolicy.MaskingType = policyInfo.MaskingType
-		replacePolicy.RestrictOps = policyInfo.RestrictOps
-		replacePolicy.UpdatedAt = policyInfo.UpdatedAt
-		if err = w.updateMaskingPolicyInSysTable(jobCtx, replacePolicy); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
+			replacePolicy := p.Clone()
+			replacePolicy.Expression = policyInfo.Expression
+			replacePolicy.Status = policyInfo.Status
+			replacePolicy.MaskingType = policyInfo.MaskingType
+			replacePolicy.RestrictOps = policyInfo.RestrictOps
+			replacePolicy.UpdatedAt = policyInfo.UpdatedAt
+			if err = w.updateMaskingPolicyInSysTable(jobCtx, replacePolicy); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 
-		ver, err = updateSchemaVersion(jobCtx, job)
-		if err != nil {
-			return ver, errors.Trace(err)
+			ver, err = updateSchemaVersion(jobCtx, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
+			return ver, nil
 		}
-		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
-		return ver, nil
-	}
-
-	if existOnColumn != nil {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existOnColumn.Name.O)
 	}
 
 	switch policyInfo.State {
@@ -206,17 +201,6 @@ func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyN
 	return policies[0], nil
 }
 
-func (w *worker) getMaskingPolicyByDBAndNameFromSysTable(ctx context.Context, dbName, policyName string) (*model.MaskingPolicyInfo, error) {
-	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByDBAndNameFromSysTable, dbName, policyName)
-	if err != nil {
-		return nil, err
-	}
-	if len(policies) == 0 {
-		return nil, nil
-	}
-	return policies[0], nil
-}
-
 func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
 	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByTableColumnFromSysTable, tableID, columnID)
 	if err != nil {
@@ -251,7 +235,6 @@ const (
 	queryMaskingPolicyFromSysTable = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy`
 	queryMaskingPolicyByNameFromSysTable        = queryMaskingPolicyFromSysTable + ` WHERE policy_name = %? ORDER BY policy_id`
-	queryMaskingPolicyByDBAndNameFromSysTable  = queryMaskingPolicyFromSysTable + ` WHERE db_name = %? AND policy_name = %? ORDER BY policy_id`
 	queryMaskingPolicyByTableColumnFromSysTable = queryMaskingPolicyFromSysTable + ` WHERE table_id = %? AND column_id = %? ORDER BY policy_id`
 	queryMaskingPolicyByIDFromSysTable          = queryMaskingPolicyFromSysTable + ` WHERE policy_id = %? ORDER BY policy_id`
 	queryMaskingPolicyByTableIDFromSysTable     = queryMaskingPolicyFromSysTable + ` WHERE table_id = %? ORDER BY policy_id`

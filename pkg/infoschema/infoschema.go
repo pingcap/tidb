@@ -73,8 +73,6 @@ type infoSchema struct {
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 	// maskingPolicyMap stores masking policy metadata by lower-case policy name.
 	maskingPolicyMap map[string]*model.MaskingPolicyInfo
-	// maskingPolicyDBAndNameMap stores masking policy metadata by dbName.policyName.
-	maskingPolicyDBAndNameMap map[string]*model.MaskingPolicyInfo
 	// maskingPolicyTableColumnMap stores masking policy metadata by table and column IDs.
 	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
 }
@@ -214,7 +212,6 @@ func newInfoSchema() *infoSchema {
 		sortedTablesBuckets:         make([]sortedTables, bucketCount),
 		referredForeignKeyMap:       make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		maskingPolicyMap:            make(map[string]*model.MaskingPolicyInfo),
-		maskingPolicyDBAndNameMap:   make(map[string]*model.MaskingPolicyInfo),
 		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
 	}
 }

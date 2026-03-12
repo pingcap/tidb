@@ -43,7 +43,6 @@ type InfoSchema interface {
 	// So it's all in memory operation. No need to worry about network or disk cost.
 	TableItemByPartitionID(partitionID int64) (TableItem, bool)
 	MaskingPolicyByName(name pmodel.CIStr) (*model.MaskingPolicyInfo, bool)
-	MaskingPolicyByDBAndName(dbName, policyName string) (*model.MaskingPolicyInfo, bool)
 	MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool)
 	AllMaskingPolicies() []*model.MaskingPolicyInfo
 	base() *infoSchema

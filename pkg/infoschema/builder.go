@@ -1056,10 +1056,6 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	if b.infoSchema.maskingPolicyMap == nil {
 		b.infoSchema.maskingPolicyMap = make(map[string]*model.MaskingPolicyInfo)
 	}
-	b.infoSchema.maskingPolicyDBAndNameMap = maps.Clone(oldIS.maskingPolicyDBAndNameMap)
-	if b.infoSchema.maskingPolicyDBAndNameMap == nil {
-		b.infoSchema.maskingPolicyDBAndNameMap = make(map[string]*model.MaskingPolicyInfo)
-	}
 	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
 	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)

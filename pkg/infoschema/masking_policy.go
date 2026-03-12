@@ -27,13 +27,6 @@ func (is *infoSchema) MaskingPolicyByName(name pmodel.CIStr) (*model.MaskingPoli
 	return policy, ok
 }
 
-// MaskingPolicyByDBAndName returns masking policy metadata by database name and policy name.
-func (is *infoSchema) MaskingPolicyByDBAndName(dbName, policyName string) (*model.MaskingPolicyInfo, bool) {
-	key := dbName + "." + policyName
-	policy, ok := is.maskingPolicyDBAndNameMap[key]
-	return policy, ok
-}
-
 // MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs.
 func (is *infoSchema) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool) {
 	colMap, ok := is.maskingPolicyTableColumnMap[tableID]
@@ -64,9 +57,6 @@ func (is *infoSchema) setMaskingPolicy(policy *model.MaskingPolicyInfo) {
 		return
 	}
 	is.maskingPolicyMap[policy.Name.L] = policy
-	// Also store with db+name key for database-scoped lookup
-	dbAndNameKey := policy.DBName.L + "." + policy.Name.L
-	is.maskingPolicyDBAndNameMap[dbAndNameKey] = policy
 	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
 	if !ok {
 		colMap = make(map[int64]*model.MaskingPolicyInfo)
@@ -81,9 +71,6 @@ func (is *infoSchema) deleteMaskingPolicy(nameL string) {
 		return
 	}
 	delete(is.maskingPolicyMap, nameL)
-	// Also delete from db+name map
-	dbAndNameKey := policy.DBName.L + "." + policy.Name.L
-	delete(is.maskingPolicyDBAndNameMap, dbAndNameKey)
 	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
 	if !ok {
 		return

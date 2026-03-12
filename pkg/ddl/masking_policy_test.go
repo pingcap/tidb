@@ -183,23 +183,18 @@ func TestMaskingPolicyDatabaseScopedUniqueness(t *testing.T) {
 	tk.MustExec("use db1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c varchar(20))")
-
-	// Create table in db2
-	tk.MustExec("use db2")
-	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(c varchar(20))")
 
-	// Same policy name in different databases should succeed
-	tk.MustExec("use db1")
+	// Same policy name in different tables in same database should succeed
 	tk.MustExec("create masking policy simple_mask on t1(c) as c enable")
-
-	tk.MustExec("use db2")
 	tk.MustExec("create masking policy simple_mask on t2(c) as c enable")
 
-	// Verify both policies exist
-	tk.MustQuery("select policy_name, db_name from mysql.tidb_masking_policy order by db_name").
-		Check(testkit.Rows("simple_mask db1", "simple_mask db2"))
+	// Same policy name in same table should fail
+	tk.MustGetErrCode("create masking policy simple_mask on t1(c) as c enable", errno.ErrMaskingPolicyExists)
 
-	// Same policy name in same database should fail
-	tk.MustGetErrCode("create masking policy simple_mask on t2(c) as c enable", errno.ErrMaskingPolicyExists)
+	// Different database - should also succeed since it's different table
+	tk.MustExec("use db2")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(c varchar(20))")
+	tk.MustExec("create masking policy simple_mask on t3(c) as c enable")
 }
