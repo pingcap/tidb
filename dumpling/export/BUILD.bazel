@@ -117,6 +117,8 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//clients/gc",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_goleak//:goleak",
     ],
