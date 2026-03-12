@@ -245,9 +245,6 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 		if j >= 0 && j < len(row) {
 			value, err = table.CastColumnValue(kvcodec.SessionCtx.GetExprCtx(), row[j],
 				ExtraHandleColumnInfo, false, false)
-			if err != nil {
-				err = kvcodec.WrapCastValueError(ExtraHandleColumnInfo, row[j], err)
-			}
 			rowValue = value.GetInt64()
 		} else {
 			rowID := kvcodec.AutoIDFn(rowID)
