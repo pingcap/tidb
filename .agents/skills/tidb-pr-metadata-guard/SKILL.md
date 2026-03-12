@@ -10,10 +10,7 @@ description: Use when creating or editing TiDB pull requests so PR template fiel
 Use this skill for TiDB GitHub metadata updates that touch PR descriptions or linked issues.
 The goal is to preserve repository-required template structure while editing only the mutable fields.
 
-Before changing a PR body, read:
-
-- `AGENTS.md` -> `PR requirements`
-- `.github/pull_request_template.md`
+Before changing a PR body, read `.github/pull_request_template.md`.
 
 ## Workflow
 
