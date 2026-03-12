@@ -68,6 +68,32 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, "ON", f.Value)
 }
 
+func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
+	sv := variable.GetSysVar(vardef.TiDBOptIndexJoinBuild)
+	require.NotNil(t, sv)
+	require.Equal(t, vardef.On, sv.Value)
+
+	vars := variable.NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, vardef.On, vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	val, err = sv.Validate(vars, vardef.Off, vardef.ScopeSession)
+	require.EqualError(t, err, "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+	require.Equal(t, vardef.On, val)
+
+	require.Equal(t, vardef.On, sv.ValidateWithRelaxedValidation(vars, vardef.Off, vardef.ScopeSession))
+
+	val, err = sv.GetSessionFromHook(vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	val, err = sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+}
+
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		variable.ErrUnsupportedValueForVar,
