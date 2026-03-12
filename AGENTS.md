@@ -45,6 +45,8 @@ When writing complex features or significant refactors, use an ExecPlan from des
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
 | During local coding iterations (not claiming completion) | SHOULD use the `WIP` verification profile from `.agents/skills/tidb-verify-profile` to run only scoped checks. |
 | Claiming task completion / PR readiness | MUST use the `Ready` verification profile from `.agents/skills/tidb-verify-profile`; if there are code changes, this includes `make lint`. `Ready` is mandatory before making final-status claims such as "fixed", "done", "all tests pass", "ready for review", or "ready for PR". |
+| Creating or updating a GitHub issue | SHOULD use `.agents/skills/tidb-issue-metadata-guard` to preserve issue templates and label hygiene. |
+| Creating a PR or editing PR metadata | SHOULD use `.agents/skills/tidb-pr-metadata-guard` to preserve PR templates, title scope, and bot-parsed checklist sections. |
 | Before finishing | SHOULD self-review diff quality before finishing. |
 | Expensive optional sweeps (for example `make bazel_lint_changed`, broad package runs) | MUST run only when required by change scope, CI reproduction, or explicit user request. |
 
