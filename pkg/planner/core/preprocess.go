@@ -132,6 +132,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		sctx:                    sctx,
 		tableAliasInJoin:        make([]map[string]any, 0),
 		preprocessWith:          &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+		lockRefCollectorStack:   make([]lockRefCollector, 0),
 		lockTablesInSelectStack: make([]map[*ast.TableName]struct{}, 0),
 		staleReadProcessor:      staleread.NewStaleReadProcessor(ctx, sctx),
 		varsMutable:             make(map[string]struct{}),
@@ -243,6 +244,9 @@ type preprocessor struct {
 	// SELECT. We skip preprocess resolution for them because they should bind to FROM aliases, not
 	// global infoschema lookups. Stack depth follows nested SELECTs.
 	lockTablesInSelectStack []map[*ast.TableName]struct{}
+	// lockRefCollectorStack tracks FROM-clause table references for each SELECT so locking clauses
+	// can reuse the ongoing AST traversal instead of re-walking the FROM tree later.
+	lockRefCollectorStack []lockRefCollector
 
 	staleReadProcessor staleread.Processor
 
@@ -268,6 +272,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 		p.checkSelectNoopFuncs(node)
+		// SelectStmt.Accept visits FROM before LockInfo, so the collector can accumulate
+		// FROM table refs during traversal and reuse them for lock-clause validation in Leave.
+		p.lockRefCollectorStack = append(p.lockRefCollectorStack, newLockRefCollector())
 		// Track locking-clause table names for this SELECT so TableName.Leave can skip resolving them.
 		lockInfoSet := make(map[*ast.TableName]struct{})
 		if node.LockInfo != nil {
@@ -673,6 +680,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			}
 		}
 		p.handleTableName(x)
+	case *ast.TableSource:
+		if len(p.lockRefCollectorStack) > 0 {
+			if v, ok := x.Source.(*ast.TableName); ok {
+				p.lockRefCollectorStack[len(p.lockRefCollectorStack)-1].collect(v, x.AsName)
+			}
+		}
 	case *ast.Join:
 		if len(p.tableAliasInJoin) > 0 {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
@@ -734,7 +747,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 
-		p.checkLockClauseTables(x)
+		var collector *lockRefCollector
+		if n := len(p.lockRefCollectorStack); n > 0 {
+			collector = &p.lockRefCollectorStack[n-1]
+		}
+		p.checkLockClauseTables(x, collector)
+		if n := len(p.lockRefCollectorStack); n > 0 {
+			p.lockRefCollectorStack = p.lockRefCollectorStack[:n-1]
+		}
 		if n := len(p.lockTablesInSelectStack); n > 0 {
 			p.lockTablesInSelectStack = p.lockTablesInSelectStack[:n-1]
 		}
@@ -1828,20 +1848,49 @@ type lockRef struct {
 	alias ast.CIStr
 }
 
+type lockRefCollector struct {
+	aliasMap     map[string]lockRef
+	qualifiedMap map[string]lockRef
+	// orderedRefs preserves the left-to-right FROM order for unqualified OF fallback.
+	// For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
+	orderedRefs []lockRef
+}
+
+func newLockRefCollector() lockRefCollector {
+	return lockRefCollector{
+		aliasMap:     make(map[string]lockRef),
+		qualifiedMap: make(map[string]lockRef),
+		orderedRefs:  make([]lockRef, 0),
+	}
+}
+
+func (c *lockRefCollector) collect(tableName *ast.TableName, asName ast.CIStr) {
+	ref := lockRef{
+		table: tableName,
+		alias: asName,
+	}
+	if asName.L != "" {
+		c.aliasMap[asName.L] = ref
+	}
+	if tableName.Schema.L != "" {
+		c.qualifiedMap[tableName.Schema.L+"."+tableName.Name.L] = ref
+		if asName.L != "" {
+			// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
+			c.qualifiedMap[tableName.Schema.L+"."+asName.L] = ref
+		}
+	}
+	c.orderedRefs = append(c.orderedRefs, ref)
+}
+
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
 // It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
 // base-table names even when aliases exist, with a warning to guide users to explicit aliases.
-func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
+func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, collector *lockRefCollector) {
 	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
 		return
 	}
-	var (
-		aliasMap     map[string]lockRef
-		qualifiedMap map[string]lockRef
-		orderedRefs  []lockRef
-	)
-	if stmt.From != nil {
-		aliasMap, qualifiedMap, orderedRefs = collectLockTableRefs(stmt.From.TableRefs)
+	if collector == nil {
+		collector = &lockRefCollector{}
 	}
 	warnedCompatRefs := make(map[string]struct{})
 
@@ -1852,12 +1901,12 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 
 		if ref.Schema.L != "" {
 			name = ref.Schema.L + "." + ref.Name.L
-			matched = qualifiedMap[name]
+			matched = collector.qualifiedMap[name]
 			matchedByAlias = matched.alias.L != "" && ref.Name.L == matched.alias.L
 			if matchedByAlias {
 				ref.IsAlias = true
 			}
-		} else if t, ok := aliasMap[name]; ok {
+		} else if t, ok := collector.aliasMap[name]; ok {
 			ref.IsAlias = true
 			matched = t
 			matchedByAlias = true
@@ -1866,7 +1915,7 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 		// If still not found and the lock clause is unqualified, try bare-name match (FROM order).
 		// For example, `SELECT * FROM db1.t, db2.t FOR UPDATE OF t` resolves `t` to `db1.t`.
 		if matched.table == nil && ref.Schema.L == "" {
-			for _, tblRef := range orderedRefs {
+			for _, tblRef := range collector.orderedRefs {
 				if tblRef.table.Name.L == name {
 					matched = tblRef
 					break
@@ -1909,55 +1958,6 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 			TableInfo: tNameW.TableInfo,
 		})
 	}
-}
-
-// collectLockTableRefs walks the FROM clause in order and collects:
-//   - aliasMap: alias name -> lockRef
-//   - qualifiedMap: "schema.table" and "schema.alias" -> lockRef (when TableName is schema-qualified)
-//   - orderedRefs: table refs in the left-to-right FROM order for unqualified OF targets.
-//     For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
-func collectLockTableRefs(node ast.ResultSetNode) (aliasMap map[string]lockRef, qualifiedMap map[string]lockRef, orderedRefs []lockRef) {
-	aliasMap = make(map[string]lockRef)
-	qualifiedMap = make(map[string]lockRef)
-	orderedRefs = make([]lockRef, 0)
-
-	var walk func(rs ast.ResultSetNode)
-	walk = func(rs ast.ResultSetNode) {
-		switch x := rs.(type) {
-		case *ast.Join:
-			walk(x.Left)
-			walk(x.Right)
-		case *ast.TableSource:
-			switch src := x.Source.(type) {
-			case *ast.TableName:
-				ref := lockRef{
-					table: src,
-					alias: x.AsName,
-				}
-				if x.AsName.L != "" {
-					aliasMap[x.AsName.L] = ref
-				}
-				if src.Schema.L != "" {
-					qualifiedMap[src.Schema.L+"."+src.Name.L] = ref
-					if x.AsName.L != "" {
-						// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
-						qualifiedMap[src.Schema.L+"."+x.AsName.L] = ref
-					}
-				}
-				orderedRefs = append(orderedRefs, ref)
-			case *ast.SelectStmt, *ast.SetOprStmt:
-				// Lock clause cannot reach inside; only alias could make sense, but MySQL does not lock derived tables by OF.
-				// Ignore to force unresolved if referenced.
-			case *ast.Join:
-				walk(src)
-			}
-		}
-	}
-
-	if node != nil {
-		walk(node)
-	}
-	return aliasMap, qualifiedMap, orderedRefs
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
