@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -336,4 +337,72 @@ func TestIssue54055(t *testing.T) {
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.NotNil(t, err)
 	rs.Close()
+}
+
+func TestIndexHashJoinLimitBatchSize(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int primary key, b int, index ib(b))")
+	tk.MustExec("create table t2(a int, b int, index ib(b))")
+	// Insert enough rows so the default batch size (25000) would cause a
+	// large over-read without the Limit-aware optimization.
+	var sb strings.Builder
+	for i := 1; i <= 5000; i++ {
+		if i > 1 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec("insert into t1 values " + sb.String())
+	tk.MustExec("insert into t2 values " + sb.String())
+
+	// Pin a small batch size so the optimization is clearly observable.
+	tk.MustExec("set @@tidb_index_join_batch_size = 100")
+
+	// Track how many outer rows each batch fetches via failpoint.
+	var maxOuterRows int64
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/executor/join/testIndexJoinOuterRowsFetched",
+		func(outerRows int) {
+			for {
+				old := atomic.LoadInt64(&maxOuterRows)
+				if int64(outerRows) <= old {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&maxOuterRows, old, int64(outerRows)) {
+					break
+				}
+			}
+		},
+	))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIndexJoinOuterRowsFetched"))
+	}()
+
+	// Semi join (EXISTS) with ORDER BY ... LIMIT via IndexHashJoin.
+	// With the optimization, the outer worker reads batches of ~100 rows
+	// instead of all 5000, allowing the Limit to short-circuit.
+	sql := "select /*+ INL_HASH_JOIN(t2) */ * from t1 where exists " +
+		"(select 1 from t2 where t2.b = t1.b) order by t1.a limit 100"
+
+	// Verify the plan uses IndexHashJoin.
+	tk.MustHavePlan(sql, "IndexHashJoin")
+
+	// Verify correctness.
+	rows := tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 100)
+	// First row should be a=1 (ordered by PK).
+	require.Equal(t, "1", rows[0][0].(string))
+	require.Equal(t, "100", rows[99][0].(string))
+
+	// Verify the failpoint was actually hit (i.e., batching occurred).
+	require.Greater(t, atomic.LoadInt64(&maxOuterRows), int64(0),
+		"failpoint was never triggered — IndexHashJoin batching may not have been exercised")
+
+	// Each batch should fetch close to the pinned batch size (100 rows).
+	// Allow some slack for chunk-size alignment, but it must be well under
+	// the default batch size of 25000 that would be used without the
+	// Limit-aware optimization.
+	require.LessOrEqual(t, atomic.LoadInt64(&maxOuterRows), int64(200),
+		"outer worker fetched far more rows than the capped batch size")
 }

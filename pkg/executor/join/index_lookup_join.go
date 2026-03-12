@@ -88,6 +88,12 @@ type IndexLookUpJoin struct {
 	stats    *indexLookUpJoinRuntimeStats
 	Finished *atomic.Value
 	prepared bool
+
+	// LimitCount is set when a Limit operator sits directly above this join.
+	// It caps the outer worker's batch size so that each task is small,
+	// allowing the Limit to short-circuit between tasks instead of waiting
+	// for one large batch to complete.
+	LimitCount uint64
 }
 
 // OuterCtx is the outer ctx used in index lookup join
@@ -215,6 +221,9 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask, initBatchSize int) *outerWorker {
 	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	if e.LimitCount > 0 {
+		maxBatchSize = min(maxBatchSize, int(e.LimitCount))
+	}
 	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &outerWorker{
 		OuterCtx:         e.OuterCtx,
@@ -455,7 +464,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		// ow.lookup.requiredRows is set when `Next` is called. Thus we check
 		// whether it's 0 here.
 		if parentRequired := int(atomic.LoadInt64(&ow.lookup.requiredRows)); parentRequired != 0 {
-			requiredRows = parentRequired
+			requiredRows = min(parentRequired, ow.maxBatchSize)
 		}
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
@@ -472,6 +481,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 		task.outerResult.Add(chk)
 	}
+	failpoint.InjectCall("testIndexJoinOuterRowsFetched", task.outerResult.Len())
 	if task.outerResult.Len() == 0 {
 		return nil, nil
 	}

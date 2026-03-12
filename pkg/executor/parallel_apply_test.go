@@ -522,13 +522,19 @@ func TestParallelApplyCancelInflight(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
+	// Insert enough outer rows so that without cancellation, workers would
+	// be busy for a long time (20 rows × 300ms each ≈ 6s with concurrency 3).
 	for i := 1; i <= 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 	}
 	tk.MustExec("insert into t2 values (1), (2), (3)")
 
-	// Verify the optimizer chooses a parallel Apply plan for this query.
+	// LIMIT 1: once one row is produced, Close() fires and should cancel
+	// in-flight inner workers via context cancellation.
 	sql := "select * from (select t1.a from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a < t1.a)) sub limit 1"
+
+	// Verify the optimizer picks the parallel Apply path before enabling the
+	// slow-inner failpoint (which would make checkApplyPlan very slow).
 	checkApplyPlan(t, tk, sql, 3)
 
 	// The failpoint makes each inner execution sleep 300ms but respects
@@ -538,23 +544,20 @@ func TestParallelApplyCancelInflight(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner"))
 	}()
 
-	// LIMIT 1: once one row is produced, Close() fires and should cancel
-	// in-flight inner workers via context cancellation.
 	start := time.Now()
 	rows := tk.MustQuery(sql).Rows()
 	elapsed := time.Since(start)
 
 	// We got exactly 1 row.
 	require.Len(t, rows, 1)
-	// Without cancel-in-flight, all 20 outer rows would be processed
-	// (~2s per run). With cancellation, Close() fires after the first
-	// result and aborts workers sleeping in the failpoint via context
-	// cancellation. Note: fillInnerChunk may process multiple outer
-	// rows per call, so the effective savings depend on how many rows
-	// are in-flight when cancel fires. The 3s threshold is generous
-	// enough to avoid CI flakiness while catching regressions where
-	// cancellation is completely broken.
-	require.Less(t, elapsed, 3*time.Second, "query took too long (%v); cancel-in-flight may not be working", elapsed)
+	// Ensure the failpoint-induced delay (~300ms per inner execution) actually
+	// took effect; if this is too small, the failpoint might not be active.
+	require.Greater(t, elapsed, 250*time.Millisecond, "query finished too quickly (%v); failpoint may not be active", elapsed)
+	// The query should complete well before all 20 outer rows are processed.
+	// Without cancel-in-flight, this would take ~2s (20/3 * 300ms).
+	// With cancellation, it should finish in roughly 1 batch (~300ms + overhead),
+	// so it must be comfortably below 1s to indicate effective cancellation.
+	require.Less(t, elapsed, time.Second, "query took too long (%v); cancel-in-flight may not be working", elapsed)
 }
 
 func TestOrderedParallelApply(t *testing.T) {

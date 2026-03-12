@@ -455,6 +455,9 @@ func (*indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHash
 
 func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask, initBatchSize int) *indexHashJoinOuterWorker {
 	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	if e.LimitCount > 0 {
+		maxBatchSize = min(maxBatchSize, int(e.LimitCount))
+	}
 	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
@@ -773,6 +776,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		}
 		return nil
 	}
+
 	joinStartTime = time.Now()
 	return iw.doJoinInOrder(ctx, task, joinResult, h, resultCh)
 }

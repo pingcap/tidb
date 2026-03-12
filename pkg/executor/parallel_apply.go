@@ -654,6 +654,15 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 		}
 	}
 
+	failpoint.Inject("parallelApplySlowInner", func(val failpoint.Value) {
+		if ms, ok := val.(int); ok {
+			select {
+			case <-time.After(time.Duration(ms) * time.Millisecond):
+			case <-ctx.Done():
+				failpoint.Return(ctx.Err())
+			}
+		}
+	})
 	err = exec.Open(ctx, e.innerExecs[id])
 	defer func() { terror.Log(exec.Close(e.innerExecs[id])) }()
 	if err != nil {
