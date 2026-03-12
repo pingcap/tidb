@@ -146,6 +146,10 @@ const (
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
 	// TiDBMVMaintainMemQuota controls the memory quota used by MV refresh / MV log purge internal maintenance sessions.
 	TiDBMVMaintainMemQuota = "tidb_mv_maintain_mem_quota" // Bytes.
+	// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	TiDBMViewMaintainImportThreads = "tidb_mview_maintain_import_threads"
+	// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	TiDBMViewMaintainImportDiskQuota = "tidb_mview_maintain_import_disk_quota"
 	// TiDBMViewTaskMax controls the max concurrency of MV background tasks. 0 means using GOMAXPROCS.
 	TiDBMViewTaskMax = "tidb_mview_task_max"
 	// TiDBMViewTaskThresholdCPU controls MV task backpressure CPU threshold.
@@ -156,8 +160,6 @@ const (
 	TiDBMViewRefreshHistTime = "tidb_mview_refresh_hist_time"
 	// TiDBMLogPurgeHistTime controls the retention time of mysql.tidb_mlog_purge_hist in hours.
 	TiDBMLogPurgeHistTime = "tidb_mlog_purge_hist_time"
-	// TiDBCreateMViewImportThreads controls the thread count for MV initial build IMPORT INTO.
-	TiDBCreateMViewImportThreads = "tidb_create_mview_import_threads"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
@@ -1493,12 +1495,13 @@ const (
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
 	DefTiDBMVMaintainMemQuota                         = int64(2 * size.GB)
+	DefTiDBMViewMaintainImportThreads                 = 0
+	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBMViewTaskMax                               = 0
 	DefTiDBMViewTaskThresholdCPU                      = 0.8
 	DefTiDBMViewTaskThresholdMemory                   = 0.8
 	DefTiDBMViewRefreshHistTime                       = 168
 	DefTiDBMLogPurgeHistTime                          = 168
-	DefTiDBCreateMViewImportThreads                   = 0
 	DefTiDBStatsCacheMemQuota                         = 0
 	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                             = 4096

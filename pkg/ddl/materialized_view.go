@@ -211,7 +211,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return err
 	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
-	job.AddSessionVars(variable.TiDBCreateMViewImportThreads, strconv.Itoa(ctx.GetSessionVars().CreateMViewImportThreads))
+	job.AddSessionVars(variable.TiDBMViewMaintainImportThreads, strconv.Itoa(ctx.GetSessionVars().MViewMaintainImportThreads))
+	job.AddSessionVars(variable.TiDBMViewMaintainImportDiskQuota, ctx.GetSessionVars().MViewMaintainImportDiskQuota)
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
 		MLogTableIDs: []int64{mlogTable.Meta().ID},

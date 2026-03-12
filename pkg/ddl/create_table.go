@@ -548,7 +548,7 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	return ver, nil
 }
 
-func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, threadCnt int) (string, error) {
+func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, threadCnt int, diskQuota string) (string, error) {
 	if mvTblInfo.MaterializedView == nil || len(mvTblInfo.MaterializedView.SQLContent) == 0 {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
@@ -559,6 +559,9 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.Ta
 	options := []string{"disable_precheck"}
 	if threadCnt > 0 {
 		options = append(options, fmt.Sprintf("thread=%d", threadCnt))
+	}
+	if diskQuota != "" {
+		options = append(options, sqlescape.MustEscapeSQL("disk_quota=%?", diskQuota))
 	}
 	return prefix + "(" + selectSQL + ") WITH " + strings.Join(options, ", "), nil
 }
@@ -666,11 +669,15 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	}()
 
 	ddlSess := sess.NewSession(sessCtx)
-	threadCnt := sessCtx.GetSessionVars().CreateMViewImportThreads
-	if val, ok := job.GetSessionVars(variable.TiDBCreateMViewImportThreads); ok {
+	threadCnt := sessCtx.GetSessionVars().MViewMaintainImportThreads
+	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportThreads); ok {
 		threadCnt = variable.TidbOptInt(val, threadCnt)
 	}
-	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, threadCnt)
+	diskQuota := sessCtx.GetSessionVars().MViewMaintainImportDiskQuota
+	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportDiskQuota); ok {
+		diskQuota = val
+	}
+	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, threadCnt, diskQuota)
 	if err != nil {
 		return errors.Trace(err)
 	}

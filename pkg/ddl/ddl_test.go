@@ -639,9 +639,21 @@ func TestBuildCreateMaterializedViewImportSQLNoAsOfTimestamp(t *testing.T) {
 			SQLContent: "select a, count(1) from t group by a",
 		},
 	}
-	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0)
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "")
 	require.NoError(t, err)
 	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
 	require.Contains(t, sql, "WITH disable_precheck")
 	require.NotContains(t, strings.ToUpper(sql), "AS OF TIMESTAMP")
+}
+
+func TestBuildCreateMaterializedViewImportSQLDiskQuota(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "100gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, disk_quota='100gib'")
 }

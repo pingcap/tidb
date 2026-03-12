@@ -1532,8 +1532,10 @@ type SessionVars struct {
 	// InMaterializedViewMaintenance indicates the session is executing internal MV refresh / MV log purge statements.
 	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict.
 	InMaterializedViewMaintenance bool
-	// CreateMViewImportThreads controls the thread count for MV initial build IMPORT INTO.
-	CreateMViewImportThreads int
+	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	MViewMaintainImportThreads int
+	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	MViewMaintainImportDiskQuota string
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -2263,7 +2265,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
-		CreateMViewImportThreads:      DefTiDBCreateMViewImportThreads,
+		MViewMaintainImportThreads:    DefTiDBMViewMaintainImportThreads,
+		MViewMaintainImportDiskQuota:  DefTiDBMViewMaintainImportDiskQuota,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
 		CostModelVersion:              DefTiDBCostModelVer,
