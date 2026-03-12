@@ -1864,6 +1864,7 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 		}
 
 		// If still not found and the lock clause is unqualified, try bare-name match (FROM order).
+		// For example, `SELECT * FROM db1.t, db2.t FOR UPDATE OF t` resolves `t` to `db1.t`.
 		if matched.table == nil && ref.Schema.L == "" {
 			for _, tblRef := range orderedRefs {
 				if tblRef.table.Name.L == name {
@@ -1913,7 +1914,8 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt) {
 // collectLockTableRefs walks the FROM clause in order and collects:
 //   - aliasMap: alias name -> lockRef
 //   - qualifiedMap: "schema.table" and "schema.alias" -> lockRef (when TableName is schema-qualified)
-//   - orderedRefs: table refs in FROM order for unqualified OF targets (first match wins)
+//   - orderedRefs: table refs in the left-to-right FROM order for unqualified OF targets.
+//     For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
 func collectLockTableRefs(node ast.ResultSetNode) (aliasMap map[string]lockRef, qualifiedMap map[string]lockRef, orderedRefs []lockRef) {
 	aliasMap = make(map[string]lockRef)
 	qualifiedMap = make(map[string]lockRef)
