@@ -152,6 +152,7 @@ var (
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
 		threadOption:          {},
 		disablePrecheckOption: {},
+		diskQuotaOption:       {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
