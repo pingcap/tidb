@@ -169,3 +169,37 @@ func TestMaskingPolicyModifyColumnGuard(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }
+
+func TestMaskingPolicyDatabaseScopedUniqueness(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists db1")
+	tk.MustExec("drop database if exists db2")
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+
+	// Create table in db1
+	tk.MustExec("use db1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c varchar(20))")
+
+	// Create table in db2
+	tk.MustExec("use db2")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(c varchar(20))")
+
+	// Same policy name in different databases should succeed
+	tk.MustExec("use db1")
+	tk.MustExec("create masking policy simple_mask on t1(c) as c enable")
+
+	tk.MustExec("use db2")
+	tk.MustExec("create masking policy simple_mask on t2(c) as c enable")
+
+	// Verify both policies exist
+	tk.MustQuery("select policy_name, db_name from mysql.tidb_masking_policy order by db_name").
+		Check(testkit.Rows("simple_mask db1", "simple_mask db2"))
+
+	// Same policy name in same database should fail
+	tk.MustGetErrCode("create masking policy simple_mask on t2(c) as c enable", errno.ErrMaskingPolicyExists)
+}

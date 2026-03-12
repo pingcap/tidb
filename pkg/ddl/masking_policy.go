@@ -52,7 +52,7 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	existPolicy, err := w.getMaskingPolicyByNameFromSysTable(jobCtx.stepCtx, policyInfo.Name)
+	existPolicy, err := w.getMaskingPolicyByDBAndNameFromSysTable(jobCtx.stepCtx, policyInfo.DBName.L, policyInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -206,6 +206,17 @@ func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyN
 	return policies[0], nil
 }
 
+func (w *worker) getMaskingPolicyByDBAndNameFromSysTable(ctx context.Context, dbName, policyName string) (*model.MaskingPolicyInfo, error) {
+	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByDBAndNameFromSysTable, dbName, policyName)
+	if err != nil {
+		return nil, err
+	}
+	if len(policies) == 0 {
+		return nil, nil
+	}
+	return policies[0], nil
+}
+
 func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
 	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, queryMaskingPolicyByTableColumnFromSysTable, tableID, columnID)
 	if err != nil {
@@ -240,6 +251,7 @@ const (
 	queryMaskingPolicyFromSysTable = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy`
 	queryMaskingPolicyByNameFromSysTable        = queryMaskingPolicyFromSysTable + ` WHERE policy_name = %? ORDER BY policy_id`
+	queryMaskingPolicyByDBAndNameFromSysTable  = queryMaskingPolicyFromSysTable + ` WHERE db_name = %? AND policy_name = %? ORDER BY policy_id`
 	queryMaskingPolicyByTableColumnFromSysTable = queryMaskingPolicyFromSysTable + ` WHERE table_id = %? AND column_id = %? ORDER BY policy_id`
 	queryMaskingPolicyByIDFromSysTable          = queryMaskingPolicyFromSysTable + ` WHERE policy_id = %? ORDER BY policy_id`
 	queryMaskingPolicyByTableIDFromSysTable     = queryMaskingPolicyFromSysTable + ` WHERE table_id = %? ORDER BY policy_id`

@@ -6579,7 +6579,8 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, schemaID int64, policy *model.MaskingPolicyInfo, onExist OnExist) error {
 	is := e.infoCache.GetLatest()
-	if existPolicy, ok := is.MaskingPolicyByName(policy.Name); ok {
+	// Use database-scoped uniqueness check (db+name)
+	if existPolicy, ok := is.MaskingPolicyByDBAndName(policy.DBName.L, policy.Name.L); ok {
 		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
