@@ -64,6 +64,7 @@ type Dumper struct {
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
+	tidbUseKeyspaceGC             bool
 	tidbKeyspaceName              string
 	tidbKeyspaceID                uint32
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
@@ -1516,6 +1517,7 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 // tidbSetPDClientForGC is an initialization step of Dumper.
 func tidbSetPDClientForGC(d *Dumper) error {
 	tctx, conf, si, pool := d.tctx, d.conf, d.conf.ServerInfo, d.dbHandle
+	d.tidbUseKeyspaceGC = false
 	if si.ServerType != version.ServerTypeTiDB ||
 		si.ServerVersion == nil ||
 		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
@@ -1543,6 +1545,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 			return errors.Trace(err)
 		}
 		d.tidbPDClientForGC = pdClient
+		d.tidbUseKeyspaceGC = true
 		return nil
 	}
 
@@ -1619,7 +1622,7 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 		if err != nil {
 			return err
 		}
-		if d.tidbKeyspaceName != "" {
+		if d.tidbUseKeyspaceGC {
 			go updateKeyspaceGCBarrier(tctx, d.tidbPDClientForGC, d.tidbKeyspaceID, defaultDumpGCSafePointTTL, snapshotTS)
 		} else {
 			go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)

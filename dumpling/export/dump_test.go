@@ -187,9 +187,9 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 		confPD       string
 		confKeyspace string
 		// After resolving we expect these on the Dumper.
-		expectKeyspace string
-		expectID       uint32
-		// When tidbKeyspaceName != "" the start service should pick barrier.
+		expectKeyspace   string
+		expectID         uint32
+		useKeyspaceGC    bool
 		expectBarrierAPI bool
 	}{
 		{
@@ -199,7 +199,18 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			confKeyspace:     "ks1",
 			expectKeyspace:   "ks1",
 			expectID:         42,
+			useKeyspaceGC:    true,
 			expectBarrierAPI: true,
+		},
+		{
+			name:             "resolved_keyspace_meta_without_keyspace_gc_mode_uses_global_safepoint_api",
+			keyspaceMeta:     []string{"ks1", "42"},
+			confPD:           "pd1:2379",
+			confKeyspace:     "ks1",
+			expectKeyspace:   "ks1",
+			expectID:         42,
+			useKeyspaceGC:    false,
+			expectBarrierAPI: false,
 		},
 		{
 			name:             "classical_uses_global_safepoint_api",
@@ -208,6 +219,7 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			confKeyspace:     "",
 			expectKeyspace:   "",
 			expectID:         0,
+			useKeyspaceGC:    false,
 			expectBarrierAPI: false,
 		},
 	}
@@ -252,6 +264,7 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			// PD connections here, just the dispatch decision).
 			mockPD := newMockPDClientForGC()
 			d.tidbPDClientForGC = mockPD
+			d.tidbUseKeyspaceGC = tc.useKeyspaceGC
 			d.conf.Snapshot = "438324008696225793"
 
 			// Mock parseSnapshotToTSO: conf.Snapshot is a numeric TSO so it
