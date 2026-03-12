@@ -107,6 +107,10 @@ func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expres
 // which breaks the function check outside. That's why we abandon the nulleq range detecting,
 // treat it as non-eq-in condition for later range build.
 func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.Expression, cols []*expression.Column) int {
+	return getPotentialEqOrInColOffsetWithMutableShape(sctx, expr, cols, false)
+}
+
+func getPotentialEqOrInColOffsetWithMutableShape(sctx *rangerctx.RangerContext, expr expression.Expression, cols []*expression.Column, ignoreMutableConstValue bool) int {
 	evalCtx := sctx.ExprCtx.GetEvalCtx()
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
@@ -118,7 +122,7 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
 		for _, dnfItem := range dnfItems {
-			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
+			curOffset := getPotentialEqOrInColOffsetWithMutableShape(sctx, dnfItem, cols, ignoreMutableConstValue)
 			if curOffset == -1 {
 				return -1
 			}
@@ -147,6 +151,15 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		}
 
 		if constVal, ok = f.GetArgs()[idxConst].(*expression.Constant); !ok {
+			return -1
+		}
+		if ignoreMutableConstValue && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, constVal) {
+			for i, col := range cols {
+				// When cols are a generated expression col, compare them in terms of virtual expr.
+				if col.EqualByExprAndID(evalCtx, c) {
+					return i
+				}
+			}
 			return -1
 		}
 
@@ -750,78 +763,74 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...)
 	genericForPlanCache := expression.PlanCacheGenericEnabled(sctx.ExprCtx) && maybeOverOptimized4PlanCache
 	for i, cond := range conditions {
+		if genericForPlanCache && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, cond) {
+			offsets[i] = getPotentialEqOrInColOffsetWithMutableShape(sctx, cond, cols, true)
+			continue
+		}
 		offsets[i] = getPotentialEqOrInColOffset(sctx, cond, cols)
 	}
-	recordPlanCacheOverwrite := func() {
-		if maybeOverOptimized4PlanCache {
-			sctx.SetSkipPlanCache("some parameters may be overwritten")
-		}
-	}
-	intersectAccessConditions := func(offset int, cond expression.Expression, recordOverwrite bool) bool {
-		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
-		collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
-		if mergedAccesses[offset] == nil {
-			mergedAccesses[offset] = accesses[offset]
-			// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
-			// later use and may build the Expression to points again.
-			// We need to keep the original value here, which means we neither cut prefix nor convert to sort key.
-			points[offset] = rb.build(accesses[offset], newTp, types.UnspecifiedLength, false)
-		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
-		if len(points[offset]) == 0 {
-			if recordOverwrite {
-				recordPlanCacheOverwrite()
+	if genericForPlanCache {
+		finalizeGenericAccessColumnValue := func(offset int, forceMutable bool) bool {
+			if accesses[offset] == nil || !allEqOrIn(accesses[offset]) {
+				accesses[offset] = nil
+				columnValues[offset] = nil
+				return false
 			}
-			return true
-		}
-		return false
-	}
-	finalizeAccessColumnValue := func(offset int, forceMutable bool) bool {
-		if accesses[offset] == nil || !allEqOrIn(accesses[offset]) {
-			accesses[offset] = nil
-			columnValues[offset] = nil
-			return false
-		}
-		if forceMutable {
-			if f, ok := accesses[offset].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
-				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
-				// Maybe we can improve it later.
-				columnValues[offset] = &valueInfo{mutable: true}
+			if forceMutable {
+				if f, ok := accesses[offset].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
+					// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
+					// Maybe we can improve it later.
+					columnValues[offset] = &valueInfo{mutable: true}
+				} else {
+					columnValues[offset] = extractValueInfo(accesses[offset])
+				}
 			} else {
 				columnValues[offset] = extractValueInfo(accesses[offset])
 			}
-		} else {
-			columnValues[offset] = extractValueInfo(accesses[offset])
-		}
-		if columnValues[offset] != nil && columnValues[offset].value != nil && columnValues[offset].value.IsNull() {
-			accesses[offset] = nil
-			columnValues[offset] = nil
-			return false
-		}
-		return true
-	}
-	finalizeMergedPointAccess := func(offset int, forceMutable, recordOverwriteOnEmpty bool) (emptyRange bool, kept bool) {
-		points[offset] = allSinglePoints(sctx.TypeCtx, points[offset])
-		if points[offset] == nil {
-			accesses[offset] = nil
-			columnValues[offset] = nil
-			return false, false
-		}
-		if len(points[offset]) == 0 {
-			if recordOverwriteOnEmpty {
-				recordPlanCacheOverwrite()
+			if columnValues[offset] != nil && columnValues[offset].value != nil && columnValues[offset].value.IsNull() {
+				accesses[offset] = nil
+				columnValues[offset] = nil
+				return false
 			}
-			return true, false
+			return true
 		}
-		accesses[offset] = points2EqOrInCond(sctx.ExprCtx, points[offset], cols[offset])
-		if accesses[offset] == nil {
-			columnValues[offset] = nil
-			return false, false
+		intersectStableAccessConditions := func(offset int, cond expression.Expression) bool {
+			newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
+			collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
+			if mergedAccesses[offset] == nil {
+				mergedAccesses[offset] = accesses[offset]
+				// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
+				// later use and may build the Expression to points again.
+				// We need to keep the original value here, which means we neither cut prefix nor convert to sort key.
+				points[offset] = rb.build(accesses[offset], newTp, types.UnspecifiedLength, false)
+			}
+			points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
+			return len(points[offset]) == 0
 		}
-		return false, finalizeAccessColumnValue(offset, forceMutable)
-	}
+		finalizeGenericMergedPointAccess := func(offset int) (emptyRange bool, kept bool) {
+			points[offset] = allSinglePoints(sctx.TypeCtx, points[offset])
+			if points[offset] == nil {
+				accesses[offset] = nil
+				columnValues[offset] = nil
+				return false, false
+			}
+			if len(points[offset]) == 0 {
+				return true, false
+			}
+			accesses[offset] = points2EqOrInCond(sctx.ExprCtx, points[offset], cols[offset])
+			if accesses[offset] == nil {
+				columnValues[offset] = nil
+				return false, false
+			}
+			// Keep merged IS NULL access like the legacy path. It is a valid point access even
+			// though it should not populate columnValues for later prefix propagation.
+			if f, ok := accesses[offset].(*expression.ScalarFunction); ok && f.FuncName.L == ast.IsNull {
+				columnValues[offset] = nil
+				return false, true
+			}
+			return false, finalizeGenericAccessColumnValue(offset, false)
+		}
 
-	if genericForPlanCache {
 		// In generic-plan mode, the template must not depend on the current parameter values.
 		// The safe rule here is:
 		// 1) Stable predicates can keep the original merge/intersection behavior because their values never change.
@@ -882,7 +891,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				continue
 			}
 
-			if intersectAccessConditions(offset, cond, false) {
+			if intersectStableAccessConditions(offset, cond) {
 				return nil, nil, nil, nil, true
 			}
 			accessOriginIdx[offset] = -1
@@ -893,12 +902,12 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				if accesses[i] == nil {
 					continue
 				}
-				if !finalizeAccessColumnValue(i, false) {
+				if !finalizeGenericAccessColumnValue(i, false) {
 					accessOriginIdx[i] = -1
 				}
 				continue
 			}
-			emptyRange, kept := finalizeMergedPointAccess(i, false, false)
+			emptyRange, kept := finalizeGenericMergedPointAccess(i)
 			if emptyRange {
 				return nil, nil, nil, nil, true
 			}
@@ -946,24 +955,65 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				accesses[offset] = cond
 				continue
 			}
-			if intersectAccessConditions(offset, cond, true) {
+			// Multiple Eq/In conditions for one column in CNF, apply intersection on them.
+			// Lazily compute the points for the previously visited Eq/In.
+			newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
+			collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
+			if mergedAccesses[offset] == nil {
+				mergedAccesses[offset] = accesses[offset]
+				// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
+				// later use and may build the Expression to points again.
+				// We need to keep the original value here, which means we neither cut prefix nor convert to sort key.
+				points[offset] = rb.build(accesses[offset], newTp, types.UnspecifiedLength, false)
+			}
+			points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
+			if len(points[offset]) == 0 {
+				if maybeOverOptimized4PlanCache {
+					// `a>@x and a<@y` --> `invalid-range if @x>=@y`
+					sctx.SetSkipPlanCache("some parameters may be overwritten")
+				}
 				return nil, nil, nil, nil, true
 			}
 		}
 		for i, ma := range mergedAccesses {
 			if ma == nil {
-				if finalizeAccessColumnValue(i, false) {
-					newConditions = append(newConditions, accesses[i])
+				if accesses[i] != nil {
+					if allEqOrIn(accesses[i]) {
+						columnValues[i] = extractValueInfo(accesses[i])
+						if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
+							accesses[i] = nil
+						} else {
+							newConditions = append(newConditions, accesses[i])
+						}
+					} else {
+						accesses[i] = nil
+					}
 				}
 				continue
 			}
-			emptyRange, kept := finalizeMergedPointAccess(i, true, true)
-			if emptyRange {
+			points[i] = allSinglePoints(sctx.TypeCtx, points[i])
+			if points[i] == nil {
+				// There exists an interval whose length is larger than 0.
+				accesses[i] = nil
+			} else if len(points[i]) == 0 {
+				if maybeOverOptimized4PlanCache {
+					// `a>@x and a<@y` --> `invalid-range if @x>=@y`
+					sctx.SetSkipPlanCache("some parameters may be overwritten")
+				}
 				return nil, nil, nil, nil, true
-			}
-			if kept {
+			} else {
+				// All intervals are single points.
+				accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
 				newConditions = append(newConditions, accesses[i])
-				recordPlanCacheOverwrite()
+				if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
+					// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
+					// Maybe we can improve it later.
+					columnValues[i] = &valueInfo{mutable: true}
+				}
+				if maybeOverOptimized4PlanCache {
+					// `a=@x and a=@y` --> `a=@x if @x==@y`
+					sctx.SetSkipPlanCache("some parameters may be overwritten")
+				}
 			}
 		}
 		for i, offset := range offsets {
