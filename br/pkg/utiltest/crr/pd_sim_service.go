@@ -99,7 +99,6 @@ func (p *PDSim) WaitGlobalCheckpointAdvance(ctx context.Context, taskName string
 	}
 	waiter := make(chan struct{})
 	p.checkpointWaiters = append(p.checkpointWaiters, waiter)
-	p.mu.Unlock()
 
 	unlock.Do(p.mu.Unlock)
 	select {

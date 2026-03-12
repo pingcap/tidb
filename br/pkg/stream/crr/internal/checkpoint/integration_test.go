@@ -289,9 +289,16 @@ func TestCheckpointCalculatorObserverSeesSuccessLifecycle(t *testing.T) {
 	require.Equal(t, checkpoint.EventRoundPlanned, events[1].Type)
 	require.Equal(t, 1, events[1].AliveStoreCount)
 	require.Greater(t, events[1].PendingFileCount, 0)
+	require.NotNil(t, events[1].Statistic)
+	require.Equal(t, 1, events[1].Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 1, events[1].Statistic.EstimatedSyncLogFileCount)
+	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, events[1].Statistic.PlannedFileSuffixCounts)
 	require.Equal(t, checkpoint.EventCheckpointAdvanced, events[2].Type)
 	require.Equal(t, upstreamCheckpoint, events[2].SafeCheckpoint)
 	require.Equal(t, calculator.SyncedTS(), events[2].SyncedTS)
+	require.NotNil(t, events[2].Statistic)
+	require.Equal(t, 2, events[2].Statistic.DownstreamCheckFileCount)
+	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, events[2].Statistic.DownstreamCheckFileSuffixCounts)
 }
 
 func TestCheckpointCalculatorConcurrentFlushInterleavings(t *testing.T) {

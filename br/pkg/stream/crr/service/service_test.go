@@ -67,6 +67,9 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 		snapshot := svc.Status()
 		return snapshot.SafeCheckpoint == upstreamCheckpoint &&
 			snapshot.SyncedTS > 0 &&
+			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
+			snapshot.Statistic.EstimatedSyncLogFileCount == 1 &&
+			snapshot.Statistic.DownstreamCheckFileCount == 2 &&
 			snapshot.ConsecutiveFailures == 0 &&
 			!snapshot.LastSuccessTime.IsZero()
 	}, 5*time.Second, 20*time.Millisecond)
@@ -254,6 +257,13 @@ func TestServiceStatusEndpoints(t *testing.T) {
 		UpstreamCheckpoint: 42,
 		SafeCheckpoint:     42,
 		SyncedTS:           42,
+		Statistic: &checkpoint.FileStatistic{
+			UpstreamReadMetaFileCount:       3,
+			EstimatedSyncLogFileCount:       7,
+			DownstreamCheckFileCount:        11,
+			PlannedFileSuffixCounts:         map[string]int{".log": 7, ".meta": 3},
+			DownstreamCheckFileSuffixCounts: map[string]int{".log": 8, ".meta": 3},
+		},
 	})
 
 	rec = httptest.NewRecorder()
@@ -268,6 +278,48 @@ func TestServiceStatusEndpoints(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snapshot))
 	require.Equal(t, uint64(42), snapshot.SafeCheckpoint)
 	require.Equal(t, uint64(42), snapshot.SyncedTS)
+	require.Equal(t, 3, snapshot.Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 7, snapshot.Statistic.EstimatedSyncLogFileCount)
+	require.Equal(t, 11, snapshot.Statistic.DownstreamCheckFileCount)
+	require.Equal(t, map[string]int{".log": 7, ".meta": 3}, snapshot.Statistic.PlannedFileSuffixCounts)
+	require.Equal(t, map[string]int{".log": 8, ".meta": 3}, snapshot.Statistic.DownstreamCheckFileSuffixCounts)
+}
+
+func TestStatusStoreTracksFileStatistic(t *testing.T) {
+	status := newStatusStore("task")
+	status.start()
+	status.beginRound()
+	status.applyEvent(checkpoint.CheckpointEvent{
+		Type:             checkpoint.EventRoundPlanned,
+		Time:             time.Now(),
+		PendingFileCount: 2,
+		Statistic: &checkpoint.FileStatistic{
+			UpstreamReadMetaFileCount: 1,
+			EstimatedSyncLogFileCount: 1,
+			PlannedFileSuffixCounts:   map[string]int{".log": 1, ".meta": 1},
+		},
+	})
+	status.applyEvent(checkpoint.CheckpointEvent{
+		Type: checkpoint.EventCheckpointAdvanced,
+		Time: time.Now(),
+		Statistic: &checkpoint.FileStatistic{
+			UpstreamReadMetaFileCount:       1,
+			EstimatedSyncLogFileCount:       1,
+			DownstreamCheckFileCount:        2,
+			PlannedFileSuffixCounts:         map[string]int{".log": 1, ".meta": 1},
+			DownstreamCheckFileSuffixCounts: map[string]int{".log": 1, ".meta": 1},
+		},
+	})
+
+	snapshot := status.snapshotCopy()
+	require.Equal(t, 1, snapshot.Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 1, snapshot.Statistic.EstimatedSyncLogFileCount)
+	require.Equal(t, 2, snapshot.Statistic.DownstreamCheckFileCount)
+	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, snapshot.Statistic.PlannedFileSuffixCounts)
+	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, snapshot.Statistic.DownstreamCheckFileSuffixCounts)
+
+	snapshot.Statistic.PlannedFileSuffixCounts[".txt"] = 99
+	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, status.snapshotCopy().Statistic.PlannedFileSuffixCounts)
 }
 
 func TestServiceRegisterPanicsOnNilMux(t *testing.T) {

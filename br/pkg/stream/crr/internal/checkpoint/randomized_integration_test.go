@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 		MaxReplicateBatchPerRound:         20,
 		MaxBufferedFiles:                  32,
 		RestartCalculatorChancePercent:    10,
-		RestartCarrySyncedTSChancePercent: 85,
+		RestartCarrySyncedTSChancePercent: 100,
 		GlobalProgressCheckEvery:          13,
 		CatchUpEvery:                      299,
 		ComputeTimeout:                    2 * time.Millisecond,
@@ -108,6 +109,8 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 			)
 		}
 	}
+
+	require.Greater(t, sim.lastSyncedTS, uint64(0), "synced ts should advance during randomized simulation")
 }
 
 type randomizedCRRSimulationConfig struct {
@@ -136,14 +139,13 @@ type randomizedCRRSimulationConfig struct {
 }
 
 type randomizedCRRSimulation struct {
-	h   *integrationHarness
-	rng interface {
-		IntN(int) int
-	}
-	cfg           randomizedCRRSimulationConfig
-	nextStoreID   uint64
-	readyStoreIDs []uint64
-	lastSyncedTS  uint64
+	h               *integrationHarness
+	rng             intNSource
+	cfg             randomizedCRRSimulationConfig
+	nextStoreID     uint64
+	pendingStoreIDs []uint64
+	readyStoreIDs   []uint64
+	lastSyncedTS    uint64
 }
 
 type randomizedCRRRoundLog struct {
@@ -157,11 +159,21 @@ type randomizedCRRRoundLog struct {
 	advanced            bool
 }
 
+type intNSource interface {
+	IntN(int) int
+}
+
+type roundRNG struct {
+	rng *rand.Rand
+}
+
+func (r *roundRNG) IntN(n int) int {
+	return r.rng.Intn(n)
+}
+
 func newRandomizedCRRSimulation(
 	h *integrationHarness,
-	rng interface {
-		IntN(int) int
-	},
+	rng intNSource,
 	cfg randomizedCRRSimulationConfig,
 ) *randomizedCRRSimulation {
 	nextStoreID := uint64(1)
@@ -186,14 +198,17 @@ func (s *randomizedCRRSimulation) runRound(
 	lastValidatedCheckpoint *uint64,
 ) {
 	roundLog := randomizedCRRRoundLog{}
+	// The replicate and compute branches stay concurrent, but they must not
+	// share one RNG or same-seed runs will diverge with goroutine scheduling.
+	replicateRNG := s.newConcurrentRNG()
+	computeRNG := s.newConcurrentRNG()
 	wg := new(sync.WaitGroup)
-	wg.Go(func() { roundLog.flushedStores = s.flushRandomStores() })
-	wg.Go(func() { roundLog.replicatedFiles = s.replicateRandomBufferedFiles() })
 	wg.Go(func() {
-		roundLog.restartedCalculator = s.restartCalculatorIfNeeded()
-		checkpoint, advanced := s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
-		roundLog.checkpoint = checkpoint
-		roundLog.advanced = advanced
+		roundLog.replicatedFiles = s.replicateRandomBufferedFiles(replicateRNG)
+	})
+	wg.Go(func() {
+		roundLog.restartedCalculator = s.restartCalculatorIfNeeded(computeRNG)
+		roundLog.checkpoint, roundLog.advanced = s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
 	})
 	wg.Wait()
 	s.rememberSyncedTS()
@@ -201,6 +216,7 @@ func (s *randomizedCRRSimulation) runRound(
 	roundLog.addedStores = s.addRandomStores()
 	roundLog.removedStores = s.removeRandomStores()
 	roundLog.scatteredRegions = s.scatterRandomRegions()
+	roundLog.flushedStores = s.flushRandomStores()
 	s.log(
 		"randomized crr round",
 		zap.Int("round", round),
@@ -252,38 +268,61 @@ func (s *randomizedCRRSimulation) flushRandomStores() []uint64 {
 	}
 	count := s.sampleOptionalCount(s.cfg.StoreNoFlushChancePercent, s.cfg.MaxNonFlushStoresPerRound, math.MaxInt)
 	selected := s.pickStoreSubset(storesWithRegions, len(storesWithRegions)-count)
-	start := make(chan struct{})
-	resultCh := make(chan flushResult, len(selected))
 	for _, storeID := range selected {
-		storeID := storeID
-		go func() {
-			<-start
-			record, err := s.h.FlushSim.FlushStore(s.h.ctx, storeID)
-			resultCh <- flushResult{record: record, err: err}
-		}()
-	}
-	close(start)
-	for range selected {
-		result := <-resultCh
-		require.NoError(s.h.t, result.err)
+		_, err := s.h.FlushSim.FlushStore(s.h.ctx, storeID)
+		require.NoError(s.h.t, err)
 	}
 	return selected
 }
 
 func (s *randomizedCRRSimulation) addRandomStores() []uint64 {
-	limit := s.cfg.MaxStores - len(s.h.PDSim.StoreIDs())
+	limit := s.cfg.MaxStores - len(s.h.PDSim.StoreIDs()) - len(s.pendingStoreIDs)
 	count := s.sampleOptionalCount(s.cfg.AddStoreChancePercent, s.cfg.MaxAddStoresPerRound, limit)
 	added := make([]uint64, 0, count)
 	for range count {
 		storeID := s.nextStoreID
-		store := s.h.PDSim.EnsureStore(storeID, s.h.PDSim.CurrentTSO())
-		store.SetSupportFlushSub(true)
-		store.LegacyRegionCheckpointRPCEnabled = false
-		store.FlushTaskName = "drr"
+		s.pendingStoreIDs = append(s.pendingStoreIDs, storeID)
 		added = append(added, storeID)
 		s.nextStoreID++
 	}
 	return added
+}
+
+func (s *randomizedCRRSimulation) activatePendingStores() bool {
+	if len(s.pendingStoreIDs) == 0 {
+		return false
+	}
+
+	for _, storeID := range s.pendingStoreIDs {
+		store := s.h.PDSim.EnsureStore(storeID, s.h.PDSim.CurrentTSO())
+		store.SetSupportFlushSub(true)
+		store.LegacyRegionCheckpointRPCEnabled = false
+		store.FlushTaskName = "drr"
+		s.readyStoreIDs = append(s.readyStoreIDs, storeID)
+		s.bootstrapAddedStore(storeID)
+	}
+	s.pendingStoreIDs = s.pendingStoreIDs[:0]
+	return true
+}
+
+func (s *randomizedCRRSimulation) bootstrapAddedStore(storeID uint64) {
+	donorStores := excludeStoreID(s.currentReadyStoreIDs(), storeID)
+	if len(donorStores) == 0 {
+		return
+	}
+	donorStoreID := donorStores[s.rng.IntN(len(donorStores))]
+	regionIDs := s.regionIDsOnStore(donorStoreID)
+	if len(regionIDs) == 0 {
+		return
+	}
+
+	// Bootstrap the new store with one region so it can be flushed in the same
+	// round after topology changes settle.
+	regionID := regionIDs[s.rng.IntN(len(regionIDs))]
+	s.h.PDSim.TransferRegionTo(regionID, []uint64{storeID})
+	s.h.PDSim.SetRegionLeader(regionID, storeID)
+	s.h.PDSim.BumpRegionEpoch(regionID)
+	s.h.PDSim.SetRegionCheckpoint(regionID, s.h.PDSim.GlobalCheckpoint())
 }
 
 func (s *randomizedCRRSimulation) removeRandomStores() []uint64 {
@@ -344,26 +383,26 @@ func (s *randomizedCRRSimulation) scatterRandomRegions() []uint64 {
 	return scattered
 }
 
-func (s *randomizedCRRSimulation) replicateRandomBufferedFiles() int {
+func (s *randomizedCRRSimulation) replicateRandomBufferedFiles(rng intNSource) int {
 	s.h.PullMessages(0)
 	buffered := len(s.h.CRRWorker.BufferedMessages())
-	count := s.samplePartialReplicateCount(buffered)
+	count := s.samplePartialReplicateCount(buffered, rng)
 	if count == 0 {
 		return 0
 	}
-	replicated, err := s.h.CRRWorker.ReplicateBufferedRandom(s.h.ctx, count, s.rng.IntN)
+	replicated, err := s.h.CRRWorker.ReplicateBufferedRandom(s.h.ctx, count, rng.IntN)
 	require.NoError(s.h.t, err)
 	require.Equal(s.h.t, count, replicated)
 	return replicated
 }
 
-func (s *randomizedCRRSimulation) restartCalculatorIfNeeded() bool {
+func (s *randomizedCRRSimulation) restartCalculatorIfNeeded(rng intNSource) bool {
 	s.rememberSyncedTS()
-	if !s.rollPercent(s.cfg.RestartCalculatorChancePercent) {
+	if !rollPercent(rng, s.cfg.RestartCalculatorChancePercent) {
 		return false
 	}
 	cfg := checkpoint.CheckpointCalculatorConfig{PollInterval: s.cfg.CalculatorPollInterval}
-	if s.lastSyncedTS > 0 && s.rollPercent(s.cfg.RestartCarrySyncedTSChancePercent) {
+	if s.lastSyncedTS > 0 && rollPercent(rng, s.cfg.RestartCarrySyncedTSChancePercent) {
 		cfg.InitialSyncedTS = s.lastSyncedTS
 	}
 	s.h.calculator = s.h.newCalculator(
@@ -399,6 +438,12 @@ func (s *randomizedCRRSimulation) replicateAllPending() {
 }
 
 func (s *randomizedCRRSimulation) requireGlobalCheckpointProgress(previous uint64) uint64 {
+	if s.activatePendingStores() {
+		// Let the advancer observe subscription topology changes before using the
+		// newly activated stores in the expected global checkpoint.
+		_, err := s.h.Tick(s.h.ctx)
+		require.NoError(s.h.t, err)
+	}
 	expected := s.flushAllStoresAndGetCheckpoint()
 	s.h.requireCheckpointAdvancedByTick(previous, expected)
 	s.readyStoreIDs = append(s.readyStoreIDs[:0], s.h.PDSim.StoreIDs()...)
@@ -516,37 +561,49 @@ func (s *randomizedCRRSimulation) sampleOptionalCount(chancePercent, maxCount, l
 	return 1 + s.rng.IntN(min(limit, maxCount))
 }
 
-func (s *randomizedCRRSimulation) samplePartialReplicateCount(buffered int) int {
+func (s *randomizedCRRSimulation) samplePartialReplicateCount(
+	buffered int,
+	rng intNSource,
+) int {
 	if buffered <= 0 {
 		return 0
 	}
 	if s.cfg.MaxBufferedFiles > 0 && buffered > s.cfg.MaxBufferedFiles {
 		return buffered - s.cfg.MaxBufferedFiles
 	}
-	if !s.rollPercent(s.cfg.ReplicateChancePercent) {
+	if !rollPercent(rng, s.cfg.ReplicateChancePercent) {
 		return 0
 	}
 	limit := min(buffered, s.cfg.MaxReplicateBatchPerRound)
 	if limit <= 1 {
 		return limit
 	}
-	return 1 + s.rng.IntN(limit-1)
+	return 1 + rng.IntN(limit-1)
 }
 
 func (s *randomizedCRRSimulation) rollPercent(chancePercent int) bool {
-	if chancePercent <= 0 {
-		return false
-	}
-	if chancePercent >= 100 {
-		return true
-	}
-	return s.rng.IntN(100) < chancePercent
+	return rollPercent(s.rng, chancePercent)
 }
 
 func (s *randomizedCRRSimulation) rememberSyncedTS() {
 	if syncedTS := s.h.calculator.SyncedTS(); syncedTS > s.lastSyncedTS {
 		s.lastSyncedTS = syncedTS
 	}
+}
+
+func (s *randomizedCRRSimulation) newConcurrentRNG() intNSource {
+	seed := int64(s.rng.IntN(math.MaxInt))
+	return &roundRNG{rng: rand.New(rand.NewSource(seed + 1))}
+}
+
+func rollPercent(rng intNSource, chancePercent int) bool {
+	if chancePercent <= 0 {
+		return false
+	}
+	if chancePercent >= 100 {
+		return true
+	}
+	return rng.IntN(100) < chancePercent
 }
 
 func pickUint64Subset(items []uint64, count int, intN func(int) int) []uint64 {

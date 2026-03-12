@@ -15,6 +15,7 @@
 package service
 
 import (
+	"maps"
 	"sync"
 	"time"
 
@@ -29,6 +30,15 @@ const (
 
 	phaseIdle = "idle"
 )
+
+// StatusStatistic summarizes the current round's file-related work.
+type StatusStatistic struct {
+	UpstreamReadMetaFileCount       int            `json:"upstream_read_meta_file_count"`
+	EstimatedSyncLogFileCount       int            `json:"estimated_sync_log_file_count"`
+	DownstreamCheckFileCount        int            `json:"downstream_check_file_count"`
+	PlannedFileSuffixCounts         map[string]int `json:"planned_file_suffix_counts,omitempty"`
+	DownstreamCheckFileSuffixCounts map[string]int `json:"downstream_check_file_suffix_counts,omitempty"`
+}
 
 // StatusSnapshot is the externally visible CRR worker status.
 type StatusSnapshot struct {
@@ -46,8 +56,9 @@ type StatusSnapshot struct {
 	SafeCheckpoint         uint64 `json:"safe_checkpoint"`
 	SyncedTS               uint64 `json:"synced_ts"`
 
-	AliveStoreCount  int `json:"alive_store_count"`
-	PendingFileCount int `json:"pending_file_count"`
+	AliveStoreCount  int             `json:"alive_store_count"`
+	PendingFileCount int             `json:"pending_file_count"`
+	Statistic        StatusStatistic `json:"statistic"`
 
 	LastSuccessTime     time.Time `json:"last_success_time"`
 	LastError           string    `json:"last_error,omitempty"`
@@ -96,6 +107,7 @@ func (s *statusStore) beginRound() uint64 {
 	s.snapshot.PendingFileCount = 0
 	s.snapshot.AliveStoreCount = 0
 	s.snapshot.Phase = phaseIdle
+	s.snapshot.Statistic = StatusStatistic{}
 	return s.snapshot.CurrentRound
 }
 
@@ -119,6 +131,9 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 		s.snapshot.AliveStoreCount = event.AliveStoreCount
 	}
 	s.snapshot.PendingFileCount = event.PendingFileCount
+	if event.Statistic != nil {
+		s.snapshot.Statistic = newStatusStatistic(*event.Statistic)
+	}
 
 	switch event.Type {
 	case checkpoint.EventCheckpointAdvanced:
@@ -144,7 +159,11 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 func (s *statusStore) snapshotCopy() StatusSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.snapshot
+
+	snapshot := s.snapshot
+	snapshot.Statistic.PlannedFileSuffixCounts = maps.Clone(snapshot.Statistic.PlannedFileSuffixCounts)
+	snapshot.Statistic.DownstreamCheckFileSuffixCounts = maps.Clone(snapshot.Statistic.DownstreamCheckFileSuffixCounts)
+	return snapshot
 }
 
 type statusObserver struct {
@@ -161,4 +180,14 @@ func (o *statusObserver) BeginCalculationRound() uint64 {
 
 func (o *statusObserver) OnCheckpointEvent(event checkpoint.CheckpointEvent) {
 	o.status.applyEvent(event)
+}
+
+func newStatusStatistic(stat checkpoint.FileStatistic) StatusStatistic {
+	return StatusStatistic{
+		UpstreamReadMetaFileCount:       stat.UpstreamReadMetaFileCount,
+		EstimatedSyncLogFileCount:       stat.EstimatedSyncLogFileCount,
+		DownstreamCheckFileCount:        stat.DownstreamCheckFileCount,
+		PlannedFileSuffixCounts:         maps.Clone(stat.PlannedFileSuffixCounts),
+		DownstreamCheckFileSuffixCounts: maps.Clone(stat.DownstreamCheckFileSuffixCounts),
+	}
 }

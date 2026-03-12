@@ -56,7 +56,18 @@ type CheckpointEvent struct {
 	AliveStoreCount  int
 	PendingFileCount int
 
+	Statistic *FileStatistic
+
 	Err error
+}
+
+// FileStatistic summarizes the files observed in the current calculation round.
+type FileStatistic struct {
+	UpstreamReadMetaFileCount       int
+	EstimatedSyncLogFileCount       int
+	DownstreamCheckFileCount        int
+	PlannedFileSuffixCounts         map[string]int
+	DownstreamCheckFileSuffixCounts map[string]int
 }
 
 // Observer receives progress events emitted by the calculator.
@@ -151,13 +162,10 @@ func NewCalculator(
 // required files are synced to downstream, and returns the safe checkpoint.
 func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint64, err error) {
 	failpoint.InjectCall("begin-calculate-checkpoint")
+	var statistic *FileStatistic
 	defer func() {
 		if err != nil {
-			c.observe(CheckpointEvent{
-				Type:     EventCalculationFailed,
-				TaskName: c.cfg.TaskName,
-				Err:      err,
-			})
+			c.observeCalculationFailed(err, statistic)
 		}
 	}()
 
@@ -178,27 +186,16 @@ func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint
 	if err != nil {
 		return 0, err
 	}
-	c.observe(CheckpointEvent{
-		Type:               EventRoundPlanned,
-		TaskName:           c.cfg.TaskName,
-		UpstreamCheckpoint: upstreamCheckpoint,
-		AliveStoreCount:    len(aliveStores),
-		PendingFileCount:   len(round.pendingPaths),
-	})
-	if err := c.waitDownstreamSync(ctx, round.pendingPaths); err != nil {
+	statistic = c.observeRoundPlanned(upstreamCheckpoint, aliveStores, round)
+	if err := c.waitDownstreamSync(ctx, round.pendingPaths, &round.statistic); err != nil {
+		statistic = round.statistic.snapshot()
 		return 0, err
 	}
+	statistic = round.statistic.snapshot()
 
 	c.advanceSyncedState(aliveStores, round.maxFlushTSByStore)
 	c.state.lastCheckpoint = upstreamCheckpoint
-	c.observe(CheckpointEvent{
-		Type:               EventCheckpointAdvanced,
-		TaskName:           c.cfg.TaskName,
-		UpstreamCheckpoint: upstreamCheckpoint,
-		SafeCheckpoint:     upstreamCheckpoint,
-		SyncedTS:           c.state.syncedTS,
-		AliveStoreCount:    len(aliveStores),
-	})
+	c.observeCheckpointAdvanced(upstreamCheckpoint, aliveStores, statistic)
 	return upstreamCheckpoint, nil
 }
 
@@ -233,4 +230,46 @@ func (c *Calculator) observe(event CheckpointEvent) {
 		event.Time = time.Now()
 	}
 	c.observer.OnCheckpointEvent(event)
+}
+
+func (c *Calculator) observeCalculationFailed(err error, statistic *FileStatistic) {
+	c.observe(CheckpointEvent{
+		Type:      EventCalculationFailed,
+		TaskName:  c.cfg.TaskName,
+		Statistic: statistic,
+		Err:       err,
+	})
+}
+
+func (c *Calculator) observeRoundPlanned(
+	upstreamCheckpoint uint64,
+	aliveStores map[uint64]struct{},
+	round roundPlan,
+) *FileStatistic {
+	statistic := round.statistic.snapshot()
+	c.observe(CheckpointEvent{
+		Type:               EventRoundPlanned,
+		TaskName:           c.cfg.TaskName,
+		UpstreamCheckpoint: upstreamCheckpoint,
+		AliveStoreCount:    len(aliveStores),
+		PendingFileCount:   len(round.pendingPaths),
+		Statistic:          statistic,
+	})
+	return statistic
+}
+
+func (c *Calculator) observeCheckpointAdvanced(
+	upstreamCheckpoint uint64,
+	aliveStores map[uint64]struct{},
+	statistic *FileStatistic,
+) {
+	c.observe(CheckpointEvent{
+		Type:               EventCheckpointAdvanced,
+		TaskName:           c.cfg.TaskName,
+		UpstreamCheckpoint: upstreamCheckpoint,
+		SafeCheckpoint:     upstreamCheckpoint,
+		SyncedTS:           c.state.syncedTS,
+		AliveStoreCount:    len(aliveStores),
+		Statistic:          statistic,
+	})
 }

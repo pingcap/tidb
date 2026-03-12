@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"path"
 	"sync"
 	"time"
 
@@ -31,6 +33,39 @@ import (
 type roundPlan struct {
 	pendingPaths      map[string]struct{}
 	maxFlushTSByStore map[uint64]uint64
+	statistic         FileStatistic
+}
+
+func newRoundPlan() roundPlan {
+	return roundPlan{
+		pendingPaths:      make(map[string]struct{}),
+		maxFlushTSByStore: make(map[uint64]uint64),
+		statistic: FileStatistic{
+			PlannedFileSuffixCounts: make(map[string]int),
+		},
+	}
+}
+
+func (p *roundPlan) recordLoadedMeta(loadedMeta loadedMetaFile, aliveStores map[uint64]struct{}) {
+	p.statistic.UpstreamReadMetaFileCount++
+	p.recordPendingPath(loadedMeta.path)
+	for _, logPath := range loadedMeta.dataFilePaths {
+		if p.recordPendingPath(logPath) {
+			p.statistic.EstimatedSyncLogFileCount++
+		}
+	}
+	if _, ok := aliveStores[loadedMeta.storeID]; ok && loadedMeta.flushTS > p.maxFlushTSByStore[loadedMeta.storeID] {
+		p.maxFlushTSByStore[loadedMeta.storeID] = loadedMeta.flushTS
+	}
+}
+
+func (p *roundPlan) recordPendingPath(filePath string) bool {
+	if _, ok := p.pendingPaths[filePath]; ok {
+		return false
+	}
+	p.pendingPaths[filePath] = struct{}{}
+	p.statistic.PlannedFileSuffixCounts[pathSuffix(filePath)]++
+	return true
 }
 
 func (c *Calculator) pollUpstreamCheckpoint(ctx context.Context) (uint64, bool, error) {
@@ -75,10 +110,7 @@ func (c *Calculator) planRound(
 	ctx context.Context,
 	aliveStores map[uint64]struct{},
 ) (roundPlan, error) {
-	plan := roundPlan{
-		pendingPaths:      make(map[string]struct{}),
-		maxFlushTSByStore: make(map[uint64]uint64),
-	}
+	plan := newRoundPlan()
 
 	planCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -104,13 +136,7 @@ func (c *Calculator) planRound(
 			}
 
 			planMu.Lock()
-			plan.pendingPaths[loadedMeta.path] = struct{}{}
-			for _, logPath := range loadedMeta.dataFilePaths {
-				plan.pendingPaths[logPath] = struct{}{}
-			}
-			if _, ok := aliveStores[loadedMeta.storeID]; ok && loadedMeta.flushTS > plan.maxFlushTSByStore[loadedMeta.storeID] {
-				plan.maxFlushTSByStore[loadedMeta.storeID] = loadedMeta.flushTS
-			}
+			plan.recordLoadedMeta(loadedMeta, aliveStores)
 			planMu.Unlock()
 
 			failpoint.InjectCall("flush-meta", loadedMeta.path, loadedMeta.storeID, loadedMeta.flushTS)
@@ -129,10 +155,15 @@ func (c *Calculator) planRound(
 	return plan, nil
 }
 
-func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[string]struct{}) error {
+func (c *Calculator) waitDownstreamSync(
+	ctx context.Context,
+	pendingPaths map[string]struct{},
+	statistic *FileStatistic,
+) error {
 	var loopIteration uint64
 	for len(pendingPaths) > 0 {
 		for filePath := range pendingPaths {
+			statistic.recordDownstreamCheck(filePath)
 			exists, err := c.deps.Downstream.FileExists(ctx, filePath)
 			if err != nil {
 				return fmt.Errorf("check downstream file %s: %w", filePath, err)
@@ -145,12 +176,7 @@ func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[st
 			return nil
 		}
 		loopIteration++
-		c.observe(CheckpointEvent{
-			Type:             EventWaitingDownstream,
-			TaskName:         c.cfg.TaskName,
-			LoopIteration:    loopIteration,
-			PendingFileCount: len(pendingPaths),
-		})
+		c.observeWaitingDownstream(loopIteration, len(pendingPaths), statistic)
 		if err := sleepWithContext(ctx, c.cfg.PollInterval); err != nil {
 			return err
 		}
@@ -234,4 +260,45 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func (s FileStatistic) snapshot() *FileStatistic {
+	cloned := FileStatistic{
+		UpstreamReadMetaFileCount:       s.UpstreamReadMetaFileCount,
+		EstimatedSyncLogFileCount:       s.EstimatedSyncLogFileCount,
+		DownstreamCheckFileCount:        s.DownstreamCheckFileCount,
+		PlannedFileSuffixCounts:         maps.Clone(s.PlannedFileSuffixCounts),
+		DownstreamCheckFileSuffixCounts: maps.Clone(s.DownstreamCheckFileSuffixCounts),
+	}
+	return &cloned
+}
+
+func (s *FileStatistic) recordDownstreamCheck(filePath string) {
+	s.DownstreamCheckFileCount++
+	if s.DownstreamCheckFileSuffixCounts == nil {
+		s.DownstreamCheckFileSuffixCounts = make(map[string]int)
+	}
+	s.DownstreamCheckFileSuffixCounts[pathSuffix(filePath)]++
+}
+
+func (c *Calculator) observeWaitingDownstream(
+	loopIteration uint64,
+	pendingFileCount int,
+	statistic *FileStatistic,
+) {
+	c.observe(CheckpointEvent{
+		Type:             EventWaitingDownstream,
+		TaskName:         c.cfg.TaskName,
+		LoopIteration:    loopIteration,
+		PendingFileCount: pendingFileCount,
+		Statistic:        statistic.snapshot(),
+	})
+}
+
+func pathSuffix(filePath string) string {
+	suffix := path.Ext(filePath)
+	if suffix == "" {
+		return "<none>"
+	}
+	return suffix
 }
