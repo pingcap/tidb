@@ -1465,7 +1465,7 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 		return nil
 	}
 
-	keyspaceName, keyspaceID, err := GetKeyspaceMeta(tctx, db)
+	keyspaceName, keyspaceID, err := queryKeyspaceNameAndID(tctx, db)
 	if err != nil {
 		// If the user explicitly passes premium GC parameters, do not ignore this error.
 		if conf.PDAddr != "" || conf.KeyspaceName != "" {
