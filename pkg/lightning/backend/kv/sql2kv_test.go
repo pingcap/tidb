@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"testing"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -160,6 +161,34 @@ func TestEncode(t *testing.T) {
 			RowID: common.EncodeIntRowID(1),
 		},
 	}))
+}
+
+func TestEncodeCastErrorRedacted(t *testing.T) {
+	originalMode := perrors.RedactLogEnabled.Load()
+	t.Cleanup(func() { perrors.RedactLogEnabled.Store(originalMode) })
+	perrors.RedactLogEnabled.Store(perrors.RedactLogEnable)
+
+	c1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	cols := []*model.ColumnInfo{c1}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+		Logger: log.Logger{Logger: zap.NewNop()},
+	}, nil)
+	require.NoError(t, err)
+
+	pairs, err := encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, 1, []int{0, 1}, 1234)
+	require.Error(t, err)
+	require.Nil(t, pairs)
+	require.Contains(t, err.Error(), "received value: ?")
+	require.NotContains(t, err.Error(), "10000000")
 }
 
 func TestDecode(t *testing.T) {

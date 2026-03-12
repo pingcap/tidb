@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -153,4 +154,39 @@ func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "[Lightning:Restore:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
 	require.Contains(t, err.Error(), "Data truncated")
+}
+
+func TestKVEncoderPreservesNonCastError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 int not null)")
+
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	encodeCfg := &encode.EncodingConfig{
+		Table:  table,
+		Logger: log.L(),
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   table,
+	}
+	encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+
+	_, err = encoder.Encode([]types.Datum{}, 1)
+	require.Error(t, err)
+	require.False(t, common.ErrCastValue.Equal(err))
+	require.Contains(t, err.Error(), "failed to convert value for column `c1` (#1)")
+	require.Contains(t, err.Error(), "doesn't have a default value")
 }

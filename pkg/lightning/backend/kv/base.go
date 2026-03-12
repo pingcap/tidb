@@ -264,7 +264,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		if needCast {
 			value, err = table.CastColumnValue(exprCtx, *inputDatum, col.ToInfo(), false, false)
 			if err != nil {
-				return value, err
+				return value, e.WrapCastValueError(col.ToInfo(), *inputDatum, err)
 			}
 		} else {
 			value = *inputDatum
@@ -278,8 +278,11 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	switch {
 	case IsAutoIncCol(col.ToInfo()):
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-		value, err = table.CastColumnValue(exprCtx,
-			types.NewIntDatum(rowID), col.ToInfo(), false, false)
+		autoIDDatum := types.NewIntDatum(rowID)
+		value, err = table.CastColumnValue(exprCtx, autoIDDatum, col.ToInfo(), false, false)
+		if err != nil {
+			err = e.WrapCastValueError(col.ToInfo(), autoIDDatum, err)
+		}
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -289,6 +292,9 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 			val = types.NewIntDatum(realRowID)
 		}
 		value, err = table.CastColumnValue(exprCtx, val, col.ToInfo(), false, false)
+		if err != nil {
+			err = e.WrapCastValueError(col.ToInfo(), val, err)
+		}
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
@@ -325,6 +331,25 @@ func datumToValueStringForCastError(d types.Datum) string {
 	return s
 }
 
+func redactCastErrorReason(reason string) string {
+	redactMode := errors.RedactLogEnabled.Load()
+	if redactMode == "" {
+		redactMode = errors.RedactLogDisable
+	}
+	return redact.String(redactMode, reason)
+}
+
+// WrapCastValueError normalizes a cast failure with the column/type/value context.
+func (e *BaseKVEncoder) WrapCastValueError(colInfo *model.ColumnInfo, original types.Datum, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	badValue := datumToValueStringForCastError(original)
+	reason := redactCastErrorReason(err.Error())
+	return common.ErrCastValue.GenWithStackByArgs(colInfo.Name.O, &colInfo.FieldType, badValue, reason)
+}
+
 // LogKVConvertFailed logs the error when converting a row to KV pair failed.
 func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
 	var original types.Datum
@@ -356,9 +381,16 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		return nil
 	}
 
-	badValue := datumToValueStringForCastError(original)
-	reason := err.Error()
-	return common.ErrCastValue.GenWithStackByArgs(colInfo.Name.O, &colInfo.FieldType, badValue, reason)
+	if common.ErrCastValue.Equal(err) {
+		return err
+	}
+
+	return errors.Annotatef(
+		err,
+		"failed to convert value for column `%s` (#%d)",
+		colInfo.Name.O,
+		j+1,
+	)
 }
 
 // LogEvalGenExprFailed logs the error when evaluating the generated column expression failed.
