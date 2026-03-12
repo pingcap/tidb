@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -104,37 +103,25 @@ func (c *Calculator) planRound(
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
 
-			metaBytes, err := c.deps.Upstream.ReadFile(egCtx, metaFile.path)
-			if err != nil {
-				return fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
-			}
-
-			meta := &backuppb.Metadata{}
-			if err := meta.Unmarshal(metaBytes); err != nil {
-				return fmt.Errorf("unmarshal backupmeta %s: %w", metaFile.path, err)
-			}
-
-			storeID, err := resolveStoreID(metaFile.storeID, meta.GetStoreId(), metaFile.path)
+			loadedMeta, err := loadMetaFile(egCtx, c.deps.Upstream, metaFile)
 			if err != nil {
 				return err
 			}
-			if _, ok := aliveStores[storeID]; !ok {
+			if _, ok := aliveStores[loadedMeta.storeID]; !ok {
 				return nil
 			}
 
-			logPaths := extractDataFilePaths(meta)
-
 			planMu.Lock()
-			plan.pendingPaths[metaFile.path] = struct{}{}
-			for _, logPath := range logPaths {
+			plan.pendingPaths[loadedMeta.path] = struct{}{}
+			for _, logPath := range loadedMeta.dataFilePaths {
 				plan.pendingPaths[logPath] = struct{}{}
 			}
-			if metaFile.flushTS > plan.maxFlushTSByStore[storeID] {
-				plan.maxFlushTSByStore[storeID] = metaFile.flushTS
+			if loadedMeta.flushTS > plan.maxFlushTSByStore[loadedMeta.storeID] {
+				plan.maxFlushTSByStore[loadedMeta.storeID] = loadedMeta.flushTS
 			}
 			planMu.Unlock()
 
-			failpoint.InjectCall("flush-meta", metaFile.path, storeID, metaFile.flushTS)
+			failpoint.InjectCall("flush-meta", loadedMeta.path, loadedMeta.storeID, loadedMeta.flushTS)
 			return nil
 		})
 	}
@@ -148,37 +135,6 @@ func (c *Calculator) planRound(
 		return roundPlan{}, iterErr
 	}
 	return plan, nil
-}
-
-func resolveStoreID(nameStoreID uint64, contentStoreID int64, metaPath string) (uint64, error) {
-	if contentStoreID <= 0 {
-		return 0, fmt.Errorf("backupmeta %s contains invalid store id %d", metaPath, contentStoreID)
-	}
-	storeID := uint64(contentStoreID)
-	if nameStoreID != 0 && nameStoreID != storeID {
-		return 0, fmt.Errorf(
-			"backupmeta %s has mismatched store id between name (%d) and content (%d)",
-			metaPath, nameStoreID, storeID,
-		)
-	}
-	return storeID, nil
-}
-
-func extractDataFilePaths(meta *backuppb.Metadata) []string {
-	paths := make([]string, 0, len(meta.Files))
-	for _, file := range meta.Files {
-		if file.Path != "" {
-			paths = append(paths, file.Path)
-		}
-	}
-	for _, group := range meta.FileGroups {
-		for _, file := range group.DataFilesInfo {
-			if file.Path != "" {
-				paths = append(paths, file.Path)
-			}
-		}
-	}
-	return paths
 }
 
 func (c *Calculator) waitDownstreamSync(ctx context.Context, pendingPaths map[string]struct{}) error {

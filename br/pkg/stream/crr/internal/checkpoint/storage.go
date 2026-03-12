@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -40,6 +41,13 @@ type parsedMetaFile struct {
 	path    string
 	flushTS uint64
 	storeID uint64
+}
+
+type loadedMetaFile struct {
+	path          string
+	flushTS       uint64
+	storeID       uint64
+	dataFilePaths []string
 }
 
 type walkEntry struct {
@@ -103,6 +111,68 @@ func (c *Calculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFil
 			}
 		}
 	}
+}
+
+func loadMetaFile(
+	ctx context.Context,
+	storage UpstreamStorageReader,
+	metaFile parsedMetaFile,
+) (loadedMetaFile, error) {
+	metaBytes, err := storage.ReadFile(ctx, metaFile.path)
+	if err != nil {
+		return loadedMetaFile{}, fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
+	}
+
+	meta, err := parseBackupMetadata(metaBytes)
+	if err != nil {
+		return loadedMetaFile{}, fmt.Errorf("parse backupmeta %s: %w", metaFile.path, err)
+	}
+
+	storeID, err := resolveStoreID(metaFile.storeID, meta.GetStoreId(), metaFile.path)
+	if err != nil {
+		return loadedMetaFile{}, err
+	}
+
+	return loadedMetaFile{
+		path:          metaFile.path,
+		flushTS:       metaFile.flushTS,
+		storeID:       storeID,
+		dataFilePaths: extractDataFilePaths(meta),
+	}, nil
+}
+
+func parseBackupMetadata(rawMeta []byte) (*backuppb.Metadata, error) {
+	return (*stream.MetadataHelper).ParseToMetadata(nil, rawMeta)
+}
+
+func resolveStoreID(nameStoreID uint64, contentStoreID int64, metaPath string) (uint64, error) {
+	if contentStoreID <= 0 {
+		return 0, fmt.Errorf("backupmeta %s contains invalid store id %d", metaPath, contentStoreID)
+	}
+	storeID := uint64(contentStoreID)
+	if nameStoreID != 0 && nameStoreID != storeID {
+		return 0, fmt.Errorf(
+			"backupmeta %s has mismatched store id between name (%d) and content (%d)",
+			metaPath, nameStoreID, storeID,
+		)
+	}
+	return storeID, nil
+}
+
+func extractDataFilePaths(meta *backuppb.Metadata) []string {
+	paths := make([]string, 0, len(meta.FileGroups))
+	for _, group := range meta.FileGroups {
+		if group.Path != "" {
+			paths = append(paths, group.Path)
+			continue
+		}
+		for _, file := range group.DataFilesInfo {
+			if file.Path != "" {
+				paths = append(paths, file.Path)
+			}
+		}
+	}
+	return paths
 }
 
 func validateIncrementalMetaScanStorage(rawURI string) error {

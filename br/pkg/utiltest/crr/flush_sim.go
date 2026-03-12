@@ -119,9 +119,9 @@ func (f *FlushSim) buildRegionFiles(
 		result.groups = append(result.groups, &backuppb.DataFileGroup{
 			MinTs: rMinTS,
 			MaxTs: rMaxTS,
+			Path:  logPath,
 			DataFilesInfo: []*backuppb.DataFileInfo{
 				{
-					Path:  logPath,
 					MinTs: rMinTS,
 					MaxTs: rMaxTS,
 				},

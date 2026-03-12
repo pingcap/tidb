@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -140,13 +141,12 @@ func assertReadableFile(ctx context.Context, storage storeapi.Storage, name stri
 }
 
 func extractDataFilePaths(meta *backuppb.Metadata) []string {
-	paths := make([]string, 0, len(meta.Files))
-	for _, file := range meta.Files {
-		if file.Path != "" {
-			paths = append(paths, file.Path)
-		}
-	}
+	paths := make([]string, 0, len(meta.FileGroups))
 	for _, group := range meta.FileGroups {
+		if group.Path != "" {
+			paths = append(paths, group.Path)
+			continue
+		}
 		for _, file := range group.DataFilesInfo {
 			if file.Path != "" {
 				paths = append(paths, file.Path)
@@ -154,6 +154,10 @@ func extractDataFilePaths(meta *backuppb.Metadata) []string {
 		}
 	}
 	return paths
+}
+
+func parseBackupMetadata(raw []byte) (*backuppb.Metadata, error) {
+	return (*stream.MetadataHelper).ParseToMetadata(nil, raw)
 }
 
 // AssertDownstreamCanRestoreTo validates that downstream can read every
@@ -184,9 +188,9 @@ func (h *TestHarness) AssertDownstreamCanRestoreTo(ctx context.Context, tso uint
 		if err != nil {
 			return fmt.Errorf("read backupmeta %s: %w", record.MetadataPath, err)
 		}
-		meta := &backuppb.Metadata{}
-		if err := meta.Unmarshal(content); err != nil {
-			return fmt.Errorf("unmarshal backupmeta %s: %w", record.MetadataPath, err)
+		meta, err := parseBackupMetadata(content)
+		if err != nil {
+			return fmt.Errorf("parse backupmeta %s: %w", record.MetadataPath, err)
 		}
 
 		for _, logPath := range extractDataFilePaths(meta) {
