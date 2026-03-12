@@ -69,7 +69,7 @@ func TestGetAverageAnalysisDurationNegativeRecord(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+	tk.MustExec(session.CreateAnalyzeJobs)
 
 	// Insert a finished record with end_time earlier than start_time to force a negative duration.
 	// This could happen if the system clock is adjusted backward (rare in practice).
@@ -150,7 +150,7 @@ func TestGetLastFailedAnalysisDurationNegativeRecord(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+	tk.MustExec(session.CreateAnalyzeJobs)
 
 	// Insert a failed record whose start_time is in the future to force a negative duration.
 	insertFailedJobWithStartTime(tk, "neg_schema", "neg_table", "", "2037-01-01 00:00:00")
