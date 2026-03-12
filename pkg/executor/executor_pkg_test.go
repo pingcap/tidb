@@ -353,7 +353,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TxnCtx.IsPessimistic = true
-	sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForLock(nil)
+	sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
 
 	const (
 		tableID    int64 = 1000
@@ -454,7 +454,7 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 
-	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForLock(nil)
+	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
 	require.Len(t, gotKeys, 1)
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
 }
