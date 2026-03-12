@@ -626,7 +626,7 @@ func matchZero(threshold any) bool {
 	}
 }
 
-// ParseString converts the input string to lowercase and returns it.
+// ParseString returns the input string as-is.
 func ParseString(v string) (any, error) { return v, nil }
 func parseInt64(v string) (any, error) {
 	n, err := strconv.ParseInt(v, 10, 64)
