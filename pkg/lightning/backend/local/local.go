@@ -837,8 +837,8 @@ func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
 }
 
 // CleanupAllLocalEngines closes and removes all local engines, used for best-effort cleanup on error.
-func (local *Backend) CleanupAllLocalEngines(ctx context.Context) error {
-	return local.engineMgr.cleanupAllLocalEngines(ctx)
+func (local *Backend) CleanupAllLocalEngines(ctx context.Context) {
+	local.engineMgr.cleanupAllLocalEngines(ctx)
 }
 
 // RetryImportDelay returns the delay time before retrying to import a file.
