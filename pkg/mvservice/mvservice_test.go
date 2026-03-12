@@ -418,8 +418,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		cfg.ServerRefreshInterval = 9 * time.Second
 		cfg.RetryBaseDelay = 3 * time.Second
 		cfg.RetryMaxDelay = 21 * time.Second
-		cfg.HistoryGCInterval = 3 * time.Hour
-		cfg.HistoryGCRetention = 15 * 24 * time.Hour
+		cfg.MViewRefreshHistRetention = 10 * 24 * time.Hour
+		cfg.MLogPurgeHistRetention = 20 * 24 * time.Hour
 		cfg.ServerConsistentHashReplicas = 17
 		cfg.TaskBackpressure = TaskBackpressureConfig{
 			CPUThreshold: 0.7,
@@ -428,23 +428,25 @@ func TestNewMVServiceConfig(t *testing.T) {
 		}
 
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
-		maxConcurrency, timeout := svc.GetTaskExecConfig()
+		maxConcurrency, timeout := svc.executor.GetConfig()
 		require.Equal(t, cfg.TaskMaxConcurrency, maxConcurrency)
 		require.Equal(t, cfg.TaskTimeout, timeout)
 
-		baseDelay, maxDelay := svc.GetRetryDelayConfig()
+		baseDelay, maxDelay := svc.retryDelayConfig()
 		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
 		require.Equal(t, cfg.RetryMaxDelay, maxDelay)
 
-		historyGCInterval, historyGCRetention := svc.GetHistoryGCConfig()
-		require.Equal(t, cfg.HistoryGCInterval, historyGCInterval)
-		require.Equal(t, cfg.HistoryGCRetention, historyGCRetention)
+		historyGCInterval := svc.historyGCInterval()
+		require.Equal(t, deriveHistoryGCInterval(cfg.MViewRefreshHistRetention, cfg.MLogPurgeHistRetention), historyGCInterval)
+		mviewRefreshRetention, mlogPurgeRetention := svc.historyGCRetentionConfig()
+		require.Equal(t, cfg.MViewRefreshHistRetention, mviewRefreshRetention)
+		require.Equal(t, cfg.MLogPurgeHistRetention, mlogPurgeRetention)
 
 		backpressureCfg := svc.GetTaskBackpressureConfig()
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
 		require.NotNil(t, svc.executor.backpressure.Load())
 
-		require.Equal(t, cfg.FetchInterval, svc.GetFetchInterval())
+		require.Equal(t, cfg.FetchInterval, svc.fetchInterval())
 		require.Equal(t, cfg.BasicInterval, svc.basicInterval)
 		require.Equal(t, cfg.ServerRefreshInterval, svc.serverRefreshInterval)
 		require.Equal(t, cfg.ServerConsistentHashReplicas, svc.sch.chash.replicas)
@@ -452,18 +454,20 @@ func TestNewMVServiceConfig(t *testing.T) {
 
 	t.Run("normalized_defaults", func(t *testing.T) {
 		cfg := DefaultMVServiceConfig()
-		cfg.HistoryGCInterval = 0
-		cfg.HistoryGCRetention = -time.Hour
+		cfg.MViewRefreshHistRetention = -time.Hour
+		cfg.MLogPurgeHistRetention = -time.Hour
 
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
 
-		baseDelay, maxDelay := svc.GetRetryDelayConfig()
+		baseDelay, maxDelay := svc.retryDelayConfig()
 		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
 		require.Equal(t, cfg.RetryMaxDelay, maxDelay)
 
-		historyGCInterval, historyGCRetention := svc.GetHistoryGCConfig()
+		historyGCInterval := svc.historyGCInterval()
 		require.Equal(t, defaultMVHistoryGCInterval, historyGCInterval)
-		require.Equal(t, defaultMVHistoryGCRetention, historyGCRetention)
+		mviewRefreshRetention, mlogPurgeRetention := svc.historyGCRetentionConfig()
+		require.Equal(t, defaultMVHistoryGCRetention, mviewRefreshRetention)
+		require.Equal(t, defaultMVHistoryGCRetention, mlogPurgeRetention)
 
 		backpressureCfg := svc.GetTaskBackpressureConfig()
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
@@ -495,14 +499,14 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 	t.Run("fetch_interval", func(t *testing.T) {
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
-		err := svc.SetFetchInterval(2 * time.Second)
+		err := svc.setFetchInterval(2 * time.Second)
 		require.NoError(t, err)
-		require.Equal(t, 2*time.Second, svc.GetFetchInterval())
+		require.Equal(t, 2*time.Second, svc.fetchInterval())
 
-		err = svc.SetFetchInterval(0)
+		err = svc.setFetchInterval(0)
 		require.Error(t, err)
 
-		err = svc.SetFetchInterval(500 * time.Microsecond)
+		err = svc.setFetchInterval(500 * time.Microsecond)
 		require.Error(t, err)
 	})
 
@@ -537,43 +541,87 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 	t.Run("retry_delay", func(t *testing.T) {
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
-		baseDelay, maxDelay := svc.GetRetryDelayConfig()
+		baseDelay, maxDelay := svc.retryDelayConfig()
 		require.Equal(t, defaultMVTaskRetryBase, baseDelay)
 		require.Equal(t, defaultMVTaskRetryMax, maxDelay)
 
-		err := svc.SetRetryDelayConfig(2*time.Second, 10*time.Second)
+		err := svc.setRetryDelayConfig(2*time.Second, 10*time.Second)
 		require.NoError(t, err)
-		baseDelay, maxDelay = svc.GetRetryDelayConfig()
+		baseDelay, maxDelay = svc.retryDelayConfig()
 		require.Equal(t, 2*time.Second, baseDelay)
 		require.Equal(t, 10*time.Second, maxDelay)
 		require.Equal(t, 2*time.Second, svc.retryDelay(0))
 		require.Equal(t, 4*time.Second, svc.retryDelay(2))
 		require.Equal(t, 10*time.Second, svc.retryDelay(10))
 
-		err = svc.SetRetryDelayConfig(0, 10*time.Second)
+		err = svc.setRetryDelayConfig(0, 10*time.Second)
 		require.Error(t, err)
-		err = svc.SetRetryDelayConfig(10*time.Second, 2*time.Second)
+		err = svc.setRetryDelayConfig(10*time.Second, 2*time.Second)
 		require.Error(t, err)
 	})
 
 	t.Run("history_gc", func(t *testing.T) {
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
-		interval, retention := svc.GetHistoryGCConfig()
+		interval := svc.historyGCInterval()
 		require.Equal(t, defaultMVHistoryGCInterval, interval)
-		require.Equal(t, defaultMVHistoryGCRetention, retention)
+		mviewRefreshRetention, mlogPurgeRetention := svc.historyGCRetentionConfig()
+		require.Equal(t, defaultMVHistoryGCRetention, mviewRefreshRetention)
+		require.Equal(t, defaultMVHistoryGCRetention, mlogPurgeRetention)
 
-		err := svc.SetHistoryGCConfig(2*time.Hour, 14*24*time.Hour)
+		err := svc.SetMViewRefreshHistRetention(10 * 24 * time.Hour)
 		require.NoError(t, err)
+		err = svc.SetMLogPurgeHistRetention(20 * 24 * time.Hour)
+		require.NoError(t, err)
+		interval = svc.historyGCInterval()
+		require.Equal(t, time.Hour, interval)
+		mviewRefreshRetention, mlogPurgeRetention = svc.historyGCRetentionConfig()
+		require.Equal(t, 10*24*time.Hour, mviewRefreshRetention)
+		require.Equal(t, 20*24*time.Hour, mlogPurgeRetention)
 
-		interval, retention = svc.GetHistoryGCConfig()
-		require.Equal(t, 2*time.Hour, interval)
-		require.Equal(t, 14*24*time.Hour, retention)
+		err = svc.SetMViewRefreshHistRetention(30 * time.Second)
+		require.NoError(t, err)
+		err = svc.SetMLogPurgeHistRetention(90 * time.Second)
+		require.NoError(t, err)
+		interval = svc.historyGCInterval()
+		require.Equal(t, time.Second, interval)
 
-		err = svc.SetHistoryGCConfig(0, 7*24*time.Hour)
+		err = svc.SetMViewRefreshHistRetention(0)
 		require.Error(t, err)
-		err = svc.SetHistoryGCConfig(time.Hour, 0)
+		err = svc.SetMLogPurgeHistRetention(0)
 		require.Error(t, err)
+	})
+
+	t.Run("history_gc_reschedule_earlier_only", func(t *testing.T) {
+		installMockTimeForTest(t)
+		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+		now := mvsNow()
+
+		svc.nextHistoryGCAtMillis.Store(now.Add(10 * time.Minute).UnixMilli())
+		require.NoError(t, svc.SetMViewRefreshHistRetention(2*time.Minute))
+		require.NoError(t, svc.SetMLogPurgeHistRetention(2*time.Minute))
+
+		afterShrink := time.UnixMilli(svc.nextHistoryGCAtMillis.Load())
+		require.True(t, afterShrink.Sub(now) <= time.Minute+time.Second)
+		require.True(t, afterShrink.Sub(now) >= 0)
+
+		svc.nextHistoryGCAtMillis.Store(now.Add(5 * time.Second).UnixMilli())
+		require.NoError(t, svc.SetMViewRefreshHistRetention(12*time.Hour))
+		require.NoError(t, svc.SetMLogPurgeHistRetention(12*time.Hour))
+		afterGrow := time.UnixMilli(svc.nextHistoryGCAtMillis.Load())
+		require.Equal(t, now.Add(1200*time.Millisecond).UnixMilli(), afterGrow.UnixMilli())
+	})
+
+	t.Run("history_gc_retry_cap", func(t *testing.T) {
+		installMockTimeForTest(t)
+		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+		now := mvsNow()
+		interval := svc.historyGCInterval()
+		svc.historyGCRetryCount.Store(historyGCRetryMaxAttempts)
+
+		svc.scheduleHistoryGCFailure(now, interval)
+		require.Equal(t, int64(0), svc.historyGCRetryCount.Load())
+		require.Equal(t, now.Add(interval).UnixMilli(), svc.nextHistoryGCAtMillis.Load())
 	})
 }
 

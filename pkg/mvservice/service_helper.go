@@ -17,6 +17,7 @@ package mvservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -33,6 +34,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+)
+
+const (
+	historyGCDeleteBatchSize = 10000
 )
 
 type serviceHelper struct {
@@ -304,26 +309,56 @@ func (*serviceHelper) GetCurrentTSO(_ context.Context, sysSessionPool basic.Sess
 }
 
 // PurgeMVHistoryBeforeTSO removes old records from MV history tables.
-func (*serviceHelper) PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, currentTSO uint64, retention time.Duration) error {
-	const (
-		deleteMVRefreshHistSQL  = `DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %?`
-		deleteMVLogPurgeHistSQL = `DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %?`
+func (*serviceHelper) PurgeMVHistoryBeforeTSO(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	currentTSO uint64,
+	mviewRefreshRetention time.Duration,
+	mlogPurgeRetention time.Duration,
+) error {
+	deleteMVRefreshHistSQL := fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+		historyGCDeleteBatchSize,
+	)
+	deleteMVLogPurgeHistSQL := fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+		historyGCDeleteBatchSize,
 	)
 
-	cutoffTSO := currentTSO
-	if retention > 0 {
-		cutoffPhysical := max(oracle.ExtractPhysical(currentTSO)-int64(retention/time.Millisecond), 0)
-		cutoffTSO = oracle.ComposeTS(cutoffPhysical, 0)
+	calcCutoffTSO := func(retention time.Duration) uint64 {
+		cutoffTSO := currentTSO
+		if retention > 0 {
+			cutoffPhysical := max(oracle.ExtractPhysical(currentTSO)-int64(retention/time.Millisecond), 0)
+			cutoffTSO = oracle.ComposeTS(cutoffPhysical, 0)
+		}
+		return cutoffTSO
 	}
 
-	params := []any{cutoffTSO}
-	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVRefreshHistSQL, params); err != nil {
+	se, err := sysSessionPool.Get()
+	if err != nil {
 		return err
 	}
-	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVLogPurgeHistSQL, params); err != nil {
+	defer sysSessionPool.Put(se)
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVRefreshHistSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
 		return err
 	}
-	return nil
+	return purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention))
+}
+
+func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTSO uint64) error {
+	for {
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, sql, []any{cutoffTSO}); err != nil {
+			return err
+		}
+		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
+		if affectedRows < uint64(historyGCDeleteBatchSize) {
+			return nil
+		}
+	}
 }
 
 // fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
@@ -467,6 +502,8 @@ func shouldHandleMVCreateEvent(event *notifier.SchemaChangeEvent) bool {
 			return false
 		}
 		return tbl.MaterializedView != nil || tbl.MaterializedViewLog != nil
+	// case meta.ActionAlterMaterializedViewRefresh, meta.ActionAlterMaterializedViewLogPurge:
+	// 	return true
 	default:
 		// For other DDL types, rely on periodic refresh.
 		return false

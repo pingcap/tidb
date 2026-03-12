@@ -29,32 +29,18 @@ var (
 	ErrMVLogPurgeHandlerNotRegistered = errors.New("mvlog purge handler is not registered")
 )
 
-// MVRefreshHandler defines the refresh contract for one MV ID.
-type MVRefreshHandler interface {
+// MVTaskHandler defines all task operations needed by MVService.
+type MVTaskHandler interface {
 	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error)
-}
-
-// MVLogPurgeHandler defines the purge contract for one MVLog ID.
-type MVLogPurgeHandler interface {
 	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error)
-}
-
-// MVMetaFetchHandler defines the metadata fetch contract for MV scheduler bootstrap.
-type MVMetaFetchHandler interface {
 	fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
 	fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
-}
-
-// MVHistoryGCHandler defines history cleanup contract for MV maintenance history tables.
-type MVHistoryGCHandler interface {
 	GetCurrentTSO(ctx context.Context, sysSessionPool basic.SessionPool) (uint64, error)
-	PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, currentTSO uint64, retention time.Duration) error
-}
-
-// MVTaskHandler is a convenience interface that implements both refresh and purge.
-type MVTaskHandler interface {
-	MVRefreshHandler
-	MVLogPurgeHandler
-	MVMetaFetchHandler
-	MVHistoryGCHandler
+	PurgeMVHistoryBeforeTSO(
+		ctx context.Context,
+		sysSessionPool basic.SessionPool,
+		currentTSO uint64,
+		mviewRefreshRetention time.Duration,
+		mlogPurgeRetention time.Duration,
+	) error
 }

@@ -174,39 +174,35 @@ func (e *TaskExecutor) Run() bool {
 	return true
 }
 
-// UpdateConfig updates maxConcurrency and timeout dynamically.
-// maxConcurrency must be positive; timeout may be 0 (no timeout).
-func (e *TaskExecutor) UpdateConfig(maxConcurrency int, timeout time.Duration) {
+func (e *TaskExecutor) setMaxConcurrency(maxConcurrency int) {
+	if e == nil || maxConcurrency <= 0 {
+		return
+	}
+	if e.lifecycleState.Load() == taskExecutorStateClosed {
+		return
+	}
+	prev := int(e.maxConcurrency.Load())
+	if maxConcurrency == prev {
+		return
+	}
+	e.maxConcurrency.Store(int64(maxConcurrency))
+	if maxConcurrency > prev {
+		e.startWorkers(maxConcurrency - prev)
+		return
+	}
+	e.queue.mu.Lock()
+	e.queue.cond.Broadcast()
+	e.queue.mu.Unlock()
+}
+
+func (e *TaskExecutor) setTimeout(timeout time.Duration) {
 	if e == nil {
 		return
 	}
 	if e.lifecycleState.Load() == taskExecutorStateClosed {
 		return
 	}
-	if maxConcurrency > 0 {
-		prev := int(e.maxConcurrency.Load())
-		if maxConcurrency != prev {
-			e.maxConcurrency.Store(int64(maxConcurrency))
-			if maxConcurrency > prev {
-				e.startWorkers(maxConcurrency - prev)
-			} else {
-				e.queue.mu.Lock()
-				e.queue.cond.Broadcast()
-				e.queue.mu.Unlock()
-			}
-		}
-	}
-	if timeout >= 0 {
-		e.timeoutNanos.Store(int64(timeout))
-	}
-}
-
-func (e *TaskExecutor) setMaxConcurrency(maxConcurrency int) {
-	e.UpdateConfig(maxConcurrency, -1)
-}
-
-func (e *TaskExecutor) setTimeout(timeout time.Duration) {
-	e.UpdateConfig(0, timeout)
+	e.timeoutNanos.Store(int64(timeout))
 }
 
 // GetConfig returns the current execution config.
