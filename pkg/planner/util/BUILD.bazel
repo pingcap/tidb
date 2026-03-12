@@ -34,6 +34,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/hint",
+        "//pkg/util/intest",
         "//pkg/util/intset",
         "//pkg/util/ranger",
         "//pkg/util/size",
@@ -51,21 +52,14 @@ go_test(
     ],
     embed = [":util"],
     flaky = True,
-<<<<<<< HEAD
-=======
-    shard_count = 4,
->>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
+    shard_count = 3,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/meta/model",
-<<<<<<< HEAD
-        "//pkg/planner/core",
-=======
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/planner/util/coretestsdk",
->>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
+        "//pkg/planner/core",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",

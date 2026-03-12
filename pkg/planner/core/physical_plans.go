@@ -1099,7 +1099,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	ctx := ts.SCtx()
 	if ts.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
-		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+		idxCols, idxColLens := util.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {
