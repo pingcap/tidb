@@ -26,7 +26,7 @@ Projection	0.50	root		expression__vitess_hash.t.id
         └─TableRowIDScan	20.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select hex(vitess_hash(1123)) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		31B565D41BDF8CA->Column#7
+Projection	10000.00	root		31B565D41BDF8CA->Column#8
 └─IndexReader	10000.00	root		index:IndexFullScan
   └─IndexFullScan	10000.00	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	keep order:false, stats:pseudo
 drop table if exists t_int;

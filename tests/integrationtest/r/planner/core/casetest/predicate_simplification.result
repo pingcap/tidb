@@ -89,7 +89,7 @@ TableReader	0.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
 id	estRows	task	access object	operator info
-Projection	199700.00	root		1->Column#7
+Projection	199700.00	root		1->Column#9
 └─HashJoin	199700.00	root		CARTESIAN inner join
   ├─TableReader(Build)	30.00	root		data:Selection
   │ └─Selection	30.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3)
@@ -99,7 +99,7 @@ Projection	199700.00	root		1->Column#7
       └─TableFullScan	10000.00	cop[tikv]	table:A	keep order:false, stats:pseudo
 explain format = 'brief' select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.;
 id	estRows	task	access object	operator info
-Projection	200.00	root		1->Column#7
+Projection	200.00	root		1->Column#9
 └─HashJoin	200.00	root		CARTESIAN inner join
   ├─TableReader(Build)	10.00	root		data:Selection
   │ └─Selection	10.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 4)
@@ -114,10 +114,10 @@ TableReader	20.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format = 'brief' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
 id	estRows	task	access object	operator info
-Selection	12.80	root		gt(Column#4, 100)
-└─HashAgg	16.00	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(Column#5)->Column#4
+Selection	12.80	root		gt(Column#5, 100)
+└─HashAgg	16.00	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(Column#6)->Column#5
   └─TableReader	16.00	root		data:HashAgg
-    └─HashAgg	16.00	cop[tikv]		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column#5
+    └─HashAgg	16.00	cop[tikv]		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column#6
       └─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.ts.f, "2", "3")
         └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
@@ -303,8 +303,8 @@ r0
 249.0000
 explain format=brief SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
 id	estRows	task	access object	operator info
-HashAgg	8.00	root		group by:Column#7, Column#8, funcs:avg(distinct Column#6)->Column#4
-└─Projection	10.00	root		cast(planner__core__casetest__predicate_simplification.t910beff5.col_40, decimal(3,0) UNSIGNED BINARY)->Column#6, planner__core__casetest__predicate_simplification.t910beff5.col_40->Column#7, planner__core__casetest__predicate_simplification.t910beff5.col_41->Column#8
+HashAgg	8.00	root		group by:Column#8, Column#9, funcs:avg(distinct Column#7)->Column#5
+└─Projection	10.00	root		cast(planner__core__casetest__predicate_simplification.t910beff5.col_40, decimal(3,0) UNSIGNED BINARY)->Column#7, planner__core__casetest__predicate_simplification.t910beff5.col_40->Column#8, planner__core__casetest__predicate_simplification.t910beff5.col_41->Column#9
   └─TableReader	10.00	root		data:Selection
     └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t910beff5.col_41, "cwx!P4xaX)U"), or(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "D1$9+VTpEe)"), and(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "znRD*2pkmtm4"), le(planner__core__casetest__predicate_simplification.t910beff5.col_41, "PBueg(&tWY%dzsT(_")))
       └─TableFullScan	10000.00	cop[tikv]	table:t910beff5	keep order:false, stats:pseudo

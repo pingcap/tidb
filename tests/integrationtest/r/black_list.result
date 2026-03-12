@@ -57,27 +57,27 @@ insert into mysql.expr_pushdown_blacklist(name) values('enum');
 admin reload expr_pushdown_blacklist;
 desc format='brief' select /*+ HASH_AGG() */ max(a) from t;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:max(black_list.t.a)->Column#5
+HashAgg	1.00	root		funcs:max(black_list.t.a)->Column#6
 └─IndexReader	10000.00	root		index:IndexFullScan
   └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:max(black_list.t.a)->Column#5
+StreamAgg	1.00	root		funcs:max(black_list.t.a)->Column#6
 └─IndexReader	10000.00	root		index:IndexFullScan
   └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 delete from mysql.expr_pushdown_blacklist;
 admin reload expr_pushdown_blacklist;
 desc format='brief' select /*+ HASH_AGG() */ max(a) from t;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:max(Column#7)->Column#5
+HashAgg	1.00	root		funcs:max(Column#8)->Column#6
 └─IndexReader	1.00	root		index:HashAgg
-  └─HashAgg	1.00	cop[tikv]		funcs:max(black_list.t.a)->Column#7
+  └─HashAgg	1.00	cop[tikv]		funcs:max(black_list.t.a)->Column#8
     └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:max(Column#7)->Column#5
+StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
 └─IndexReader	1.00	root		index:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:max(black_list.t.a)->Column#7
+  └─StreamAgg	1.00	cop[tikv]		funcs:max(black_list.t.a)->Column#8
     └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 insert into mysql.expr_pushdown_blacklist(name) values('enum');
 admin reload expr_pushdown_blacklist;

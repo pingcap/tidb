@@ -32,14 +32,14 @@ Projection	3333.33	root		access_path_selection.access_path_selection.a, access_p
     └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:true, stats:pseudo
 explain format = 'brief' select max(_tidb_rowid) from access_path_selection;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:max(access_path_selection.access_path_selection._tidb_rowid)->Column#4
+StreamAgg	1.00	root		funcs:max(access_path_selection.access_path_selection._tidb_rowid)->Column#5
 └─Limit	1.00	root		offset:0, count:1
   └─TableReader	1.00	root		data:Limit
     └─Limit	1.00	cop[tikv]		offset:0, count:1
       └─TableFullScan	1.00	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
 explain format = 'brief' select count(1) from access_path_selection;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(Column#18)->Column#4
+StreamAgg	1.00	root		funcs:count(Column#19)->Column#5
 └─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#18
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#19
     └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo
