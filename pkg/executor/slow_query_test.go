@@ -795,7 +795,7 @@ func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
 	data := infoschema.NewData()
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	newISBuilder := infoschema.NewBuilder(nil, nil, data, schemaCacheSize > 0)
-	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := newISBuilder.Build(math.MaxUint64)
 	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.ClusterTableSlowLog))
@@ -823,7 +823,7 @@ func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
 	physicalPlan, err := plannercore.NewPBPlanBuilder(sctx, is, nil).Build(executors)
 	require.NoError(t, err)
 
-	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
+	execBuilder := NewMockExecutorBuilderForTest(sctx, is)
 	executor := execBuilder.Build(physicalPlan)
 	limitExec, ok := executor.(*LimitExec)
 	require.True(t, ok)

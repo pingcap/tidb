@@ -317,6 +317,7 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 }
 
 func (s *mockGCSSuite) TestSplitRangeForTable() {
+	s.T().Skip("TODO: skip until real CSE supports ImportSST AddForcePartitionRange/RemoveForcePartitionRange APIs")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
 		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
