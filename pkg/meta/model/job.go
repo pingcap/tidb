@@ -123,6 +123,8 @@ const (
 	ActionCreateMaskingPolicy                   ActionType = 81
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
+
+	// range [200, 256) is reserved for a downstream fork
 )
 
 // ActionMap is the map of DDL ActionType to string.
