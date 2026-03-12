@@ -882,6 +882,8 @@ func finishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 	if analyzeErr != nil {
 		setClauses = append(setClauses, "fail_reason = %?")
 		args = append(args, failReason)
+	} else {
+		setClauses = append(setClauses, "fail_reason = NULL")
 	}
 	setClauses = append(setClauses, "process_id = NULL")
 
@@ -894,7 +896,19 @@ func finishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
 		}
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
+		logger := logutil.BgLogger().With(
+			zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)),
+			zap.String("db", job.DBName),
+			zap.String("table", job.TableName),
+			zap.String("partition", job.PartitionName),
+			zap.String("jobInfo", job.JobInfo),
+			zap.Int("analyzeType", int(analyzeType)),
+			zap.Error(err),
+		)
+		if job.ID != nil {
+			logger = logger.With(zap.Uint64("jobID", *job.ID))
+		}
+		logger.Warn("failed to update analyze job")
 	}
 
 	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {

@@ -177,7 +177,7 @@ TASKLOOP:
 	}()
 
 	err = e.waitFinish(ctx, g, resultsCh)
-	if err == nil && ctx.Err() != nil && (sentTasks < len(tasks) || len(taskCh) > 0) {
+	if err == nil {
 		err = normalizeCtxErrWithCause(ctx, ctx.Err())
 	}
 	if err != nil {
@@ -574,15 +574,12 @@ func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Conte
 }
 
 func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return normalizeCtxErrWithCause(ctx, ctxErr)
+	}
 	select {
 	case <-ctx.Done():
-		if err := context.Cause(ctx); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return exeerrors.ErrQueryInterrupted
+		return normalizeCtxErrWithCause(ctx, ctx.Err())
 	case <-errExitCh:
 		return exeerrors.ErrQueryInterrupted
 	default:
@@ -597,17 +594,15 @@ func (e *AnalyzeExec) sendAnalyzeResult(ctx context.Context, statsHandle *handle
 	case <-ctx.Done():
 	case <-e.errExitCh:
 	}
-	err := result.Err
+	err := normalizeCtxErrWithCause(ctx, result.Err)
 	if err == nil {
-		err = context.Cause(ctx)
-	}
-	if err == nil {
-		err = ctx.Err()
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
 	}
 	if err == nil {
 		err = exeerrors.ErrQueryInterrupted
 	}
 	finishJobWithLog(statsHandle, result.Job, err)
+	result.DestroyAndPutToPool()
 }
 
 // ctx must be from AnalyzeExec.buildAnalyzeKillCtx

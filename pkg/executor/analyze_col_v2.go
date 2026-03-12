@@ -367,11 +367,11 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
-	buildResultChan := make(chan error, totalLen)
-	buildTaskChan := make(chan *samplingBuildTask, totalLen)
 	if totalLen < samplingStatsConcurrency {
 		samplingStatsConcurrency = totalLen
 	}
+	buildResultChan := make(chan error, totalLen+samplingStatsConcurrency)
+	buildTaskChan := make(chan *samplingBuildTask, totalLen)
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(gp, buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
@@ -637,10 +637,24 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx context.Context, resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+	for range l {
+		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+	}
+	needCleanupCollector := true
+	cleanupCollector := func() {
+		if !needCleanupCollector {
+			return
+		}
+		needCleanupCollector = false
+		e.memTracker.Release(retCollector.Base().MemSize)
+		retCollector.DestroyAndPutToPool()
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			cleanupCollector()
 			resultCh <- &samplingMergeResult{err: getAnalyzePanicErr(r)}
 		}
 		// Consume the remaining things.
@@ -667,19 +681,12 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 			time.Sleep(100 * time.Millisecond)
 		}
 	})
-	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for range l {
-		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
-	cleanupCollector := func() {
-		// Ensure collector resources are released on early exit paths.
-		retCollector.DestroyAndPutToPool()
-	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		select {
 		case data, ok := <-taskCh:
 			if !ok {
+				needCleanupCollector = false
 				resultCh <- &samplingMergeResult{collector: retCollector}
 				return
 			}
@@ -718,20 +725,15 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 			e.memTracker.Release(dataSize + colRespSize)
 			subCollector.DestroyAndPutToPool()
 		case <-ctx.Done():
-			err := context.Cause(ctx)
+			err := normalizeCtxErrWithCause(ctx, ctx.Err())
+			// mergeCtx may only carry a generic cancellation when errgroup stops the merge stage.
+			// Fall back to taskCtx to preserve the original kill/analyze failure reason.
 			if (err == nil || stderrors.Is(err, context.Canceled)) && parentCtx != nil {
-				parentErr := context.Cause(parentCtx)
+				parentErr := normalizeCtxErrWithCause(parentCtx, parentCtx.Err())
 				if parentErr != nil {
 					err = parentErr
 				}
 			}
-			if err != nil {
-				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
-				cleanupCollector()
-				resultCh <- &samplingMergeResult{err: err}
-				return
-			}
-			err = ctx.Err()
 			if err != nil {
 				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
 				cleanupCollector()

@@ -164,6 +164,28 @@ func TestDisableAutoAnalyzeWithAnalyzeAllColumnsOptions(t *testing.T) {
 	disableAutoAnalyzeCase(t, tk, dom)
 }
 
+func TestFinishAnalyzeJobClearsFailReasonOnSuccess(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	h := dom.StatsHandle()
+	job := &statistics.AnalyzeJob{
+		DBName:    "test",
+		TableName: "t",
+		JobInfo:   "manual analyze table",
+	}
+	require.NoError(t, h.InsertAnalyzeJob(job, "test-instance", 1))
+	require.NotNil(t, job.ID)
+
+	h.StartAnalyzeJob(job)
+	tk.MustExec("update mysql.analyze_jobs set fail_reason = 'stale failure' where id = ?", *job.ID)
+
+	h.FinishAnalyzeJob(job, nil, statistics.TableAnalysisJob)
+	tk.MustQuery("select state, fail_reason is null from mysql.analyze_jobs where id = ?", *job.ID).Check(
+		testkit.Rows("finished 1"),
+	)
+}
+
 func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
