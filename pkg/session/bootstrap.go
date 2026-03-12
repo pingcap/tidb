@@ -787,7 +787,9 @@ const (
 		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
 		REFRESH_FAILED_REASON text DEFAULT NULL,
-		PRIMARY KEY(REFRESH_JOB_ID))`
+		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_status (MVIEW_ID, REFRESH_STATUS, REFRESH_TIME),
+		KEY idx_refresh_status (REFRESH_STATUS, REFRESH_TIME))`
 
 	// CreateTiDBMLogPurgeHistTable is a table to store mlog purge history.
 	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
@@ -799,7 +801,9 @@ const (
 		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
 		PURGE_FAILED_REASON text DEFAULT NULL,
-		PRIMARY KEY(PURGE_JOB_ID))`
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_status (MLOG_ID, PURGE_STATUS, PURGE_TIME),
+		KEY idx_purge_status (PURGE_STATUS, PURGE_TIME))`
 )
 
 // CreateTimers is a table to store all timers for tidb
