@@ -25,7 +25,8 @@ Before creating an issue, read the matching file under `.github/ISSUE_TEMPLATE/`
    - Severity labeling rule:
      - Wrong-result bugs: use `severity/major`.
      - Query fails to execute on valid SQL, for example an internal planner or runtime error: use `severity/major`.
-   - If label permissions are missing, include `Suggested labels: ...` in the issue body.
+   - If label permissions are missing, first add labels by commenting `/label <label name>`.
+   - If label comments still do not work, add a separate comment with `Suggested labels: ...`.
 5. Prefer file-based edits for GitHub metadata.
    - Materialize the intended issue body in a local Markdown file.
    - Review that file against the matching issue template before calling `gh`.
@@ -34,4 +35,4 @@ Before creating an issue, read the matching file under `.github/ISSUE_TEMPLATE/`
 
 - The issue title and body are in English.
 - The issue still follows the matching template structure.
-- The issue carries the expected labels, or the body includes `Suggested labels: ...` when label permissions are missing.
+- The issue carries the expected labels, or a follow-up label comment / `Suggested labels: ...` comment is present when label permissions are missing.
