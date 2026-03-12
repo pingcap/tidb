@@ -55,6 +55,9 @@ When writing complex features or significant refactors, use an ExecPlan from des
 - `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
 - Policy belongs in `AGENTS.md`; detailed command playbooks SHOULD live in `docs/agents/*`, and skills SHOULD provide entrypoint workflows that reference those playbooks.
 - Operational testing/build skills are indexed in `.agents/skills/README.md` to avoid duplicated lists drifting in multiple docs.
+- GitHub metadata workflows are indexed in `.agents/skills/README.md`.
+  - Use `tidb-issue-metadata-guard` for issue creation and issue metadata updates.
+  - Use `tidb-pr-metadata-guard` for PR creation, PR body updates, and PR-linked issue references.
 
 ## Pre-flight Checklist
 
@@ -170,32 +173,6 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 - Use explicit placeholders such as `<package_name>`, `<TestName>`, and `<dir>`.
 - Documentation updates SHOULD keep terminology, policy wording, and command conventions consistent across related docs.
 - Keep guidance executable and concrete; avoid ambiguous phrasing.
-- Issues and PRs MUST be written in English (title and description).
-
-## Issue and PR Rules
-
-### Issue rules
-
-- Follow templates under `.github/ISSUE_TEMPLATE/` and fill all required fields.
-- Bug reports should include minimal reproduction, expected/actual behavior, and TiDB version (for example `SELECT tidb_version()` output).
-- Search existing issues/PRs first (for example `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), then add relevant logs/configuration/SQL plans.
-- Labeling requirements:
-  - `type/*` is usually applied by the issue template (GitHub UI); if creating issues via `gh issue create`, add it explicitly via `--label` (or follow up with `gh issue edit --add-label`).
-  - Add at least one `component/*` label.
-  - For bug/regression, include `severity/*` and affected-version labels (for example `affects-8.5`, or `may-affects-*` if unsure).
-  - If label permissions are missing, include `Suggested labels: ...` in issue body.
-
-### PR requirements
-
-- PR title MUST use one of:
-  - `pkg [, pkg2, pkg3]: what is changed`
-  - `*: what is changed`
-- PR description MUST follow `.github/pull_request_template.md`.
-- PR description MUST contain one line starting with `Issue Number:` and reference related issue(s) using `close #<id>` or `ref #<id>`.
-- If you create PRs via GitHub CLI, start from the template to avoid breaking required HTML comments: `gh pr create -T .github/pull_request_template.md` (then fill in the fields; do not delete/alter the HTML comment markers).
-- Keep HTML comments unchanged, including `Tests <!-- At least one of them must be included. -->`, because CI tooling depends on them.
-- Avoid force-push when possible; prefer follow-up commits and squash merge.
-- If force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
 
 ## Agent Output Contract
 
