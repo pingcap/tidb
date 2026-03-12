@@ -4777,7 +4777,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		ColName:     model.ExtraCommitTSName,
 		OrigColName: model.ExtraCommitTSName,
 	})
-	ds.TblCols = append(ds.TblCols, commitTSCol)
+	ds.AppendTableCol(commitTSCol)
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
