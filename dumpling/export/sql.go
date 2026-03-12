@@ -862,9 +862,9 @@ func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	return pdAddrs, errors.Annotatef(err, "sql: %s", query)
 }
 
-// GetKeyspaceMeta gets keyspace name/id from TiDB.
+// queryKeyspaceNameAndID gets the keyspace name/id row from TiDB.
 // It returns empty strings for a classical cluster.
-func GetKeyspaceMeta(tctx *tcontext.Context, db *sql.DB) (keyspaceName string, keyspaceID string, err error) {
+func queryKeyspaceNameAndID(tctx *tcontext.Context, db *sql.DB) (keyspaceName string, keyspaceID string, err error) {
 	const query = "SELECT KEYSPACE_NAME, KEYSPACE_ID FROM information_schema.KEYSPACE_META;"
 	row := db.QueryRowContext(tctx, query)
 	var name, id sql.NullString
