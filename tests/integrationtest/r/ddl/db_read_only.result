@@ -469,6 +469,8 @@ insert into ro_fk_parent.parent values (1, 100), (2, 200);
 insert into ro_fk_child.child values (1, 1), (2, 2);
 grant all on ro_fk_parent.* to 'repl_writer'@'localhost';
 grant all on ro_fk_parent.* to 'normal_user'@'localhost';
+grant select on ro_fk_child.* to 'repl_writer'@'localhost';
+grant select on ro_fk_child.* to 'normal_user'@'localhost';
 alter schema ro_fk_child read only 1;
 replace into ro_fk_parent.parent values (1, 150);
 select * from ro_fk_parent.parent order by id;
@@ -505,8 +507,8 @@ select * from ro_fk_child.child order by id;
 id	parent_id
 2	3
 alter schema ro_fk_child read only 0;
-drop database ro_fk_parent;
 drop database ro_fk_child;
+drop database ro_fk_parent;
 alter schema ro_bypass read only 0;
 drop database ro_bypass;
 drop user 'repl_writer'@'localhost';
