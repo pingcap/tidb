@@ -36,13 +36,13 @@ type pitrCollectorT struct {
 	cx      context.Context
 }
 
-func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
-	cb, err := p.RestoreAFileWithErr(fs)
+func (p pitrCollectorT) MustStartRestoreBatch(fs restore.BatchBackupFileSet) func() error {
+	cb, err := p.StartRestoreBatch(fs)
 	require.NoError(p.t, err)
 	return cb
 }
 
-func (p pitrCollectorT) RestoreAFileWithErr(fs restore.BatchBackupFileSet) (func() error, error) {
+func (p pitrCollectorT) StartRestoreBatch(fs restore.BatchBackupFileSet) (func() error, error) {
 	for _, b := range fs {
 		for _, file := range b.SSTFiles {
 			if err := p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")); err != nil {
@@ -189,7 +189,8 @@ func TestCollAFile(t *testing.T) {
 	coll := newPiTRCollForTest(t)
 	batch := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("foo.txt")))}
 
-	require.NoError(t, coll.RestoreAFile(batch)())
+	complete := coll.MustStartRestoreBatch(batch)
+	require.NoError(t, complete())
 	coll.MarkSuccess()
 	coll.Done()
 
@@ -210,7 +211,8 @@ func TestCollManyFileAndRewriteRules(t *testing.T) {
 		backupFileSet(withFile(nameFile("quux.txt")), withRewriteRule(remap(3, 21))),
 	}
 
-	require.NoError(t, coll.RestoreAFile(batch)())
+	complete := coll.MustStartRestoreBatch(batch)
+	require.NoError(t, complete())
 	coll.MarkSuccess()
 	coll.Done()
 
@@ -231,7 +233,8 @@ func TestReopen(t *testing.T) {
 	batch2 := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("baz.txt")), withRewriteRule(remap(2, 20)))}
 	batch3 := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("quux.txt")), withRewriteRule(remap(3, 21)))}
 
-	require.NoError(t, coll.RestoreAFile(batch1)())
+	complete := coll.MustStartRestoreBatch(batch1)
+	require.NoError(t, complete())
 	coll.Done()
 	exts := coll.ExtFullBkups()
 	require.Len(t, exts, 1)
@@ -242,7 +245,8 @@ func TestReopen(t *testing.T) {
 	require.Equal(t, coll.coll.restoreUUID[:], e.BackupUuid)
 
 	coll.Reopen()
-	require.NoError(t, coll.RestoreAFile(batch2)())
+	complete = coll.MustStartRestoreBatch(batch2)
+	require.NoError(t, complete())
 	exts = coll.ExtFullBkups()
 	require.Len(t, exts, 2)
 	e = exts[1]
@@ -253,7 +257,8 @@ func TestReopen(t *testing.T) {
 	coll.coll.writerRoutine.close()
 
 	coll.Reopen()
-	require.NoError(t, coll.RestoreAFile(batch3)())
+	complete = coll.MustStartRestoreBatch(batch3)
+	require.NoError(t, complete())
 	coll.MarkSuccess()
 	coll.Done()
 	exts = coll.ExtFullBkups()
@@ -295,8 +300,8 @@ func TestConcurrency(t *testing.T) {
 	}))
 
 	type result struct {
-		cb  func() error
-		err error
+		complete func() error
+		err      error
 	}
 	const tasks = 10
 	results := make(chan result, tasks)
@@ -316,8 +321,8 @@ func TestConcurrency(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			cb, err := coll.RestoreAFileWithErr(batch)
-			results <- result{cb: cb, err: err}
+			complete, err := coll.StartRestoreBatch(batch)
+			results <- result{complete: complete, err: err}
 		}()
 	}
 
@@ -331,7 +336,7 @@ func TestConcurrency(t *testing.T) {
 	for i := 0; i < tasks; i++ {
 		res := <-results
 		require.NoError(t, res.err)
-		cbs = append(cbs, res.cb)
+		cbs = append(cbs, res.complete)
 	}
 	for _, cb := range cbs {
 		require.NoError(t, cb())
