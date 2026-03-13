@@ -958,9 +958,22 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 		err                                                            error
 	)
 
+	// Trim trailing non-date characters (like ' a' in '2020-01-01 a')
+	// Only trim if there's no timezone information detected
+	originalStr := str
+	tzIndex, _, _, _, _ := GetTimezone(str)
+	if tzIndex == -1 {
+		str = strings.TrimRightFunc(str, func(r rune) bool {
+			return !unicode.IsDigit(r) && r != '-' && r != ':' && r != ' ' && r != '.' && r != 'T'
+		})
+		if str != originalStr {
+			ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", originalStr))
+		}
+	}
+
 	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(str)
 	if truncatedOrIncorrect {
-		ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", str))
+		ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", originalStr))
 	}
 	/*
 		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
