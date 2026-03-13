@@ -408,7 +408,7 @@ PREPARE stmt_prepare_toggle FROM
 SET @toggle_id = 1;
 EXECUTE stmt_prepare_toggle USING @toggle_id;
 c
-xray
+****
 ALTER TABLE privilege__column_masking_policy.t_prepare_toggle DISABLE MASKING POLICY p_prepare_toggle;
 EXECUTE stmt_prepare_toggle USING @toggle_id;
 c
@@ -416,7 +416,7 @@ xray
 ALTER TABLE privilege__column_masking_policy.t_prepare_toggle ENABLE MASKING POLICY p_prepare_toggle;
 EXECUTE stmt_prepare_toggle USING @toggle_id;
 c
-xray
+****
 DEALLOCATE PREPARE stmt_prepare_toggle;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_recreate;
 DROP USER IF EXISTS cmp_prepare_recreate;
@@ -430,7 +430,7 @@ PREPARE stmt_prepare_recreate FROM
 'SELECT c FROM privilege__column_masking_policy.t_prepare_recreate WHERE id = 1';
 EXECUTE stmt_prepare_recreate;
 c
-yankee
+******
 ALTER TABLE privilege__column_masking_policy.t_prepare_recreate DROP MASKING POLICY p_prepare_recreate;
 EXECUTE stmt_prepare_recreate;
 c
@@ -439,7 +439,7 @@ CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_p
 AS MASK_PARTIAL(c, '*', 1, 1) ENABLE;
 EXECUTE stmt_prepare_recreate;
 c
-yankee
+y*nkee
 DEALLOCATE PREPARE stmt_prepare_recreate;
 DROP VIEW IF EXISTS privilege__column_masking_policy.v_view_mask;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_view_mask;
