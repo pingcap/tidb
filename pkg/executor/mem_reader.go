@@ -224,15 +224,17 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 			// index table ID, not the partition ID.
 			var tid int64
 			if m.index.Global {
-				if !m.index.Unique && m.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
-					// V2 non-unique global index: partition ID is in the key
+				pidBytes := tablecodec.SplitIndexValue(value).PartitionID
+				if pidBytes == nil && m.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+					// V2+ global index with partition ID in key only (non-unique entries,
+					// or unique index entries with NULL values where distinct=false).
 					tid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(m.index.Columns))
 					if err != nil {
 						return nil, err
 					}
 				} else {
-					// V0/V1 or unique global index: partition ID is in the value
-					_, tid, err = codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+					// V0/V1, or V2+ unique entries with partition ID in the value.
+					_, tid, err = codec.DecodeInt(pidBytes)
 					if err != nil {
 						return nil, err
 					}
@@ -1024,12 +1026,14 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		if iter.index.Global {
 			var pid int64
 			var err error
-			// For V2+ non-unique global indexes, the partition ID is in the key, not the value.
-			// For unique global indexes or legacy (V0/V1) indexes, partition ID is in the value.
-			if !iter.index.Unique && iter.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+			pidBytes := tablecodec.SplitIndexValue(value).PartitionID
+			if pidBytes == nil && iter.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+				// V2+ global index with partition ID in key only (non-unique entries,
+				// or unique index entries with NULL values where distinct=false).
 				pid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(iter.index.Columns))
 			} else {
-				_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+				// V0/V1, or V2+ unique entries with partition ID in the value.
+				_, pid, err = codec.DecodeInt(pidBytes)
 			}
 			if err != nil {
 				return nil, err
