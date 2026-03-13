@@ -478,6 +478,12 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+
+	// version255
+	// Deduplicate mysql.tidb_runaway_queries, add update_time column, and add a composite clustered
+	// primary key (resource_group_name, sql_digest, plan_digest, match_type) to eliminate cross-window
+	// duplicate rows and the implicit _tidb_rowid write hotspot.
+	version255 = 255
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -491,7 +497,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version254
+var currentBootstrapVersion int64 = version255
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -670,6 +676,7 @@ var (
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
+		{version: version255, fn: upgradeToVer255},
 	}
 )
 
@@ -2048,4 +2055,61 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer255(s sessionapi.Session, _ int64) {
+	// TiDB cannot ALTER TABLE ADD PRIMARY KEY ... CLUSTERED on an existing table,
+	// so we must recreate mysql.tidb_runaway_queries with the target schema.
+
+	// Step 1: add update_time column to the old table so the migration SELECT works.
+	// DEFAULT CURRENT_TIMESTAMP backfills existing rows.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP", infoschema.ErrColumnExists)
+
+	// Step 2: create staging table and migrate deduplicated data.
+	// Uses GROUP BY on the composite key to collapse duplicates, preserving
+	// MIN(start_time) for first-seen semantics, MAX(update_time) for last activity,
+	// and SUM(repeats) so historical counts are not lost.
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
+	mustExecute(s, "CREATE TABLE mysql.tidb_runaway_queries_bak ("+
+		"resource_group_name varchar(32) NOT NULL, "+
+		"start_time TIMESTAMP NOT NULL, "+
+		"update_time TIMESTAMP NOT NULL, "+
+		"repeats BIGINT, "+
+		"match_type varchar(12) NOT NULL, "+
+		"action varchar(64) NOT NULL, "+
+		"sample_sql TEXT NOT NULL, "+
+		"sql_digest varchar(64) NOT NULL, "+
+		"plan_digest varchar(64) NOT NULL, "+
+		"tidb_server varchar(512), "+
+		"rule VARCHAR(512) DEFAULT ''"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	mustExecute(s, "INSERT INTO mysql.tidb_runaway_queries_bak "+
+		"SELECT resource_group_name, "+
+		"MIN(start_time), "+
+		"MAX(update_time), "+
+		"SUM(repeats), "+
+		"match_type, "+
+		"ANY_VALUE(action), "+
+		"ANY_VALUE(sample_sql), "+
+		"sql_digest, "+
+		"plan_digest, "+
+		"ANY_VALUE(tidb_server), "+
+		"ANY_VALUE(rule) "+
+		"FROM mysql.tidb_runaway_queries "+
+		"GROUP BY resource_group_name, sql_digest, plan_digest, match_type")
+
+	// Step 3: drop old table and recreate with target schema (CLUSTERED PK).
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries")
+	mustExecute(s, metadef.CreateTiDBRunawayQueriesTable)
+
+	// Step 4: re-insert deduplicated data into the new table.
+	mustExecute(s, "INSERT INTO mysql.tidb_runaway_queries "+
+		"(resource_group_name, start_time, update_time, repeats, match_type, "+
+		"action, sample_sql, sql_digest, plan_digest, tidb_server, rule) "+
+		"SELECT resource_group_name, start_time, update_time, repeats, match_type, "+
+		"action, sample_sql, sql_digest, plan_digest, tidb_server, rule "+
+		"FROM mysql.tidb_runaway_queries_bak")
+
+	// Step 5: drop staging table.
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
 }

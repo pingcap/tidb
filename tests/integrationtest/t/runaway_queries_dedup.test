@@ -1,0 +1,73 @@
+# TestRunawayQueriesDedupSchema
+# TC1: update_time column exists with correct type and is NOT NULL
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'mysql'
+  AND table_name = 'tidb_runaway_queries'
+  AND column_name = 'update_time';
+
+# TC2: composite primary key covers the four dedup columns in the right order
+SELECT column_name, seq_in_index, non_unique
+FROM information_schema.statistics
+WHERE table_schema = 'mysql'
+  AND table_name = 'tidb_runaway_queries'
+  AND index_name = 'PRIMARY'
+ORDER BY seq_in_index;
+
+# TC6: update_time_index exists so GC scans are efficient
+SELECT index_name, column_name
+FROM information_schema.statistics
+WHERE table_schema = 'mysql'
+  AND table_name = 'tidb_runaway_queries'
+  AND index_name = 'update_time_index';
+
+# TestRunawayQueriesODKU
+# TC3: repeats accumulates and update_time advances on duplicate insert;
+#      start_time retains first-seen value (immutable).
+DELETE FROM mysql.tidb_runaway_queries WHERE resource_group_name = 'rg_inttest_dedup';
+INSERT INTO mysql.tidb_runaway_queries
+  (resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats)
+VALUES
+  ('rg_inttest_dedup','2024-01-01 00:00:00','2024-01-01 00:00:01','identify','DRYRUN','select 1','d1','p1','srv1','',1)
+ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = GREATEST(update_time, VALUES(update_time));
+INSERT INTO mysql.tidb_runaway_queries
+  (resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats)
+VALUES
+  ('rg_inttest_dedup','2024-01-02 00:00:00','2024-01-01 00:00:10','identify','DRYRUN','select 1','d1','p1','srv2','',3)
+ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = GREATEST(update_time, VALUES(update_time));
+# expect: 1 row, repeats=4, update_time='2024-01-01 00:00:10', start_time='2024-01-01 00:00:00'
+SELECT resource_group_name, start_time, update_time, repeats
+FROM mysql.tidb_runaway_queries
+WHERE resource_group_name = 'rg_inttest_dedup';
+DELETE FROM mysql.tidb_runaway_queries WHERE resource_group_name = 'rg_inttest_dedup';
+
+# TC4: a stale flush with an earlier update_time must not roll back update_time (GREATEST)
+DELETE FROM mysql.tidb_runaway_queries WHERE resource_group_name = 'rg_inttest_greatest';
+INSERT INTO mysql.tidb_runaway_queries
+  (resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats)
+VALUES
+  ('rg_inttest_greatest','2024-01-01 00:00:00','2024-01-10 12:00:00','identify','DRYRUN','select 1','d2','p2','srv1','',5)
+ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = GREATEST(update_time, VALUES(update_time));
+INSERT INTO mysql.tidb_runaway_queries
+  (resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats)
+VALUES
+  ('rg_inttest_greatest','2024-01-01 00:00:00','2024-01-01 06:00:00','identify','DRYRUN','select 1','d2','p2','srv2','',1)
+ON DUPLICATE KEY UPDATE repeats = repeats + VALUES(repeats), update_time = GREATEST(update_time, VALUES(update_time));
+# expect: update_time stays '2024-01-10 12:00:00', repeats=6
+SELECT resource_group_name, update_time, repeats
+FROM mysql.tidb_runaway_queries
+WHERE resource_group_name = 'rg_inttest_greatest';
+DELETE FROM mysql.tidb_runaway_queries WHERE resource_group_name = 'rg_inttest_greatest';
+
+# TC5: plain INSERT without ON DUPLICATE KEY UPDATE raises Error 1062 on composite PK collision
+DELETE FROM mysql.tidb_runaway_queries WHERE resource_group_name = 'rg_inttest_pk';
+INSERT INTO mysql.tidb_runaway_queries
+  (resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats)
+VALUES
+  ('rg_inttest_pk','2024-01-01 00:00:00','2024-01-01 00:00:00','identify','DRYRUN','select 1','d3','p3','srv1','',1);
+-- error 1062
+INSERT INTO mysql.tidb_runaway_queries
+  (resource_group_name, start_time, update_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats)
+VALUES
+  ('rg_inttest_pk','2024-01-01 00:00:00','2024-01-01 00:00:00','identify','DRYRUN','select 1','d3','p3','srv1','',1);
+DELETE FROM mysql.tidb_runaway_queries WHERE resource_group_name = 'rg_inttest_pk';

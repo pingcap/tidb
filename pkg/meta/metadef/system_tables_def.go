@@ -592,9 +592,13 @@ const (
     );`
 
 	// CreateTiDBRunawayQueriesTable stores the query which is identified as runaway or quarantined because of in watch list.
+	// The composite primary key (resource_group_name, sql_digest, plan_digest, match_type) enforces cluster-wide
+	// deduplication: repeated occurrences of the same query pattern accumulate into one row via ON DUPLICATE KEY UPDATE.
+	// update_time tracks the last activity time and is used by GC instead of start_time.
 	CreateTiDBRunawayQueriesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
+		update_time TIMESTAMP NOT NULL,
 		repeats int default 1,
 		match_type varchar(12) NOT NULL,
 		action varchar(64) NOT NULL,
@@ -603,8 +607,10 @@ const (
 		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
 		rule VARCHAR(512) DEFAULT '',
+		PRIMARY KEY (resource_group_name, sql_digest, plan_digest, match_type) CLUSTERED,
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
-		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with start time",
+		INDEX update_time_index(update_time) COMMENT "accelerate the speed when GC expired records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateTiDBTimersTable is a table to store all timers for tidb

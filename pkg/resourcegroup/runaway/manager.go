@@ -159,6 +159,9 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 		func(m map[recordKey]*Record, k recordKey, v *Record) {
 			if existing, ok := m[k]; ok {
 				existing.Repeats++
+				if v.UpdateTime.After(existing.UpdateTime) {
+					existing.UpdateTime = v.UpdateTime
+				}
 			} else {
 				m[k] = v
 			}
@@ -339,6 +342,7 @@ func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *
 	case rm.runawayQueriesChan <- &Record{
 		ResourceGroupName: checker.resourceGroupName,
 		StartTime:         *now,
+		UpdateTime:        *now,
 		Match:             matchType,
 		Action:            action,
 		SampleText:        checker.originalSQL,
