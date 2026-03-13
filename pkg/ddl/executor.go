@@ -6592,9 +6592,15 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, schemaID 
 	// Check if there's already a policy on the same table+column (table-scoped uniqueness)
 	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok {
 		if existPolicy.Name.L != policy.Name.L {
+			// Different name on same column - error
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
-		// Same name on same table+column, allow for CREATE OR REPLACE case
+		// Same name on same table+column
+		if onExist == OnExistIgnore {
+			// IF NOT EXISTS - silently ignore
+			return nil
+		}
+		// Allow for CREATE OR REPLACE case (handled by DDL worker)
 	}
 
 	job := &model.Job{
