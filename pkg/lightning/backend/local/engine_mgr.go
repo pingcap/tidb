@@ -476,7 +476,8 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 	return nil
 }
 
-// cleanupAllLocalEngines closes and removes all local engines, used for best-effort cleanup on error.
+// cleanupAllLocalEngines performs best-effort cleanup for all local engines.
+// Failures are logged internally and not returned to the caller.
 func (em *engineManager) cleanupAllLocalEngines(ctx context.Context) {
 	var (
 		retErr  error
