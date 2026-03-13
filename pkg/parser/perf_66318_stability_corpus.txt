@@ -1,0 +1,182 @@
+# Perf66318 stability corpus (parser-only)
+#
+# - This file is intentionally ordered by category for readability.
+# - The stability test loads it into memory and then shuffles it (deterministically).
+# - "Weights" are expressed by line count: more lines => higher frequency.
+#
+# Relevant env vars (see perf_66318_stability_test.go):
+# - PERF66318_CORPUS_FILE: override corpus file path (default: this file if present)
+# - PERF66318_SHUFFLE: whether to shuffle after load (default: true)
+# - PERF66318_SEED: shuffle seed (default: 1)
+#
+# Recommended usage:
+#   cd pkg/parser
+#   PERF66318_DURATION=10m PERF66318_CONC=16 PERF66318_REPORT_EVERY=1m \
+#     PERF66318_CORPUS_FILE=perf_66318_stability_corpus.txt PERF66318_SEED=1 \
+#     GOTOOLCHAIN=local /usr/local/go/bin/go test -run TestPerf66318Stability -count 1 -timeout 25m -v
+
+
+# -----------------------------------------------------------------------------
+# Session / connection (high frequency)
+# -----------------------------------------------------------------------------
+
+# Database switching (vary db name to avoid identical text duplicates).
+USE sbtest0
+USE sbtest1
+USE sbtest2
+USE sbtest3
+USE sbtest4
+USE sbtest5
+USE sbtest6
+USE sbtest7
+USE sbtest8
+USE sbtest9
+USE appdb_oltp0
+USE appdb_oltp1
+USE appdb_oltp2
+USE appdb_oltp3
+USE appdb_oltp4
+USE appdb_oltp5
+USE appdb_oltp6
+USE appdb_oltp7
+USE appdb_oltp8
+USE appdb_oltp9
+
+# Transaction controls.
+BEGIN
+COMMIT
+ROLLBACK
+START TRANSACTION
+
+# Common session variables (autocommit / charset / time zone / sql_mode).
+SET autocommit = 1
+SET autocommit = 0
+SET @@session.autocommit = 1
+SET @@session.autocommit = 0
+SET SESSION autocommit = 1
+SET SESSION autocommit = 0
+
+SET NAMES utf8mb4
+SET NAMES utf8
+SET NAMES latin1
+SET CHARACTER SET utf8mb4
+
+SET time_zone = '+00:00'
+SET time_zone = '+08:00'
+SET SESSION time_zone = '+00:00'
+SET SESSION time_zone = '+09:00'
+
+SET sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'
+SET SESSION sql_mode = ''
+SET @@session.sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES'
+
+# Other frequently-seen SET forms (session vars + user vars).
+SET tx_isolation = 'REPEATABLE-READ'
+SET SESSION tx_isolation = 'READ-COMMITTED'
+SET @@session.wait_timeout = 28800
+SET @@session.max_execution_time = 0
+SET sql_select_limit = DEFAULT
+SET @usr_var_0 = 0
+SET @usr_var_1 = 1
+SET @usr_var_s = 'abc'
+
+# SHOW/SELECT metadata probes (drivers/ORMs do this a lot).
+SHOW VARIABLES LIKE 'tidb%'
+SHOW VARIABLES LIKE 'autocommit'
+SHOW VARIABLES LIKE 'sql_mode'
+SHOW VARIABLES LIKE 'time_zone'
+SHOW VARIABLES LIKE 'character_set%'
+SHOW VARIABLES LIKE 'collation%'
+
+SHOW STATUS LIKE 'Threads_running'
+SHOW STATUS LIKE 'Threads_connected'
+SHOW STATUS LIKE 'Connections'
+SHOW STATUS LIKE 'Uptime'
+
+SELECT DATABASE()
+SELECT @@autocommit
+SELECT @@sql_mode
+SELECT @@time_zone
+SELECT @@character_set_client, @@collation_connection
+SELECT @@version_comment
+
+# Multi-statement (common in connection init; also exercises multi-stmt parsing).
+USE sbtest0; SET autocommit = 1; SELECT DATABASE()
+USE sbtest1; SET autocommit = 0; SELECT @@autocommit
+SET NAMES utf8mb4; SELECT @@character_set_client
+SET time_zone = '+00:00'; SELECT @@time_zone
+BEGIN; SELECT 1; COMMIT
+START TRANSACTION; SELECT 1; ROLLBACK
+USE sbtest2; SHOW VARIABLES LIKE 'tidb%'; SHOW STATUS LIKE 'Threads_running'
+SET @usr_var_0 = 0; SET @usr_var_1 = 1; SELECT @usr_var_0 + @usr_var_1
+
+
+# -----------------------------------------------------------------------------
+# OLTP-ish DML / point queries (medium frequency)
+# -----------------------------------------------------------------------------
+
+# Point selects (param-style + const-style) across multiple tables.
+SELECT c FROM sbtest1 WHERE id=?
+SELECT c FROM sbtest2 WHERE id=?
+SELECT c FROM sbtest3 WHERE id=?
+SELECT c FROM sbtest4 WHERE id=?
+SELECT c FROM sbtest5 WHERE id=?
+SELECT c FROM sbtest6 WHERE id=?
+SELECT c FROM sbtest7 WHERE id=?
+SELECT c FROM sbtest8 WHERE id=?
+SELECT c FROM sbtest9 WHERE id=?
+SELECT c FROM sbtest10 WHERE id=?
+
+SELECT c FROM sbtest1 WHERE id=1
+SELECT c FROM sbtest2 WHERE id=2
+SELECT c FROM sbtest3 WHERE id=3
+SELECT c FROM sbtest4 WHERE id=4
+SELECT c FROM sbtest5 WHERE id=5
+
+SELECT c FROM sbtest1 WHERE id=? FOR UPDATE
+SELECT c FROM sbtest2 WHERE id=? FOR UPDATE
+SELECT c FROM sbtest3 WHERE id=? FOR UPDATE
+SELECT c FROM sbtest4 WHERE id=? FOR UPDATE
+SELECT c FROM sbtest5 WHERE id=? FOR UPDATE
+
+# Updates / deletes.
+UPDATE sbtest1 SET k=k+1 WHERE id=?
+UPDATE sbtest2 SET k=k+1 WHERE id=?
+UPDATE sbtest3 SET k=k+1 WHERE id=?
+UPDATE sbtest4 SET k=k+1 WHERE id=?
+UPDATE sbtest5 SET k=k+1 WHERE id=?
+
+UPDATE sbtest6 SET c=? WHERE id=?
+UPDATE sbtest7 SET c=? WHERE id=?
+UPDATE sbtest8 SET c=? WHERE id=?
+UPDATE sbtest9 SET c=? WHERE id=?
+UPDATE sbtest10 SET c=? WHERE id=?
+
+DELETE FROM sbtest1 WHERE id=?
+DELETE FROM sbtest2 WHERE id=?
+DELETE FROM sbtest3 WHERE id=?
+DELETE FROM sbtest4 WHERE id=?
+DELETE FROM sbtest5 WHERE id=?
+
+# Inserts (single-row, prepared-like).
+INSERT INTO sbtest1(id,k,c,pad) VALUES(?,?,?,?)
+INSERT INTO sbtest2(id,k,c,pad) VALUES(?,?,?,?)
+INSERT INTO sbtest3(id,k,c,pad) VALUES(?,?,?,?)
+INSERT INTO sbtest4(id,k,c,pad) VALUES(?,?,?,?)
+INSERT INTO sbtest5(id,k,c,pad) VALUES(?,?,?,?)
+
+
+# -----------------------------------------------------------------------------
+# Complex / structural SQL (low frequency)
+# -----------------------------------------------------------------------------
+
+SELECT t1.a, t2.b FROM t1 LEFT JOIN t2 ON t1.id = t2.id WHERE t1.a > 10 AND t2.b IS NOT NULL ORDER BY t2.b DESC LIMIT 100
+WITH cte AS (SELECT id, v FROM t0 WHERE v > 10) SELECT * FROM cte WHERE id < 100
+WITH RECURSIVE cte AS (SELECT 1 AS n UNION ALL SELECT n+1 FROM cte WHERE n < 10) SELECT * FROM cte
+SELECT id, SUM(v) OVER (PARTITION BY id % 10 ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s FROM t
+SELECT /*+ USE_INDEX(t idx_a) */ * FROM t WHERE a = 1 AND b = 2
+SELECT * FROM t WHERE id IN (SELECT id FROM t2 WHERE v > 10) AND EXISTS (SELECT 1 FROM t3 WHERE t3.id = t.id)
+CREATE TABLE t_ddl_0 (id INT PRIMARY KEY, c VARCHAR(32), v INT, KEY idx_v (v))
+SELECT a FROM t0 UNION ALL SELECT a FROM t1 UNION ALL SELECT a FROM t2
+SELECT * FROM (SELECT id, v FROM t0 WHERE v > 10) AS d WHERE d.id < 100
+SELECT '中文' AS zh, '🙂' AS emj
