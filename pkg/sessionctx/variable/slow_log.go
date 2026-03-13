@@ -124,6 +124,8 @@ const (
 	// SlowLogWarnings is the warnings generated during executing the statement.
 	// Note that some extra warnings would also be printed through slow log.
 	SlowLogWarnings = "Warnings"
+	// SlowLogModelInference is the model inference stats payload.
+	SlowLogModelInference = "Model_inference"
 	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
@@ -294,6 +296,7 @@ type SlowQueryLogItems struct {
 	ExecRetryTime     time.Duration
 	ResultRows        int64
 	Warnings          []JSONSQLWarnForSlowLog
+	ModelInference    string
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
@@ -515,6 +518,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		if err != nil {
 			buf.WriteString(err.Error())
 		}
+	}
+	if len(logItems.ModelInference) > 0 {
+		writeSlowLogItem(&buf, SlowLogModelInference, logItems.ModelInference)
 	}
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))

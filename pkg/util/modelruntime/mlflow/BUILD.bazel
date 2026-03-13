@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mlflow",
+    srcs = [
+        "client.go",
+        "parse.go",
+        "protocol.go",
+        "sidecar.go",
+    ],
+    embedsrcs = ["sidecar.py"],
+    importpath = "github.com/pingcap/tidb/pkg/util/modelruntime/mlflow",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_test(
+    name = "mlflow_test",
+    timeout = "short",
+    srcs = [
+        "client_test.go",
+        "sidecar_test.go",
+    ],
+    data = ["sidecar.py"],
+    embed = [":mlflow"],
+    flaky = True,
+    deps = [
+        "@com_github_stretchr_testify//require",
+    ],
+)

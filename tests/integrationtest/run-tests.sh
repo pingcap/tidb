@@ -33,6 +33,7 @@ set -eu
 trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
 function help_message()
 {
@@ -129,6 +130,28 @@ function extract_stats()
     unzip -qq s.zip
 }
 
+function prepare_model_test_artifacts()
+{
+    local src="${ROOT_DIR}/pkg/executor/testdata/onnx/identity_scalar.onnx"
+    local dst_dir="/tmp/tidb-models"
+    local dst="${dst_dir}/identity_scalar.onnx"
+    if [ ! -f "$src" ]; then
+        echo "missing model test artifact: $src" >&2
+        exit 1
+    fi
+    mkdir -p "$dst_dir"
+    cp "$src" "$dst"
+
+    local mlflow_src="${ROOT_DIR}/pkg/executor/testdata/mlflow/identity"
+    local mlflow_dst="${dst_dir}/identity_mlflow"
+    if [ ! -f "${mlflow_src}/MLmodel" ]; then
+        echo "missing mlflow model test artifact: ${mlflow_src}/MLmodel" >&2
+        exit 1
+    fi
+    rm -rf "${mlflow_dst}"
+    cp -R "${mlflow_src}" "${mlflow_dst}"
+}
+
 while getopts "t:s:r:b:d:c:i:P:h" opt; do
     case $opt in
         P)
@@ -189,6 +212,7 @@ while getopts "t:s:r:b:d:c:i:P:h" opt; do
 done
 
 extract_stats
+prepare_model_test_artifacts
 
 if [ $build -eq 1 ]; then
     if [ -z "$tidb_server" ]; then

@@ -1,0 +1,19 @@
+use test;
+set global tidb_enable_model_ddl = on;
+set global tidb_enable_model_inference = on;
+drop model if exists identity_model_predicate;
+drop table if exists t_model;
+create model identity_model_predicate (input (x float) output (y float)) using onnx location 'file:/tmp/tidb-models/identity_scalar.onnx' checksum 'sha256:855db7d48ba65b32534d04595a9776cec73b54784a6321d5aa536d6b405b5dde';
+create table t_model (x float, y int);
+insert into t_model values (0.25, 1), (0.75, 1), (1.5, 1), (2.5, 1), (0.4, 2), (2.0, 2), (3.0, 2);
+select x from t_model where y = 1 and model_predict(identity_model_predicate, x).y > 0.5 order by x;
+select count(*) from t_model where y = 2 and model_predict(identity_model_predicate, x).y > 1.0;
+explain select x from t_model where y = 1 and model_predict(identity_model_predicate, x).y > 0.5;
+id	estRows	task	access object	operator info
+Projection_4	8.00	root		test.t_model.x
+└─Selection_7	8.00	root		gt(tidb_model_predict_output("identity_model_predicate", "y", test.t_model.x), 0.5)
+  └─TableReader_10	10.00	root		data:Selection_9
+    └─Selection_9	10.00	cop[tikv]		eq(test.t_model.y, 1)
+      └─TableFullScan_8	10000.00	cop[tikv]	table:t_model	keep order:false, stats:pseudo
+drop table t_model;
+drop model identity_model_predicate;

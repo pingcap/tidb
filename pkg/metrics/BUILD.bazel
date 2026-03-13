@@ -17,6 +17,7 @@ go_library(
         "memory.go",
         "meta.go",
         "metrics.go",
+        "model.go",
         "owner.go",
         "rawkv.go",
         "resource_group.go",

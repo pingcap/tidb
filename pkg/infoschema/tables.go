@@ -220,6 +220,10 @@ const (
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 	// TableTiDBPlanCache is the plan cache table.
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
+	// TableTiDBModelVersions is the model versions table.
+	TableTiDBModelVersions = "TIDB_MODEL_VERSIONS"
+	// TableTiDBModelCache is the model cache table.
+	TableTiDBModelCache = "TIDB_MODEL_CACHE"
 	// TableKeyspaceMeta is the table to show the keyspace meta.
 	TableKeyspaceMeta = "KEYSPACE_META"
 	// TableSchemataExtensions is the table to show read only status of database.
@@ -354,6 +358,8 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
+	TableTiDBModelVersions:               autoid.InformationSchemaDBID + 102,
+	TableTiDBModelCache:                  autoid.InformationSchemaDBID + 103,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -963,6 +969,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogResultRows, tp: mysql.TypeLonglong, size: 22},
 	{name: variable.SlowLogWarnings, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: variable.SlowLogModelInference, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
@@ -1877,6 +1884,32 @@ var tablePlanCache = []columnInfo{
 	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
 }
 
+var tableTiDBModelVersionsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "MODEL_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "MODEL_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "VERSION", tp: mysql.TypeLonglong, size: 21},
+	{name: "ENGINE", tp: mysql.TypeVarchar, size: 16},
+	{name: "LOCATION", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "CHECKSUM", tp: mysql.TypeVarchar, size: 128},
+	{name: "INPUT_SCHEMA", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+	{name: "OUTPUT_SCHEMA", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+	{name: "OPTIONS", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+	{name: "STATUS", tp: mysql.TypeVarchar, size: 16},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "DELETED_AT", tp: mysql.TypeDatetime, size: 19},
+}
+
+var tableTiDBModelCacheCols = []columnInfo{
+	{name: "MODEL_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "VERSION", tp: mysql.TypeLonglong, size: 21},
+	{name: "INPUT_NAMES", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "OUTPUT_NAMES", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "CACHED_AT", tp: mysql.TypeDatetime, size: 19},
+	{name: "TTL_SECONDS", tp: mysql.TypeLonglong, size: 21},
+	{name: "EXPIRES_AT", tp: mysql.TypeDatetime, size: 19},
+}
+
 var tableKeyspaceMetaCols = []columnInfo{
 	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 128},
 	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
@@ -2536,6 +2569,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
+	TableTiDBModelVersions:                  tableTiDBModelVersionsCols,
+	TableTiDBModelCache:                     tableTiDBModelCacheCols,
 	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
 }
 

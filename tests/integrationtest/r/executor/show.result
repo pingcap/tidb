@@ -760,6 +760,7 @@ mid
 minus
 minute
 mod
+model_predict
 month
 monthname
 mul
@@ -837,6 +838,7 @@ tidb_encode_index_key
 tidb_encode_record_key
 tidb_encode_sql_digest
 tidb_is_ddl_owner
+tidb_model_predict_output
 tidb_mvcc_info
 tidb_parse_tso
 tidb_parse_tso_logical

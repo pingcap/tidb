@@ -69,6 +69,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpModelRuntimeStats is the tp for ModelRuntimeStats
+	TpModelRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.

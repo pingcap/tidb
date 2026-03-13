@@ -663,6 +663,9 @@ var funcs = map[string]functionClass{
 	ast.Greatest: &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
 	ast.Least:    &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
 	ast.Interval: &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
+	// model functions
+	ast.ModelPredict:       &modelPredictFunctionClass{baseFunctionClass{ast.ModelPredict, 2, -1}},
+	ast.ModelPredictOutput: &modelPredictOutputFunctionClass{baseFunctionClass{ast.ModelPredictOutput, 3, -1}},
 
 	// math functions
 	ast.Abs:      &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},

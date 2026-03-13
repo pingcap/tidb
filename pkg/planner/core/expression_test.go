@@ -71,6 +71,18 @@ func buildExprAndEval(t *testing.T, ctx expression.BuildContext, exprNode any) t
 	return val
 }
 
+func TestModelPredictFieldAccessParse(t *testing.T) {
+	node := parseExpr(t, "MODEL_PREDICT(m, a).score")
+	access, ok := node.(*ast.FieldAccessExpr)
+	require.True(t, ok)
+	require.Equal(t, "score", access.Name.L)
+
+	call, ok := access.Expr.(*ast.FuncCallExpr)
+	require.True(t, ok)
+	require.Equal(t, "model_predict", call.FnName.L)
+	require.Len(t, call.Args, 2)
+}
+
 type testCase struct {
 	exprStr   string
 	resultStr string

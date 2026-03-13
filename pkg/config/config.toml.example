@@ -298,6 +298,19 @@ lite-init-stats = true
 # Whether to wait for init stats to finish before providing service during startup
 force-init-stats = true
 
+[model-mlflow]
+# Python executable used to start the MLflow sidecar.
+python = "python3"
+
+# Number of sidecar worker processes per TiDB node.
+sidecar-workers = 2
+
+# Timeout for establishing a sidecar connection and startup checks.
+request-timeout = "2s"
+
+# Maximum number of models cached in each sidecar worker.
+cache-entries = 64
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.

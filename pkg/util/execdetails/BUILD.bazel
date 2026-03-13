@@ -4,6 +4,7 @@ go_library(
     name = "execdetails",
     srcs = [
         "execdetails.go",
+        "model_runtime_stats.go",
         "runtime_stats.go",
         "tiflash_stats.go",
         "util.go",

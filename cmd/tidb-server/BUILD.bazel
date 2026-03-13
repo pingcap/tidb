@@ -48,6 +48,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
+        "//pkg/util/modelruntime",
         "//pkg/util/naming",
         "//pkg/util/printer",
         "//pkg/util/redact",

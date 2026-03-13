@@ -446,6 +446,21 @@ func (*Checker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) er
 	panic("implement me")
 }
 
+// CreateModel implements the DDL interface.
+func (*Checker) CreateModel(_ sessionctx.Context, _ *ast.CreateModelStmt) error {
+	return nil
+}
+
+// AlterModel implements the DDL interface.
+func (*Checker) AlterModel(_ sessionctx.Context, _ *ast.AlterModelStmt) error {
+	return nil
+}
+
+// DropModel implements the DDL interface.
+func (*Checker) DropModel(_ sessionctx.Context, _ *ast.DropModelStmt) error {
+	return nil
+}
+
 // CreatePlacementPolicy implements the DDL interface.
 func (*Checker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	//TODO implement me

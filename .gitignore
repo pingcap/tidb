@@ -74,6 +74,7 @@ compose-dev.yaml
 fix.sql
 export-20*/
 var
+lib/onnxruntime/
 
 # Personal config files
 /*config.toml

@@ -258,6 +258,9 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.UsedStats = stmtCtx.GetUsedStatsInfo(false)
 	items.IsSyncStatsFailed = stmtCtx.IsSyncStatsFailed
 	items.Warnings = variable.CollectWarningsForSlowLog(stmtCtx)
+	if modelInferenceJSON, err := stmtCtx.ModelInferenceStats().SlowLogJSON(); err == nil {
+		items.ModelInference = modelInferenceJSON
+	}
 	items.ResourceGroupName = stmtCtx.ResourceGroupName
 	items.RUDetails = ruDetails
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()

@@ -478,6 +478,9 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+	// version255
+	// Add model system tables mysql.tidb_model and mysql.tidb_model_version.
+	version255 = 255
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -491,7 +494,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version254
+var currentBootstrapVersion int64 = version255
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -670,6 +673,7 @@ var (
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
+		{version: version255, fn: upgradeToVer255},
 	}
 )
 
@@ -2048,4 +2052,9 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer255(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBModelTable)
+	mustExecute(s, metadef.CreateTiDBModelVersionTable)
 }

@@ -129,6 +129,9 @@ type Executor interface {
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
+	CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt) error
+	AlterModel(ctx sessionctx.Context, stmt *ast.AlterModelStmt) error
+	DropModel(ctx sessionctx.Context, stmt *ast.DropModelStmt) error
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error

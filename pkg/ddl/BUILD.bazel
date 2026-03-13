@@ -50,6 +50,7 @@ go_library(
         "job_worker.go",
         "metabuild.go",
         "mock.go",
+        "model.go",
         "modify_column.go",
         "multi_schema_change.go",
         "options.go",

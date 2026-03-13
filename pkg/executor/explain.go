@@ -139,6 +139,30 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
 			coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
 		}
+		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+			stats := e.Ctx().GetSessionVars().StmtCtx.ModelInferenceStats()
+			for planID, summaries := range stats.PlanSummaries() {
+				if len(summaries) == 0 {
+					continue
+				}
+				converted := make([]execdetails.ModelInferenceSummary, 0, len(summaries))
+				for _, summary := range summaries {
+					converted = append(converted, execdetails.ModelInferenceSummary{
+						ModelID:            summary.ModelID,
+						VersionID:          summary.VersionID,
+						Role:               string(summary.Role),
+						Calls:              summary.Calls,
+						Errors:             summary.Errors,
+						TotalInferenceTime: summary.TotalInferenceTime,
+						TotalBatchSize:     summary.TotalBatchSize,
+						MaxBatchSize:       summary.MaxBatchSize,
+						TotalLoadTime:      summary.TotalLoadTime,
+						LoadErrors:         summary.LoadErrors,
+					})
+				}
+				coll.RegisterStats(planID, &execdetails.ModelRuntimeStats{Summaries: converted})
+			}
+		}
 	}
 	return err
 }

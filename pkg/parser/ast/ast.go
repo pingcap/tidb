@@ -160,6 +160,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 	switch x := stmtNode.(type) {
 	case *AlterTableStmt:
 		return "AlterTable"
+	case *AlterModelStmt:
+		return "AlterModel"
 	case *AnalyzeTableStmt:
 		return "AnalyzeTable"
 	case *BeginStmt:
@@ -172,6 +174,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "CreateDatabase"
 	case *CreateIndexStmt:
 		return "CreateIndex"
+	case *CreateModelStmt:
+		return "CreateModel"
 	case *CreateTableStmt:
 		return "CreateTable"
 	case *CreateViewStmt:
@@ -184,6 +188,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "DropDatabase"
 	case *DropIndexStmt:
 		return "DropIndex"
+	case *DropModelStmt:
+		return "DropModel"
 	case *DropTableStmt:
 		if x.IsView {
 			return "DropView"

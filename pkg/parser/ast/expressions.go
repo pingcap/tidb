@@ -34,6 +34,7 @@ var (
 	_ ExprNode = &CompareSubqueryExpr{}
 	_ ExprNode = &DefaultExpr{}
 	_ ExprNode = &ExistsSubqueryExpr{}
+	_ ExprNode = &FieldAccessExpr{}
 	_ ExprNode = &IsNullExpr{}
 	_ ExprNode = &IsTruthExpr{}
 	_ ExprNode = &ParenthesesExpr{}
@@ -81,6 +82,46 @@ type BetweenExpr struct {
 	Right ExprNode
 	// Not is true, the expression is "not between and".
 	Not bool
+}
+
+// FieldAccessExpr is for expressions like expr.field.
+type FieldAccessExpr struct {
+	exprNode
+	Expr ExprNode
+	Name CIStr
+}
+
+// Restore implements Node interface.
+func (n *FieldAccessExpr) Restore(ctx *format.RestoreCtx) error {
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore FieldAccessExpr.Expr")
+	}
+	ctx.WritePlain(".")
+	ctx.WriteName(n.Name.O)
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *FieldAccessExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	fmt.Fprint(w, ".")
+	fmt.Fprint(w, n.Name.L)
+}
+
+// Accept implements Node interface.
+func (n *FieldAccessExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*FieldAccessExpr)
+	node, ok := n.Expr.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.
