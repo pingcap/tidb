@@ -674,6 +674,63 @@ func TestPurgeMaterializedViewLogLockConflictAfterPartialSuccess(t *testing.T) {
 		Check(testkit.Rows("success 1"))
 }
 
+func TestPurgeMaterializedViewLogBeginFailureAfterPartialSuccess(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_begin_fail (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_begin_fail (id, v) purge immediate")
+	tk.MustExec("insert into t_purge_begin_fail values (1, 10), (2, 20), (3, 30)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_begin_fail"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 1")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogBeginErr", "1*return(false)->return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogBeginErr"))
+	}()
+
+	err = tk.ExecToErr("purge materialized view log on t_purge_begin_fail")
+	require.ErrorContains(t, err, "mock purge begin error")
+
+	tk.MustQuery("select count(*) from `$mlog$t_purge_begin_fail`").Check(testkit.Rows("2"))
+	tk.MustQuery(fmt.Sprintf(
+		"select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON like '%%mock purge begin error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		mlogID,
+	)).Check(testkit.Rows("failed 1 1 1"))
+}
+
+func TestPurgeMaterializedViewLogZeroStartTS(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_zero_start_ts (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_zero_start_ts (id, v) purge immediate")
+	tk.MustExec("insert into t_purge_zero_start_ts values (1, 10), (2, 20)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_zero_start_ts"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogZeroStartTS", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogZeroStartTS"))
+	}()
+
+	err = tk.ExecToErr("purge materialized view log on t_purge_zero_start_ts")
+	require.ErrorContains(t, err, "purge materialized view log: invalid transaction start tso")
+
+	tk.MustQuery("select count(*) from `$mlog$t_purge_zero_start_ts`").Check(testkit.Rows("2"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("0"))
+}
+
 func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

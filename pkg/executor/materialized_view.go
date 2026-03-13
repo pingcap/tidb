@@ -181,8 +181,17 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 
 	for {
+		var beginErr error
+		failpoint.Inject("mockPurgeMaterializedViewLogBeginErr", func(val failpoint.Value) {
+			if v, ok := val.(bool); ok && v {
+				beginErr = errors.New("mock purge begin error")
+			}
+		})
+		if beginErr != nil {
+			return finalizeFailure(beginErr)
+		}
 		if _, err = sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
-			return errors.Trace(err)
+			return finalizeFailure(err)
 		}
 
 		lastPurgedTSO, hasLastPurgedTSO, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
@@ -219,6 +228,15 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				return errors.Trace(err)
 			}
 			purgeStartTS := txn.StartTS()
+			failpoint.Inject("mockPurgeMaterializedViewLogZeroStartTS", func(val failpoint.Value) {
+				if v, ok := val.(bool); ok && v {
+					purgeStartTS = 0
+				}
+			})
+			if purgeStartTS == 0 {
+				_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+				return finalizeFailure(errors.New("purge materialized view log: invalid transaction start tso"))
+			}
 			safePurgeTSO = purgeStartTS
 
 			if !purgeHistRunningInserted {
