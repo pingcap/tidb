@@ -24,7 +24,6 @@ import (
 	"sync"
 
 	"github.com/ngaut/pools"
-
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"

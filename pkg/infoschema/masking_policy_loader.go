@@ -45,7 +45,6 @@ func loadMaskingPoliciesWithTableIDs(
 	factory func() (pools.Resource, error),
 	tableIDs []int64,
 ) ([]*model.MaskingPolicyInfo, error) {
-
 	resource, err := factory()
 	if err != nil {
 		return nil, errors.Trace(err)
