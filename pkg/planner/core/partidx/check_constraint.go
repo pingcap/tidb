@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -36,7 +37,7 @@ func CheckConstraints(sctx planctx.PlanContext, prePredicates []expression.Expre
 		return true
 	}
 
-	if canBeImpliedFromExprs(sctx.GetRangerCtx(), prePredicates[0], filters) {
+	if canBeImpliedFromExprs(sctx, prePredicates[0], filters) {
 		return true
 	}
 
@@ -65,7 +66,7 @@ func exactMatch(evalctx expression.EvalContext, prePredicates []expression.Expre
 }
 
 func canBeImpliedFromExprs(
-	rangerctx *context.RangerContext,
+	sctx planctx.PlanContext,
 	pre expression.Expression,
 	filters []expression.Expression,
 ) bool {
@@ -80,13 +81,13 @@ func canBeImpliedFromExprs(
 		if !ok {
 			return false
 		}
-		return implIsNotNull(rangerctx, col, filters)
+		return implIsNotNull(sctx, sctx.GetRangerCtx(), col, filters)
 	}
 
 	if _, ok := expression.CompareOpMap[sf.FuncName.L]; !ok {
 		return false
 	}
-	return implCompareExpr(rangerctx, sf, filters)
+	return implCompareExpr(sctx.GetRangerCtx(), sf, filters)
 }
 
 func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFunction, filters []expression.Expression) bool {
@@ -128,27 +129,38 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	return true
 }
 
-func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Column, filters []expression.Expression) bool {
+func implIsNotNull(sctx planctx.PlanContext, rangerctx *context.RangerContext, targetCol *expression.Column, filters []expression.Expression) bool {
 	columnConds := ranger.ExtractAccessConditionsForColumn(rangerctx, filters, targetCol)
-	if len(columnConds) == 0 {
-		return false
-	}
-	rangesFromFilters, _, _, err := ranger.BuildColumnRange(columnConds, rangerctx, targetCol.RetType, -1, 0)
-	if len(rangesFromFilters) == 0 || err != nil {
-		return false
-	}
-	for _, ran := range rangesFromFilters {
-		if ran.LowVal[0].IsNull() && !ran.LowExclude {
-			return false
+	if len(columnConds) > 0 {
+		rangesFromFilters, _, _, err := ranger.BuildColumnRange(columnConds, rangerctx, targetCol.RetType, -1, 0)
+		if len(rangesFromFilters) > 0 && err == nil {
+			allRejectNull := true
+			for _, ran := range rangesFromFilters {
+				if ran.LowVal[0].IsNull() && !ran.LowExclude {
+					allRejectNull = false
+					break
+				}
+			}
+			if allRejectNull {
+				return true
+			}
 		}
 	}
-	return true
+	// Range inference misses expressions like `a + ? > 1` that still prove `a` cannot be NULL.
+	// Reuse the conservative null-reject checker so partial-index eligibility and plan-cache
+	// safety stay aligned on the same small whitelist.
+	for _, filter := range filters {
+		if plannerutil.IsNullRejectedByInnerColumn(sctx, targetCol, filter) {
+			return true
+		}
+	}
+	return false
 }
 
 // AlwaysMeetConstraints checks whether the filters always meet the constraints from the predefined predicates in index meta.
 // This check is only applied to the pre condition that is single IS NOT NULL.
 // e.g. for partial index idx(b) where a IS NOT NULL, if the filter is b = ? and a is not null/a > 10, then we can guarantee that a IS NOT NULL is always true.
-// Because the `IsNullRejected` has correctness issues. So we implement a simpler version here.
+// This shares the same conservative structural null-reject checker used by plan-cache-sensitive join rewrites.
 func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []expression.Expression) bool {
 	if len(prePredicates) != 1 {
 		return false
@@ -165,57 +177,5 @@ func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []ex
 	if !ok {
 		return false
 	}
-	// When the index is chosen, the given filters can not be empty.
-	for _, filter := range filters {
-		sf, ok := filter.(*expression.ScalarFunction)
-		if !ok {
-			continue
-		}
-		if checkIsNullRejected(sctx, col, sf) {
-			return true
-		}
-	}
-	return false
-}
-
-func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column, filter *expression.ScalarFunction) bool {
-	if filter.FuncName.L == ast.LogicOr {
-		leavesAllRejected := true
-		for _, arg := range filter.GetArgs() {
-			sf, ok := arg.(*expression.ScalarFunction)
-			if !ok || !checkIsNullRejected(sctx, targetCol, sf) {
-				leavesAllRejected = false
-				break
-			}
-		}
-		return leavesAllRejected
-	}
-	if filter.FuncName.L == ast.LogicAnd {
-		for _, arg := range filter.GetArgs() {
-			sf, ok := arg.(*expression.ScalarFunction)
-			if ok && checkIsNullRejected(sctx, targetCol, sf) {
-				return true
-			}
-		}
-		return false
-	}
-	if filter.FuncName.L == ast.IsNull {
-		col, ok := filter.GetArgs()[0].(*expression.Column)
-		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
-			return false
-		}
-	}
-	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {
-		if filter.FuncName.L == ast.NullEQ {
-			return false
-		}
-		col, ok := filter.GetArgs()[0].(*expression.Column)
-		if !ok {
-			col, ok = filter.GetArgs()[1].(*expression.Column)
-		}
-		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
-			return true
-		}
-	}
-	return false
+	return implIsNotNull(sctx, sctx.GetRangerCtx(), col, filters)
 }
