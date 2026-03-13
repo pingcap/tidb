@@ -388,6 +388,13 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/executor/internal/builder",
         "//pkg/executor/internal/exec",
+<<<<<<< HEAD
+=======
+        "//pkg/executor/internal/testutil",
+        "//pkg/executor/join",
+        "//pkg/executor/sortexec",
+        "//pkg/executor/unionexec",
+>>>>>>> 377e6abd0d0 (pkg/executor: make UnionExec close race-safe (#66050))
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
