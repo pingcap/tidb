@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -351,4 +351,106 @@ func TestSetSessionParams(t *testing.T) {
 
 	err = setSessionParam(d)
 	require.NoError(t, err)
+}
+
+func TestDumpTableMetaExportTiDBRowID(t *testing.T) {
+	testCases := []struct {
+		name             string
+		hasImplicitRowID bool
+		pkAutoInc        bool
+		expectedField    string
+		expectedLen      int
+	}{
+		{
+			name:             "int auto-inc pk + has _tidb_rowid",
+			hasImplicitRowID: true,
+			pkAutoInc:        true,
+			expectedField:    "*,_tidb_rowid",
+			expectedLen:      2,
+		},
+		{
+			name:             "int auto-inc pk + no _tidb_rowid",
+			hasImplicitRowID: false,
+			pkAutoInc:        true,
+			expectedField:    "*,`id` AS `_tidb_rowid`",
+			expectedLen:      2,
+		},
+		{
+			name:             "int non-auto-inc pk + has _tidb_rowid",
+			hasImplicitRowID: true,
+			pkAutoInc:        false,
+			expectedField:    "*",
+			expectedLen:      1,
+		},
+		{
+			name:             "int non-auto-inc pk + no _tidb_rowid",
+			hasImplicitRowID: false,
+			pkAutoInc:        false,
+			expectedField:    "*",
+			expectedLen:      1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() {
+				require.NoError(t, db.Close())
+			}()
+
+			tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+			defer cancel()
+			conn, err := db.Conn(tctx)
+			require.NoError(t, err)
+			baseConn := newBaseConn(conn, true, nil)
+
+			conf := DefaultConfig()
+			conf.NoSchemas = true
+			conf.ExportTiDBRowIDMode = ExportTiDBRowIDModeIntPKAutoInc
+			conf.ServerInfo.ServerType = version.ServerTypeTiDB
+
+			// buildSelectField
+			colExtra := ""
+			if tc.pkAutoInc {
+				colExtra = "auto_increment"
+			}
+			mock.ExpectQuery("SHOW COLUMNS FROM").
+				WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+					AddRow("id", "int(11)", "NO", "PRI", nil, colExtra))
+
+			// SelectTiDBRowID
+			if tc.hasImplicitRowID {
+				mock.ExpectExec("SELECT _tidb_rowid from").
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			} else {
+				mock.ExpectExec("SELECT _tidb_rowid from").
+					WillReturnError(&mysql.MySQLError{Number: 1054, Message: "Unknown column '_tidb_rowid'"})
+			}
+
+			// getIntAutoIncPrimaryKeyColumn uses another SHOW COLUMNS
+			mock.ExpectQuery("SHOW COLUMNS FROM").
+				WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+					AddRow("id", "int(11)", "NO", "PRI", nil, colExtra))
+
+			// GetColumnTypes: query depends on selectedField
+			switch tc.expectedField {
+			case "*":
+				mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
+					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+			case "*,_tidb_rowid":
+				mock.ExpectQuery(fmt.Sprintf("SELECT \\*,_tidb_rowid FROM `%s`.`%s`", database, table)).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "_tidb_rowid"}).AddRow(1, 1))
+			default:
+				mock.ExpectQuery(fmt.Sprintf("SELECT \\*,`id` AS `_tidb_rowid` FROM `%s`.`%s`", database, table)).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "_tidb_rowid"}).AddRow(1, 1))
+			}
+
+			meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedField, meta.SelectedField())
+			require.Equal(t, tc.expectedLen, meta.SelectedLen())
+			require.Equal(t, tc.hasImplicitRowID, meta.HasImplicitRowID())
+		})
+	}
 }

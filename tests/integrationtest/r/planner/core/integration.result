@@ -3597,9 +3597,9 @@ Projection_16	10000.00	root		planner__core__integration.t1.a
           └─TableFullScan_24	20000000.00	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain select rank() over (partition by table_name) from information_schema.tables;
 id	estRows	task	access object	operator info
-Projection_7	10000.00	root		Column#27->Column#28
+Projection_7	10000.00	root		Column#29->Column#30
 └─Shuffle_11	10000.00	root		execution info: concurrency:5, data sources:[MemTableScan_9]
-  └─Window_8	10000.00	root		rank()->Column#27 over(partition by Column#3)
+  └─Window_8	10000.00	root		rank()->Column#29 over(partition by Column#3)
     └─Sort_10	10000.00	root		Column#3
       └─ShuffleReceiver_12	10000.00	root		
         └─MemTableScan_9	10000.00	root	table:TABLES	
@@ -3821,7 +3821,7 @@ set @@tidb_opt_range_max_size = 111;
 explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		in(planner__core__integration.sbtest1.id, 1, 1, 1, 1, 1), in(planner__core__integration.sbtest1.pad, "1", "1", "1", "1", "1")
+└─Selection	8000.00	cop[tikv]		in(planner__core__integration.sbtest1.id, 1), in(planner__core__integration.sbtest1.pad, "1")
   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen

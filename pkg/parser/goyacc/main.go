@@ -833,7 +833,7 @@ import __yyfmt__ "fmt"
 	}
 }
 
-func mustFormat(f strutil.Formatter, format string, args ...interface{}) {
+func mustFormat(f strutil.Formatter, format string, args ...any) {
 	_, err := f.Format(format, args...)
 	if err != nil {
 		log.Fatalf("format error %v", err)

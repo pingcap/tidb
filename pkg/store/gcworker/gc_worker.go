@@ -756,7 +756,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 
 	err := w.resolveLocks(ctx, safePoint, concurrency.v)
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks returns an error", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("resolve_lock").Inc()
@@ -867,7 +867,7 @@ func (w *GCWorker) deleteRanges(
 		})
 
 		if err != nil {
-			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -877,7 +877,7 @@ func (w *GCWorker) deleteRanges(
 
 		err = doGCPlacementRules(se, safePoint, r, &gcPlacementRuleCache)
 		if err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("gc placement rules failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
@@ -979,7 +979,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			logutil.Logger(ctx).Error("redo-delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("redo-delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -1225,7 +1225,7 @@ func (w *GCWorker) resolveLocks(
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks failed", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Uint64("safePoint", safePoint),
 			zap.Error(err))

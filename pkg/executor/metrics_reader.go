@@ -113,6 +113,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	}
 	promClient, err := api.NewClient(api.Config{
 		Address: prometheusAddr,
+		Client:  util.InternalHTTPClient(),
 	})
 	if err != nil {
 		return nil, err

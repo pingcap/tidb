@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -36,10 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -674,7 +677,7 @@ func getActualEndKey(
 		// and IndexMergeTmpWorker should still be finished in a bounded time.
 		return rangeEnd
 	}
-	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		// Ingest worker uses coprocessor to read table data. It is fast enough,
 		// we don't need to get the actual end key of this range.
 		return rangeEnd
@@ -699,7 +702,7 @@ func getActualEndKey(
 
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
 func sendTasks(
-	scheduler backfillScheduler,
+	exec backfillExecutor,
 	t table.PhysicalTable,
 	kvRanges []kv.KeyRange,
 	reorgInfo *reorgInfo,
@@ -708,7 +711,7 @@ func sendTasks(
 ) error {
 	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc, bfWorkerTp)
 	for _, task := range batchTasks {
-		if err := scheduler.sendTask(task); err != nil {
+		if err := exec.sendTask(task); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -752,7 +755,7 @@ func makeupDecodeColMap(dbName pmodel.CIStr, t table.Table) (map[int64]decoder.C
 
 const backfillTaskChanSize = 128
 
-func (dc *ddlCtx) runAddIndexInLocalIngestMode(
+func (dc *ddlCtx) addIndexWithLocalIngest(
 	ctx context.Context,
 	sessPool *sess.Pool,
 	t table.PhysicalTable,
@@ -762,8 +765,8 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
-	defer cancel()
+	wctx := NewLocalWorkerCtx(ctx, job.ID)
+	defer wctx.Cancel()
 
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
@@ -790,34 +793,25 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
-	//nolint: forcetypeassert
-	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
+	var (
+		cfg *local.BackendConfig
+		bd  *local.Backend
+		err error
+	)
+	if config.GetGlobalConfig().Store == "tikv" {
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, hasUnique, false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer bd.Close()
+	}
+	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
+		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
+		Build(cfg, bd)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-
-	cpMgr, err := ingest.NewCheckpointManager(
-		ctx,
-		sessPool,
-		reorgInfo.PhysicalTableID,
-		job.ID,
-		indexIDs,
-		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
-		dc.store.(kv.StorageWithPD).GetPDClient(),
-	)
-	if err != nil {
-		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
-			zap.Int64("jobID", job.ID),
-			zap.Error(err))
-	} else {
-		defer cpMgr.Close()
-		bcCtx.AttachCheckpointManager(cpMgr)
-	}
+	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntListener{
@@ -841,8 +835,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	pipe, err := NewAddIndexIngestPipeline(
-		opCtx,
+		wctx,
 		dc.store,
 		sessPool,
 		bcCtx,
@@ -855,13 +850,12 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		job.ReorgMeta,
 		avgRowSize,
 		importConc,
-		cpMgr,
 		rowCntListener,
 	)
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)
+	err = executeAndClosePipeline(wctx, pipe, reorgInfo, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -872,27 +866,13 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		}
 		return err
 	}
-	if cpMgr != nil {
-		cpMgr.AdvanceWatermark(true, true)
-	}
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
-	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-	if opR == nil || opW == nil {
-		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
-		return
-	}
-	reader, readerOk := opR.(*TableScanOperator)
-	writer, writerOk := opW.(*IndexIngestOperator)
-	if !readerOk || !writerOk {
-		logutil.DDLIngestLogger().Error(
-			"unexpected operator types, config can't be adjusted",
-			zap.Int64("jobID", job.ID),
-			zap.Bool("isReaderValid", readerOk),
-			zap.Bool("isWriterValid", writerOk),
-		)
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, bcCtx ingest.BackendCtx, avgRowSize int, reorgInfo *reorgInfo) {
+	reader, writer := pipe.GetReaderAndWriter()
+	if reader == nil || writer == nil {
+		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", reorgInfo.ID))
 		return
 	}
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
@@ -903,30 +883,32 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			return
 		case <-ticker.C:
 			failpoint.InjectCall("onUpdateJobParam")
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			reorgInfo.UpdateConfigFromSysTbl(ctx)
+			maxWriteSpeed := reorgInfo.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
-					zap.Int64("jobID", job.ID),
+					zap.Int64("jobID", reorgInfo.ID),
 					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
 
-			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			concurrency := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
-				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt), false)
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt), false)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
-					zap.Int64("jobID", job.ID),
+					zap.Int64("jobID", reorgInfo.ID),
 					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
 					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
 			}
+			failpoint.InjectCall("checkReorgConcurrency", reorgInfo.Job)
 		}
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
+func executeAndClosePipeline(ctx *workerpool.Context, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err
@@ -935,14 +917,14 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	// Adjust worker pool size and max write speed dynamically.
 	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
-	if job != nil {
+	if reorgInfo != nil {
 		wg.RunWithLog(func() {
-			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
+			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, bcCtx, avgRowSize, reorgInfo)
 		})
 	}
 
 	err = pipe.Close()
-	failpoint.InjectCall("afterPipeLineClose")
+	failpoint.InjectCall("afterPipeLineClose", pipe)
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
@@ -978,7 +960,7 @@ func (s *localRowCntListener) SetTotal(total int) {
 }
 
 // UpdateDDLJobReorgCfgInterval is the interval to check and update reorg configuration.
-const UpdateDDLJobReorgCfgInterval = 2 * time.Second
+var UpdateDDLJobReorgCfgInterval = 2 * time.Second
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
@@ -1019,21 +1001,21 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
-	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
+		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
 	}
 
 	jc := reorgInfo.NewJobContext()
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	scheduler, err := newTxnBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
+	exec, err := newTxnBackfillExecutor(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer scheduler.close(true)
+	defer exec.close(true)
 
-	err = scheduler.setupWorkers()
+	err = exec.setupWorkers()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1053,7 +1035,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			select {
 			case <-egCtx.Done():
 				return egCtx.Err()
-			case result, ok := <-scheduler.resultChan():
+			case result, ok := <-exec.resultChan():
 				if !ok {
 					logutil.DDLLogger().Info("backfill workers successfully processed",
 						zap.Stringer("element", reorgInfo.currElement),
@@ -1081,7 +1063,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
-				if cnt%(scheduler.currentWorkerSize()*4) == 0 {
+				if cnt%(exec.currentWorkerSize()*4) == 0 {
 					err2 := reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)
 					if err2 != nil {
 						logutil.DDLLogger().Warn("update reorg meta failed",
@@ -1110,12 +1092,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			}
 			logutil.DDLLogger().Info("start backfill workers to reorg record",
 				zap.Stringer("type", bfWorkerType),
-				zap.Int("workerCnt", scheduler.currentWorkerSize()),
+				zap.Int("workerCnt", exec.currentWorkerSize()),
 				zap.Int("regionCnt", len(kvRanges)),
 				zap.String("startKey", hex.EncodeToString(start)),
 				zap.String("endKey", hex.EncodeToString(end)))
 
-			err2 = sendTasks(scheduler, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
+			err2 = sendTasks(exec, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
@@ -1126,7 +1108,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			}
 		}
 
-		scheduler.close(false)
+		exec.close(false)
 		close(doneCh)
 		return nil
 	})
@@ -1143,18 +1125,19 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			case <-doneCh:
 				break outer
 			case <-ticker.C:
-				currentWorkerCnt := scheduler.currentWorkerSize()
+				currentWorkerCnt := exec.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 				if currentWorkerCnt != targetWorkerCnt {
-					err := scheduler.adjustWorkerSize()
+					err := exec.adjustWorkerSize()
 					if err != nil {
 						logutil.DDLLogger().Error("adjust ddl job config failed",
 							zap.Error(err))
 					} else {
 						logutil.DDLLogger().Info("adjust ddl job config success",
-							zap.Int("current worker count", scheduler.currentWorkerSize()))
+							zap.Int("current worker count", exec.currentWorkerSize()))
 					}
 				}
+				failpoint.InjectCall("checkReorgWorkerCnt", reorgInfo.Job)
 			}
 		}
 		return nil

@@ -140,6 +140,29 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 	tk.MustExec(`insert into city values ("abc"), ("abd");`)
 }
 
+func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	model.SetJobVerInUse(model.JobVersion1)
+	mockOwnerChange := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+		if job.Type == model.ActionModifyColumn &&
+			job.SchemaState == model.StateWriteReorganization &&
+			!mockOwnerChange {
+			// Mock the first few phases of this DDL job is executed in old version TiDB.
+			model.UpdateJobArgsForTest(job, func(args []any) []any {
+				return args[:len(args)-1]
+			})
+			mockOwnerChange = true
+		}
+	})
+	tk.MustExec("alter table t modify column a varchar(16);")
+	require.True(t, mockOwnerChange)
+}
+
 func TestIssue2293(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 

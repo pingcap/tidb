@@ -90,7 +90,7 @@ func closeBaseExecutor(b *exec.BaseExecutor) {
 func recoveryHashAgg(output chan *AfFinalResult, r any) {
 	err := util.GetRecoverError(r)
 	output <- &AfFinalResult{err: err}
-	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
+	logutil.BgLogger().Warn("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func getGroupKeyMemUsage(groupKey [][]byte) int64 {

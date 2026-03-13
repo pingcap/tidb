@@ -16,13 +16,14 @@ package handle
 
 import (
 	"context"
+	goerrors "errors"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
@@ -66,7 +67,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		return nil, err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
-	if err != nil && err != storage.ErrTaskNotFound {
+	if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 		return nil, err
 	}
 	if task != nil {
@@ -82,7 +83,8 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(&task.TaskBase)
+
+	failpoint.InjectCall("afterDXFTaskSubmitted")
 
 	NotifyTaskChange()
 	return task, nil
@@ -174,7 +176,7 @@ func CancelTask(ctx context.Context, taskKey string) error {
 	}
 	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
-		if err == storage.ErrTaskNotFound {
+		if goerrors.Is(err, storage.ErrTaskNotFound) {
 			logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
 			return nil
 		}

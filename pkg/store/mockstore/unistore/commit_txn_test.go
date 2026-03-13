@@ -100,11 +100,12 @@ func TestCommitTxnBasic(t *testing.T) {
 
 	commitTS := commitTxnResp.GetCommitTs()
 
+	primaryCtx := ctxForKey(t, cluster, primaryKey)
 	getPrimaryReq := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
-		Context: ctxForKey(t, cluster, primaryKey),
+		Context: primaryCtx,
 		Key:     primaryKey,
 		Version: commitTS,
-	})
+	}, *primaryCtx)
 	getPrimaryResp, err := rpcClient.SendRequest(context.Background(), addr, getPrimaryReq, time.Second)
 	require.NoError(t, err)
 	gotPrimary, ok := getPrimaryResp.Resp.(*kvrpcpb.GetResponse)
@@ -113,11 +114,12 @@ func TestCommitTxnBasic(t *testing.T) {
 	require.Nil(t, gotPrimary.GetError())
 	require.Equal(t, primaryVal, gotPrimary.GetValue())
 
+	secondaryCtx := ctxForKey(t, cluster, secondaryKey)
 	getSecondaryReq := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
-		Context: ctxForKey(t, cluster, secondaryKey),
+		Context: secondaryCtx,
 		Key:     secondaryKey,
 		Version: commitTS,
-	})
+	}, *secondaryCtx)
 	for i := 0; i < 10; i++ {
 		getSecondaryResp, err := rpcClient.SendRequest(context.Background(), addr, getSecondaryReq, time.Second)
 		require.NoError(t, err)
@@ -153,13 +155,14 @@ func TestCommitTxnPrewriteError(t *testing.T) {
 
 	// Leave a lock on primaryKey.
 	lockStartTS := uint64(5)
+	lockCtx := ctxForKey(t, cluster, primaryKey)
 	lockPrewriteReq := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{
-		Context:      ctxForKey(t, cluster, primaryKey),
+		Context:      lockCtx,
 		Mutations:    []*kvrpcpb.Mutation{{Op: kvrpcpb.Op_Put, Key: primaryKey, Value: []byte("locked")}},
 		PrimaryLock:  primaryKey,
 		StartVersion: lockStartTS,
 		LockTtl:      3000,
-	})
+	}, *lockCtx)
 	_, err = rpcClient.SendRequest(context.Background(), addr, lockPrewriteReq, time.Second)
 	require.NoError(t, err)
 

@@ -277,6 +277,7 @@ import (
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
+	tableSplit        "TABLESPLIT"
 	terminated        "TERMINATED"
 	then              "THEN"
 	tidbCurrentTSO    "TIDB_CURRENT_TSO"
@@ -319,6 +320,7 @@ import (
 	account               "ACCOUNT"
 	action                "ACTION"
 	advise                "ADVISE"
+	affinity              "AFFINITY"
 	after                 "AFTER"
 	against               "AGAINST"
 	ago                   "AGO"
@@ -607,6 +609,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	rule                  "RULE"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	schemaName            "SCHEMA_NAME"
@@ -680,6 +683,7 @@ import (
 	than                  "THAN"
 	tikvImporter          "TIKV_IMPORTER"
 	timeType              "TIME"
+	timeout               "TIMEOUT"
 	timestampType         "TIMESTAMP"
 	tokenIssuer           "TOKEN_ISSUER"
 	tpcc                  "TPCC"
@@ -882,6 +886,9 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distribute                 "DISTRIBUTE"
+	distribution               "DISTRIBUTION"
+	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -984,7 +991,7 @@ import (
 	AdminStmt                  "Check table statement or show ddl statement"
 	AlterDatabaseStmt          "Alter database statement"
 	AlterTableStmt             "Alter table statement"
-	AlterTableGroupStmt		   "Alter tablegroup statement"
+	AlterTableGroupStmt        "Alter tablegroup statement"
 	AlterUserStmt              "Alter user statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterRangeStmt             "Alter data range configuration statement"
@@ -997,6 +1004,7 @@ import (
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
+	CancelDistributionJobStmt  "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateTableGroupStmt       "CREATE TABLEGROUP statement"
@@ -1032,6 +1040,7 @@ import (
 	DeleteFromStmt             "DELETE FROM statement"
 	DeleteWithoutUsingStmt     "Normal DELETE statement"
 	DeleteWithUsingStmt        "DELETE USING statement"
+	DistributeTableStmt        "Distribute table statement"
 	EmptyStmt                  "empty statement"
 	ExecuteStmt                "Execute statement"
 	ExplainStmt                "EXPLAIN statement"
@@ -1401,6 +1410,7 @@ import (
 	TableSampleOpt                         "table sample clause optional"
 	TableSampleMethodOpt                   "table sample method optional"
 	TableSampleUnitOpt                     "table sample unit optional"
+	TableSplitOpt                          "table split optional"
 	TableToTable                           "rename table to table"
 	TableToTableList                       "rename table to table by list"
 	TextString                             "text string item"
@@ -3215,6 +3225,43 @@ FlashbackDatabaseStmt:
 
 /*******************************************************************
  *
+ *  Distribute Table Statement
+ *
+ *  Example:
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine ='tikv' Rule='leader' timeout = '30m';
+ *
+ *******************************************************************/
+DistributeTableStmt:
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]model.CIStr),
+			Rule:           $7,
+			Engine:         $10,
+		}
+	}
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit "TIMEOUT" EqOpt stringLit
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]model.CIStr),
+			Rule:           $7,
+			Engine:         $10,
+			Timeout:        $13,
+		}
+	}
+
+CancelDistributionJobStmt:
+	"CANCEL" "DISTRIBUTION" "JOB" Int64Num
+	{
+		$$ = &ast.CancelDistributionJobStmt{
+			JobID: $4.(int64),
+		}
+	}
+
+/*******************************************************************
+ *
  *  Split index region statement
  *
  *  Example:
@@ -4557,17 +4604,17 @@ AlterTableGroupStmt:
 	"ALTER" "TABLEGROUP" TableGroupName "ADD" "TABLES" TableNameList
 	{
 		$$ = &ast.AlterTableGroupStmt{
-			Name:     model.NewCIStr($3),
-			Option:   ast.AlterTableGroupOptionAddTables,
-			Tables:      $6.([]*ast.TableName),
+			Name:   model.NewCIStr($3),
+			Option: ast.AlterTableGroupOptionAddTables,
+			Tables: $6.([]*ast.TableName),
 		}
 	}
-|   "ALTER" "TABLEGROUP" TableGroupName "DROP" "TABLES" TableNameList
+|	"ALTER" "TABLEGROUP" TableGroupName "DROP" "TABLES" TableNameList
 	{
 		$$ = &ast.AlterTableGroupStmt{
-			Name:     model.NewCIStr($3),
-			Option:   ast.AlterTableGroupOptionDropTables,
-			Tables:      $6.([]*ast.TableName),
+			Name:   model.NewCIStr($3),
+			Option: ast.AlterTableGroupOptionDropTables,
+			Tables: $6.([]*ast.TableName),
 		}
 	}
 
@@ -6862,6 +6909,7 @@ UnReservedKeyword:
 |	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
+|	"AFFINITY"
 |	"AFTER"
 |	"ALWAYS"
 |	"AVG"
@@ -6943,6 +6991,7 @@ UnReservedKeyword:
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"RULE"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -6961,6 +7010,7 @@ UnReservedKeyword:
 |	"TEXT"
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
+|	"TIMEOUT"
 |	"TIMESTAMP" %prec lowerThanStringLitToken
 |	"TRACE"
 |	"TRANSACTION"
@@ -7263,6 +7313,9 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTE"
+|	"DISTRIBUTION"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -9509,6 +9562,34 @@ SelectStmt:
 		}
 		$$ = st
 	}
+|	SelectStmtBasic SelectStmtIntoVars WhereClauseOptional SelectStmtGroup OrderByOptional SelectStmtLimitOpt SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-5])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		}
+		if $2 != nil {
+			st.SelectIntoOpt = $2.(*ast.SelectIntoOption)
+		}
+		if $3 != nil {
+			st.Where = $3.(ast.ExprNode)
+		}
+		if $4 != nil {
+			st.GroupBy = $4.(*ast.GroupByClause)
+		}
+		if $5 != nil {
+			st.OrderBy = $5.(*ast.OrderByClause)
+		}
+		if $6 != nil {
+			st.Limit = $6.(*ast.Limit)
+		}
+		if $7 != nil {
+			st.LockInfo = $7.(*ast.SelectLockInfo)
+		}
+		$$ = st
+	}
 |	SelectStmtFromDualTable SelectStmtGroup OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := $1.(*ast.SelectStmt)
@@ -9526,6 +9607,34 @@ SelectStmt:
 		}
 		if $6 != nil {
 			st.SelectIntoOpt = $6.(*ast.SelectIntoOption)
+		}
+		$$ = st
+	}
+|	SelectStmtBasic SelectStmtIntoVars FromDual WhereClauseOptional SelectStmtGroup OrderByOptional SelectStmtLimitOpt SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-6])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		}
+		if $2 != nil {
+			st.SelectIntoOpt = $2.(*ast.SelectIntoOption)
+		}
+		if $4 != nil {
+			st.Where = $4.(ast.ExprNode)
+		}
+		if $5 != nil {
+			st.GroupBy = $5.(*ast.GroupByClause)
+		}
+		if $6 != nil {
+			st.OrderBy = $6.(*ast.OrderByClause)
+		}
+		if $7 != nil {
+			st.Limit = $7.(*ast.Limit)
+		}
+		if $8 != nil {
+			st.LockInfo = $8.(*ast.SelectLockInfo)
 		}
 		$$ = st
 	}
@@ -10027,7 +10136,7 @@ TableRef:
 |	JoinTable
 
 TableFactor:
-	TableName PartitionNameListOpt TableAsNameOpt AsOfClauseOpt IndexHintListOpt TableSampleOpt
+	TableName PartitionNameListOpt TableAsNameOpt AsOfClauseOpt IndexHintListOpt TableSampleOpt TableSplitOpt
 	{
 		tn := $1.(*ast.TableName)
 		tn.PartitionNames = $2.([]model.CIStr)
@@ -10037,6 +10146,9 @@ TableFactor:
 		}
 		if $4 != nil {
 			tn.AsOf = $4.(*ast.AsOfClause)
+		}
+		if $7 != nil {
+			tn.TableSplit = $7.(*ast.TableSplit)
 		}
 		$$ = &ast.TableSource{Source: tn, AsName: $3.(model.CIStr)}
 	}
@@ -10060,6 +10172,19 @@ PartitionNameListOpt:
 |	"PARTITION" '(' PartitionNameList ')'
 	{
 		$$ = $3
+	}
+
+TableSplitOpt:
+	/* empty */
+	{
+		$$ = nil
+	}
+|	"TABLESPLIT" '(' stringLit ',' stringLit ')'
+	{
+		$$ = &ast.TableSplit{
+			Start: $3,
+			End:   $5,
+		}
 	}
 
 TableAsNameOpt:
@@ -11885,12 +12010,29 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "DISTRIBUTION" "JOB" Int64Num
+	{
+		v := $4.(int64)
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs, DistributionJobID: &v}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:        ast.ShowCreateProcedure,
 			Procedure: $4.(*ast.TableName),
 		}
+	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]model.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 
 ShowPlacementTarget:
@@ -12199,6 +12341,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
 	}
+|	"AFFINITY"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowAffinity}
+	}
 |	"ANALYZE" "STATUS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAnalyzeStatus}
@@ -12226,6 +12372,10 @@ ShowTargetFilterable:
 |	"TABLEGROUPS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowTableGroups}
+	}
+|	"DISTRIBUTION" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
 	}
 
 ShowLikeOrWhereOpt:
@@ -12448,6 +12598,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateTableGroupStmt
 |	CreateIndexStmt
@@ -12462,6 +12613,7 @@ Statement:
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
+|	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -12944,6 +13096,10 @@ TableOption:
 			return 1
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
+	}
+|	"AFFINITY" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionAffinity, StrValue: $3}
 	}
 
 ForceOpt:

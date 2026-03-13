@@ -129,7 +129,7 @@ var (
 	RemotePlanRespBatchSize prometheus.Histogram
 
 	// RemotePlanGrpcRecvDuration records actual gRPC stream.Recv() time on the control side.
-	RemotePlanGrpcRecvDuration      prometheus.Histogram
+	RemotePlanGrpcRecvDuration prometheus.Histogram
 	// RemotePlanRSNextDuration records time spent in recordSet.Next() on the control side.
 	RemotePlanRSNextDuration prometheus.Histogram
 	// RemotePlanRSFirstNextDuration records time spent in the first recordSet.Next() call.

@@ -214,6 +214,8 @@ func TestValidator(t *testing.T) {
 
 		// issue 24309
 		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		{"SELECT * FROM t UNION SELECT * FROM u INTO OUTFILE 'ttt'", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		{"SELECT 1 UNION SELECT 2 INTO @a", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
 
 		// Error caused by "Table 'test.u' doesn't exist".
 		// {"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},

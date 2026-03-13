@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -104,8 +103,6 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	if err != nil {
 		return 0, nil, err
 	}
-
-	metrics.UpdateMetricsForAddTask(task)
 
 	logutil.BgLogger().Info("job submitted to task queue",
 		zap.Int64("job-id", jobID),

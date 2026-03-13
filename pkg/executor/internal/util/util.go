@@ -13,3 +13,55 @@
 // limitations under the License.
 
 package util
+
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/stretchr/testify/require"
+)
+
+// GetFunctionName returns the function name
+func GetFunctionName() string {
+	pc, _, _, _ := runtime.Caller(1)
+	return path.Base(runtime.FuncForPC(pc).Name())
+}
+
+// CheckNoLeakFiles checks if there are file leaks
+func CheckNoLeakFiles(t *testing.T, fileNamePrefixForTest string) {
+	tempStoragePath := config.GetGlobalConfig().TempStoragePath
+	log.Info(fmt.Sprintf("path: %s", tempStoragePath))
+
+	if _, err := os.Stat(tempStoragePath); err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		require.NoError(t, err)
+	}
+
+	err := filepath.WalkDir(tempStoragePath, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fs.SkipDir
+			}
+			return err
+		}
+
+		if !d.IsDir() {
+			require.False(t, strings.HasPrefix(d.Name(), fileNamePrefixForTest))
+		}
+		return nil
+	})
+	if err != nil && os.IsNotExist(err) {
+		return
+	}
+	require.NoError(t, err)
+}

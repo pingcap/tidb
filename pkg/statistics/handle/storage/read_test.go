@@ -52,7 +52,7 @@ func TestLoadStats(t *testing.T) {
 	h := dom.StatsHandle()
 
 	// Index/column stats are not be loaded after analyze.
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, stat.GetCol(colAID).IsAllEvicted())
 	c := stat.GetCol(colAID)
 	require.True(t, c == nil || c.Histogram.Len() == 0)
@@ -72,7 +72,7 @@ func TestLoadStats(t *testing.T) {
 	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colCID)
 	require.NoError(t, err)
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, stat.GetCol(colAID).IsFullLoad())
 	hg := stat.GetCol(colAID).Histogram
 	require.Greater(t, hg.Len(), 0)
@@ -92,7 +92,7 @@ func TestLoadStats(t *testing.T) {
 	// IsInvalid adds the index to AsyncLoadHistogramNeededItems.
 	statistics.IndexStatsIsInvalid(testKit.Session().GetPlanCtx(), idx, &stat.HistColl, idxBID)
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	idx = stat.GetIdx(tableInfo.Indices[0].ID)
 	hg = idx.Histogram
 	cms = idx.CMSketch

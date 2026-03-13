@@ -26,9 +26,16 @@ import (
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
-	// to make sure lower rank tasks can be scheduled if resource is enough.
+	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetTopNoNeedResourceTasks returns tasks that don't need resource to run,
+	// those tasks are in reverting/pausing/cancelling/modifying states.
+	// we need this API for fast respond to those requests, as we can only
+	// schedule a limited number of tasks at the same time
+	GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetAllTasks gets all tasks with basic columns.
+	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
@@ -49,10 +56,14 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
-	// PausedTask updated task state to paused.
+	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.
 	ResumedTask(ctx context.Context, taskID int64) error
+	// ModifiedTask tries to update task concurrency and meta, and update state
+	// back to prev-state, if success, it will also update concurrency of all
+	// active subtasks.
+	ModifiedTask(ctx context.Context, task *proto.Task) error
 	// SucceedTask updates a task to success state.
 	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
@@ -127,6 +138,12 @@ type Extension interface {
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
+	// ModifyMeta is used to modify the task meta when the task is in modifying
+	// state, it should return new meta after applying the modifications to the
+	// old meta.
+	// Note: the application side only need to modify meta, no need to do notify,
+	// task executor will do it later.
+	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
 }
 
 // Param is used to pass parameters when creating scheduler.

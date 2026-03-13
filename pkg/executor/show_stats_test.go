@@ -47,6 +47,51 @@ func TestShowStatsMeta(t *testing.T) {
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
+
+	// Create different database to test the like pattern.
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("analyze table t all columns")
+	// Test it works under different database.
+	tk.MustExec("use test")
+	// Test it is not case sensitive.
+	result = tk.MustQuery("show stats_meta like 'Test2%'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	result = tk.MustQuery("show stats_meta like 'test2'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+
+	// For dynamic partitioned table, we need to display the global table as well.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec("analyze table t all columns")
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "global", result.Rows()[0][2])
+	require.Equal(t, "test", result.Rows()[1][0])
+	require.Equal(t, "t", result.Rows()[1][1])
+	require.Equal(t, "p0", result.Rows()[1][2])
+
+	// For static partitioned table, there is no global table.
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec("analyze table t all columns")
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "p0", result.Rows()[0][2])
 }
 
 func TestShowStatsLocked(t *testing.T) {

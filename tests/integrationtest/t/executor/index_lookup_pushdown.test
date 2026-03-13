@@ -1,4 +1,8 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+
+# wait regions split after create table to make the test stable
+set @@tidb_scatter_region='table';
+
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
 create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 create table t3 (
@@ -41,6 +45,34 @@ explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limi
 select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
 select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+
+## test NO_INDEX_LOOKUP_PUSHDOWN has a higher priority than INDEX_LOOKUP_PUSHDOWN
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
+
+## test NO_INDEX_LOOKUP_PUSHDOWN does not support specify index name
+explain select /*+ NO_INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+
+## test system variable tidb_index_lookup_pushdown_policy and hint NO_INDEX_LOOKUP_PUSHDOWN
+set @@tidb_index_lookup_pushdown_policy='force';
+select @@tidb_index_lookup_pushdown_policy;
+explain select * from t1 where a = 'x';
+explain select * from t1 where a > 'x' and a < 'y' order by a;
+explain select /*+ NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
+set @@tidb_index_lookup_pushdown_policy='affinity-force';
+select @@tidb_index_lookup_pushdown_policy;
+explain select * from t1 where a = 'x';
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+alter table t1 affinity = 'table';
+explain select * from t1 where a = 'x';
+alter table t1 affinity = 'none';
+explain select * from t1 where a = 'x';
+set @@tidb_index_lookup_pushdown_policy='hint-only';
+select @@tidb_index_lookup_pushdown_policy;
+explain select * from t1 where a = 'x';
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+explain select /*+ SET_VAR(tidb_index_lookup_pushdown_policy='force') */ * from t1 where a = 'x';
+set @@tidb_index_lookup_pushdown_policy=default;
+select @@tidb_index_lookup_pushdown_policy;
 
 --disable_warnings
 # test for plan cache, close show warnings to avoid affecting plan cache output
@@ -88,8 +120,8 @@ explain select /*+ index_lookup_pushdown(t2, u) */ * from t2;
 select /*+ index_lookup_pushdown(t2, u) */ * from t2;
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
 select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
-explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
-select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
 
 ## test common handle with primary key prefix column
 create table t22(a varchar(32), b int, c int, d int, e int, primary key(a(2), b) CLUSTERED, index i(c)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -168,3 +200,6 @@ insert into t3 values(1, 2, 3);
 explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 --disable_warnings
+
+# restore tidb_scatter_region
+set @@tidb_scatter_region=default;

@@ -198,8 +198,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	if _, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency=1"); err != nil {
 		return t.result(err)
 	}
-
+	rawSess.GetSessionVars().InternalSQLScanUserTable = true
 	defer func() {
+		rawSess.GetSessionVars().InternalSQLScanUserTable = false
 		_, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency="+strconv.Itoa(origConcurrency))
 		terror.Log(err)
 	}()

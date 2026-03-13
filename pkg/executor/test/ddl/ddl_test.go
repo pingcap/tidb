@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/pkg/autoid_service" // Init MockForTest
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -981,10 +982,28 @@ func TestRenameTableWithReload(t *testing.T) {
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
 	tk.MustExec("drop database if exists rename3")
-
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
+
+	// Issue #64561
+	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	forceFullReload(t, store, dom)
+	tk.MustExec("insert into rename2.t values ()")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2"))
+	tk.MustExec("drop table rename2.t")
+
+	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t values (), ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	tk.MustExec("insert into rename2.t values (100)")
+	forceFullReload(t, store, dom)
+	tk.MustExec("insert into rename2.t values ()")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2", "100", "101"))
+	tk.MustExec("drop table rename2.t")
+
 	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
 	tk.MustExec("insert rename1.t values ()")
 	tk.MustExec("rename table rename1.t to rename2.t")

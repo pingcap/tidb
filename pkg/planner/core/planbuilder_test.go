@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -328,7 +329,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		ExtraHandleCol: col,
 		PushedLimit:    &PushedDownLimit{1, 2},
 	}
-	indexLookup = indexLookup.Init(ctx, 0, false)
+	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
@@ -399,6 +400,22 @@ func TestPhysicalPlanClone(t *testing.T) {
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
+
+	// index join
+	baseJoin := basePhysicalJoin{
+		LeftJoinKeys:    []*expression.Column{col},
+		RightJoinKeys:   nil,
+		OtherConditions: []expression.Expression{col},
+	}
+
+	indexJoin := &PhysicalIndexJoin{
+		basePhysicalJoin: baseJoin,
+		innerPlan:        indexScan,
+		Ranges:           ranger.Ranges{},
+	}
+	indexJoin = indexJoin.Init(ctx, stats, 0)
+	indexJoin.SetSchema(schema)
+	require.NoError(t, checkPhysicalPlanClone(indexJoin))
 }
 
 //go:linkname valueInterface reflect.valueInterface
@@ -1075,7 +1092,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		tablePlan: tablePlan,
 		indexPlan: indexPlan,
 		keepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
@@ -1143,7 +1160,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		tablePlan: projectionPlan,
 		indexPlan: limitPlan,
 		keepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)

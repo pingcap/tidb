@@ -318,6 +318,12 @@ const (
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
+	// TiDBOptEnableSemiJoinRewrite is the variable equivalent of SEMI_JOIN_REWRITE hint.
+	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
+
+	// TiDBOptEnableNoDecorrelateInSelect is the variable equivalent of NO_DECORRELATE hint.
+	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -599,6 +605,10 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptJoinReorderThroughSel indicates whether join reorder considers
+	// joins through selection, allowing more flexible join ordering.
+	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
+
 	// TiDBSlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -859,6 +869,9 @@ const (
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 
+	// TiDBEnableStatsUpdateDuringDDL indicate the embedded analyze behavior inside ddl.
+	TiDBEnableStatsUpdateDuringDDL = "tidb_stats_update_during_ddl"
+
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
@@ -1007,6 +1020,9 @@ const (
 	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result of
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
+
+	// TiDBPlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	TiDBPlanCacheMaxDecimalParamNums = "tidb_plan_cache_max_decimal_param_nums"
 
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
@@ -1281,6 +1297,16 @@ const (
 	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
 	// TiDBEnableDutySeparationMode indicates if enable the mode of duty separation.
 	TiDBEnableDutySeparationMode = "tidb_enable_duty_separation_mode"
+	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
+	// The log backup task will be paused if the checkpoint lag is larger than it.
+	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
+	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
+
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
+	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
 )
 
 // TiDB intentional limits
@@ -1324,6 +1350,8 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
+	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
@@ -1399,7 +1427,7 @@ const (
 	DefTiFlashMemQuotaQueryPerNode          = 0
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "60s"
+	DefTiDBMPPStoreFailTTL                  = "0s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2
@@ -1422,6 +1450,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
@@ -1516,7 +1545,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1537,6 +1566,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableStatsUpdateDuringDDL                 = false
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false
@@ -1570,94 +1600,98 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                     float64 = 0.6
-	DefTiDBGOGCMaxValue                                   = 500
-	DefTiDBGOGCMinValue                                   = 100
-	DefTiDBOptPrefixIndexSingleScan                       = true
-	DefTiDBEnableAsyncMergeGlobalStats                    = true
-	DefTiDBExternalTS                                     = 0
-	DefTiDBEnableExternalTSRead                           = false
-	DefTiDBEnableReusechunk                               = true
-	DefTiDBUseAlloc                                       = false
-	DefTiDBEnablePlanReplayerCapture                      = true
-	DefTiDBIndexMergeIntersectionConcurrency              = ConcurrencyUnset
-	DefTiDBTTLJobEnable                                   = true
-	DefTiDBTTLScanBatchSize                               = 500
-	DefTiDBTTLScanBatchMaxSize                            = 10240
-	DefTiDBTTLScanBatchMinSize                            = 1
-	DefTiDBTTLDeleteBatchSize                             = 100
-	DefTiDBTTLDeleteBatchMaxSize                          = 10240
-	DefTiDBTTLDeleteBatchMinSize                          = 1
-	DefTiDBTTLDeleteRateLimit                             = 0
-	DefTiDBTTLRunningTasks                                = -1
-	DefPasswordReuseHistory                               = 0
-	DefPasswordReuseTime                                  = 0
-	DefMaxUserConnections                                 = 0
-	DefTiDBStoreBatchSize                                 = 4
-	DefTiDBHistoricalStatsDuration                        = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture                = false
-	DefTiDBTTLJobScheduleWindowStartTime                  = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime                    = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                             = 4
-	DefTiDBTTLDeleteWorkerCount                           = 4
-	DefaultExchangeCompressionMode                        = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                          = true
-	DefTiDBResourceControlStrictMode                      = true
-	DefTiDBPessimisticTransactionFairLocking              = false
-	DefTiDBEnablePlanCacheForParamLimit                   = true
-	DefTiDBEnableINLJoinMultiPattern                      = true
-	DefTiFlashComputeDispatchPolicy                       = tiflashcompute.DispatchPolicyConsistentHashStr
-	DefTiDBEnablePlanCacheForSubquery                     = true
-	DefTiDBLoadBasedReplicaReadThreshold                  = time.Second
-	DefTiDBOptEnableLateMaterialization                   = true
-	DefTiDBOptOrderingIdxSelThresh                        = 0.0
-	DefTiDBOptOrderingIdxSelRatio                         = -1
-	DefTiDBOptEnableMPPSharedCTEExecution                 = false
-	DefTiDBPlanCacheInvalidationOnFreshStats              = true
-	DefTiDBEnableRowLevelChecksum                         = false
-	DefAuthenticationLDAPSASLAuthMethodName               = "SCRAM-SHA-1"
-	DefAuthenticationLDAPSASLServerPort                   = 389
-	DefAuthenticationLDAPSASLTLS                          = false
-	DefAuthenticationLDAPSASLUserSearchAttr               = "uid"
-	DefAuthenticationLDAPSASLInitPoolSize                 = 10
-	DefAuthenticationLDAPSASLMaxPoolSize                  = 1000
-	DefAuthenticationLDAPSimpleAuthMethodName             = "SIMPLE"
-	DefAuthenticationLDAPSimpleServerPort                 = 389
-	DefAuthenticationLDAPSimpleTLS                        = false
-	DefAuthenticationLDAPSimpleUserSearchAttr             = "uid"
-	DefAuthenticationLDAPSimpleInitPoolSize               = 10
-	DefAuthenticationLDAPSimpleMaxPoolSize                = 1000
-	DefTiFlashReplicaRead                                 = tiflash.AllReplicaStr
-	DefTiDBEnableFastCheckTable                           = true
-	DefRuntimeFilterType                                  = "IN"
-	DefRuntimeFilterMode                                  = "OFF"
-	DefTiDBLockUnchangedKeys                              = true
-	DefTiDBEnableCheckConstraint                          = false
-	DefTiDBSkipMissingPartitionStats                      = true
-	DefTiDBOptEnableHashJoin                              = true
-	DefTiDBHashJoinVersion                                = joinversion.HashJoinVersionLegacy
-	DefTiDBOptObjective                                   = OptObjectiveModerate
-	DefTiDBSchemaVersionCacheLimit                        = 16
-	DefTiDBIdleTransactionTimeout                         = 0
-	DefTiDBTxnEntrySizeLimit                              = 0
-	DefTiDBSchemaCacheSize                                = 512 * 1024 * 1024
-	DefTiDBLowResolutionTSOUpdateInterval                 = 2000
-	DefDivPrecisionIncrement                              = 4
-	DefTiDBDMLType                                        = "STANDARD"
-	DefGroupConcatMaxLen                                  = uint64(1024)
-	DefDefaultWeekFormat                                  = "0"
-	DefTiFlashPreAggMode                                  = ForcePreAggStr
-	DefTiDBEnableLazyCursorFetch                          = false
+	DefTiDBGOGCTunerThreshold                      float64 = 0.6
+	DefTiDBGOGCMaxValue                                    = 500
+	DefTiDBGOGCMinValue                                    = 100
+	DefTiDBOptPrefixIndexSingleScan                        = true
+	DefTiDBEnableAsyncMergeGlobalStats                     = true
+	DefTiDBExternalTS                                      = 0
+	DefTiDBEnableExternalTSRead                            = false
+	DefTiDBEnableReusechunk                                = true
+	DefTiDBUseAlloc                                        = false
+	DefTiDBEnablePlanReplayerCapture                       = true
+	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
+	DefTiDBTTLJobEnable                                    = true
+	DefTiDBTTLScanBatchSize                                = 500
+	DefTiDBTTLScanBatchMaxSize                             = 10240
+	DefTiDBTTLScanBatchMinSize                             = 1
+	DefTiDBTTLDeleteBatchSize                              = 100
+	DefTiDBTTLDeleteBatchMaxSize                           = 10240
+	DefTiDBTTLDeleteBatchMinSize                           = 1
+	DefTiDBTTLDeleteRateLimit                              = 0
+	DefTiDBTTLRunningTasks                                 = -1
+	DefPasswordReuseHistory                                = 0
+	DefPasswordReuseTime                                   = 0
+	DefMaxUserConnections                                  = 0
+	DefTiDBStoreBatchSize                                  = 4
+	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture                 = false
+	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                              = 4
+	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                           = true
+	DefTiDBResourceControlStrictMode                       = true
+	DefTiDBPessimisticTransactionFairLocking               = false
+	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiDBEnableINLJoinMultiPattern                       = true
+	DefTiFlashComputeDispatchPolicy                        = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBLoadBasedReplicaReadThreshold                   = time.Second
+	DefTiDBOptEnableLateMaterialization                    = true
+	DefTiDBOptOrderingIdxSelThresh                         = 0.0
+	DefTiDBOptOrderingIdxSelRatio                          = -1
+	DefTiDBOptEnableMPPSharedCTEExecution                  = false
+	DefTiDBPlanCacheInvalidationOnFreshStats               = true
+	DefTiDBEnableRowLevelChecksum                          = false
+	DefAuthenticationLDAPSASLAuthMethodName                = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort                    = 389
+	DefAuthenticationLDAPSASLTLS                           = false
+	DefAuthenticationLDAPSASLUserSearchAttr                = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize                  = 10
+	DefAuthenticationLDAPSASLMaxPoolSize                   = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName              = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort                  = 389
+	DefAuthenticationLDAPSimpleTLS                         = false
+	DefAuthenticationLDAPSimpleUserSearchAttr              = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize                = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize                 = 1000
+	DefTiFlashReplicaRead                                  = tiflash.AllReplicaStr
+	DefTiDBEnableFastCheckTable                            = true
+	DefRuntimeFilterType                                   = "IN"
+	DefRuntimeFilterMode                                   = "OFF"
+	DefTiDBLockUnchangedKeys                               = true
+	DefTiDBEnableCheckConstraint                           = false
+	DefTiDBSkipMissingPartitionStats                       = true
+	DefTiDBOptEnableHashJoin                               = true
+	DefTiDBHashJoinVersion                                 = joinversion.HashJoinVersionLegacy
+	DefTiDBOptObjective                                    = OptObjectiveModerate
+	DefTiDBSchemaVersionCacheLimit                         = 16
+	DefTiDBIdleTransactionTimeout                          = 0
+	DefTiDBTxnEntrySizeLimit                               = 0
+	DefTiDBSchemaCacheSize                                 = 512 * 1024 * 1024
+	DefTiDBLowResolutionTSOUpdateInterval                  = 2000
+	DefDivPrecisionIncrement                               = 4
+	DefTiDBDMLType                                         = "STANDARD"
+	DefGroupConcatMaxLen                                   = uint64(1024)
+	DefDefaultWeekFormat                                   = "0"
+	DefTiFlashPreAggMode                                   = ForcePreAggStr
+	DefTiDBEnableLazyCursorFetch                           = false
 	DefTiDBXRemotePlanEnable                               = false
 	DefTiDBXRemotePlanEnableInTxnRead                      = true
 	DefTiDBXRemotePlanFeedbackDisableAfter                 = uint64(2)
 	DefTiDBXRemotePlanFeedbackCooldown                     = uint64(300) // seconds
 	DefTiDBXRemotePlanFeedbackNoShrinkRatio                = uint64(90)  // percent
 	DefTiDBXRemotePlanFeedbackMinLocalCallRequests         = uint64(2)
-	DefOptEnableProjectionPushDown                        = true
-	DefTiDBEnableSharedLockPromotion                      = false
-	DefTiDBTSOClientRPCMode                               = TSOClientRPCModeDefault
-	DefTiDBLoadBindingTimeout                             = 200
+	DefOptEnableProjectionPushDown                         = true
+	DefTiDBEnableSharedLockPromotion                       = false
+	DefTiDBTSOClientRPCMode                                = TSOClientRPCModeDefault
+	DefTiDBPlanCacheMaxDecimalParamNums                    = -1
+	DefTiDBLoadBindingTimeout                              = 200
+	DefTiDBAdvancerCheckPointLagLimit                      = 48 * time.Hour
+	DefTiDBIndexLookUpPushDownPolicy                       = IndexLookUpPushDownPolicyHintOnly
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio              = 0.0
 )
 
 // Process global variables.
@@ -1781,6 +1815,9 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+
+	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 )
 
 var (
@@ -1816,6 +1853,8 @@ var (
 	EnableStatsOwner func() error = nil
 	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
 	DisableStatsOwner func() error = nil
+	// ChangePDMetadataCircuitBreakerErrorRateThresholdRatio changes the error rate threshold of the PD metadata circuit breaker.
+	ChangePDMetadataCircuitBreakerErrorRateThresholdRatio func(uint32) = nil
 )
 
 // Hooks functions for Cluster Resource Control.
