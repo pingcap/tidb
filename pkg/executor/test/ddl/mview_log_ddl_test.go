@@ -402,6 +402,28 @@ func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	tkUser.MustExec("purge materialized view log on t_purge_priv")
 }
 
+func TestPurgeMaterializedViewLogDisallowExplicitTransaction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mlog_purge_txn (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_purge_txn (a, b) purge immediate")
+
+	tk.MustExec("begin")
+	tk.MustGetErrMsg(
+		"purge materialized view log on t_mlog_purge_txn",
+		"cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction",
+	)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`prepare stmt from "purge materialized view log on t_mlog_purge_txn"`)
+	defer tk.MustExec("deallocate prepare stmt")
+	tk.MustExec("begin")
+	tk.MustGetErrMsg("execute stmt", "cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction")
+	tk.MustExec("rollback")
+}
+
 func TestPurgeMaterializedViewLogLockRowMissing(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
