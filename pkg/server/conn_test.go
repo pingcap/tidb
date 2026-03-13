@@ -2235,6 +2235,54 @@ func TestConnAddMetrics(t *testing.T) {
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
 }
 
+func TestGetSQLTypeForQueryMetrics(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		cmd      byte
+		stmtType string
+		expected string
+	}{
+		{
+			name:     "query uses stmt type",
+			cmd:      mysql.ComQuery,
+			stmtType: "Select",
+			expected: "Select",
+		},
+		{
+			name:     "stmt execute uses stmt type",
+			cmd:      mysql.ComStmtExecute,
+			stmtType: "Update",
+			expected: "Update",
+		},
+		{
+			name:     "stmt close uses general",
+			cmd:      mysql.ComStmtClose,
+			stmtType: "Select",
+			expected: metrics.LblGeneral,
+		},
+		{
+			name:     "stmt prepare uses general",
+			cmd:      mysql.ComStmtPrepare,
+			stmtType: "Select",
+			expected: metrics.LblGeneral,
+		},
+		{
+			name:     "empty stmt type falls back to general",
+			cmd:      mysql.ComStmtExecute,
+			stmtType: "",
+			expected: metrics.LblGeneral,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, getSQLTypeForQueryMetrics(tc.cmd, tc.stmtType))
+		})
+	}
+}
+
 func TestIssue54335(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

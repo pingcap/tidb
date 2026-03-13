@@ -1317,11 +1317,7 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
-	stmtType := sessionVar.StmtCtx.StmtType
-	sqlType := metrics.LblGeneral
-	if stmtType != "" {
-		sqlType = stmtType
-	}
+	sqlType := getSQLTypeForQueryMetrics(cmd, sessionVar.StmtCtx.StmtType)
 
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
@@ -1330,6 +1326,16 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
 		}
 	}
+}
+
+func getSQLTypeForQueryMetrics(cmd byte, stmtType string) string {
+	if cmd != mysql.ComQuery && cmd != mysql.ComStmtExecute {
+		return metrics.LblGeneral
+	}
+	if stmtType == "" {
+		return metrics.LblGeneral
+	}
+	return stmtType
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
