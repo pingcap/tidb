@@ -2742,10 +2742,21 @@ var defaultSysVars = []*SysVar{
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, vardef.DefTiDBAnalyzeVersion)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnhanceIndexJoinBuildV2 = TiDBOptOn(val)
-		return nil
-	}},
+	// Keep this sysvar for upgrade compatibility. The planner always uses the v2 path now.
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool,
+		Validation: func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if !TiDBOptOn(normalizedValue) {
+				return vardef.On, errors.New("tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+			}
+			return vardef.On, nil
+		},
+		GetSession: func(*SessionVars) (string, error) {
+			return vardef.On, nil
+		},
+		GetGlobal: func(context.Context, *SessionVars) (string, error) {
+			return vardef.On, nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashJoinVersion, Value: vardef.DefTiDBHashJoinVersion, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			lowerValue := strings.ToLower(normalizedValue)

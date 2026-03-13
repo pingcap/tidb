@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 set @@session.tidb_executor_concurrency = 4;
 set @@session.tidb_hash_join_concurrency = 5;
 set @@session.tidb_distsql_scan_concurrency = 15;
@@ -34,7 +33,6 @@ Limit	root		offset:2, count:1
   └─Limit(Probe)	cop[tikv]		offset:0, count:3
     └─Selection	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.a, 1)
       └─TableRowIDScan	cop[tikv]	table:tbl	keep order:false
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)));
 create table t2(a json);

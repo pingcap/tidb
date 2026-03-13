@@ -356,7 +356,6 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -769,7 +768,6 @@ func TestPlanCacheOperators(t *testing.T) {
 func TestIssue29101(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec(`use test`)
@@ -798,11 +796,12 @@ func TestIssue29101(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PK
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─IndexJoin_11 1.00 root  inner join, inner:TableReader_30, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
-		`  ├─Point_Get_27(Build) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `,
-		`  └─TableReader_30(Probe) 0.00 root  data:Selection_29`,
-		`    └─Selection_29 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
-		`      └─TableRangeScan_28 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
+		`└─IndexJoin_18 1.00 root  inner join, inner:IndexLookUp_34, outer key:test.warehouse.w_id, inner key:test.customer.c_w_id, equal cond:eq(test.warehouse.w_id, test.customer.c_w_id)`,
+		`  ├─Point_Get_35(Build) 1.00 root table:warehouse handle:936`,
+		`  └─IndexLookUp_34(Probe) 1.00 root  `,
+		`    ├─Selection_33(Build) 1.00 cop[tikv]  eq(test.customer.c_w_id, 936)`,
+		`    │ └─IndexRangeScan_31 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range: decided by [eq(test.customer.c_w_id, test.warehouse.w_id) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 158)], keep order:false, stats:pseudo`,
+		`    └─TableRowIDScan_32(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 
