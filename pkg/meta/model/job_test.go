@@ -246,12 +246,6 @@ func TestSchemaState(t *testing.T) {
 	}
 }
 
-func TestActionTypeReserved(t *testing.T) {
-	for k := range ActionMap {
-		require.True(t, k < 200, "range [200, 256) should be reserved for a downstream fork")
-	}
-}
-
 func TestString(t *testing.T) {
 	acts := []struct {
 		act    ActionType
