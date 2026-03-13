@@ -1,0 +1,158 @@
+package executor
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
+)
+
+type unionEmptyExec struct {
+	*exec.BaseExecutor
+	nextEntered chan struct{}
+	closeCh     <-chan struct{}
+}
+
+func (e *unionEmptyExec) Open(context.Context) error { return nil }
+func (e *unionEmptyExec) Next(_ context.Context, req *chunk.Chunk) error {
+	close(e.nextEntered)
+	<-e.closeCh
+	req.Reset()
+	return nil
+}
+func (e *unionEmptyExec) Close() error { return nil }
+
+type unionPanicExec struct {
+	*exec.BaseExecutor
+	nextEntered chan struct{}
+	panicCh     <-chan struct{}
+}
+
+func (e *unionPanicExec) Open(context.Context) error { return nil }
+func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
+	close(e.nextEntered)
+	<-e.panicCh
+	panic("union exec panic during close")
+}
+func (e *unionPanicExec) Close() error { return nil }
+
+func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
+	fp := "github.com/pingcap/tidb/pkg/executor/pauseUnionExecResultPuller"
+	require.NoError(t, failpoint.Enable(fp, "pause"))
+	fpEnabled := true
+	t.Cleanup(func() {
+		if fpEnabled {
+			require.NoError(t, failpoint.Disable(fp))
+		}
+	})
+
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	closeCh := make(chan struct{})
+	nextEntered := make(chan struct{})
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionEmptyExec{BaseExecutor: &childBase, nextEntered: nextEntered, closeCh: closeCh}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &UnionExec{BaseExecutor: unionBase, concurrency: 1}
+
+	require.NoError(t, union.Open(context.Background()))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union worker did not enter Next")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned before worker exited")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	require.NoError(t, failpoint.Disable(fp))
+	fpEnabled = false
+	close(closeCh)
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not wait for worker exit")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after Close")
+	}
+}
+
+func TestUnionExecCloseReturnsAfterWorkerPanicDuringShutdown(t *testing.T) {
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	panicCh := make(chan struct{})
+	nextEntered := make(chan struct{})
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionPanicExec{BaseExecutor: &childBase, nextEntered: nextEntered, panicCh: panicCh}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &UnionExec{BaseExecutor: unionBase, concurrency: 1}
+
+	require.NoError(t, union.Open(context.Background()))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union worker did not enter Next")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned before worker panic")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(panicCh)
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not return after worker panic")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after worker panic")
+	}
+}
