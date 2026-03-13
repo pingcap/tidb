@@ -2600,6 +2600,17 @@ func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
 	seV220 := CreateSessionAndSetID(t, store)
 	MustExec(t, seV220, "USE mysql")
 
+	// Simulate the v8.5.2 schema for `mysql.tidb_pitr_id_map` (pre-version221, no restore_id + old primary key).
+	MustExec(t, seV220, "DROP TABLE IF EXISTS mysql.tidb_pitr_id_map")
+	MustExec(t, seV220, `CREATE TABLE mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		upstream_cluster_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id) /*T![clustered_index] NONCLUSTERED */
+	);`)
+
 	// Simulate a cluster bootstrapped/upgraded to v8.5.2 (version220).
 	ver220 := version220
 	txn, err := store.Begin()
