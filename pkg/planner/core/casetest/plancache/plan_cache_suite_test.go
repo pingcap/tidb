@@ -1102,6 +1102,13 @@ func TestGenericPlanKeepsMutablePrefixOffsetForNullParam(t *testing.T) {
 	require.Contains(t, plan, "idx_ab(a, b)")
 	require.Contains(t, plan, "range:[NULL 1,NULL 1]")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// NULL-typed executions do not reuse prepared plan cache entries today, so switch to a
+	// stable INT bind to verify the statement still remains cacheable after the initial NULL run.
+	tk.MustExec("set @x=1")
+	tk.MustQuery("execute st using @x").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @x").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("deallocate prepare st")
 }
