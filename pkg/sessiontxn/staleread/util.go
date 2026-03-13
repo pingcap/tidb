@@ -65,12 +65,13 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 	// If datetime conversion failed, try to parse as a TiDB TSO (not a Unix timestamp).
 	// A TiDB TSO encodes a physical timestamp (ms since epoch) in the high bits and a logical
 	// counter in the low 18 bits
-	tso, tsoErr := tsoFromDatum(tsVal)
-	if tsoErr != nil {
-		return 0, datetimeErr
+	tso, ok := tsoFromDatum(tsVal)
+	if !ok {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("cannot parse AS OF TIMESTAMP expression as datetime or TSO")
 	}
-	physicalMS := oracle.ExtractPhysical(tso)
+
 	// 1356998400000 ms = 2013-01-01T00:00:00Z, a reasonable lower bound for any TiDB TSO
+	physicalMS := oracle.ExtractPhysical(tso)
 	if physicalMS <= 1356998400000 {
 		return 0, plannererrors.ErrAsOf.FastGenWithCause("invalid TSO timestamp: TSO is before 2013-01-01")
 	}
@@ -83,22 +84,22 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 }
 
 // tsoFromDatum extracts a uint64 TSO value from a Datum.
-func tsoFromDatum(d types.Datum) (uint64, error) {
+func tsoFromDatum(d types.Datum) (uint64, bool) {
 	switch d.Kind() {
 	case types.KindString, types.KindBytes:
 		if tso, err := strconv.ParseUint(d.GetString(), 10, 64); err == nil {
-			return tso, nil
+			return tso, true
 		}
 	case types.KindInt64:
 		if v := d.GetInt64(); v > 0 {
-			return uint64(v), nil
+			return uint64(v), true
 		}
 	case types.KindUint64:
 		if v := d.GetUint64(); v > 0 {
-			return v, nil
+			return v, true
 		}
 	}
-	return 0, plannererrors.ErrAsOf.FastGenWithCause("cannot parse AS OF TIMESTAMP expression as TSO")
+	return 0, false
 }
 
 // parseTsExprAsDatetime tries to parse the value as a datetime and convert it to TSO.

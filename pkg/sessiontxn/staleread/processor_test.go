@@ -291,17 +291,16 @@ func TestStaleReadInvalidExpression(t *testing.T) {
 	tk.MustExec("create table if not exists test.t(a bigint)")
 
 	// Test invalid formats that can't be parsed as datetime or TSO.
-	// These should return the original datetime parsing error.
 	testCases := []struct {
 		input       string
 		expectedErr string
 	}{
-		{"invalid_timestamp", "Incorrect datetime value: 'invalid_timestamp'"},
-		{"not-a-date", "Incorrect datetime value: 'not-a-date'"},
-		{"2024-13-01 00:00:00", "Incorrect time value"},                            // invalid month
-		{"2024-01-32 00:00:00", "Incorrect datetime value: '2024-01-32 00:00:00'"}, // invalid day
-		{"42", "invalid TSO timestamp: TSO is before 2013-01-01"}, // small integer, not a valid TSO
-		{"0", "invalid TSO timestamp: TSO is before 2013-01-01"}, // zero is not a valid TSO
+		{"invalid_timestamp", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"},
+		{"not-a-date", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"},
+		{"2024-13-01 00:00:00", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"}, // invalid month
+		{"2024-01-32 00:00:00", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"}, // invalid day
+		{"42", "invalid TSO timestamp: TSO is before 2013-01-01"},                              // small integer, not a valid TSO
+		{"0", "invalid TSO timestamp: TSO is before 2013-01-01"},                               // zero is not a valid TSO
 	}
 
 	for _, tc := range testCases {
