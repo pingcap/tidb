@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -328,32 +327,17 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	exprCtx := exprctx.WithNullRejectCheck(ctx.GetExprCtx())
-	expr = expression.PushDownNot(exprCtx, expr)
+	expr = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), expr)
 	if expression.ContainOuterNot(expr) {
 		return false
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	for _, cond := range expression.SplitCNFItems(expr) {
-		if isNullRejectedSpecially(ctx, schema, expr) {
-			return true
-		}
-
-		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond, true)
-		if err != nil {
-			return false
-		}
-		x, ok := result.(*expression.Constant)
-		if !ok {
-			continue
-		}
-		if x.Value.IsNull() {
-			return true
-		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
-			return true
-		}
+	// Outer-join simplification is plan-cache-sensitive. Reuse the conservative planner
+	// checker here so parameterized inner-side predicates are only considered null-rejecting
+	// when they match the small structurally safe whitelist.
+	if util.IsNullRejected(ctx, schema, expr, true) {
+		return true
 	}
-	return false
+	return isNullRejectedSpecially(ctx, schema, expr)
 }
 
 // isNullRejectedSpecially handles some null-rejected cases specially, since the current in
