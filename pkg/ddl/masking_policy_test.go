@@ -198,3 +198,60 @@ func TestMaskingPolicyDatabaseScopedUniqueness(t *testing.T) {
 	tk.MustExec("create table t3(c varchar(20))")
 	tk.MustExec("create masking policy simple_mask on t3(c) as c enable")
 }
+
+func TestMaskingPolicySameNameNoOverwrite(t *testing.T) {
+	// This test verifies the critical bug fix: policy names are only unique per table, not globally.
+	// Different tables can have policies with the same name, and they should not overwrite each other.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+
+	// Create two tables
+	tk.MustExec("create table t1(id int primary key, c varchar(20))")
+	tk.MustExec("create table t2(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t1 values (1, 'secret1')")
+	tk.MustExec("insert into t2 values (1, 'secret2')")
+
+	// Create policies with the same name "p" on different tables with different expressions
+	tk.MustExec("create masking policy p on t1(c) as mask_full(c, '*') enable")
+	tk.MustExec("create masking policy p on t2(c) as mask_full(c, '#') enable")
+
+	// Verify both policies are stored and work correctly (no overwrite)
+	// t1 should use '*' for masking
+	tk.MustQuery("select c from t1").Check(testkit.Rows("*******"))
+	// t2 should use '#' for masking (not overwritten by t1's policy)
+	tk.MustQuery("select c from t2").Check(testkit.Rows("#######"))
+
+	// Verify both policies exist in system table
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("2"))
+}
+
+func TestMaskingPolicyDropImmediateQuery(t *testing.T) {
+	// This test verifies that after dropping a policy, the InfoSchema is immediately updated
+	// and subsequent queries see the original values (not masked).
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// Create table with masking policy
+	tk.MustExec("create table t(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t values (1, 'secret')")
+	tk.MustExec("create masking policy p on t(c) as mask_full(c, '*') enable")
+
+	// Verify masking is active
+	tk.MustQuery("select c from t").Check(testkit.Rows("******"))
+
+	// Drop the policy
+	tk.MustExec("alter table t drop masking policy p")
+
+	// Immediately query - should see original value, not masked
+	// This verifies refreshMaskingPoliciesForTableIDs works correctly
+	tk.MustQuery("select c from t").Check(testkit.Rows("secret"))
+
+	// Verify policy is removed from system table
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("0"))
+}

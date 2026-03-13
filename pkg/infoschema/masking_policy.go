@@ -25,14 +25,24 @@ import (
 )
 
 // MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
+// Note: Policy name is only unique per table, not globally. This method returns the first matching
+// policy if multiple tables have policies with the same name. For precise lookup, use MaskingPolicyByTableColumn.
 func (is *infoSchema) MaskingPolicyByName(name pmodel.CIStr) (*model.MaskingPolicyInfo, bool) {
 	is.loadMaskingPoliciesIfNeeded()
 
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 
-	policy, ok := is.maskingPolicyMap[name.L]
-	return policy, ok
+	// Search through all tables to find the first policy with matching name
+	// Note: This may return a policy from any table if multiple tables have the same policy name
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.Name.L == name.L {
+				return policy, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs with delayed loading.
@@ -62,9 +72,11 @@ func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 
-	policies := make([]*model.MaskingPolicyInfo, 0, len(is.maskingPolicyMap))
-	for _, policy := range is.maskingPolicyMap {
-		policies = append(policies, policy)
+	policies := make([]*model.MaskingPolicyInfo, 0)
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			policies = append(policies, policy)
+		}
 	}
 	sort.Slice(policies, func(i, j int) bool {
 		if policies[i].Name.L == policies[j].Name.L {
@@ -127,8 +139,6 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
 
 	// Update maps
 	for _, policy := range policies {
-		is.maskingPolicyMap[policy.Name.L] = policy
-
 		if is.maskingPolicyTableColumnMap == nil {
 			is.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
 		}

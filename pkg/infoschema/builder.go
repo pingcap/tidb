@@ -626,8 +626,10 @@ func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 }
 
 func refreshMaskingPoliciesForTableIDs(b *Builder, tableIDs ...int64) error {
-	// Masking policies will be loaded on first access via delayed loading mechanism
-	// No need to refresh them here during DDL operations
+	// Reset the loaded flag and clear the map to trigger a full reload on next access.
+	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	b.infoSchema.maskingPoliciesLoaded = false
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
 	return nil
 }
 
@@ -1003,10 +1005,6 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
-	b.infoSchema.maskingPolicyMap = maps.Clone(oldIS.maskingPolicyMap)
-	if b.infoSchema.maskingPolicyMap == nil {
-		b.infoSchema.maskingPolicyMap = make(map[string]*model.MaskingPolicyInfo)
-	}
 	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
 	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
