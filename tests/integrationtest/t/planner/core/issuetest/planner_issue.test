@@ -921,6 +921,8 @@ select * from t ue1_0 for update of t;
 select * from t ue1_0 for update of t, t, ue1_0;
 select * from t ue1_0 for update of lock_db1.t;
 select * from t ue1_0 for update of lock_db1.ue1_0;
+select * from t ue1_0, t where ue1_0.id = t.id for update of t;
+select * from t, t ue1_0 where ue1_0.id = t.id for update of lock_db1.t;
 
 --error 1109
 select * from t ue1_0 for update of non_exist_table;

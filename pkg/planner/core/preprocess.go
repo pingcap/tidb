@@ -681,9 +681,9 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 		p.handleTableName(x)
 	case *ast.TableSource:
-		if len(p.lockRefCollectorStack) > 0 {
+		if n := len(p.lockRefCollectorStack); n > 0 {
 			if v, ok := x.Source.(*ast.TableName); ok {
-				p.lockRefCollectorStack[len(p.lockRefCollectorStack)-1].collect(v, x.AsName)
+				p.lockRefCollectorStack[n-1].collect(v, x.AsName)
 			}
 		}
 	case *ast.Join:
@@ -1853,6 +1853,9 @@ type lockRefCollector struct {
 	qualifiedMap map[string]lockRef
 	// orderedRefs preserves the left-to-right FROM order for unqualified OF fallback.
 	// For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
+	// When both aliased and unaliased entries share the same base name, checkLockClauseTables first
+	// searches orderedRefs for an exact unaliased match, and only then falls back to aliased entries
+	// for backward compatibility.
 	orderedRefs []lockRef
 }
 
@@ -1873,7 +1876,12 @@ func (c *lockRefCollector) collect(tableName *ast.TableName, asName ast.CIStr) {
 		c.aliasMap[asName.L] = ref
 	}
 	if tableName.Schema.L != "" {
-		c.qualifiedMap[tableName.Schema.L+"."+tableName.Name.L] = ref
+		qualifiedKey := tableName.Schema.L + "." + tableName.Name.L
+		// Prefer an exact unaliased `schema.table` entry. If only aliased references exist in FROM,
+		// keep one as the backward-compatibility fallback for `OF schema.table`.
+		if asName.L == "" || c.qualifiedMap[qualifiedKey].table == nil {
+			c.qualifiedMap[qualifiedKey] = ref
+		}
 		if asName.L != "" {
 			// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
 			c.qualifiedMap[tableName.Schema.L+"."+asName.L] = ref
@@ -1912,13 +1920,24 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, collector *lo
 			matchedByAlias = true
 		}
 
-		// If still not found and the lock clause is unqualified, try bare-name match (FROM order).
-		// For example, `SELECT * FROM db1.t, db2.t FOR UPDATE OF t` resolves `t` to `db1.t`.
+		// If still not found and the lock clause is unqualified, first try an exact unaliased match.
+		// For example, `SELECT * FROM db.t AS a, db.t FOR UPDATE OF t` should resolve `t` to the
+		// unaliased `db.t`, not to `a`. Only if no unaliased entry exists do we fall back to aliased
+		// entries for backward compatibility. `SELECT * FROM db1.t, db2.t FOR UPDATE OF t` still
+		// resolves `t` to `db1.t` because orderedRefs preserves the left-to-right FROM order.
 		if matched.table == nil && ref.Schema.L == "" {
 			for _, tblRef := range collector.orderedRefs {
-				if tblRef.table.Name.L == name {
+				if tblRef.alias.L == "" && tblRef.table.Name.L == name {
 					matched = tblRef
 					break
+				}
+			}
+			if matched.table == nil {
+				for _, tblRef := range collector.orderedRefs {
+					if tblRef.alias.L != "" && tblRef.table.Name.L == name {
+						matched = tblRef
+						break
+					}
 				}
 			}
 		}

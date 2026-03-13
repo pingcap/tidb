@@ -1505,6 +1505,12 @@ Warning	1105	FOR UPDATE OF references the base table name while the table is ali
 select * from t ue1_0 for update of lock_db1.ue1_0;
 id	v
 1	100
+select * from t ue1_0, t where ue1_0.id = t.id for update of t;
+id	v	id	v
+1	100	1	100
+select * from t, t ue1_0 where ue1_0.id = t.id for update of lock_db1.t;
+id	v	id	v
+1	100	1	100
 select * from t ue1_0 for update of non_exist_table;
 Error 1109 (42S02): Unknown table 'non_exist_table' in locking clause
 use lock_db2;
