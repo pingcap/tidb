@@ -201,7 +201,8 @@ type TableInfo struct {
 
 	DBID int64 `json:"-"`
 
-	Mode TableMode `json:"mode,omitempty"`
+	Mode       TableMode `json:"mode,omitempty"`
+	Encryption bool      `json:"encryption,omitempty"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.

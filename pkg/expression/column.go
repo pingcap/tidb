@@ -306,6 +306,8 @@ type Column struct {
 	collationInfo
 
 	CorrelatedColUniqueID int64
+
+	Encryption bool
 }
 
 // Equal implements Expression interface.

@@ -597,6 +597,7 @@ aes_decrypt
 aes_encrypt
 and
 any_value
+array_element
 ascii
 asin
 atan
@@ -627,6 +628,7 @@ charset
 coalesce
 coercibility
 collation
+column_decryption
 compress
 concat
 concat_ws
@@ -899,6 +901,7 @@ weekday
 weekofyear
 weight_string
 xor
+xpath
 year
 yearweek
 SHOW INDEX FROM performance_schema.events_statements_summary_by_digest;

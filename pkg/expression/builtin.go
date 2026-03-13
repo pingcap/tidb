@@ -960,6 +960,10 @@ var funcs = map[string]functionClass{
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
+	// PingKaiDB Enterprise Edit functions
+	ast.ArrayElementAt: &arrayElementFunctionClass{baseFunctionClass{ast.ArrayElementAt, 2, -1}},
+	ast.XPath:          &xpathFunctionClass{baseFunctionClass{ast.XPath, 2, 2}},
+
 	// vector functions (TiDB extension)
 	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
 	ast.VecL1Distance:           &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecL1Distance, 2, 2}},
@@ -983,6 +987,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 	ast.DataOperationAudit:   &dataOpAuditFunctionClass{baseFunctionClass{ast.DataOperationAudit, 5, 5}},
+	ast.ColumnDecryption:     &ColumnDecryptionFunctionClass{baseFunctionClass{ast.ColumnDecryption, 1, 1}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},

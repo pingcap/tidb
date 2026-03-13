@@ -272,6 +272,7 @@ const (
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
 	DataOperationAudit   = "data_operation_audit"
+	ColumnDecryption     = "column_decryption"
 
 	// control functions
 	If     = "if"
@@ -357,6 +358,10 @@ const (
 	JSONDepth         = "json_depth"
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
+
+	// PingKaiDB Enterprise Edit functions
+	ArrayElementAt = "array_element"
+	XPath          = "xpath"
 
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"

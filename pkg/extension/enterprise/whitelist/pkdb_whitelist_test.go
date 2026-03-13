@@ -16,12 +16,55 @@ package whitelist
 
 import (
 	"fmt"
+	"net"
+	"strings"
+	"testing"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
+
+const (
+	fpWhitelistReloadEnabled = "github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-reload-enable"
+	fpWhitelistParseHost     = "github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-parse-host"
+	fpWhitelistConnHost      = "github.com/pingcap/tidb/pkg/server/mock-whitelist-connection-host"
+)
+
+func requireFpDisable(t *testing.T, failpath string) {
+	t.Helper()
+	err := failpoint.Disable(failpath)
+	if err == nil {
+		return
+	}
+	if errors.Cause(err) == failpoint.ErrNotExist {
+		return
+	}
+	require.NoError(t, err)
+}
+
+func requireFpEnable(t *testing.T, failpath string, host ...string) {
+	t.Helper()
+	if len(host) == 0 {
+		require.NoError(t, failpoint.Enable(failpath, "return"))
+		return
+	}
+	require.NoError(t, failpoint.Enable(failpath, fmt.Sprintf("return(%q)", host[0])))
+}
+
+func requireConnAllowed(t *testing.T, srv *server.Server, host string, expected bool) {
+	t.Helper()
+	requireFpEnable(t, fpWhitelistConnHost, host)
+	conn := server.CreateMockConn(t, srv)
+	defer conn.Close()
+	if expected {
+		require.True(t, conn.HandleWhiteList(), "host=%s", host)
+	} else {
+		require.False(t, conn.HandleWhiteList(), "host=%s", host)
+	}
+}
 
 func TestWhiteListTable(t *testing.T) {
 	Register4Test()
@@ -51,10 +94,8 @@ func TestWhiteListTable(t *testing.T) {
 
 func TestParseIPListFromTable(t *testing.T) {
 	Register4Test()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-reload-enable", `return`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-reload-enable"))
-	}()
+	requireFpEnable(t, fpWhitelistReloadEnabled)
+	defer requireFpDisable(t, fpWhitelistReloadEnabled)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -62,6 +103,9 @@ func TestParseIPListFromTable(t *testing.T) {
 	defer srv.Close()
 	conn := server.CreateMockConn(t, srv)
 	defer conn.Close()
+	// The whitelist validator resolves ConnectionInfo.Host via net.LookupIP.
+	// Use a stable IP that is covered by all test CIDRs to avoid depending on mock conn internals.
+	conn.Context().GetSessionVars().ConnectionInfo.Host = "172.16.6.95"
 
 	lists := [][]string{
 		{"172.16.6.95/8", "172.0.0.0/8"},
@@ -73,27 +117,25 @@ func TestParseIPListFromTable(t *testing.T) {
 	}
 	for _, list := range lists {
 		tk.MustExec(fmt.Sprintf("insert into mysql.whitelist(list, action) values('%s', 'accept')", list[0]))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-parse-host",
-			fmt.Sprintf(`return("%s")`, list[1])))
+		requireFpEnable(t, fpWhitelistParseHost, list[1])
 		require.True(t, conn.HandleWhiteList())
 		tk.MustExec("delete from mysql.whitelist")
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-parse-host"))
+	requireFpDisable(t, fpWhitelistParseHost)
 }
 
+// Please make failpoint work
 func TestConnHandleWhiteList(t *testing.T) {
 	Register4Test()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/mock-whitelist-config-enabled", `return`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-reload-enable", `return`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/mock-whitelist-config-enabled"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/extension/enterprise/whitelist/mock-whitelist-reload-enable"))
-	}()
+	requireFpEnable(t, fpWhitelistReloadEnabled)
+	defer requireFpDisable(t, fpWhitelistReloadEnabled)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
+
+	tk.MustExec("set global pkdb_whitelist = on")
 
 	cases := []struct {
 		ipList  []string
@@ -121,10 +163,10 @@ func TestConnHandleWhiteList(t *testing.T) {
 			allowIP: []string{
 				"172.16.6.95",
 				"172.1.6.95",
+				"11.1.1.1",
 			},
 			denyIP: []string{
 				"171.2.2.2",
-				"11.1.1.1",
 			},
 		},
 		{
@@ -193,10 +235,47 @@ func TestConnHandleWhiteList(t *testing.T) {
 			action: []string{
 				"reject",
 			},
-
+			allowIP: []string{
+				"11.2.2.2",
+			},
 			denyIP: []string{
 				"171.16.6.95",
-				"11.2.2.2",
+			},
+		},
+		// conflict
+		{
+			ipList: []string{
+				"172.16.6.95/24",
+				"172.16.6.95/24",
+				"171.16.6.95/24",
+			},
+			action: []string{
+				"accept",
+				"reject",
+				"accept",
+			},
+			allowIP: []string{
+				"171.16.6.95",
+			},
+			denyIP: []string{
+				"172.16.6.95",
+			},
+		},
+		// conflict
+		{
+			ipList: []string{
+				"172.16.6.95/24",
+				"172.16.6.95/24",
+			},
+			action: []string{
+				"accept",
+				"reject",
+			},
+			allowIP: []string{
+				"171.16.6.95",
+			},
+			denyIP: []string{
+				"172.16.6.95",
 			},
 		},
 	}
@@ -207,22 +286,130 @@ func TestConnHandleWhiteList(t *testing.T) {
 
 		// allow ip
 		for _, ip := range cs.allowIP {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/mock-whitelist-connection-host",
-				fmt.Sprintf(`return("%s")`, ip)))
+			requireFpEnable(t, fpWhitelistConnHost, ip)
 			conn := server.CreateMockConn(t, srv)
-			require.True(t, conn.HandleWhiteList())
+			require.True(t, conn.HandleWhiteList(), fmt.Sprintf("case: %#v\nip: %v\n", cs, ip))
 			conn.Close()
 		}
 		// deny ip
 		for _, ip := range cs.denyIP {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/mock-whitelist-connection-host",
-				fmt.Sprintf(`return("%s")`, ip)))
+			requireFpEnable(t, fpWhitelistConnHost, ip)
 			conn := server.CreateMockConn(t, srv)
-			require.False(t, conn.HandleWhiteList())
+			require.False(t, conn.HandleWhiteList(), fmt.Sprintf("case: %#v\nip: %v\n", cs, ip))
 			conn.Close()
 		}
 
 		tk.MustExec("delete from mysql.whitelist")
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/mock-whitelist-connection-host"))
+	requireFpDisable(t, fpWhitelistConnHost)
+}
+
+func TestConnHandleWhiteList_ActionNull(t *testing.T) {
+	Register4Test()
+	requireFpEnable(t, fpWhitelistReloadEnabled)
+	defer requireFpDisable(t, fpWhitelistReloadEnabled)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	srv := server.CreateMockServer(t, store)
+	defer srv.Close()
+
+	tk.MustExec("set global pkdb_whitelist = on")
+	tk.MustExec("delete from mysql.whitelist")
+	// action=NULL (or invalid) is treated as default action "accept" in code.
+	tk.MustExec("insert into mysql.whitelist(list) values('172.16.0.0/16')")
+	requireConnAllowed(t, srv, "172.16.1.1", true)
+	requireConnAllowed(t, srv, "172.17.1.1", false)
+}
+
+func TestConnHandleWhiteList_IPv6(t *testing.T) {
+	Register4Test()
+	requireFpEnable(t, fpWhitelistReloadEnabled)
+	defer requireFpDisable(t, fpWhitelistReloadEnabled)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	srv := server.CreateMockServer(t, store)
+	defer srv.Close()
+
+	tk.MustExec("set global pkdb_whitelist = on")
+
+	// whitelist only
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec("insert into mysql.whitelist(list, action) values('2001:db8::/32', 'accept')")
+	requireConnAllowed(t, srv, "2001:db8::1", true)
+	requireConnAllowed(t, srv, "2001:db9::1", false)
+
+	// blacklist only
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec("insert into mysql.whitelist(list, action) values('2001:db8::/32', 'reject')")
+	requireConnAllowed(t, srv, "2001:db8::1", false)
+	requireConnAllowed(t, srv, "2001:db9::1", true)
+
+	// mixed: blacklist has higher priority; also verify mixed-mode default allow.
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec("insert into mysql.whitelist(list, action) values('2001:db8::/32', 'accept')")
+	tk.MustExec("insert into mysql.whitelist(list, action) values('2001:db8::1/128', 'reject')")
+	requireConnAllowed(t, srv, "2001:db8::1", false)
+	requireConnAllowed(t, srv, "2001:db9::1", true)
+}
+
+func TestConnHandleWhiteList_LocalhostMultiAddress(t *testing.T) {
+	Register4Test()
+	requireFpEnable(t, fpWhitelistReloadEnabled)
+	defer requireFpDisable(t, fpWhitelistReloadEnabled)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	srv := server.CreateMockServer(t, store)
+	defer srv.Close()
+
+	ips, err := net.LookupIP("localhost")
+	require.NoError(t, err)
+	require.NotEmpty(t, ips)
+
+	cidrs := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if ip4 := ip.To4(); ip4 != nil {
+			cidrs = append(cidrs, ip4.String()+"/32")
+			continue
+		}
+		cidrs = append(cidrs, ip.String()+"/128")
+	}
+	list := strings.Join(cidrs, ",")
+
+	tk.MustExec("set global pkdb_whitelist = on")
+
+	// whitelist: allow localhost (covers 127.0.0.1 and/or ::1 depending on resolver).
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec(fmt.Sprintf("insert into mysql.whitelist(list, action) values('%s', 'accept')", list))
+	requireConnAllowed(t, srv, "localhost", true)
+
+	// blacklist: deny localhost
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec(fmt.Sprintf("insert into mysql.whitelist(list, action) values('%s', 'reject')", list))
+	requireConnAllowed(t, srv, "localhost", false)
+}
+
+func TestConnHandleWhiteList_PureIPNoMask(t *testing.T) {
+	Register4Test()
+	requireFpEnable(t, fpWhitelistReloadEnabled)
+	defer requireFpDisable(t, fpWhitelistReloadEnabled)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	srv := server.CreateMockServer(t, store)
+	defer srv.Close()
+
+	tk.MustExec("set global pkdb_whitelist = on")
+
+	// Compatibility strategy (current behavior): pure IP without CIDR mask is invalid and ignored.
+	// If the only rows are invalid, it is treated as "no rules" => allow all.
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec("insert into mysql.whitelist(list, action) values('1.1.1.1', 'accept')")
+	requireConnAllowed(t, srv, "2.2.2.2", true)
+
+	tk.MustExec("delete from mysql.whitelist")
+	tk.MustExec("insert into mysql.whitelist(list, action) values('1.1.1.1', 'reject')")
+	requireConnAllowed(t, srv, "1.1.1.1", true)
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -75,7 +76,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
-	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible"},
+	{Scope: ScopeGlobal | ScopeSession, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible", GetSession: func(s *SessionVars) (string, error) {
+		comment := "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL compatible"
+		comment += s.LogHistory
+		return comment, nil
+	}},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeNone, Name: Socket, Value: ""},
@@ -3704,6 +3709,31 @@ var defaultSysVars = []*SysVar{
 				ChangePDMetadataCircuitBreakerErrorRateThresholdRatio(uint32(v * 100))
 			}
 			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: PKDBEnableWhitelist, Value: BoolToOnOff(DefPKDBEnableWhitelist), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableWhitelist.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableWhitelist.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: PKDBExtraDataType, Value: BoolToOnOff(DefPKDBExtraDataType), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			enabled := TiDBOptOn(val)
+			parsertypes.EnableExtraDataType.Store(enabled)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(parsertypes.EnableExtraDataType.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: PKDBEnableEAL, Value: BoolToOnOff(DefPKDBEnableEAL), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableEAL.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableEAL.Load()), nil
 		},
 	},
 }

@@ -1168,6 +1168,7 @@ const (
 
 	// Enterprise Edit errors.
 	ErrRowLabelUnAccessible = 8800
+	ErrInvalidValueOfType   = 8801
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
