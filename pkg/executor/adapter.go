@@ -2228,8 +2228,7 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
-	topSQL := topsqlstate.TopSQLEnabled()
-	topRU := topsqlstate.TopRUEnabled()
+	topSQL, topRU := topsqlstate.TopSQLEnabled(), topsqlstate.TopRUEnabled()
 	topProfiling := topsqlstate.TopProfilingEnabled()
 	if !topProfiling && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
@@ -2249,31 +2248,30 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		planDigestByte = planDigest.Bytes()
 	}
 	stats := a.Ctx.GetStmtStats()
-	user := ""
-	if vars.User != nil {
-		user = vars.User.String()
+	var beginInfo *stmtstats.ExecBeginInfo
+	if stats != nil {
+		beginInfo = &stmtstats.ExecBeginInfo{
+			InNetworkBytes: vars.InPacketBytes.Load(),
+			TopRUEnabled:   topRU,
+		}
+		if topRU {
+			beginInfo.Ctx = a.GoCtx
+			if vars.User != nil {
+				beginInfo.User = vars.User.String()
+			}
+		}
 	}
 	if !topProfiling {
 		// Always attach the SQL and plan info uses to catch the running SQL when Top Profiling is enabled in execution.
 		// Note: Goroutine labels for CPU profiling are only set when TopSQL is enabled.
 		if stats != nil {
-			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, &stmtstats.ExecBeginInfo{
-				InNetworkBytes: vars.InPacketBytes.Load(),
-				User:           user,
-				TopRUEnabled:   topRU,
-				Ctx:            a.GoCtx,
-			})
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, beginInfo)
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 
 	if stats != nil {
-		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, &stmtstats.ExecBeginInfo{
-			InNetworkBytes: vars.InPacketBytes.Load(),
-			User:           user,
-			TopRUEnabled:   topRU,
-			Ctx:            a.GoCtx,
-		})
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, beginInfo)
 		if topSQL {
 			// This is a special logic prepared for TiKV's SQLExecCount.
 			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
@@ -2322,25 +2320,33 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 	if vars == nil {
 		return
 	}
-	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopProfilingEnabled() {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := vars.GetTotalCostDuration()
-		var ruDetail *util.RUDetails
-		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
-			ruDetail = ruDetailRaw.(*util.RUDetails)
-		}
-		user := ""
-		if vars.User != nil {
-			user = vars.User.String()
-		}
-		stats.OnExecutionFinished(sqlDigest, planDigest, &stmtstats.ExecFinishInfo{
-			OutNetworkBytes: vars.OutPacketBytes.Load(),
-			ExecDuration:    execDuration,
-			User:            user,
-			TopRUEnabled:    topsqlstate.TopRUEnabled(),
-			RUDetails:       ruDetail,
-		})
+	stats := a.Ctx.GetStmtStats()
+	if stats == nil {
+		return
 	}
+
+	topRU := topsqlstate.TopRUEnabled()
+	if !topsqlstate.TopSQLEnabled() && !topRU {
+		stats.ClearRUExecContext()
+		return
+	}
+
+	finishInfo := &stmtstats.ExecFinishInfo{
+		OutNetworkBytes: vars.OutPacketBytes.Load(),
+		ExecDuration:    vars.GetTotalCostDuration(),
+		TopRUEnabled:    topRU,
+	}
+	if topRU {
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			finishInfo.RUDetails, _ = ruDetailRaw.(*util.RUDetails)
+		}
+		if vars.User != nil {
+			finishInfo.User = vars.User.String()
+		}
+	}
+
+	sqlDigest, planDigest := a.getSQLPlanDigest()
+	stats.OnExecutionFinished(sqlDigest, planDigest, finishInfo)
 }
 
 func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest []byte) {

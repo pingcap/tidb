@@ -201,6 +201,14 @@ func (s *StatementStats) clearRUExecCtxLocked() {
 	s.execCtx = nil
 }
 
+// ClearRUExecContext discards the active RU execution context without touching
+// accumulated stmtstats or finished RU increments.
+func (s *StatementStats) ClearRUExecContext() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clearRUExecCtxLocked()
+}
+
 func (s *StatementStats) sampleActiveRUDeltaLocked(result RUIncrementMap) RUIncrementMap {
 	if s.execCtx == nil || s.execCtx.RUDetails == nil {
 		return result

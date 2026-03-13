@@ -79,7 +79,8 @@ func (m RUIncrementMap) Merge(other RUIncrementMap) {
 	}
 }
 
-func TestKvStatementStatsItem_Merge(t *testing.T) {
+// TestKvStatementStatsItemMerge verifies kv statement stats item merge and guards against regressions in begin-based RU accounting.
+func TestKvStatementStatsItemMerge(t *testing.T) {
 	item1 := KvStatementStatsItem{
 		KvExecCount: map[string]uint64{
 			"127.0.0.1:10001": 1,
@@ -102,7 +103,8 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
 }
 
-func TestStatementsStatsItem_Merge(t *testing.T) {
+// TestStatementsStatsItemMerge verifies statements stats item merge and guards against regressions in begin-based RU accounting.
+func TestStatementsStatsItemMerge(t *testing.T) {
 	item1 := &StatementStatsItem{
 		ExecCount:       1,
 		SumDurationNs:   100,
@@ -124,7 +126,8 @@ func TestStatementsStatsItem_Merge(t *testing.T) {
 	assert.Equal(t, uint64(80), item1.NetworkOutBytes)
 }
 
-func TestStatementStatsMap_Merge(t *testing.T) {
+// TestStatementStatsMapMerge verifies statement stats map merge and guards against regressions in begin-based RU accounting.
+func TestStatementStatsMapMerge(t *testing.T) {
 	m1 := StatementStatsMap{
 		SQLPlanDigest{SQLDigest: "SQL-1"}: &StatementStatsItem{
 			ExecCount:     1,
@@ -200,7 +203,8 @@ func TestCreateStatementStats(t *testing.T) {
 	assert.True(t, stats.Finished())
 }
 
-func TestExecCounter_AddExecCount_Take(t *testing.T) {
+// TestExecCounterAddExecCountTake verifies exec counter add exec count take and guards against regressions in begin-based RU accounting.
+func TestExecCounterAddExecCountTake(t *testing.T) {
 	stats := CreateStatementStats()
 	m := stats.Take()
 	assert.Len(t, m, 0)
@@ -368,7 +372,8 @@ func TestMergeRUIntoHandlesRUResetAndNilRUDetails(t *testing.T) {
 	require.Nil(t, stats.execCtx)
 }
 
-func TestExecCountBeginBased_LongRunningAcrossTicks(t *testing.T) {
+// TestExecCountBeginBasedLongRunningAcrossTicks verifies exec count begin based long running across ticks and guards against regressions in begin-based RU accounting.
+func TestExecCountBeginBasedLongRunningAcrossTicks(t *testing.T) {
 	stats := CreateStatementStats()
 	ru := util.NewRUDetailsWith(0, 0, 0)
 	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
@@ -542,7 +547,8 @@ func TestExecCountBeginBasedRUZeroNoNoise(t *testing.T) {
 	require.Len(t, stats.MergeRUInto(), 0)
 }
 
-func TestExecCountBeginBased_BucketMergeSameTick(t *testing.T) {
+// TestExecCountBeginBasedBucketMergeSameTick verifies same-tick merge combines finished and in-flight RU into one bucket with deterministic exec-count accumulation.
+func TestExecCountBeginBasedBucketMergeSameTick(t *testing.T) {
 	stats := CreateStatementStats()
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 
@@ -577,7 +583,8 @@ func TestExecCountBeginBased_BucketMergeSameTick(t *testing.T) {
 	require.Equal(t, uint64(2), m[key].ExecCount)
 }
 
-func TestExecCountBeginBased_FinishAndTickConcurrent(t *testing.T) {
+// TestExecCountBeginBasedFinishAndTickConcurrent covers concurrent tick/finish ordering to avoid double counting begin-based exec deltas.
+func TestExecCountBeginBasedFinishAndTickConcurrent(t *testing.T) {
 	// Contract: begin-based ExecCount must remain 1 even when finish and tick race.
 	// We aggregate tickResult+tailResult to assert no double count across buckets.
 	const rounds = 100
@@ -633,7 +640,8 @@ func TestExecCountBeginBased_FinishAndTickConcurrent(t *testing.T) {
 	}
 }
 
-func TestExecCountBeginBased_FinishTickBucketSemantics(t *testing.T) {
+// TestExecCountBeginBasedFinishTickBucketSemantics verifies tick-first and finish-first ordering keeps delta ownership in exactly one bucket and leaves the next bucket empty.
+func TestExecCountBeginBasedFinishTickBucketSemantics(t *testing.T) {
 	// Bucket contract: whether tick or finish happens first, exactly one bucket
 	// gets the delta and the next bucket remains empty.
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
@@ -681,7 +689,8 @@ func TestExecCountBeginBased_FinishTickBucketSemantics(t *testing.T) {
 	})
 }
 
-func TestExecCountBeginBased_TickThenGrowThenFinishAcrossBuckets(t *testing.T) {
+// TestExecCountBeginBasedTickThenGrow verifies grow-after-tick paths split RU across buckets while preserving begin-based exec-count semantics.
+func TestExecCountBeginBasedTickThenGrow(t *testing.T) {
 	// Cross-bucket contract: first tick emits begin-based count=1; later finish only
 	// emits tail RU/duration with count=0.
 	stats := CreateStatementStats()
@@ -728,7 +737,7 @@ func TestExecCountBeginBased_TickThenGrowThenFinishAcrossBuckets(t *testing.T) {
 	require.Nil(t, stats.execCtx)
 }
 
-func TestExecCountBeginBased_TickThenDisableThenFinishNoBucketB(t *testing.T) {
+func TestExecCountBeginBasedTickThen(t *testing.T) {
 	stats := CreateStatementStats()
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 	ru := util.NewRUDetailsWith(0, 0, 0)
@@ -759,7 +768,8 @@ func TestExecCountBeginBased_TickThenDisableThenFinishNoBucketB(t *testing.T) {
 	require.Nil(t, stats.execCtx)
 }
 
-func TestExecCountBeginBased_TickThenResetThenFinishNoBucketB(t *testing.T) {
+// TestExecCountBeginBasedTickThenReset verifies the reset-after-tick path does not emit negative tail deltas and still clears execution context.
+func TestExecCountBeginBasedTickThenReset(t *testing.T) {
 	stats := CreateStatementStats()
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 	ru := util.NewRUDetailsWith(0, 0, 0)
@@ -794,7 +804,8 @@ func TestExecCountBeginBased_TickThenResetThenFinishNoBucketB(t *testing.T) {
 	require.Nil(t, stats.execCtx)
 }
 
-func TestExecCountBeginBased_KeySwitchNoCrossPollution(t *testing.T) {
+// TestExecCountBeginBasedKeySwitchNoCrossPollution ensures key switches do not leak RU increments across different SQL/plan digests.
+func TestExecCountBeginBasedKeySwitchNoCrossPollution(t *testing.T) {
 	// Key-switch contract: stale finish for keyA must not write into keyB, even when
 	// keyB is now the active execution context.
 	stats := CreateStatementStats()

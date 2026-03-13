@@ -28,7 +28,8 @@ import (
 	"go.uber.org/atomic"
 )
 
-func Test_SetupCloseAggregator(t *testing.T) {
+// TestSetupCloseAggregator verifies setup close aggregator and guards against regressions in begin-based RU accounting.
+func TestSetupCloseAggregator(t *testing.T) {
 	for range 3 {
 		SetupAggregator()
 		time.Sleep(100 * time.Millisecond)
@@ -39,7 +40,8 @@ func Test_SetupCloseAggregator(t *testing.T) {
 	}
 }
 
-func Test_RegisterUnregisterCollector(t *testing.T) {
+// TestRegisterUnregisterCollector verifies register unregister collector and guards against regressions in begin-based RU accounting.
+func TestRegisterUnregisterCollector(t *testing.T) {
 	SetupAggregator()
 	defer CloseAggregator()
 	time.Sleep(100 * time.Millisecond)
@@ -67,7 +69,8 @@ func TestRegisterUnregisterRUCollector(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func Test_aggregator_register_collect(t *testing.T) {
+// TestAggregatorRegisterCollect ensures disable-on-finish paths clear exec context and avoid unexpected tail RU emission.
+func TestAggregatorRegisterCollect(t *testing.T) {
 	state.EnableTopSQL()
 	defer state.DisableTopSQL()
 	a := newAggregator()
@@ -88,7 +91,8 @@ func Test_aggregator_register_collect(t *testing.T) {
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
-func Test_aggregator_run_close(t *testing.T) {
+// TestAggregatorRunClose verifies aggregator run close and guards against regressions in begin-based RU accounting.
+func TestAggregatorRunClose(t *testing.T) {
 	a := newAggregator()
 	assert.True(t, a.closed())
 	a.start()
@@ -108,6 +112,7 @@ func Test_aggregator_run_close(t *testing.T) {
 	a.close()
 }
 
+// TestAggregatorDisableAggregate ensures disable-on-finish paths clear exec context and avoid unexpected tail RU emission.
 func TestAggregatorDisableAggregate(t *testing.T) {
 	total := StatementStatsMap{}
 	a := newAggregator()
@@ -141,8 +146,7 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 	state.DisableTopSQL()
 }
 
-// TestAggregatorDisableAggregateRUNoEmit verifies disabled TopRU drains session
-// RU buffers but does not emit data to RU collectors.
+// TestAggregatorDisableAggregateRUNoEmit verifies TopRU disable-on-finish keeps exec context clean without emitting tail RU noise.
 func TestAggregatorDisableAggregateRUNoEmit(t *testing.T) {
 	for state.TopRUEnabled() {
 		state.DisableTopRU()
@@ -174,8 +178,7 @@ func TestAggregatorDisableAggregateRUNoEmit(t *testing.T) {
 	require.Len(t, collected, 0)
 }
 
-// TestAggregatorRunOrderKeepsFinishedRU verifies aggregateAll drains RU before
-// unregistering finished sessions, preserving close-tail increments.
+// TestAggregatorRunOrderKeepsFinishedRU verifies TopRU disable-on-finish keeps exec context clean without emitting tail RU noise.
 func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
 	for state.TopRUEnabled() {
 		state.DisableTopRU()
@@ -207,8 +210,7 @@ func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
 	require.False(t, ok)
 }
 
-// TestAggregatorTopSQLTopRUCoexistenceMatrix verifies TopSQL and TopRU
-// forwarding are independently gated by their enable flags.
+// TestAggregatorTopSQLTopRUCoexistenceMatrix verifies TopRU disable-on-finish keeps exec context clean without emitting tail RU noise.
 func TestAggregatorTopSQLTopRUCoexistenceMatrix(t *testing.T) {
 	type tc struct {
 		name           string
@@ -318,8 +320,7 @@ func TestAggregatorTopSQLTopRUCoexistenceMatrix(t *testing.T) {
 	}
 }
 
-// TestAggregatorDrainTailIncrementMatrix verifies tail-RU draining remains
-// deterministic under session-close and unregister races.
+// TestAggregatorDrainTailIncrementMatrix covers concurrent tick/finish ordering to avoid double counting begin-based exec deltas.
 func TestAggregatorDrainTailIncrementMatrix(t *testing.T) {
 	type tc struct {
 		name               string
@@ -409,10 +410,8 @@ func TestAggregatorDrainTailIncrementMatrix(t *testing.T) {
 	}
 }
 
-// TestDrainAndPushRUCapsAtMaxRUKeysPerAggregateAndMetrics covers the critical
-// capacity-protection risk: when RU key cardinality exceeds hard cap, we must
-// keep output bounded, preserve hot keys, and account dropped keys/RU via metrics.
-func TestDrainAndPushRUCapsAtMaxRUKeysPerAggregateAndMetrics(t *testing.T) {
+// TestDrainPushRUCapsAtMax verifies TopRU disable-on-finish keeps exec context clean without emitting tail RU noise.
+func TestDrainPushRUCapsAtMax(t *testing.T) {
 	for state.TopRUEnabled() {
 		state.DisableTopRU()
 	}
