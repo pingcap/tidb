@@ -2069,9 +2069,7 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 
 	// The current default value of tidb_analyze_version is 2.
 	newValue := strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
-	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue),
-		zap.String("oldValue", oldValue),
-		zap.String("newValue", newValue))
+	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
 }
