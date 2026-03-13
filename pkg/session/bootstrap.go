@@ -1254,8 +1254,13 @@ const (
 	// Add index on user field for some mysql tables.
 	version225 = 225
 
+	// version 226
+	// Ensure `mysql.tidb_pitr_id_map` has `restore_id` and correct primary key.
+	// This is a compatibility fix for upgrade paths where version221 was already used.
+	version226 = 226
+
 	// ...
-	// [version226, version238] is the version range reserved for patches of 8.5.x
+	// [version227, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
 
@@ -1263,7 +1268,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version225
+var currentBootstrapVersion int64 = version226
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1444,6 +1449,7 @@ var (
 		upgradeToVer223,
 		upgradeToVer224,
 		upgradeToVer225,
+		upgradeToVer226,
 	}
 )
 
@@ -3300,7 +3306,7 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
 
@@ -3339,6 +3345,59 @@ func upgradeToVer225(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer226(s sessiontypes.Session, ver int64) {
+	if ver >= version226 {
+		return
+	}
+
+	// Make sure the table exists.
+	doReentrantDDL(s, CreatePITRIDMap)
+
+	// If the primary key columns are already as expected, the schema is already fixed
+	// In this case, no further action is needed.
+	expectedPKCols := []string{"restore_id", "restored_ts", "upstream_cluster_id", "segment_id"}
+	pkCols := getPrimaryKeyColsOrEmpty(s, mysql.SystemDB, "tidb_pitr_id_map")
+	if sameStringSlice(pkCols, expectedPKCols) {
+		return
+	}
+
+	// Otherwise, execute the same DDLs as version221.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
+}
+
+func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, `
+		SELECT COLUMN_NAME
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA=%? AND TABLE_NAME=%? AND INDEX_NAME='PRIMARY'
+		ORDER BY SEQ_IN_INDEX`,
+		dbName, tableName,
+	)
+	if err != nil {
+		logutil.BgLogger().Fatal("get primary key columns failed", zap.Error(err), zap.String("db", dbName), zap.String("table", tableName))
+	}
+	cols := make([]string, 0, len(rows))
+	for _, row := range rows {
+		cols = append(cols, row.GetString(0))
+	}
+	return cols
+}
+
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
