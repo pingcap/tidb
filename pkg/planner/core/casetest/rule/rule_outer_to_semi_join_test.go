@@ -65,6 +65,72 @@ func TestOuterToSemiJoin(tt *testing.T) {
 	})
 }
 
+func TestSemiJoinInnerDedup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Outer table: small, no duplicates on join key.
+	tk.MustExec("create table outer_t (id int not null, val int)")
+	tk.MustExec("insert into outer_t values (1, 10), (2, 20), (3, 30)")
+
+	// Inner table: many duplicates on join key (oid) — dupRatio must be >= 2.0
+	// to pass the SemiJoinInnerDedup threshold.
+	tk.MustExec("create table inner_t (id int not null, oid int not null, v int)")
+	for i := 0; i < 50; i++ {
+		tk.MustExec("insert into inner_t values (?, ?, ?)", i, i%5, i*10)
+	}
+	tk.MustExec("analyze table outer_t")
+	tk.MustExec("analyze table inner_t")
+
+	// Ensure the sysvar is ON so dedup fires (default for new clusters).
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern = on")
+
+	// Semi-join via EXISTS — should show a HashAgg (dedup) on the inner side.
+	tk.MustHavePlan(
+		"select * from outer_t where exists (select 1 from inner_t where outer_t.id = inner_t.oid)",
+		"HashAgg",
+	)
+
+	// Anti-semi-join via NOT EXISTS — should also show dedup.
+	tk.MustHavePlan(
+		"select * from outer_t where not exists (select 1 from inner_t where outer_t.id = inner_t.oid)",
+		"HashAgg",
+	)
+
+	// Semi-join via IN — should also show dedup.
+	tk.MustHavePlan(
+		"select * from outer_t where id in (select oid from inner_t)",
+		"HashAgg",
+	)
+
+	// Verify correctness of results.
+	tk.MustQuery(
+		"select id from outer_t where exists (select 1 from inner_t where outer_t.id = inner_t.oid) order by id",
+	).Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustQuery(
+		"select id from outer_t where not exists (select 1 from inner_t where outer_t.id = inner_t.oid) order by id",
+	).Check(testkit.Rows())
+
+	tk.MustQuery(
+		"select id from outer_t where id in (select oid from inner_t) order by id",
+	).Check(testkit.Rows("1", "2", "3"))
+
+	// Dedup fires regardless of tidb_enable_inl_join_inner_multi_pattern
+	// because IndexJoin is enumerated before dedup in exhaustPhysicalPlans.
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern = off")
+	tk.MustHavePlan(
+		"select * from outer_t where exists (select 1 from inner_t where outer_t.id = inner_t.oid)",
+		"HashAgg",
+	)
+
+	// Correctness is preserved with dedup and sysvar OFF.
+	tk.MustQuery(
+		"select id from outer_t where exists (select 1 from inner_t where outer_t.id = inner_t.oid) order by id",
+	).Check(testkit.Rows("1", "2", "3"))
+}
+
 func TestSemiJoinRewrite(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")

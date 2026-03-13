@@ -152,17 +152,17 @@
         "SQL": "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "StreamAgg_15 1.00 62546.70 root  funcs:count(1)->Column#9",
-          "└─MergeJoin_29 3.00 62397.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Sort_27(Build) 3.00 31197.00 root  test.t2.a",
-          "  │ └─TableReader_26 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_25",
-          "  │   └─ExchangeSender_25 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │     └─Selection_24 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │       └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
-          "  └─Sort_22(Probe) 3.00 31197.00 root  test.t1.a",
-          "    └─TableReader_21 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_20",
-          "      └─ExchangeSender_20 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─Selection_19 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
-          "          └─TableFullScan_18 3.00 464139.20 mpp[tiflash] table:t1 keep order:false"
+          "└─MergeJoin_53 3.00 62397.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort_39(Build) 3.00 31197.00 root  test.t2.a",
+          "  │ └─TableReader_38 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_37",
+          "  │   └─ExchangeSender_37 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │     └─Selection_36 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "  │       └─TableFullScan_35 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
+          "  └─Sort_34(Probe) 3.00 31197.00 root  test.t1.a",
+          "    └─TableReader_33 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_32",
+          "      └─ExchangeSender_32 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection_31 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          └─TableFullScan_30 3.00 464139.20 mpp[tiflash] table:t1 keep order:false"
         ]
       },
       {

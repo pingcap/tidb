@@ -101,32 +101,32 @@
         "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
         "JSONPlan": [
           {
-            "id": "MergeJoin_10",
+            "id": "MergeJoin_22",
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
-            "executeInfo": "time:117.6µs, open:32.2µs, close:3.63µs, loops:1",
+            "executeInfo": "time:97.1µs, open:49.5µs, close:2.25µs, loops:1",
             "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
             "memoryInfo": "760 Bytes",
             "diskInfo": "0 Bytes",
             "subOperators": [
               {
-                "id": "IndexReader_28(Build)",
+                "id": "IndexReader_38(Build)",
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:64µs, open:8.54µs, close:204ns, loops:1, cop_task: {num: 1, max: 38.6µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 733ns, max_distsql_concurrency: 1}, fetch_resp_duration: 50.4µs, rpc_info:{Cop:{num_rpc:1, total_time:32µs}}",
-                "operatorInfo": "index:IndexFullScan_27",
-                "memoryInfo": "182 Bytes",
+                "executeInfo": "time:60.3µs, open:36.4µs, close:209ns, loops:1, cop_task: {num: 1, max: 19µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 500ns, max_distsql_concurrency: 1}, fetch_resp_duration: 21.2µs, rpc_info:{Cop:{num_rpc:1, total_time:16.3µs}}",
+                "operatorInfo": "index:IndexFullScan_37",
+                "memoryInfo": "197 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
-                    "id": "IndexFullScan_27",
+                    "id": "IndexFullScan_37",
                     "estRows": "9990.00",
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:24.3µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:13.5µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
@@ -134,22 +134,22 @@
                 ]
               },
               {
-                "id": "IndexReader_26(Probe)",
+                "id": "IndexReader_36(Probe)",
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:39.6µs, open:14.2µs, close:1.38µs, loops:1, cop_task: {num: 1, max: 18.8µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 2.77µs, max_distsql_concurrency: 1}, fetch_resp_duration: 22µs, rpc_info:{Cop:{num_rpc:1, total_time:16µs}}",
-                "operatorInfo": "index:IndexFullScan_25",
-                "memoryInfo": "181 Bytes",
+                "executeInfo": "time:25.7µs, open:5.71µs, close:667ns, loops:1, cop_task: {num: 1, max: 15.7µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 1.17µs, max_distsql_concurrency: 1}, fetch_resp_duration: 17.7µs, rpc_info:{Cop:{num_rpc:1, total_time:13.6µs}}",
+                "operatorInfo": "index:IndexFullScan_35",
+                "memoryInfo": "197 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
-                    "id": "IndexFullScan_25",
+                    "id": "IndexFullScan_35",
                     "estRows": "9990.00",
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t1, index:id(id)",
-                    "executeInfo": "tikv_task:{time:12µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:10.6µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"

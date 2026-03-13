@@ -2076,6 +2076,136 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	return proj, nil
 }
 
+// SemiJoinInnerDedup adds an aggregation on the inner child's join key columns
+// to deduplicate inner rows for semi/anti-semi joins. For these join types, only
+// the existence of a match matters, so duplicate inner rows on the join keys are
+// wasted work. This benefits all physical join implementations (HashJoin, MergeJoin,
+// IndexJoin, IndexHashJoin) by reducing the inner side cardinality.
+//
+// This is only safe when there are no OtherConditions (non-equi conditions that
+// reference both sides), because different inner rows with the same join key could
+// produce different results for such conditions.
+func (p *LogicalJoin) SemiJoinInnerDedup() (base.LogicalPlan, bool, error) {
+	// Only for semi/anti-semi join types.
+	if p.JoinType != base.SemiJoin && p.JoinType != base.AntiSemiJoin &&
+		p.JoinType != base.LeftOuterSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
+		return p.Self(), false, nil
+	}
+	// Skip correlated semi joins (LogicalApply).
+	if _, ok := p.Self().(*LogicalApply); ok {
+		return p.Self(), false, nil
+	}
+	// Must have equi-join conditions.
+	if len(p.EqualConditions) == 0 {
+		return p.Self(), false, nil
+	}
+	// Cannot have non-equi conditions — dedup would change semantics.
+	if len(p.OtherConditions) > 0 {
+		return p.Self(), false, nil
+	}
+	// Cannot have null-aware conditions.
+	if len(p.NAEQConditions) > 0 {
+		return p.Self(), false, nil
+	}
+
+	innerChild := p.Children()[1]
+
+	// Collect inner join key columns.
+	innerKeyCols := make([]*expression.Column, 0, len(p.EqualConditions))
+	for i := range p.EqualConditions {
+		innerKeyCols = append(innerKeyCols, p.EqualConditions[i].GetArgs()[1].(*expression.Column))
+	}
+
+	// Skip if the inner child's join key columns already form a unique key,
+	// meaning the inner side is already effectively deduplicated (e.g., from
+	// a prior aggregation or a unique index).
+	innerKeySchema := expression.NewSchema(innerKeyCols...)
+	for _, key := range innerChild.Schema().PKOrUK {
+		if innerKeySchema.ColumnsIndices(key) != nil {
+			return p.Self(), false, nil
+		}
+	}
+
+	// Skip if the inner child has low duplication on join key columns.
+	// When NDV is close to the row count, dedup adds overhead with little benefit.
+	// Also skip when stats are unavailable (pseudo stats) as a conservative default,
+	// since injecting an aggregation can cause plan regressions (e.g., blocking
+	// IndexJoin or shifting the optimizer toward more expensive TiFlash plans).
+	innerStats := innerChild.StatsInfo()
+	if innerStats == nil || innerStats.RowCount <= 0 {
+		return p.Self(), false, nil
+	}
+	// Compute the max NDV across the join key columns. The number of distinct
+	// key combinations is at most min(NDV(col_i)), but using max gives a
+	// conservative (less aggressive) estimate of duplication.
+	maxNDV := float64(0)
+	for _, col := range innerKeyCols {
+		if ndv, ok := innerStats.ColNDVs[col.UniqueID]; ok && ndv > maxNDV {
+			maxNDV = ndv
+		}
+	}
+	// dupRatio = rows / NDV. A ratio near 1.0 means almost no duplicates.
+	// Only insert dedup when there's meaningful duplication (ratio >= 2.0).
+	// When NDV is unavailable (maxNDV == 0), skip conservatively.
+	if maxNDV <= 0 {
+		return p.Self(), false, nil
+	}
+	dupRatio := innerStats.RowCount / maxNDV
+	if dupRatio < 2.0 {
+		return p.Self(), false, nil
+	}
+
+	// Push RightConditions below the aggregation as a Selection.
+	if len(p.RightConditions) > 0 {
+		sel := LogicalSelection{Conditions: make([]expression.Expression, len(p.RightConditions))}.Init(p.SCtx(), innerChild.QueryBlockOffset())
+		copy(sel.Conditions, p.RightConditions)
+		sel.SetChildren(innerChild)
+		// Derive stats for the selection so the downstream aggregation can use them.
+		if innerChild.StatsInfo() != nil {
+			childStats := []*property.StatsInfo{innerChild.StatsInfo()}
+			if _, _, err := sel.DeriveStats(childStats, sel.Schema(), []*expression.Schema{innerChild.Schema()}, nil); err != nil {
+				return nil, false, err
+			}
+		}
+		innerChild = sel
+		p.RightConditions = nil
+	}
+
+	// Create aggregation with GROUP BY on inner join key columns.
+	subAgg := LogicalAggregation{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(p.EqualConditions)),
+		GroupByItems: make([]expression.Expression, 0, len(p.EqualConditions)),
+	}.Init(p.SCtx(), p.Children()[1].QueryBlockOffset())
+
+	aggOutputCols := make([]*expression.Column, 0, len(p.EqualConditions))
+	for i := range p.EqualConditions {
+		innerCol := p.EqualConditions[i].GetArgs()[1].(*expression.Column)
+		firstRow, err := aggregation.NewAggFuncDesc(p.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
+		if err != nil {
+			return nil, false, err
+		}
+		subAgg.AggFuncs = append(subAgg.AggFuncs, firstRow)
+		subAgg.GroupByItems = append(subAgg.GroupByItems, innerCol)
+		aggOutputCols = append(aggOutputCols, innerCol)
+	}
+	subAgg.SetChildren(innerChild)
+	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
+	subAgg.BuildSelfKeyInfo(subAgg.Schema())
+
+	// Derive stats for the aggregation so physical optimization can use it.
+	if innerChild.StatsInfo() != nil {
+		childStats := []*property.StatsInfo{innerChild.StatsInfo()}
+		childSchema := []*expression.Schema{innerChild.Schema()}
+		if _, _, err := subAgg.DeriveStats(childStats, subAgg.Schema(), childSchema, nil); err != nil {
+			return nil, false, err
+		}
+	}
+
+	// Replace inner child with the deduplicated aggregation.
+	p.SetChildren(p.Children()[0], subAgg)
+	return p.Self(), true, nil
+}
+
 // containDifferentJoinTypes checks whether `PreferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
