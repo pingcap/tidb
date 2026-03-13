@@ -114,9 +114,8 @@ func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model
 	}
 }
 
-// InitMaskingPolicies initializes masking policy metadata for a full infoschema load.
+// InitMaskingPolicies is deprecated - masking policies are now loaded on first access via delayed loading mechanism.
+// This method is kept for backward compatibility but does nothing.
 func (b *Builder) InitMaskingPolicies(maskingPolicies []*model.MaskingPolicyInfo) {
-	for _, policy := range maskingPolicies {
-		b.infoSchema.setMaskingPolicy(policy)
-	}
+	// No-op: masking policies will be loaded on first access via delayed loading
 }

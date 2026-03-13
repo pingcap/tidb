@@ -388,11 +388,12 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	maskingPolicyTable := findSystemTableInfoByName(schemas, mysql.SystemDB, "tidb_masking_policy")
-	maskingPolicies, err := do.fetchMaskingPolicies(m, maskingPolicyTable)
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to fetch them during initialization
+	// maskingPolicies, err := do.fetchMaskingPolicies(m)
+	// if err != nil {
+	// 	return nil, false, currentSchemaVersion, nil, err
+	// }
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := do.infoCache.Data
@@ -410,7 +411,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	builder.InitMaskingPolicies(maskingPolicies)
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to initialize them here
+	// builder.InitMaskingPolicies(maskingPolicies)
 	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
@@ -473,17 +476,27 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (do *Domain) fetchMaskingPolicies(m meta.Reader, policyTblInfo *model.TableInfo) ([]*model.MaskingPolicyInfo, error) {
-	bootstrapVersion, err := m.GetBootstrapVersion()
-	if err != nil {
-		return nil, err
-	}
-	// mysql.tidb_masking_policy is introduced in bootstrap version 224.
-	if bootstrapVersion < 224 {
-		return nil, nil
-	}
-	return infoschema.LoadMaskingPolicies(do.sysFacHack, policyTblInfo)
-}
+// fetchMaskingPolicies is deprecated - masking policies are now loaded on first access via delayed loading mechanism.
+// This method is kept for reference but is no longer called during initialization.
+// func (do *Domain) fetchMaskingPolicies(m meta.Reader) ([]*model.MaskingPolicyInfo, error) {
+// 	bootstrapVersion, err := m.GetBootstrapVersion()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	// mysql.tidb_masking_policy is introduced in bootstrap version 224.
+// 	if bootstrapVersion < 224 {
+// 		return nil, nil
+// 	}
+// 	logutil.BgLogger().Info("fetchMaskingPolicies: calling LoadMaskingPolicies", zap.Int64("bootstrapVersion", bootstrapVersion))
+// 	// Load all masking policies directly from system table via SQL query
+// 	policies, err := infoschema.LoadMaskingPolicies(do.sysFacHack)
+// 	if err != nil {
+// 		logutil.BgLogger().Error("fetchMaskingPolicies: LoadMaskingPolicies failed", zap.Error(err))
+// 		return nil, err
+// 	}
+// 	logutil.BgLogger().Info("fetchMaskingPolicies: LoadMaskingPolicies succeeded", zap.Int("count", len(policies)))
+// 	return policies, nil
+// }
 
 func findSystemTableInfoByName(schemas []*model.DBInfo, dbName, tableName string) *model.TableInfo {
 	for _, dbInfo := range schemas {
@@ -696,6 +709,19 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 			actions = append(actions, uint64(diff.Type))
 		}
 	}
+
+	// Load masking policies from system table to ensure they are not lost during diff load.
+	// This is necessary because masking policies are stored separately in mysql.tidb_masking_policy
+	// and are not part of the schema diff mechanism.
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to initialize them here
+	// maskingPolicies, err := do.fetchMaskingPolicies(m)
+	// if err != nil {
+	// 	logutil.BgLogger().Warn("failed to fetch masking policies during diff load", zap.Error(err))
+	// 	// Don't fail the entire diff load, just log the warning
+	// } else {
+	// 	builder.InitMaskingPolicies(maskingPolicies)
+	// }
 
 	is := builder.Build(startTS)
 	relatedChange := transaction.RelatedSchemaChange{}

@@ -626,57 +626,8 @@ func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 }
 
 func refreshMaskingPoliciesForTableIDs(b *Builder, tableIDs ...int64) error {
-	targetIDs := make(map[int64]struct{}, len(tableIDs))
-	for _, tableID := range tableIDs {
-		if !tableIDIsValid(tableID) {
-			continue
-		}
-		targetIDs[tableID] = struct{}{}
-	}
-	if len(targetIDs) == 0 {
-		return nil
-	}
-
-	targetIS := b.infoSchema
-	tableLookupIS := InfoSchema(targetIS)
-	if b.enableV2 {
-		// In infoschema v2, table lookup must go through infoschemaV2 data instead of base infoSchema.
-		tableLookupIS = &b.infoschemaV2
-	}
-
-	existingNames := make([]string, 0)
-	for tableID := range targetIDs {
-		colMap, ok := targetIS.maskingPolicyTableColumnMap[tableID]
-		if !ok {
-			continue
-		}
-		for _, policy := range colMap {
-			existingNames = append(existingNames, policy.Name.L)
-		}
-	}
-	for _, name := range existingNames {
-		targetIS.deleteMaskingPolicy(name)
-	}
-
-	policySystemTable, err := tableLookupIS.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_masking_policy"))
-	if err != nil {
-		// Older schema versions may not have mysql.tidb_masking_policy.
-		return nil
-	}
-
-	idList := make([]int64, 0, len(targetIDs))
-	for tableID := range targetIDs {
-		idList = append(idList, tableID)
-	}
-	policies, err := LoadMaskingPolicies(b.factory, policySystemTable.Meta(), idList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, policy := range policies {
-		if _, ok := targetIDs[policy.TableID]; ok {
-			targetIS.setMaskingPolicy(policy)
-		}
-	}
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to refresh them here during DDL operations
 	return nil
 }
 

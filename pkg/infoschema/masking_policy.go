@@ -16,29 +16,52 @@ package infoschema
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
-// MaskingPolicyByName returns masking policy metadata by policy name.
+// MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
 func (is *infoSchema) MaskingPolicyByName(name pmodel.CIStr) (*model.MaskingPolicyInfo, bool) {
+	is.loadMaskingPoliciesIfNeeded()
+
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+
 	policy, ok := is.maskingPolicyMap[name.L]
 	return policy, ok
 }
 
-// MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs.
+// MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs with delayed loading.
 func (is *infoSchema) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool) {
+	is.loadMaskingPoliciesIfNeeded()
+
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+
+	if is.maskingPolicyTableColumnMap == nil {
+		return nil, false
+	}
+
 	colMap, ok := is.maskingPolicyTableColumnMap[tableID]
 	if !ok {
 		return nil, false
 	}
+
 	policy, ok := colMap[columnID]
 	return policy, ok
 }
 
-// AllMaskingPolicies returns all masking policies in a stable order.
+// AllMaskingPolicies returns all masking policies in a stable order with delayed loading.
 func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
+	is.loadMaskingPoliciesIfNeeded()
+
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+
 	policies := make([]*model.MaskingPolicyInfo, 0, len(is.maskingPolicyMap))
 	for _, policy := range is.maskingPolicyMap {
 		policies = append(policies, policy)
@@ -52,31 +75,74 @@ func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
 	return policies
 }
 
-func (is *infoSchema) setMaskingPolicy(policy *model.MaskingPolicyInfo) {
-	if policy == nil {
+// loadMaskingPoliciesIfNeeded loads masking policies from system table on first access.
+// It uses double-check locking and detects recursive calls to avoid deadlock.
+func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
+	// Fast path: already loaded
+	if is.maskingPoliciesLoaded {
 		return
 	}
-	is.maskingPolicyMap[policy.Name.L] = policy
-	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
-	if !ok {
-		colMap = make(map[int64]*model.MaskingPolicyInfo)
-		is.maskingPolicyTableColumnMap[policy.TableID] = colMap
+
+	// Detect recursive calls - if we're already loading in this goroutine, skip
+	// This prevents deadlock when ExecRestrictedSQL triggers masking policy loading recursively
+	if is.loadingMaskingPolicies {
+		logutil.BgLogger().Debug("recursive call to loadMaskingPoliciesIfNeeded detected, skipping")
+		return
 	}
-	colMap[policy.ColumnID] = policy
+
+	// Mark as loading (without lock to avoid blocking)
+	is.loadingMaskingPolicies = true
+	defer func() { is.loadingMaskingPolicies = false }()
+
+	// Check if factory is available (without lock)
+	if is.factory == nil {
+		logutil.BgLogger().Debug("factory is nil, skipping masking policies loading")
+		is.maskingPoliciesLoaded = true
+		return
+	}
+
+	// Load policies WITHOUT holding the lock to avoid deadlock
+	// (SQL execution may trigger recursive calls to this method)
+	policies, err := LoadMaskingPolicies(is.factory)
+	if err != nil {
+		// If table doesn't exist (e.g., during bootstrap), mark as loaded to avoid repeated attempts
+		errStr := err.Error()
+		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "not exist") {
+			logutil.BgLogger().Debug("masking policy table not available yet, skipping", zap.Error(err))
+		} else {
+			logutil.BgLogger().Warn("failed to load masking policies", zap.Error(err))
+		}
+		is.maskingPoliciesLoaded = true
+		return
+	}
+
+	// Now acquire lock to update the maps
+	is.maskingPolicyMutex.Lock()
+	defer is.maskingPolicyMutex.Unlock()
+
+	// Double check after acquiring lock
+	if is.maskingPoliciesLoaded {
+		return
+	}
+
+	// Update maps
+	for _, policy := range policies {
+		is.maskingPolicyMap[policy.Name.L] = policy
+
+		if is.maskingPolicyTableColumnMap == nil {
+			is.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+		}
+		if is.maskingPolicyTableColumnMap[policy.TableID] == nil {
+			is.maskingPolicyTableColumnMap[policy.TableID] = make(map[int64]*model.MaskingPolicyInfo)
+		}
+		is.maskingPolicyTableColumnMap[policy.TableID][policy.ColumnID] = policy
+	}
+
+	// Mark as loaded
+	is.maskingPoliciesLoaded = true
+	logutil.BgLogger().Info("masking policies loaded", zap.Int("count", len(policies)))
 }
 
-func (is *infoSchema) deleteMaskingPolicy(nameL string) {
-	policy, ok := is.maskingPolicyMap[nameL]
-	if !ok {
-		return
-	}
-	delete(is.maskingPolicyMap, nameL)
-	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
-	if !ok {
-		return
-	}
-	delete(colMap, policy.ColumnID)
-	if len(colMap) == 0 {
-		delete(is.maskingPolicyTableColumnMap, policy.TableID)
-	}
-}
+// Note: setMaskingPolicy and deleteMaskingPolicy methods are no longer needed.
+// Masking policies are now loaded entirely through delayed loading mechanism in loadMaskingPoliciesIfNeeded().
+// These methods were used during initialization, but now the maps are updated directly in loadMaskingPoliciesIfNeeded().

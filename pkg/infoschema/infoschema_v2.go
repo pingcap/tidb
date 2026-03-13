@@ -850,7 +850,7 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: newInfoSchema(),
+		infoSchema: newInfoSchema(factory),
 		Data:       infoData,
 		r:          r,
 		factory:    factory,

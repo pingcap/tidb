@@ -23,6 +23,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/ngaut/pools"
+
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -75,6 +77,15 @@ type infoSchema struct {
 	maskingPolicyMap map[string]*model.MaskingPolicyInfo
 	// maskingPolicyTableColumnMap stores masking policy metadata by table and column IDs.
 	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
+	// maskingPoliciesLoaded indicates whether masking policies have been loaded.
+	maskingPoliciesLoaded bool
+	// loadingMaskingPolicies indicates whether we're currently loading masking policies.
+	// This is used to detect and prevent recursive calls during loading.
+	loadingMaskingPolicies bool
+	// maskingPolicyMutex protects maskingPolicyMap and maskingPolicyTableColumnMap.
+	maskingPolicyMutex sync.RWMutex
+	// factory is used to execute SQL for delayed loading of masking policies.
+	factory func() (pools.Resource, error)
 }
 
 type infoSchemaMisc struct {
@@ -104,7 +115,7 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -170,7 +181,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -200,7 +211,7 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
-func newInfoSchema() *infoSchema {
+func newInfoSchema(factory func() (pools.Resource, error)) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
 			policyMap:        map[string]*model.PolicyInfo{},
@@ -213,6 +224,7 @@ func newInfoSchema() *infoSchema {
 		referredForeignKeyMap:       make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		maskingPolicyMap:            make(map[string]*model.MaskingPolicyInfo),
 		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
+		factory:                     factory,
 	}
 }
 

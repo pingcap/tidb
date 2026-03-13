@@ -31,16 +31,20 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-// LoadMaskingPolicies loads masking policy metadata from mysql.tidb_masking_policy.
-// If tableIDs is empty, all policies are loaded.
+// LoadMaskingPolicies loads all masking policy metadata through mysql.tidb_masking_policy.
+// This is the simplified version for delayed loading - loads ALL policies
 func LoadMaskingPolicies(
 	factory func() (pools.Resource, error),
-	policyTblInfo *model.TableInfo,
-	tableIDs ...int64,
 ) ([]*model.MaskingPolicyInfo, error) {
-	if policyTblInfo == nil {
-		return nil, nil
-	}
+	return loadMaskingPoliciesWithTableIDs(factory, nil)
+}
+
+// loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
+// If tableIDs is empty, all policies are loaded.
+func loadMaskingPoliciesWithTableIDs(
+	factory func() (pools.Resource, error),
+	tableIDs []int64,
+) ([]*model.MaskingPolicyInfo, error) {
 
 	resource, err := factory()
 	if err != nil {
