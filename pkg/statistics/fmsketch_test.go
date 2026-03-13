@@ -70,9 +70,9 @@ func SubTestSketch() func(*testing.T) {
 		sketch := NewFMSketch(maxSize)
 		sketch.insertHashValue(1)
 		sketch.insertHashValue(2)
-		require.Equal(t, maxSize, sketch.hashset.Count())
+		require.Equal(t, maxSize, len(sketch.hashset))
 		sketch.insertHashValue(4)
-		require.LessOrEqual(t, maxSize, sketch.hashset.Count())
+		require.LessOrEqual(t, maxSize, len(sketch.hashset))
 	}
 }
 
@@ -87,11 +87,11 @@ func SubTestSketchProtoConversion() func(*testing.T) {
 		p := FMSketchToProto(sampleSketch)
 		f := FMSketchFromProto(p)
 		require.Equal(t, f.mask, sampleSketch.mask)
-		require.Equal(t, f.hashset.Count(), sampleSketch.hashset.Count())
-		sampleSketch.hashset.Iter(func(key uint64, _ bool) bool {
-			require.True(t, f.hashset.Has(key))
-			return false
-		})
+		require.Equal(t, len(f.hashset), len(sampleSketch.hashset))
+		for key := range sampleSketch.hashset {
+			_, ok := f.hashset[key]
+			require.True(t, ok)
+		}
 	}
 }
 

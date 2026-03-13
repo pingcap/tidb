@@ -66,7 +66,6 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		ranges = ranger.FullIntRange(false)
 	}
 
-	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
 	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
 	// are derived from sample data processed within TiDB.
@@ -95,7 +94,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
 	e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, err := e.buildSamplingStats(gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -128,7 +127,6 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		StatsVer:      e.StatsVersion,
 		Count:         count,
 		Snapshot:      e.snapshot,
-		ExtStats:      extStats,
 		BaseCount:     e.baseCount,
 		BaseModifyCnt: e.baseModifyCnt,
 	}
@@ -202,7 +200,6 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	gp *gp.Pool,
 	ranges []*ranger.Range,
-	needExtStats bool,
 	indexesWithVirtualColOffsets []int,
 	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
 	samplingStatsConcurrency int,
@@ -211,12 +208,11 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	hists []*statistics.Histogram,
 	topns []*statistics.TopN,
 	fmSketches []*statistics.FMSketch,
-	extStats *statistics.ExtendedStatsColl,
 	err error,
 ) {
 	// Open memory tracker and resultHandler.
 	if err = e.open(ranges); err != nil {
-		return 0, nil, nil, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
 	defer func() {
 		if err1 := e.resultHandler.Close(); err1 != nil {
@@ -293,12 +289,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		if err1 := mergeEg.Wait(); err1 != nil {
 			err = stderrors.Join(err, err1)
 		}
-		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
+		return 0, nil, nil, nil, getAnalyzePanicErr(err)
 	}
 	err = mergeEg.Wait()
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
-		return 0, nil, nil, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
 
 	// Decode the data from sample collectors.
@@ -311,7 +307,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}
 		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, e.schemaForVirtualColEval)
 		if err != nil {
-			return 0, nil, nil, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 	} else {
 		// If there's no virtual column, normal decode way is enough.
@@ -319,7 +315,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
 				if err != nil {
-					return 0, nil, nil, nil, nil, err
+					return 0, nil, nil, nil, err
 				}
 			}
 		}
@@ -329,7 +325,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for _, sample := range rootRowCollector.Base().Samples {
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
 		if err != nil {
-			return 0, nil, nil, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 	}
 	colLen := len(e.colsInfo)
@@ -349,14 +345,13 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		samplingStatsConcurrency = totalLen
 	}
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(gp, buildResultChan)
-	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	e.samplingBuilderWg.Add(samplingStatsConcurrency)
 
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, exitCh)
 		})
 	}
 	// Generate tasks for building stats.
@@ -375,7 +370,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	if indexPushedDownResult.err != nil {
 		close(exitCh)
 		e.samplingBuilderWg.Wait()
-		return 0, nil, nil, nil, nil, indexPushedDownResult.err
+		return 0, nil, nil, nil, indexPushedDownResult.err
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
 		ret := indexPushedDownResult.results[e.indexes[offset].ID]
@@ -410,27 +405,11 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			continue
 		}
 	}
-	defer func() {
-		totalSampleCollectorSize := int64(0)
-		for _, sampleCollector := range sampleCollectors {
-			if sampleCollector != nil {
-				totalSampleCollectorSize += sampleCollector.MemSize
-			}
-		}
-		e.memTracker.Release(totalSampleCollectorSize)
-	}()
 	if err != nil {
-		return 0, nil, nil, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
 
 	count = rootRowCollector.Base().Count
-	if needExtStats {
-		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
-		if err != nil {
-			return 0, nil, nil, nil, nil, err
-		}
-	}
-
 	return
 }
 
@@ -669,7 +648,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -819,13 +798,13 @@ workLoop:
 					MemSize:   collectorMemSize,
 				}
 			}
-			if task.isColumn {
-				collectors[task.slicePos] = collector
-			}
 			releaseCollectorMemory := func() {
-				if !task.isColumn {
-					e.memTracker.Release(collector.MemSize)
-				}
+				collectorMemSize := collector.MemSize
+				failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+				intest.Assert(collectorMemSize >= 0, "collector memory size should be non-negative")
+				e.memTracker.Release(collectorMemSize)
+				collector.Destroy()
+				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			if task.isColumn {
@@ -838,7 +817,7 @@ workLoop:
 					numTopN = 0
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()

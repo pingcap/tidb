@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -799,7 +798,6 @@ IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest
 └─IndexReader(Probe)	root		index:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)], keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -2329,7 +2327,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__
           └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6;
 create table t(a int, b int) partition by hash(a) partitions 3;
 create table t1(a int, b int) partition by hash(a) partitions 4;
@@ -4046,7 +4043,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner_
                 └─TableFullScan	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -4548,7 +4544,6 @@ HashJoin	root		CARTESIAN inner join
   │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -4622,7 +4617,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
@@ -4638,7 +4633,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5141,7 +5136,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
@@ -5157,7 +5152,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -5175,7 +5170,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -5193,7 +5188,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -5212,7 +5207,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -5230,7 +5225,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -5917,7 +5912,6 @@ ScalarSubQuery	root		Output: ScalarQueryCol#18
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -6963,7 +6957,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
@@ -6978,7 +6972,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -6995,7 +6989,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
     └─Projection	root		Column
       └─IndexReader	root		index:Selection
         └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+          └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
@@ -7461,7 +7455,6 @@ ScalarSubQuery	root		Output: ScalarQueryCol#18
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
-set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1(a int, b int, key(a));
 create table t2(a int, b int, key(a));

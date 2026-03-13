@@ -186,7 +186,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 	memUsage := memTracker.MaxConsumed()
 	require.Greater(t, memUsage, int64(0))
 
-	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
+	res := tk.MustQuery("explain analyze format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 	require.Len(t, res.Rows(), 4)
 	// Parse "xxx KB" and check it's greater than 0.
 	memStr := res.Rows()[0][7].(string)
@@ -288,7 +288,7 @@ func TestIndexMergeIntersectionConcurrency(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
-	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
+	res := tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// Default is tidb_executor_concurrency.
@@ -433,7 +433,7 @@ func TestIntersectionWorkerPanic(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
-	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
+	res := tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// Test panic in intersection.
@@ -785,11 +785,11 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	tk.MustExec("drop table if exists reproduce;")
 	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
 	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
-	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
-		"IndexMerge_12 33.99 root  type: union",
-		"├─TableRangeScan_9(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
-		"├─IndexRangeScan_10(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_11(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
+		"IndexMerge 33.99 root  type: union",
+		"├─TableRangeScan(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
 
 	// This function should return successfully
 	var ctx context.Context

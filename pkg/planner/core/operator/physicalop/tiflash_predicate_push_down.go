@@ -47,6 +47,18 @@ type expressionGroup struct {
 	selectivity float64
 }
 
+func compareExpressionGroups(x, y expressionGroup) int {
+	if diff := cmp.Compare(len(x.exprs), len(y.exprs)); diff != 0 {
+		return diff
+	}
+	for i := range x.exprs {
+		if diff := slices.Compare(y.exprs[i].HashCode(), x.exprs[i].HashCode()); diff != 0 {
+			return diff
+		}
+	}
+	return 0
+}
+
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".
 // @param: cols: the columns of a Expression
 // @param: tableColumns: the total number of columns in the tablescan
@@ -115,12 +127,12 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 		}
 	}
 
-	// Sort exprGroups by selectivity in ascending order
+	// Keep the group order deterministic when selectivity and group size tie.
 	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) int {
-		if x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs) {
-			return -1
+		if diff := cmp.Compare(x.selectivity, y.selectivity); diff != 0 {
+			return diff
 		}
-		return cmp.Compare(x.selectivity, y.selectivity)
+		return compareExpressionGroups(x, y)
 	})
 
 	return exprGroups

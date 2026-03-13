@@ -109,7 +109,6 @@ func TestSubqueryInExplainAnalyze(t *testing.T) {
 
 		// Setup test tables with comprehensive data types
 		testKit.MustExec("use test")
-		testKit.MustExec("set tidb_cost_model_version=1")
 		testKit.MustExec("drop table if exists t1, t2, t3, t4")
 
 		// Create tables with comprehensive data types for better testing coverage

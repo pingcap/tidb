@@ -49,6 +49,8 @@ import (
 type DataSource struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
+	// AstIndexHints keeps the original AST hints for later access-path selection.
+	// It is treated as read-only after DataSource build and may be shared by plans rebuilt from the same AST.
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
@@ -56,6 +58,7 @@ type DataSource struct {
 	Columns       []*model.ColumnInfo
 	DBName        ast.CIStr
 
+	// TableAsName points to the AST alias and is only used as read-only metadata after plan build.
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
@@ -84,7 +87,8 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64 `hash64-equals:"true"`
-	PartitionNames  []ast.CIStr
+	// PartitionNames records the explicit partition list from AST and is treated as read-only after plan build.
+	PartitionNames []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -578,6 +582,7 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 // NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(tp.GetFlag() | mysql.UnsignedFlag)
 	return &expression.Column{
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
