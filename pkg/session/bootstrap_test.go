@@ -2601,6 +2601,8 @@ func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
 	MustExec(t, seV220, "USE mysql")
 
 	// Simulate the v8.5.2 schema for `mysql.tidb_pitr_id_map` (pre-version221, no restore_id + old primary key).
+	// Bootstrap sessions use INT_ONLY to keep compatible behavior with old TiDB versions.
+	require.NoError(t, seV220.GetSessionVars().SetSystemVar(variable.TiDBEnableClusteredIndex, variable.IntOnly))
 	MustExec(t, seV220, "DROP TABLE IF EXISTS mysql.tidb_pitr_id_map")
 	MustExec(t, seV220, `CREATE TABLE mysql.tidb_pitr_id_map (
 		restored_ts BIGINT NOT NULL,
@@ -2608,8 +2610,7 @@ func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
 		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id) /*T![clustered_index] NONCLUSTERED */
-	);`)
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`)
 
 	// Simulate a cluster bootstrapped/upgraded to v8.5.2 (version220).
 	ver220 := version220
@@ -2645,6 +2646,8 @@ func TestUpgradeToVer226FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
 
 	// Simulate a customer branch bootstrapped with version221 but missing the upstream's
 	// schema change for `mysql.tidb_pitr_id_map` (no restore_id + old primary key).
+	// Bootstrap sessions use INT_ONLY to keep compatible behavior with old TiDB versions.
+	require.NoError(t, se.GetSessionVars().SetSystemVar(variable.TiDBEnableClusteredIndex, variable.IntOnly))
 	MustExec(t, se, "DROP TABLE IF EXISTS mysql.tidb_pitr_id_map")
 	MustExec(t, se, `CREATE TABLE mysql.tidb_pitr_id_map (
 		restored_ts BIGINT NOT NULL,
@@ -2652,8 +2655,7 @@ func TestUpgradeToVer226FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
 		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id) /*T![clustered_index] NONCLUSTERED */
-	);`)
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`)
 	// The customer branch `release-8.5-20250606-v8.5.2` uses version221 for adding `i_user` indexes.
 	// Simulate these bootstrap DDLs before triggering the upgrade flow.
 	doReentrantDDL(se, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
