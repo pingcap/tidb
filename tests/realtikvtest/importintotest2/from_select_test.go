@@ -181,3 +181,12 @@ func (s *mockGCSSuite) TestImportFromSelectPrivilege() {
 	}
 	userTk.MustExec(importSQL)
 }
+
+func (s *mockGCSSuite) TestCastNegativeToUnsigned() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("create table dt(id int unsigned)")
+	s.ErrorContains(s.tk.ExecToErr("import into dt from select -1"), "constant -1 overflows int")
+	s.tk.MustExec("set sql_mode=''")
+	s.tk.MustExec("import into dt from select -1")
+	s.tk.MustQuery("select * from dt").Check(testkit.Rows("0"))
+}
