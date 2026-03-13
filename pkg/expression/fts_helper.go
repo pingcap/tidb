@@ -67,13 +67,18 @@ func ExprCoveredByOneTiCIIndex(
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+			matchedCols := intset.NewFastIntSet()
 			for i := 1; i < len(x.GetArgs()); i++ {
 				arg := x.GetArgs()[i].(*Column)
+				if matchedCols.Has(int(arg.ID)) {
+					return false
+				}
+				matchedCols.Insert(int(arg.ID))
 				if !ftsColIDs.Has(int(arg.ID)) {
 					return false
 				}
 			}
-			return true
+			return matchedCols.Equals(*ftsColIDs)
 		}
 		switch x.FuncName.L {
 		case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.IsTruthWithNull:

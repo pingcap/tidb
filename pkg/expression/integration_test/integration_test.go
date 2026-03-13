@@ -105,12 +105,12 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title) AND id > 10")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title, body)", "Incorrect parameter count in the call to native function")
-	tk.MustContainErrMsg("explain select * from t where fts_match_prefix('hello', title, body)", "Incorrect parameter count in the call to native function")
-	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('hello world', title, body)", "Incorrect parameter count in the call to native function")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title, body)", "must exactly match the fulltext index columns")
+	tk.MustContainErrMsg("explain select * from t where fts_match_prefix('hello', title, body)", "must exactly match the fulltext index columns")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('hello world', title, body)", "must exactly match the fulltext index columns")
 	tk.MustContainErrMsg(
 		"explain select * from t where match(title, body) against ('hello' IN BOOLEAN MODE)",
-		"Currently TiDB only supports searching one column at a time in MATCH AGAINST",
+		"must exactly match the fulltext index columns",
 	)
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "you write it in a wrong way")
@@ -182,6 +182,67 @@ func TestFTSParser(t *testing.T) {
 	tk.MustContainErrMsg("create table tx (a TEXT, FULLTEXT (a) WITH PARSER abc)", "Unsupported parser 'abc'")
 }
 
+func TestFTSMultiColumnForTiCI(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
+	}()
+
+	tk.MustExec(`create table t(
+		id INT PRIMARY KEY,
+		title TEXT,
+		body TEXT,
+		FULLTEXT KEY idx_title_body (title, body)
+	)`)
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	tk.MustQuery("explain select * from t where fts_match_word('hello', title, body)")
+	tk.MustQuery("explain select * from t where fts_match_word('hello', body, title)")
+	tk.MustQuery("explain select * from t where fts_match_prefix('hello', title, body)")
+	tk.MustQuery("explain select * from t where fts_match_phrase('hello world', title, body)")
+	tk.MustQuery("explain select * from t where match(title, body) against ('hello' IN BOOLEAN MODE)")
+	tk.MustQuery("explain select * from t where match(body, title) against ('hello' IN BOOLEAN MODE)")
+
+	tk.MustContainErrMsg(
+		"explain select * from t where fts_match_word('hello', title)",
+		"must exactly match the fulltext index columns",
+	)
+	tk.MustContainErrMsg(
+		"explain select * from t where match(title) against ('hello' IN BOOLEAN MODE)",
+		"must exactly match the fulltext index columns",
+	)
+	tk.MustContainErrMsg(
+		"explain select * from t where fts_match_word('hello', title, title)",
+		"must exactly match the fulltext index columns",
+	)
+	tk.MustContainErrMsg(
+		"explain select * from t where match(title, title) against ('hello' IN BOOLEAN MODE)",
+		"must exactly match the fulltext index columns",
+	)
+}
+
 func TestFTSSyntax(t *testing.T) {
 	t.Skip()
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
@@ -216,7 +277,7 @@ func TestFTSSyntax(t *testing.T) {
 	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `cannot use 'MATCH ... AGAINST' outside of fulltext index`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(title, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(45.67, body)", `match against a non-constant string`)
-	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `Incorrect parameter count in the call to native function`)
+	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `cannot use 'FTS_MATCH_WORD()' outside of fulltext index`)
 }
 
 func TestFTSIndexSyntax(t *testing.T) {

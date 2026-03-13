@@ -654,6 +654,7 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // analyzeTiCIIndex checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
 func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
+	const exactFTSIndexColumnsErr = "Full text search columns must exactly match the fulltext index columns"
 	hasDirtyWrite := ds.SCtx().HasDirtyContent(ds.TableInfo.ID)
 	if !hasFTSFuncGlobal && hasDirtyWrite {
 		// If there is no FTS function, and there're dirty writes on the table,
@@ -669,6 +670,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 	tmpMatchedExprSet := intset.NewFastIntSet()
 	matchedExprSetForChosenIndex := intset.NewFastIntSet()
 	condHasFTSFunc := intset.NewFastIntSet()
+	hasExactSetMismatch := false
 	hasUnmatchedFTSOverAllIdx := false
 	if hasFTSFuncGlobal {
 		for i, cond := range ds.PushedDownConds {
@@ -735,6 +737,12 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 				// If this expression can not be calculated at TiCI side, check whether it has fts function.
 				// If yes, we should skip this index path.
 				if condHasFTSFunc.Has(i) {
+					if scalarFunc, ok := cond.(*expression.ScalarFunction); ok {
+						switch scalarFunc.FuncName.L {
+						case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase, ast.FTSMysqlMatchAgainst:
+							hasExactSetMismatch = true
+						}
+					}
 					allFTSFuncIsCovered = false
 					break checkExprForIndexLoop
 				}
@@ -759,6 +767,9 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 
 	// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
 	if hasUnmatchedFTSOverAllIdx {
+		if hasExactSetMismatch {
+			return errors.New(exactFTSIndexColumnsErr)
+		}
 		return errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")
 	}
 

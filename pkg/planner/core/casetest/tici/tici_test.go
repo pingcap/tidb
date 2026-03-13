@@ -223,9 +223,14 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		id INT PRIMARY KEY, title TEXT,
 		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
 	)`)
+	tk.MustExec(`create table t7(
+		id INT PRIMARY KEY, title TEXT, body TEXT,
+		FULLTEXT INDEX idx_title_body (title, body)
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t6")
+	testkit.SetTiFlashReplica(t, dom, "test", "t7")
 
 	// Non-BOOLEAN MODE is rejected.
 	tk.MustContainErrMsg(
@@ -255,6 +260,36 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 	tk.MustContainErrMsg(
 		"explain format='brief' select * from t6 where match(title) against ('>hello' IN BOOLEAN MODE)",
 		"unsupported operator '>' in BOOLEAN MODE query",
+	)
+
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title, body)",
+	).CheckContain(`search func:fts_match_word("hello", test.t7.title, test.t7.body)`)
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where fts_match_word('hello', body, title)",
+	).CheckContain(`search func:fts_match_word("hello", test.t7.body, test.t7.title)`)
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where match(title, body) against ('hello' IN BOOLEAN MODE)",
+	).CheckContain(`search func:fts_match_word("hello", test.t7.title, test.t7.body)`)
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where match(body, title) against ('hello' IN BOOLEAN MODE)",
+	).CheckContain(`search func:fts_match_word("hello", test.t7.body, test.t7.title)`)
+
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title)",
+		"must exactly match the fulltext index columns",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title, title)",
+		"must exactly match the fulltext index columns",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where match(title) against ('hello' IN BOOLEAN MODE)",
+		"must exactly match the fulltext index columns",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where match(title, title) against ('hello' IN BOOLEAN MODE)",
+		"must exactly match the fulltext index columns",
 	)
 }
 

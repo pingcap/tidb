@@ -633,7 +633,7 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 		visit(expr, false)
 		return leaves
 	}
-	assertFTSLeafArgCols := func(expr Expression, colCount int) {
+	assertFTSLeafArgCols := func(expr Expression, expectedCols ...*Column) {
 		var visit func(Expression)
 		visit = func(e Expression) {
 			sf, ok := e.(*ScalarFunction)
@@ -642,10 +642,11 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 			}
 			switch sf.FuncName.L {
 			case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
-				require.Len(t, sf.GetArgs(), colCount+1)
-				for i := 1; i < len(sf.GetArgs()); i++ {
-					_, ok := sf.GetArgs()[i].(*Column)
+				require.Len(t, sf.GetArgs(), len(expectedCols)+1)
+				for i, expectedCol := range expectedCols {
+					col, ok := sf.GetArgs()[i+1].(*Column)
 					require.True(t, ok)
+					require.Same(t, expectedCol, col)
 				}
 				return
 			}
@@ -688,7 +689,7 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	require.ElementsMatch(t, []ftsLeaf{
 		{funcName: ast.FTSMatchWord, query: "hello"},
 	}, collectFTSLeaves(expr))
-	assertFTSLeafArgCols(expr, 1)
+	assertFTSLeafArgCols(expr, titleCol)
 
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("hello*"), model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
@@ -720,20 +721,14 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 		{funcName: ast.FTSMatchWord, query: "banana", underNot: true},
 	}, collectFTSLeaves(expr))
 
-	{
-		// MATCH ... AGAINST only supports one matching column for now.
-		args := []Expression{
-			&Constant{
-				Value:   types.NewStringDatum("apple"),
-				RetType: types.NewFieldType(mysql.TypeString),
-			},
-			titleCol,
-			bodyCol,
-		}
-		_, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), args...)
-		require.Error(t, err)
-		require.True(t, ErrIncorrectParameterCount.Equal(err))
-	}
+	multiColMatch := buildMatchAgainstWithCols("apple", titleCol, bodyCol)
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, multiColMatch, model.FullTextParserTypeStandardV1)
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "apple"},
+	}, collectFTSLeaves(expr))
+	assertFTSLeafArgCols(expr, titleCol, bodyCol)
 
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("-banana"), model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
