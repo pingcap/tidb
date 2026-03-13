@@ -1,7 +1,7 @@
 # Proposal: Max Rows Read Limit for SELECT Queries
 
 - Author(s): @Tema
-- Tracking Issue: https://github.com/pingcap/tidb/issues/19443
+- Tracking Issue: https://github.com/pingcap/tidb/issues/66925
 
 ## Table of Contents
 
@@ -133,6 +133,8 @@ SHOW STATUS LIKE 'tidb_rows_examined';
 FLUSH STATUS;
 ```
 
+> **Note**: `tidb_rows_examined` is a new status variable introduced by this proposal. TiDB's `FLUSH STATUS` support is limited compared to MySQL — the reset mechanism for this counter needs to be verified or an alternative (e.g., session variable reset on new connection) should be considered.
+
 ### Session Variable
 
 | Property        | Value            |
@@ -142,12 +144,12 @@ FLUSH STATUS;
 | Type            | Unsigned integer |
 | Default         | `0` (unlimited)  |
 | Min             | `0`              |
-| Max             | `math.MaxInt64`  |
+| Max             | `math.MaxUint64` |
 | SET_VAR hint    | Supported        |
 
 ### Query Hint via SET_VAR
 
-No parser changes are needed. The existing `SET_VAR` hint mechanism in `already supports arbitrary session variables.
+No parser changes are needed. The existing `SET_VAR` hint mechanism in TiDB already supports session variables that are marked as hint-updatable (`IsHintUpdatableVerified`). The new `tidb_max_rows_read` variable must be registered in this set (in `pkg/sessionctx/variable/setvar_affect.go`).
 
 The flow:
 
@@ -332,7 +334,7 @@ The error is raised **at the TiDB layer** (in `copIterator.Next()`) when the cum
 
 - **Partitioned tables**: limit applies across all accessed partitions.
 - **Prepared statements**: limit evaluated at `EXECUTE`, not `PREPARE`.
-- **Plan cache**: queries with `SET_VAR(tidb_max_rows_read=N)` skip plan cache (existing behavior).
+- **Plan cache**: queries with `SET_VAR(tidb_max_rows_read=N)` are cached normally; different `N` values produce separate cache entries because the hint text is part of the SQL text used in the cache key.
 - **Upgrade**: old TiKV ignores new proto field; TiDB-side enforcement still works.
 - **Downgrade**: old TiDB does not recognize the variable; returns an error.
 - **Coexistence with `max_execution_time`**: both can be active; whichever triggers first wins.
@@ -497,7 +499,7 @@ Note: TiDB-side enforcement is still maintained as a **secondary check** for cor
 
 2. **ProcessedKeys vs true row count**: For index lookups, `ProcessedKeys` may count both index keys and table keys separately. Should we normalize this to a logical row count, or accept key count as the metric? Proposal: accept key count as the metric — it is a conservative approximation and aligns with TiDB's existing `PROCESSED_KEYS` semantics.
 
-3**Interaction with RunawayChecker**: When both `PROCESSED_KEYS` and `tidb_max_rows_read` are active, which error takes precedence? Proposal: whichever check fires first wins, as they run in different code paths (`CheckThresholds()` in `handleTaskOnce()` vs. the accumulation check in `copIterator.Next()`).
+3. **Interaction with RunawayChecker**: When both `PROCESSED_KEYS` and `tidb_max_rows_read` are active, which error takes precedence? Proposal: whichever check fires first wins, as they run in different code paths (`CheckThresholds()` in `handleTaskOnce()` vs. the accumulation check in `copIterator.Next()`).
 
-4**Scope for DML subqueries**: If `INSERT INTO t2 SELECT * FROM t1` is executed, should the SELECT portion be limited? Current proposal: no — `GetMaxRowsRead()` returns 0 when not in a pure SELECT statement, consistent with MariaDB which excludes `DELETE` and `UPDATE` from `LIMIT ROWS EXAMINED`.
+4. **Scope for DML subqueries**: If `INSERT INTO t2 SELECT * FROM t1` is executed, should the SELECT portion be limited? Current proposal: no — `GetMaxRowsRead()` returns 0 when not in a pure SELECT statement, consistent with MariaDB which excludes `DELETE` and `UPDATE` from `LIMIT ROWS EXAMINED`.
 
