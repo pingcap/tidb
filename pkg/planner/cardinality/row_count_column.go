@@ -16,11 +16,8 @@ package cardinality
 
 import (
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
->>>>>>> f4cf761aa1d (planner: skip out of range for full range (#65854))
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
