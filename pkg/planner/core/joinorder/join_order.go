@@ -405,23 +405,8 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	return nodeWithHint, nodesAfterHint, nil
 }
 
-func checkConnection(detector *ConflictDetector, leftPlan, rightPlan *Node) (*CheckConnectionResult, error) {
-	checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
-	if err != nil {
-		return nil, err
-	}
-	if checkResult.Connected() {
-		return checkResult, nil
-	}
-	checkResult, err = detector.CheckConnection(rightPlan, leftPlan)
-	if err != nil {
-		return nil, err
-	}
-	return checkResult, nil
-}
-
 func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*JoinMethodHint, allowNoEQ bool) (*CheckConnectionResult, *Node, error) {
-	checkResult, err := checkConnection(detector, leftPlan, rightPlan)
+	checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
 	if err != nil {
 		return nil, nil, err
 	}

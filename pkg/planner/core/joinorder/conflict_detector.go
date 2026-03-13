@@ -570,10 +570,7 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 		return nil, errors.Errorf("nil node found in CheckConnection, node1: %v, node2: %v", node1, node2)
 	}
 
-	result := &CheckConnectionResult{
-		node1: node1,
-		node2: node2,
-	}
+	result := &CheckConnectionResult{}
 	for _, e := range d.innerEdges {
 		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
 			continue
@@ -583,17 +580,33 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
 		}
 	}
+	var swapNode bool
 	for _, e := range d.nonInnerEdges {
 		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
 			continue
 		}
-		if e.checkNonInnerEdgeApplicable(node1, node2) {
+		ok1 := e.checkNonInnerEdgeApplicable(node1, node2)
+		ok2 := e.checkNonInnerEdgeApplicable(node2, node1)
+		if ok1 && ok2 {
+			return nil, errors.New("node1 and node2 cannot be connected by non-inner edges of different direction")
+		}
+		if ok1 || ok2 {
 			if result.appliedNonInnerEdge != nil {
 				return nil, errors.New("multiple non-inner edges applied between two nodes")
 			}
 			result.appliedNonInnerEdge = e
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
+			// No need to worry about `swapNode` changing from true to false in the next loop,
+			// because an error will be returned if there are multiple different non-inner edges.
+			swapNode = ok2
 		}
+	}
+	if swapNode {
+		result.node1 = node2
+		result.node2 = node1
+	} else {
+		result.node1 = node1
+		result.node2 = node2
 	}
 	return result, nil
 }
