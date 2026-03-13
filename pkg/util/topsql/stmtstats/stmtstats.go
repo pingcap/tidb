@@ -35,9 +35,9 @@ type StatementObserver interface {
 	OnExecutionBegin(sqlDigest, planDigest []byte, info *ExecBeginInfo)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	// WARNING: Currently Only call StatementObserver API when TopSQL is enabled,
-	// there is no guarantee that both OnExecutionBegin and OnExecutionFinished will be called for a SQL,
-	// such as TopSQL is enabled during a SQL execution.
+	// WARNING: StatementObserver callbacks are used by both TopSQL and TopRU
+	// collection paths, and begin/finish are not guaranteed to be paired for
+	// every statement across TopSQL/TopRU toggle windows.
 	OnExecutionFinished(sqlDigest, planDigest []byte, info *ExecFinishInfo)
 }
 
