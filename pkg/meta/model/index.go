@@ -62,9 +62,10 @@ const (
 	// for decreasing the risk of issues changing the read code path for various index reads.
 	GlobalIndexVersionV1 uint8 = 1
 	// GlobalIndexVersionV2 is the format (version 2) where partition ID is encoded in the key ONLY
-	// for non-unique global indexes on non-clustered tables. The partition ID is NOT stored in the
-	// value, reducing storage overhead since the partition ID can be extracted from the key when
-	// needed. This is the preferred format for new global indexes.
+	// (not in the value) for global indexes on non-clustered tables where the handle is in the key:
+	// non-unique indexes (handle always in key) and unique indexes with nullable columns
+	// (handle in key when any indexed value is NULL). This reduces storage overhead compared to V1.
+	// This is the preferred format for new global indexes.
 	GlobalIndexVersionV2 uint8 = 2
 )
 
@@ -259,11 +260,11 @@ type IndexInfo struct {
 	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
 	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
-	// Set to V1 when the handle can appear in the index key (non-unique indexes,
+	// Set when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
 	// 0=legacy, or unique with all NOT NULL columns, or clustered.
 	// 1=v1 with partition ID in key and value.
-	// 2=v2 with partition ID in key only.
+	// 2=v2 with partition ID in key only (for entries where the handle is in the key).
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 

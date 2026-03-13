@@ -965,7 +965,8 @@ func decodeIndexKvOldCollation(key, value []byte, hdStatus HandleStatus, buf []b
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// For V2+ non-unique global indexes, the partition ID is in the key (inside the handle).
+	// For V2+ global indexes where the handle is in the key (non-unique entries, or unique
+	// index entries with NULL values), the partition ID is in the key (inside the handle).
 	// We need to append it to the result values for callers that expect it.
 	if ph, ok := handle.(kv.PartitionHandle); ok {
 		datum := types.NewIntDatum(ph.PartitionID)
@@ -1116,7 +1117,8 @@ func DecodeIntHandleInIndexValue(data []byte) kv.Handle {
 }
 
 // DecodePartitionIDFromGlobalIndexKey extracts the partition ID from a global index key
-// for V1/V2+ non-unique indexes where the partition ID is encoded in the key suffix.
+// for V1/V2+ indexes where the partition ID is encoded in the key suffix (non-unique
+// entries, or unique index entries with NULL values where distinct=false).
 // Returns the partition ID and nil error on success.
 // Returns 0 and error if the key doesn't contain a partition ID in the expected format.
 func DecodePartitionIDFromGlobalIndexKey(key []byte, colsLen int) (int64, error) {
@@ -1129,7 +1131,8 @@ func DecodePartitionIDFromGlobalIndexKey(key []byte, colsLen int) (int64, error)
 			return 0, errors.Trace(err)
 		}
 	}
-	// Now b is the key suffix which should start with PartitionIDFlag for V1/V2+ non-unique global indexes
+	// Now b is the key suffix which should start with PartitionIDFlag for V1/V2+ global indexes
+	// where the handle is in the key (non-unique entries, or unique with NULL values).
 	if len(b) > 0 && b[0] == PartitionIDFlag {
 		_, partID, err := codec.DecodeInt(b[1:])
 		if err != nil {
@@ -1680,9 +1683,10 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 		idxVal = encodeCommonHandle(idxVal, h)
 	}
 	// For global indexes, encode the partition ID in the value UNLESS:
-	// - This is V2+ format AND non-unique (partition ID is already in the key)
-	// For unique global indexes, partition ID is always needed in the value since
-	// it's not encoded in the key (uniqueness is enforced globally).
+	// - This is V2+ format AND the handle is in the key (!distinct), meaning
+	//   partition ID is already in the key (non-unique entries, or unique entries
+	//   with NULL values). For distinct unique entries, partition ID is still
+	//   needed in the value since it's not encoded in the key.
 	// Note: V1/V2 global indexes don't support clustered tables, so this function
 	// would only be called with GlobalIndexVersionLegacy for clustered tables.
 	if idxInfo.Global && (distinct || idxInfo.GlobalIndexVersion < model.GlobalIndexVersionV2) {
@@ -1749,9 +1753,10 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		newEncode = true
 	}
 	// For global indexes, encode the partition ID in the value UNLESS:
-	// - This is V2+ format AND non-unique (partition ID is already in the key)
-	// For unique global indexes, partition ID is always needed in the value since
-	// it's not encoded in the key (uniqueness is enforced globally).
+	// - This is V2+ format AND the handle is in the key (!distinct), meaning
+	//   partition ID is already in the key (non-unique entries, or unique entries
+	//   with NULL values). For distinct unique entries, partition ID is still
+	//   needed in the value since it's not encoded in the key.
 	if idxInfo.Global && (distinct || idxInfo.GlobalIndexVersion < model.GlobalIndexVersionV2) {
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
@@ -2041,8 +2046,9 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 	}
 	resultValues = append(resultValues, handleBytes...)
 	// For global indexes, append the partition ID to result values.
-	// For V2+ non-unique indexes, partition ID is in the key (inside handle).
-	// For unique indexes or V0/V1 indexes, partition ID is in the value.
+	// For V2+ indexes where the handle is in the key (non-unique entries, or unique
+	// entries with NULL values), partition ID is in the key (inside handle).
+	// For V2+ distinct unique entries or V0/V1 indexes, partition ID is in the value.
 	if segs.PartitionID != nil {
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
@@ -2055,7 +2061,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		}
 		resultValues = append(resultValues, pidBytes)
 	} else if ph, ok := handle.(kv.PartitionHandle); ok {
-		// For V2+ non-unique global indexes, extract partition ID from the handle.
+		// For V2+ global indexes where handle is in key, extract partition ID from the handle.
 		datum := types.NewIntDatum(ph.PartitionID)
 		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {

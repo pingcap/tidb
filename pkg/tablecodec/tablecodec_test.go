@@ -748,9 +748,10 @@ func TestV2TableCodec(t *testing.T) {
 }
 
 // TestDecodeIndexHandleWithPartitionIDInKeyAndValue tests the scenario where
-// a GlobalIndexVersionV1+ non-unique index has partition ID in both the key
-// (new format) and the value (legacy global index format). This can produce
-// a nested PartitionHandle if not handled correctly.
+// a GlobalIndexVersionV1 index has partition ID in both the key (new format)
+// and the value (legacy global index format). This applies to non-unique indexes
+// and unique indexes with nullable columns. It can produce a nested PartitionHandle
+// if not handled correctly.
 // See: https://github.com/pingcap/tidb/pull/65380#discussion_r2721786298
 func TestDecodeIndexHandleWithPartitionIDInKeyAndValue(t *testing.T) {
 	tableID := int64(100)
@@ -766,7 +767,7 @@ func TestDecodeIndexHandleWithPartitionIDInKeyAndValue(t *testing.T) {
 	require.NoError(t, err)
 
 	// Build the key: table prefix + table ID + index ID + encoded columns + partition handle suffix
-	// For GlobalIndexVersionV1+ non-unique indexes, the key suffix is:
+	// For GlobalIndexVersionV1+ indexes where the handle is in the key, the key suffix is:
 	// PartitionIDFlag + partition_id (8 bytes) + IntHandleFlag + handle (8 bytes)
 	key := make([]byte, 0)
 	key = append(key, tablePrefix...)
