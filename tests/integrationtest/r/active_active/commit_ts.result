@@ -196,3 +196,49 @@ a	b	c
 delete from t where a > 1;
 select * from t;
 a	b	c
+set @@tidb_translate_softdelete_sql=1;
+set @@tidb_enable_async_commit = true;
+set @@tidb_enable_1pc = true;
+set @@autocommit=1;
+create table t_aa(id int primary key, v int) softdelete retention 7 day active_active = 'on';
+create table t_normal(id int primary key, v int);
+insert into t_aa values (1, 1);
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as aa_commit_mode;
+aa_commit_mode
+"2pc"
+insert into t_normal values (1, 1);
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as normal_commit_mode;
+normal_commit_mode
+"1pc"
+update t_aa set v = 2 where id = 1;
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as aa_commit_mode;
+aa_commit_mode
+"2pc"
+update t_normal set v = 2 where id = 1;
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as normal_commit_mode;
+normal_commit_mode
+"1pc"
+begin;
+update t_aa set v = v+1 where id = 1;
+update t_normal set v = v+1 where id = 1;
+commit;
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as mixed_commit_mode;
+mixed_commit_mode
+"2pc"
+delete from t_aa where id = 1;
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as aa_commit_mode;
+aa_commit_mode
+"2pc"
+delete from t_normal where id = 1;
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as normal_commit_mode;
+normal_commit_mode
+"1pc"
+set @@tidb_translate_softdelete_sql=0;
+delete from t_aa where id = 1;
+select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode') as aa_commit_mode;
+aa_commit_mode
+"2pc"
+set @@tidb_translate_softdelete_sql=default;
+set @@tidb_enable_async_commit = default;
+set @@tidb_enable_1pc = default;
+set @@autocommit=default;

@@ -427,6 +427,18 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
+// Active-active tables participate in bidirectional replication,
+// so their commit ts must satisfy the suffix index constraint configured by `tso-unique-index` to avoid duplicate
+// commit ts values across clusters.
+// async commit / 1PC may violate this assumption, so active-active writes always fall back to 2PC.
+func disableAsyncCommitAnd1PCForActiveActiveTableWrite(tblInfo *model.TableInfo, txn kv.Transaction) {
+	if !tblInfo.IsActiveActive {
+		return
+	}
+	txn.SetOption(kv.EnableAsyncCommit, false)
+	txn.SetOption(kv.Enable1PC, false)
+}
+
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -440,7 +452,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+	m := t.Meta()
+	if m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
 			if err := checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
@@ -448,6 +461,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
 	}
+	disableAsyncCommitAnd1PCForActiveActiveTableWrite(m, txn)
 
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 
@@ -714,7 +728,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, txn kv.Transaction, r 
 }
 
 func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r []types.Datum, opt *table.AddRecordOpt) (recordID kv.Handle, err error) {
-	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+	m := t.Meta()
+	if m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
 			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return nil, err
@@ -722,6 +737,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
 	}
+	disableAsyncCommitAnd1PCForActiveActiveTableWrite(m, txn)
 
 	var ctx context.Context
 	if ctx = opt.Ctx(); ctx != nil {
@@ -1147,12 +1163,14 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	m := t.Meta()
+	disableAsyncCommitAnd1PCForActiveActiveTableWrite(m, txn)
+
 	err := t.removeRowData(ctx, txn, h)
 	if err != nil {
 		return err
 	}
 
-	m := t.Meta()
 	if m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(ctx, m); ok {
 			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
