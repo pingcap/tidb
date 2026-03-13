@@ -1426,15 +1426,6 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	testKit.MustExec("alter table t add column c3 int")
 	// Insert some data.
 	testKit.MustExec("insert into t values (4, 5, 6)")
-<<<<<<< HEAD
-	// Analyze table to force create the histogram meta record.
-	// FIXME: When analyzing all columns, it will error out due to a duplicate key.
-	testKit.MustExec("analyze table t predicate columns")
-	// Find the add column event.
-	event := findEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
-	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
-	require.NoError(t, err)
-=======
 	// Add not-null column.
 	testKit.MustExec("alter table t add column c4 int not null default 0")
 	// Insert by explicit column list to keep new columns on default values.
@@ -1453,7 +1444,7 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	require.Len(t, metaBefore, 1)
 	// Handle two add-column events in order: c3 then c4.
 	for i := 0; i < 2; i++ {
-		event := statstestutil.FindEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
+		event := findEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
 		err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
 		require.NoError(t, err)
 	}
@@ -1467,5 +1458,4 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 		)
 	`).Rows()
 	require.Equal(t, metaBefore, metaAfter)
->>>>>>> 4b6349d1817 (statistics: avoid duplicate stats_histograms insert after analyze all columns (#66815))
 }
