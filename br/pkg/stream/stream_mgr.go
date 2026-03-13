@@ -26,11 +26,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/storage"
-=======
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
->>>>>>> 7519c7be8dc (br/pkg/stream: support parsing tagged backupmeta file names (#66655))
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
