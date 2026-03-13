@@ -592,12 +592,6 @@ func withUpstream(upstream checkpoint.UpstreamStorageReader) calculatorOption {
 	}
 }
 
-func withDownstream(downstream checkpoint.DownstreamObjectChecker) calculatorOption {
-	return func(params *calculatorParams) {
-		params.deps.Downstream = downstream
-	}
-}
-
 func withObserver(observer checkpoint.Observer) calculatorOption {
 	return func(params *calculatorParams) {
 		params.observer = observer

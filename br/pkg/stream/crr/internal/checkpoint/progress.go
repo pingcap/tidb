@@ -300,5 +300,8 @@ func pathSuffix(filePath string) string {
 	if suffix == "" {
 		return "<none>"
 	}
+	if len(suffix) > 5 {
+		return "<other>"
+	}
 	return suffix
 }

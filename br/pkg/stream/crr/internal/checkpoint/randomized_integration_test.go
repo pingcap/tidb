@@ -51,6 +51,8 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 		MaxBufferedFiles:                  32,
 		RestartCalculatorChancePercent:    10,
 		RestartCarrySyncedTSChancePercent: 100,
+		PruneEmptyStoreAfterRounds:        3,
+		PruneEmptyStoreChancePercent:      85,
 		GlobalProgressCheckEvery:          13,
 		CatchUpEvery:                      299,
 		ComputeTimeout:                    2 * time.Millisecond,
@@ -93,6 +95,7 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 		}
 
 		if round%cfg.CatchUpEvery == 0 {
+			sim.pruneEmptyStores(true)
 			sim.replicateAllPending()
 
 			checkpoint, advanced := sim.tryComputeCheckpoint(cfg.CatchUpTimeout)
@@ -131,6 +134,8 @@ type randomizedCRRSimulationConfig struct {
 	MaxBufferedFiles                  int
 	RestartCalculatorChancePercent    int
 	RestartCarrySyncedTSChancePercent int
+	PruneEmptyStoreAfterRounds        int
+	PruneEmptyStoreChancePercent      int
 	GlobalProgressCheckEvery          int
 	CatchUpEvery                      int
 	ComputeTimeout                    time.Duration
@@ -139,13 +144,14 @@ type randomizedCRRSimulationConfig struct {
 }
 
 type randomizedCRRSimulation struct {
-	h               *integrationHarness
-	rng             intNSource
-	cfg             randomizedCRRSimulationConfig
-	nextStoreID     uint64
-	pendingStoreIDs []uint64
-	readyStoreIDs   []uint64
-	lastSyncedTS    uint64
+	h                *integrationHarness
+	rng              intNSource
+	cfg              randomizedCRRSimulationConfig
+	nextStoreID      uint64
+	pendingStoreIDs  []uint64
+	readyStoreIDs    []uint64
+	lastSyncedTS     uint64
+	emptyStoreRounds map[uint64]int
 }
 
 type randomizedCRRRoundLog struct {
@@ -155,12 +161,18 @@ type randomizedCRRRoundLog struct {
 	addedStores         []uint64
 	removedStores       []uint64
 	scatteredRegions    []uint64
+	actionOrder         []string
 	checkpoint          uint64
 	advanced            bool
 }
 
 type intNSource interface {
 	IntN(int) int
+}
+
+type randomizedCRRRoundAction struct {
+	name string
+	run  func(*randomizedCRRRoundLog)
 }
 
 type roundRNG struct {
@@ -183,12 +195,13 @@ func newRandomizedCRRSimulation(
 		}
 	}
 	return &randomizedCRRSimulation{
-		h:             h,
-		rng:           rng,
-		cfg:           cfg,
-		nextStoreID:   nextStoreID,
-		readyStoreIDs: append([]uint64(nil), h.PDSim.StoreIDs()...),
-		lastSyncedTS:  h.calculator.SyncedTS(),
+		h:                h,
+		rng:              rng,
+		cfg:              cfg,
+		nextStoreID:      nextStoreID,
+		readyStoreIDs:    append([]uint64(nil), h.PDSim.StoreIDs()...),
+		lastSyncedTS:     h.calculator.SyncedTS(),
+		emptyStoreRounds: make(map[uint64]int),
 	}
 }
 
@@ -202,21 +215,59 @@ func (s *randomizedCRRSimulation) runRound(
 	// share one RNG or same-seed runs will diverge with goroutine scheduling.
 	replicateRNG := s.newConcurrentRNG()
 	computeRNG := s.newConcurrentRNG()
-	wg := new(sync.WaitGroup)
-	wg.Go(func() {
-		roundLog.replicatedFiles = s.replicateRandomBufferedFiles(replicateRNG)
-	})
-	wg.Go(func() {
-		roundLog.restartedCalculator = s.restartCalculatorIfNeeded(computeRNG)
-		roundLog.checkpoint, roundLog.advanced = s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
-	})
-	wg.Wait()
+
+	for _, action := range s.shuffleRoundActions([]randomizedCRRRoundAction{
+		{
+			name: "replicate-and-compute",
+			run: func(log *randomizedCRRRoundLog) {
+				wg := new(sync.WaitGroup)
+				wg.Go(func() {
+					log.replicatedFiles = s.replicateRandomBufferedFiles(replicateRNG)
+				})
+				wg.Go(func() {
+					log.restartedCalculator = s.restartCalculatorIfNeeded(computeRNG)
+					log.checkpoint, log.advanced = s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
+				})
+				wg.Wait()
+			},
+		},
+		{
+			name: "add-stores",
+			run: func(log *randomizedCRRRoundLog) {
+				log.addedStores = s.addRandomStores()
+			},
+		},
+		{
+			name: "remove-stores",
+			run: func(log *randomizedCRRRoundLog) {
+				log.removedStores = s.removeRandomStores()
+			},
+		},
+		{
+			name: "scatter-regions",
+			run: func(log *randomizedCRRRoundLog) {
+				log.scatteredRegions = s.scatterRandomRegions()
+			},
+		},
+		{
+			name: "prune-empty-stores",
+			run: func(log *randomizedCRRRoundLog) {
+				log.removedStores = append(log.removedStores, s.pruneEmptyStores(false)...)
+			},
+		},
+		{
+			name: "flush-stores",
+			run: func(log *randomizedCRRRoundLog) {
+				log.flushedStores = s.flushRandomStores()
+			},
+		},
+	}) {
+		roundLog.actionOrder = append(roundLog.actionOrder, action.name)
+		action.run(&roundLog)
+	}
+
 	s.rememberSyncedTS()
 
-	roundLog.addedStores = s.addRandomStores()
-	roundLog.removedStores = s.removeRandomStores()
-	roundLog.scatteredRegions = s.scatterRandomRegions()
-	roundLog.flushedStores = s.flushRandomStores()
 	s.log(
 		"randomized crr round",
 		zap.Int("round", round),
@@ -226,6 +277,7 @@ func (s *randomizedCRRSimulation) runRound(
 		zap.Uint64s("added-stores", roundLog.addedStores),
 		zap.Uint64s("removed-stores", roundLog.removedStores),
 		zap.Uint64s("scattered-regions", roundLog.scatteredRegions),
+		zap.Strings("action-order", roundLog.actionOrder),
 		zap.Bool("advanced", roundLog.advanced),
 		zap.Uint64("checkpoint", roundLog.checkpoint),
 		zap.Uint64("safe-checkpoint", *lastSafeCheckpoint),
@@ -259,6 +311,16 @@ func (s *randomizedCRRSimulation) runRound(
 
 func (s *randomizedCRRSimulation) log(msg string, fields ...zap.Field) {
 	log.Info(msg, fields...)
+}
+
+func (s *randomizedCRRSimulation) shuffleRoundActions(
+	actions []randomizedCRRRoundAction,
+) []randomizedCRRRoundAction {
+	for i := len(actions) - 1; i > 0; i-- {
+		j := s.rng.IntN(i + 1)
+		actions[i], actions[j] = actions[j], actions[i]
+	}
+	return actions
 }
 
 func (s *randomizedCRRSimulation) flushRandomStores() []uint64 {
@@ -381,6 +443,35 @@ func (s *randomizedCRRSimulation) scatterRandomRegions() []uint64 {
 		scattered = append(scattered, regionID)
 	}
 	return scattered
+}
+
+func (s *randomizedCRRSimulation) pruneEmptyStores(force bool) []uint64 {
+	storeIDs := s.h.PDSim.StoreIDs()
+	removed := make([]uint64, 0)
+	currentStores := make(map[uint64]struct{}, len(storeIDs))
+	for _, storeID := range storeIDs {
+		currentStores[storeID] = struct{}{}
+		if len(s.regionIDsOnStore(storeID)) != 0 {
+			delete(s.emptyStoreRounds, storeID)
+			continue
+		}
+		s.emptyStoreRounds[storeID]++
+		if !force && s.emptyStoreRounds[storeID] < s.cfg.PruneEmptyStoreAfterRounds {
+			continue
+		}
+		if !force && !s.rollPercent(s.cfg.PruneEmptyStoreChancePercent) {
+			continue
+		}
+		s.h.PDSim.RemoveStore(storeID)
+		delete(s.emptyStoreRounds, storeID)
+		removed = append(removed, storeID)
+	}
+	for storeID := range s.emptyStoreRounds {
+		if _, ok := currentStores[storeID]; !ok {
+			delete(s.emptyStoreRounds, storeID)
+		}
+	}
+	return removed
 }
 
 func (s *randomizedCRRSimulation) replicateRandomBufferedFiles(rng intNSource) int {
