@@ -2961,6 +2961,27 @@ func TestAlterModifyPartitionColSignedUnsignedAndNotNull(t *testing.T) {
 	tk.MustExec(`admin check table t_part_col_attr`)
 }
 
+func TestAlterModifyPartitionColCharsetCollate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_part_col_charset")
+	tk.MustExec(`create table t_part_col_charset (
+		a varchar(16) character set utf8 collate utf8_bin,
+		b int
+	) partition by range columns (a) (
+		partition p0 values less than ('m'),
+		partition p1 values less than (maxvalue)
+	)`)
+	tk.MustExec(`insert into t_part_col_charset values ('a', 1), ('z', 2)`)
+
+	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
+	tk.MustContainErrMsg(`alter table t_part_col_charset modify column a varchar(16) character set utf8mb4 collate utf8mb4_bin`, errMsg)
+	tk.MustContainErrMsg(`alter table t_part_col_charset modify column a varchar(16) character set utf8 collate utf8_general_ci`, errMsg)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_part_col_charset`)
+}
+
 func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

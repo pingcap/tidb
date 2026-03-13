@@ -1571,6 +1571,8 @@ func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, tblInfo *m
 		oldCol.GetDecimal() != newCol.GetDecimal() ||
 		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(newCol.GetFlag()) ||
 		mysql.HasNotNullFlag(oldCol.GetFlag()) != mysql.HasNotNullFlag(newCol.GetFlag()) ||
+		!strings.EqualFold(oldCol.GetCharset(), newCol.GetCharset()) ||
+		!strings.EqualFold(oldCol.GetCollate(), newCol.GetCollate()) ||
 		len(oldElems) != len(newElems)
 	if !typeChanged {
 		for i := range oldElems {
