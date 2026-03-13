@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -94,7 +95,22 @@ func getTableImporter(
 		return nil, err
 	}
 
+	failpoint.Inject("createTableImporterForTest", func() {
+		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), &tableImporterStoreHelper{store: store}))
+	})
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
+}
+
+type tableImporterStoreHelper struct {
+	store tidbkv.Storage
+}
+
+func (*tableImporterStoreHelper) GetTS(context.Context) (physical, logical int64, err error) {
+	return 0, 0, nil
+}
+
+func (h *tableImporterStoreHelper) GetTiKVCodec() tikv.Codec {
+	return h.store.GetCodec()
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
@@ -148,6 +164,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
+	defer func() {
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		s.tableImporter.Backend().CleanupAllLocalEngines(context.Background())
+	}()
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 		if err != nil {
@@ -176,12 +198,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 	defer func() {
 		s.sharedVars.Delete(subtaskMeta.ID)
-		if err == nil || !s.tableImporter.IsLocalSort() {
-			return
-		}
-		if cleanupErr := s.tableImporter.Backend().CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
-			logger.Warn("cleanup engines failed", zap.Error(cleanupErr))
-		}
 	}()
 
 	wctx := workerpool.NewContext(ctx)
