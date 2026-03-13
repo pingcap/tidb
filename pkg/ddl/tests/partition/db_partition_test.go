@@ -2950,8 +2950,13 @@ func TestAlterModifyPartitionColSignedUnsignedAndNotNull(t *testing.T) {
 	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
 	tk.MustContainErrMsg(`alter table t_part_col_attr modify column a int unsigned`, errMsg)
 	tk.MustContainErrMsg(`alter table t_part_col_attr modify column a int not null`, errMsg)
+	tk.MustExec(`alter table t_part_col_attr modify column a int default 42 comment 'safe attr update'`)
 	tk.MustQuery(`select column_name, column_type, is_nullable from information_schema.columns where table_schema = 'test' and table_name = 't_part_col_attr' and column_name = 'a'`).
 		Check(testkit.Rows("a int(11) YES"))
+	tk.MustQuery(`select column_default, column_comment from information_schema.columns where table_schema = 'test' and table_name = 't_part_col_attr' and column_name = 'a'`).
+		Check(testkit.Rows("42 safe attr update"))
+	tk.MustExec(`insert into t_part_col_attr (b) values (99)`)
+	tk.MustQuery(`select a, b from t_part_col_attr where b = 99`).Check(testkit.Rows("42 99"))
 	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec(`admin check table t_part_col_attr`)
 }
@@ -3462,7 +3467,14 @@ func TestModifyColumnPartitionedTableNonPartitionColumnTruncationSQLMode(t *test
 		tk.MustExec(`alter table t_non_part_trunc_nonstrict modify column b tinyint`)
 		warnings := tk.MustQuery(`show warnings`).Rows()
 		require.NotEmpty(t, warnings)
-		require.Contains(t, fmt.Sprint(warnings[0][2]), "overflows tinyint")
+		foundOverflowWarning := false
+		for _, row := range warnings {
+			if strings.Contains(fmt.Sprint(row[2]), "overflows tinyint") {
+				foundOverflowWarning = true
+				break
+			}
+		}
+		require.True(t, foundOverflowWarning, "warnings: %v", warnings)
 		tk.MustQuery(`select data_type from information_schema.columns where table_schema = 'test' and table_name = 't_non_part_trunc_nonstrict' and column_name = 'b'`).Check(testkit.Rows("tinyint"))
 		tk.MustQuery(`select a, b from t_non_part_trunc_nonstrict order by a`).Check(testkit.Rows(
 			"1 127",

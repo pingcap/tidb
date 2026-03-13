@@ -1544,8 +1544,46 @@ func gracefulCheckPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *mo
 	return nil
 }
 
-func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, _ *model.TableInfo, _, _ *model.ColumnInfo) error {
-	return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+// conservativeCheckPartitionColumnModifiable is the strict fallback check for
+// partitioning columns when graceful validation is disabled.
+//
+// Allowed:
+//   - metadata-only changes that do not affect partitioning value evaluation,
+//     such as updating default value/comment.
+//
+// Rejected:
+//   - any type-related change that may alter partitioning behavior and would
+//     require full partition reorganization, including:
+//   - column type, flen, decimal,
+//   - signed/unsigned flag,
+//   - nullability (NOT NULL flag),
+//   - enum element definition changes.
+func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	oldCol := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
+	if oldCol == nil {
+		oldCol = col
+	}
+
+	oldElems := oldCol.GetElems()
+	newElems := newCol.GetElems()
+	typeChanged := oldCol.GetType() != newCol.GetType() ||
+		oldCol.GetFlen() != newCol.GetFlen() ||
+		oldCol.GetDecimal() != newCol.GetDecimal() ||
+		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(newCol.GetFlag()) ||
+		mysql.HasNotNullFlag(oldCol.GetFlag()) != mysql.HasNotNullFlag(newCol.GetFlag()) ||
+		len(oldElems) != len(newElems)
+	if !typeChanged {
+		for i := range oldElems {
+			if oldElems[i] != newElems[i] {
+				typeChanged = true
+				break
+			}
+		}
+	}
+	if typeChanged {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+	}
+	return nil
 }
 
 var colStateOrd = map[model.SchemaState]int{
