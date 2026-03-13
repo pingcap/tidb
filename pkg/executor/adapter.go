@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
@@ -2203,7 +2204,9 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
-	if !topsqlstate.TopProfilingEnabled() && IsFastPlan(a.Plan) {
+	topSQL, topRU := topsqlstate.TopSQLEnabled(), topsqlstate.TopRUEnabled()
+	topProfiling := topsqlstate.TopProfilingEnabled()
+	if !topProfiling && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
 		// Drop them does not cause notable accuracy issue in Top Profiling.
 		return ctx
@@ -2221,19 +2224,33 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		planDigestByte = planDigest.Bytes()
 	}
 	stats := a.Ctx.GetStmtStats()
-	if !topsqlstate.TopProfilingEnabled() {
+	var beginInfo *stmtstats.ExecBeginInfo
+	if stats != nil {
+		beginInfo = &stmtstats.ExecBeginInfo{
+			TopRUEnabled: topRU,
+		}
+		if topRU {
+			beginInfo.Ctx = a.GoCtx
+			if vars.User != nil {
+				beginInfo.User = vars.User.String()
+			}
+		}
+	}
+	if !topProfiling {
 		// Always attach the SQL and plan info uses to catch the running SQL when Top Profiling is enabled in execution.
 		// Note: Goroutine labels for CPU profiling are only set when TopSQL is enabled.
 		if stats != nil {
-			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, beginInfo)
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 
 	if stats != nil {
-		stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
-		// This is a special logic prepared for TiKV's SQLExecCount.
-		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, beginInfo)
+		if topSQL {
+			// This is a special logic prepared for TiKV's SQLExecCount.
+			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		}
 	}
 
 	isSQLRegistered := sc.IsSQLRegistered.Load()
@@ -2278,11 +2295,32 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 	if vars == nil {
 		return
 	}
-	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopProfilingEnabled() {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := vars.GetTotalCostDuration()
-		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+	stats := a.Ctx.GetStmtStats()
+	if stats == nil {
+		return
 	}
+
+	topRU := topsqlstate.TopRUEnabled()
+	if !topsqlstate.TopSQLEnabled() && !topRU {
+		stats.ClearRUExecContext()
+		return
+	}
+
+	finishInfo := &stmtstats.ExecFinishInfo{
+		ExecDuration: vars.GetTotalCostDuration(),
+		TopRUEnabled: topRU,
+	}
+	if topRU {
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			finishInfo.RUDetails, _ = ruDetailRaw.(*util.RUDetails)
+		}
+		if vars.User != nil {
+			finishInfo.User = vars.User.String()
+		}
+	}
+
+	sqlDigest, planDigest := a.getSQLPlanDigest()
+	stats.OnExecutionFinished(sqlDigest, planDigest, finishInfo)
 }
 
 func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest []byte) {
