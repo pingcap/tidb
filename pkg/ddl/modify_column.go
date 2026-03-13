@@ -1466,6 +1466,17 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 }
 
 func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	useGracefulCheck := false
+	failpoint.Inject("useGracefulPartitionColumnModifiableCheck", func() {
+		useGracefulCheck = true
+	})
+	if useGracefulCheck {
+		return gracefulCheckPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+	}
+	return conservativeCheckPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+}
+
+func gracefulCheckPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
 	if col.Name.L != newCol.Name.L {
 		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 	}
@@ -1531,6 +1542,10 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 	}
 	return nil
+}
+
+func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, _ *model.TableInfo, _, _ *model.ColumnInfo) error {
+	return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
 }
 
 var colStateOrd = map[model.SchemaState]int{
