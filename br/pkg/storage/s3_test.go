@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -736,6 +737,141 @@ func TestPutAndDeleteObjectCheck(t *testing.T) {
 	s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
 	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
 	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock put error")
+}
+
+func assertContentMD5Option(t *testing.T, optFns []func(*s3.Options), expect bool) {
+	t.Helper()
+	if !expect {
+		require.Len(t, optFns, 0)
+		return
+	}
+	require.Len(t, optFns, 1)
+	require.Equal(t, reflect.ValueOf(WithContentMD5).Pointer(), reflect.ValueOf(optFns[0]).Pointer())
+}
+
+func TestContentMD5OptionForS3Compatible(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("PutObject", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := createS3Suite(t)
+				loc := NewBucketPrefix("bucket", "prefix/")
+				options := &backuppb.S3{Bucket: loc.Bucket, Prefix: loc.Prefix}
+				if tc.s3Compatible {
+					options.Provider = "ceph"
+				}
+				cli := NewS3StorageForTest(s.s3, options)
+
+				s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						assertContentMD5Option(t, optFns, tc.s3Compatible)
+						return &s3.PutObjectOutput{}, nil
+					})
+				// WriteFile waits for the object to become visible via HeadObject.
+				s.s3.EXPECT().HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						return &s3.HeadObjectOutput{}, nil
+					})
+
+				require.NoError(t, cli.WriteFile(ctx, "object", []byte("data")))
+				require.True(t, s.controller.Satisfied())
+			})
+		}
+	})
+
+	t.Run("CheckPutAndDeleteObject", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := createS3Suite(t)
+				loc := NewBucketPrefix("bucket", "prefix/")
+				options := &backuppb.S3{Bucket: loc.Bucket, Prefix: loc.Prefix}
+				if tc.s3Compatible {
+					options.Provider = "ceph"
+				}
+
+				s.s3.EXPECT().
+					PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.True(t, strings.HasPrefix(aws.ToString(input.Key), "prefix/access-check/"))
+						assertContentMD5Option(t, optFns, tc.s3Compatible)
+						return &s3.PutObjectOutput{}, nil
+					})
+				s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.True(t, strings.HasPrefix(aws.ToString(input.Key), "prefix/access-check/"))
+						return &s3.DeleteObjectOutput{}, nil
+					})
+
+				require.NoError(t, PutAndDeleteObjectCheck(ctx, s.s3, options))
+				require.True(t, s.controller.Satisfied())
+			})
+		}
+	})
+
+	t.Run("MultipartWriterUploadPart", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := createS3Suite(t)
+				loc := NewBucketPrefix("bucket", "prefix/")
+				options := &backuppb.S3{Bucket: loc.Bucket, Prefix: loc.Prefix}
+				if tc.s3Compatible {
+					options.Provider = "ceph"
+				}
+				cli := NewS3StorageForTest(s.s3, options)
+
+				s.s3.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						return &s3.CreateMultipartUploadOutput{
+							Bucket:   input.Bucket,
+							Key:      input.Key,
+							UploadId: aws.String("upload-id"),
+						}, nil
+					})
+				s.s3.EXPECT().UploadPart(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						assertContentMD5Option(t, optFns, tc.s3Compatible)
+						return &s3.UploadPartOutput{ETag: aws.String("etag")}, nil
+					})
+
+				w, err := cli.MultipartWriter(ctx, "object")
+				require.NoError(t, err)
+				_, err = w.Write(ctx, []byte("part"))
+				require.NoError(t, err)
+				require.True(t, s.controller.Satisfied())
+			})
+		}
+	})
+
+	// Multipart uploader client options are covered by current branch tests.
 }
 
 // TestOpenSeek checks that Seek is implemented correctly.

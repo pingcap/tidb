@@ -128,6 +128,7 @@ type S3Uploader struct {
 	svc           S3API
 	createOutput  *s3.CreateMultipartUploadOutput
 	completeParts []types.CompletedPart
+	s3Compatible  bool
 }
 
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
@@ -142,7 +143,11 @@ func (u *S3Uploader) Write(ctx context.Context, data []byte) (int, error) {
 		ContentLength: aws.Int64(int64(len(data))),
 	}
 
-	uploadResult, err := u.svc.UploadPart(ctx, partInput)
+	var optFns []func(*s3.Options)
+	if u.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	uploadResult, err := u.svc.UploadPart(ctx, partInput, optFns...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -293,8 +298,9 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 // NewS3StorageForTest creates a new S3Storage for testing only.
 func NewS3StorageForTest(svc S3API, options *backuppb.S3) *S3Storage {
 	return &S3Storage{
-		svc:     svc,
-		options: options,
+		svc:          svc,
+		options:      options,
+		s3Compatible: len(options.Provider) > 0 && options.Provider != "aws",
 	}
 }
 
@@ -663,7 +669,11 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
 	input := buildPutObjectInput(options, file, []byte("check"))
-	_, err = svc.PutObject(ctx, input)
+	var optFns []func(*s3.Options)
+	if options.Provider != "aws" && options.Provider != "" {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	_, err = svc.PutObject(ctx, input, optFns...)
 	return errors.Trace(err)
 }
 
@@ -711,7 +721,11 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
-	_, err := rs.svc.PutObject(ctx, input)
+	var optFns []func(*s3.Options)
+	if rs.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	_, err := rs.svc.PutObject(ctx, input, optFns...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1251,6 +1265,7 @@ func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalF
 		svc:           rs.svc,
 		createOutput:  resp,
 		completeParts: make([]types.CompletedPart, 0, 128),
+		s3Compatible:  rs.s3Compatible,
 	}, nil
 }
 
@@ -1291,6 +1306,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
 			if rs.s3Compatible {
 				u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+				u.ClientOptions = append(u.ClientOptions, withContentMD5)
 			}
 		})
 		rd, wd := io.Pipe()
