@@ -114,6 +114,9 @@ func TestPostProcessStepExecutor(t *testing.T) {
 }
 
 func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen doesn't support local sort, skip this test")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
