@@ -15,8 +15,10 @@
 package infoschema
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -39,4 +41,37 @@ func TestInfoSchemaAddDel(t *testing.T) {
 	is.delSchema(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")})
 	require.Empty(t, is.schemaMap)
 	require.Empty(t, is.schemaID2Name)
+}
+
+func TestLoadMaskingPoliciesRetryOnGenericError(t *testing.T) {
+	is := newInfoSchema(nil)
+	calls := 0
+	is.factory = func() (pools.Resource, error) {
+		calls++
+		return nil, errors.New("temporary load failure")
+	}
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 1, calls)
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 2, calls)
+}
+
+func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
+	is := newInfoSchema(nil)
+	calls := 0
+	is.factory = func() (pools.Resource, error) {
+		calls++
+		return nil, errors.New("Table 'mysql.tidb_masking_policy' doesn't exist")
+	}
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.True(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 1, calls)
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.Equal(t, 1, calls)
 }

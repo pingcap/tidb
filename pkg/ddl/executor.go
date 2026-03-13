@@ -6409,18 +6409,28 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	return e.createMaskingPolicyWithInfo(ctx, schema.ID, policyInfo, OnExistError)
 }
 
-func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
-	if policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName); ok {
-		return policy, nil
+func (e *executor) getMaskingPolicyByNameForDDL(
+	ctx sessionctx.Context,
+	tableID int64,
+	columns []*model.ColumnInfo,
+	policyName ast.CIStr,
+) (*model.MaskingPolicyInfo, error) {
+	is := e.infoCache.GetLatest()
+	for _, col := range columns {
+		policy, ok := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		if ok && policy != nil && policy.Name.L == policyName.L {
+			return policy, nil
+		}
 	}
 	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 		nil,
 		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy
-WHERE LOWER(policy_name) = %?
+WHERE table_id = %? AND LOWER(policy_name) = %?
 ORDER BY policy_id
 LIMIT 1`,
+		tableID,
 		policyName.L,
 	)
 	if err != nil {
@@ -6442,7 +6452,7 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6497,7 +6507,7 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6544,7 +6554,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}

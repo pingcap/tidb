@@ -255,3 +255,26 @@ func TestMaskingPolicyDropImmediateQuery(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("0"))
 }
+
+func TestMaskingPolicyAlterDropByTableWithSameName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+
+	tk.MustExec("create table t1(id int primary key, c varchar(20))")
+	tk.MustExec("create table t2(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t1 values (1, 'secret1')")
+	tk.MustExec("insert into t2 values (1, 'secret2')")
+
+	tk.MustExec("create masking policy p on t1(c) as mask_full(c, '*') enable")
+	tk.MustExec("create masking policy p on t2(c) as mask_full(c, '#') enable")
+
+	tk.MustExec("alter table t2 modify masking policy p set expression = mask_full(c, '$')")
+	tk.MustQuery("select c from t1").Check(testkit.Rows("*******"))
+	tk.MustQuery("select c from t2").Check(testkit.Rows("$$$$$$$"))
+
+	tk.MustExec("alter table t1 drop masking policy p")
+	tk.MustQuery("select c from t1").Check(testkit.Rows("secret1"))
+	tk.MustQuery("select c from t2").Check(testkit.Rows("$$$$$$$"))
+}

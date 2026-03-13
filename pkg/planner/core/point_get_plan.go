@@ -1736,6 +1736,11 @@ func buildMaskingExprsForPointGet(
 	if is == nil || schema == nil || len(names) == 0 {
 		return nil, nil
 	}
+	sv := sctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		// Internal SQL should not be rewritten by masking policies.
+		return nil, nil
+	}
 
 	// Check if there are any masking policies
 	if len(is.AllMaskingPolicies()) == 0 {
@@ -1753,7 +1758,6 @@ func buildMaskingExprsForPointGet(
 	}
 
 	schemaVersion := is.SchemaMetaVersion()
-	sv := sctx.GetSessionVars()
 	hasMask := false
 
 	for i, col := range cols {

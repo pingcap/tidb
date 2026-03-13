@@ -1532,6 +1532,11 @@ func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.Logic
 	if b.is == nil || p == nil {
 		return nil, nil
 	}
+	sv := b.ctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		// Internal SQL should not be rewritten by masking policies.
+		return nil, nil
+	}
 	if len(b.is.AllMaskingPolicies()) == 0 {
 		return nil, nil
 	}
@@ -1545,7 +1550,6 @@ func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.Logic
 		replaceExprs[i] = col
 	}
 	schemaVersion := b.is.SchemaMetaVersion()
-	sv := b.ctx.GetSessionVars()
 	hasMask := false
 	for i, col := range cols {
 		policy, tblInfo, colInfo := b.findMaskingPolicy(ctx, names[i], col)
