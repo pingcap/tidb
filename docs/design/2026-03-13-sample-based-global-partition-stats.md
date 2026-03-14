@@ -31,6 +31,8 @@
 
 This proposal introduces a sample-based approach for building global-level statistics on partitioned tables. Instead of merging per-partition histograms and TopN arrays — which is both lossy and slow — global histograms and TopN are built directly from merged reservoir samples, reusing the same histogram construction logic that already handles per-partition stats.
 
+For non-partitioned tables, TiDB already builds statistics this way: each TiKV region returns a reservoir sample collector, all region collectors are merged via A-Res weighted sampling into a single collector, and histograms and TopN are built from the merged samples. The current partition-to-global path bypasses this proven infrastructure and instead attempts to merge pre-built histograms and TopN arrays — a fundamentally lossier operation. This proposal replaces that merge with the same sample-based approach already used for regions, applied at the partition-to-global level. The only addition is persisting pruned samples per partition so that future single-partition re-analyzes can load them instead of re-scanning unchanged partitions from TiKV.
+
 By also persisting pruned samples per partition, this design enables incremental global stats rebuilds: re-analyzing a single partition no longer requires re-scanning all other partitions from TiKV.
 
 ## Motivation or Background
