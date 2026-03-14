@@ -312,7 +312,7 @@ Store the full 10,000-sample collector per partition instead of pruning.
 
 Store intermediate merge results in a tree structure, enabling O(log N) incremental updates instead of O(N).
 
-**Rejected for initial implementation because**: The I/O cost of reading all N partitions' pruned samples is acceptable for realistic partition counts. Merging N collectors in memory takes < 100ms for 1,000 partitions. The simplicity of per-partition-only storage (no cache invalidation, trivial DDL handling) outweighs the marginal I/O savings. Can be added later if profiling shows I/O is the bottleneck.
+**Rejected for initial implementation because**: The I/O cost of reading all N partitions' pruned samples is acceptable for realistic partition counts. Merging N collectors in memory takes < 100ms for 1,000 partitions. The simplicity of per-partition-only storage (no cache invalidation, trivial DDL handling) outweighs the marginal I/O savings. This optimization can be added later if profiling shows I/O is the bottleneck.
 
 ## Unresolved Questions
 
