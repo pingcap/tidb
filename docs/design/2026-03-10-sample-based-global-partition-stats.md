@@ -69,7 +69,7 @@ By persisting pruned samples per partition, future single-partition re-analyzes 
 
 ### Current Approach: Merge-Based Global Stats
 
-```
+```text
 ANALYZE TABLE t
 
   For each partition Pi (in parallel, up to concurrency limit):
@@ -90,7 +90,7 @@ The merge in steps 5-7 is the bottleneck for tables with many partitions: it req
 
 ### Proposed Approach: Sample-Based Global Stats
 
-```
+```text
 ANALYZE TABLE t
 
   For each partition Pi (in parallel, up to concurrency limit):
@@ -120,7 +120,7 @@ When merging samples from partitions with different row counts, proportional rep
 
 The A-Res algorithm (Efraimidis & Spirakis, 2006) achieves this. For each item with weight `w_i`, a key is computed:
 
-```
+```text
 k_i = u_i^(1/w_i)    where u_i ~ Uniform(0, 1)
 ```
 
@@ -148,7 +148,7 @@ Each partition stores one row. `REPLACE INTO` overwrites stale samples atomicall
 
 Persisting the full reservoir (up to 10,000 samples) per partition would use excessive storage. Instead, a proportional budget is allocated across all partitions within a fixed total (default 30,000 samples):
 
-```
+```text
 First partition:       target = budget / totalPartitions
 Subsequent partitions: target = (budget / totalPartitions) × (partitionRows / avgRowsSoFar)
                        clamped to [500, MaxSampleSize]
@@ -162,7 +162,7 @@ Pruning applies **only to the persisted copy**. The full unpruned collector is u
 
 When `ANALYZE TABLE t PARTITION p5` is executed:
 
-```
+```text
   1. Analyze partition p5 (scan from TiKV, build stats)
   2. Load saved samples for all other partitions from mysql.stats_table_data
   3. Validate schema compatibility (FMSketch array lengths must match)
