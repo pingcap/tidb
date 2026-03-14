@@ -146,7 +146,7 @@ Each partition stores one row. The serialized blob is a `ReservoirRowSampleColle
 
 ### Progressive Pruning
 
-Persisting the full reservoir (up to 10,000 samples) per partition would use excessive storage. Instead, a proportional budget is allocated across all partitions within a fixed total (default 30,000 samples):
+Persisting the full reservoir (up to 10,000 samples) per partition would use excessive storage. Instead, a target budget (default 30,000 samples) determines proportional allocation:
 
 ```text
 First partition:       target = budget / totalPartitions
@@ -154,7 +154,9 @@ Subsequent partitions: target = (budget / totalPartitions) × (partitionRows / a
                        clamped to [500, MaxSampleSize]
 ```
 
-Larger partitions get proportionally more samples. The pruning performs correct A-Res sub-sampling: a smaller reservoir is created and all current samples compete for slots via weighted selection, preserving statistical validity.
+Larger partitions get proportionally more samples. The per-partition minimum (500) ensures each partition retains enough samples for valid A-Res sub-sampling. For tables with many partitions, the minimum takes precedence over the target budget — e.g., 8,000 partitions × 500 = 4M total samples. In practice this is acceptable: 500 pruned samples per partition produce small blobs (~50–100 KB each), and the total storage remains well below what the full 10,000-sample reservoirs would require.
+
+The pruning performs correct A-Res sub-sampling: a smaller reservoir is created and all current samples compete for slots via weighted selection, preserving statistical validity.
 
 Pruning applies **only to the persisted copy**. The full unpruned collector is used for the in-memory global merge during the current ANALYZE.
 
