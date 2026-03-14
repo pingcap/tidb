@@ -167,12 +167,14 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
 ```text
   1. Analyze partition p5 (scan from TiKV, build stats)
   2. Load saved samples for all other partitions from mysql.stats_table_data
-  3. Validate schema compatibility (FMSketch array lengths must match)
+  3. Validate schema compatibility (see below)
   4. Merge all collectors (fresh p5 + loaded others) via A-Res
   5. Build global histogram + TopN from merged samples
   6. Save global stats
   7. Persist p5's pruned samples (replacing old entry)
 ```
+
+**Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th column in the original ANALYZE request. On load, the FMSketch array length of the saved collector is compared against the current ANALYZE's collector. If they differ (columns added or dropped), the saved samples are discarded and the partition falls back to merge-based global stats. This check does not detect column type or collation changes with the same column count; a schema fingerprint (column IDs + types) could strengthen this in a future iteration.
 
 This avoids re-scanning unchanged partitions entirely. The cost is:
 - **I/O**: reading ~500 KB per partition from TiKV (pruned sample blobs)
