@@ -1257,8 +1257,13 @@ const (
 
 	// version 226
 	// Ensure `mysql.tidb_pitr_id_map` has `restore_id` and correct primary key.
-	// This is a compatibility fix for upgrade paths where version221 was reused in
-	// other branches/releases for a different purpose.
+	// This fixes upgrades from customer branch `release-8.5-20250606-v8.5.2`, where
+	// version221 was used for adding `i_user` indexes on mysql privilege tables.
+	// In upstream `release-8.5`, version221 is the PITR schema change for
+	// `mysql.tidb_pitr_id_map` (`restore_id` + new primary key definition). When that
+	// customer branch later upgrades back to upstream `release-8.5`, bootstrap sees
+	// version221 as already applied and skips the upstream PITR DDL, so version226
+	// repairs the table schema.
 	version226 = 226
 
 	// ...
