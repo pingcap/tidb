@@ -20,6 +20,7 @@ go_library(
         "flat_plan.go",
         "hint_utils.go",
         "index_join_path.go",
+        "index_only_join_path.go",
         "indexmerge_path.go",
         "indexmerge_unfinished_path.go",
         "initialize.go",

@@ -1,0 +1,39 @@
+# Test INDEX_ONLY_JOIN hint
+
+# Setup
+drop table if exists t;
+create table t (a int, b int, c int, key idx_a(a), key idx_b(b));
+insert into t values (1,1,1),(2,2,2),(3,1,3),(4,2,4),(5,1,5),(6,1,6),(7,2,7);
+
+# EXPLAIN without LIMIT shows IndexOnlyJoin
+explain select /*+ index_only_join(t, idx_a, idx_b) */ * from t where a > 0 and b = 1 order by a;
+
+# Correctness (compare with normal query)
+select /*+ index_only_join(t, idx_a, idx_b) */ * from t where a > 0 and b = 1 order by a limit 3;
+select * from t where a > 0 and b = 1 order by a limit 3;
+
+# Without LIMIT
+select /*+ index_only_join(t, idx_a, idx_b) */ * from t where a > 0 and b = 1 order by a;
+select * from t where a > 0 and b = 1 order by a;
+
+# Invalid hint: only 1 index name
+--echo # Test: hint with only 1 index name should produce warning
+explain select /*+ index_only_join(t, idx_a) */ * from t where a > 0;
+show warnings;
+
+# Invalid hint: nonexistent index
+--echo # Test: hint with nonexistent index should produce warning
+explain select /*+ index_only_join(t, idx_a, nonexistent) */ * from t where a > 0;
+show warnings;
+
+# Invalid hint: probe index is unique (primary key)
+drop table if exists t2;
+create table t2 (a int, b int, primary key(b), key idx_a(a));
+insert into t2 values (1,1),(2,2),(3,3);
+--echo # Test: unique probe index should produce warning
+explain select /*+ index_only_join(t2, idx_a, PRIMARY) */ * from t2 where a > 0 and b = 1;
+show warnings;
+
+# Cleanup
+drop table if exists t;
+drop table if exists t2;

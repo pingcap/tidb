@@ -1,0 +1,59 @@
+drop table if exists t;
+create table t (a int, b int, c int, key idx_a(a), key idx_b(b));
+insert into t values (1,1,1),(2,2,2),(3,1,3),(4,2,4),(5,1,5),(6,1,6),(7,2,7);
+explain select /*+ index_only_join(t, idx_a, idx_b) */ * from t where a > 0 and b = 1 order by a;
+id	estRows	task	access object	operator info
+IndexOnlyJoin_25	3333.33	root		type: index_only_join, driver_index: idx_a, probe_index: idx_b, keep_order: true
+select /*+ index_only_join(t, idx_a, idx_b) */ * from t where a > 0 and b = 1 order by a limit 3;
+a	b	c
+1	1	1
+3	1	3
+5	1	5
+select * from t where a > 0 and b = 1 order by a limit 3;
+a	b	c
+1	1	1
+3	1	3
+5	1	5
+select /*+ index_only_join(t, idx_a, idx_b) */ * from t where a > 0 and b = 1 order by a;
+a	b	c
+1	1	1
+3	1	3
+5	1	5
+6	1	6
+select * from t where a > 0 and b = 1 order by a;
+a	b	c
+1	1	1
+3	1	3
+5	1	5
+6	1	6
+# Test: hint with only 1 index name should produce warning
+explain select /*+ index_only_join(t, idx_a) */ * from t where a > 0;
+id	estRows	task	access object	operator info
+TableReader_8	3333.33	root		data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(planner__core__index_only_join.t.a, 0)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	index_only_join(planner__core__index_only_join.t, idx_a) is inapplicable, it requires exactly 2 index names (driver, probe).
+# Test: hint with nonexistent index should produce warning
+explain select /*+ index_only_join(t, idx_a, nonexistent) */ * from t where a > 0;
+id	estRows	task	access object	operator info
+TableReader_8	3333.33	root		data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(planner__core__index_only_join.t.a, 0)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	index_only_join(planner__core__index_only_join.t, idx_a, nonexistent) is inapplicable, check whether the indexes (nonexistent) exist.
+drop table if exists t2;
+create table t2 (a int, b int, primary key(b), key idx_a(a));
+insert into t2 values (1,1),(2,2),(3,3);
+# Test: unique probe index should produce warning
+explain select /*+ index_only_join(t2, idx_a, PRIMARY) */ * from t2 where a > 0 and b = 1;
+id	estRows	task	access object	operator info
+Selection_7	1.00	root		gt(planner__core__index_only_join.t2.a, 0)
+└─Point_Get_6	1.00	root	table:t2	handle:1
+show warnings;
+Level	Code	Message
+Warning	1815	index_only_join(planner__core__index_only_join.t2, idx_a, primary) is inapplicable, check whether the indexes (PRIMARY) exist.
+drop table if exists t;
+drop table if exists t2;

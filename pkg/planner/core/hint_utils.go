@@ -178,6 +178,14 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
 			Indexes:  indexs,
 		})
+	case *physicalop.PhysicalIndexOnlyJoin:
+		driverIS := pp.DriverPlans[0].(*physicalop.PhysicalIndexScan)
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: ast.NewCIStr(h.HintIndexOnlyJoin),
+			Tables:   []ast.HintTable{{TableName: getTableName(driverIS.Table.Name, driverIS.TableAsName)}},
+			Indexes:  []ast.CIStr{driverIS.Index.Name, pp.ProbeIndex.Name},
+		})
 	case *physicalop.PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,

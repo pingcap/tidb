@@ -41,6 +41,15 @@ const (
 	IndexLookUpPushDownBySysVar
 )
 
+// IndexOnlyJoinInfo stores metadata for an index-only join path.
+type IndexOnlyJoinInfo struct {
+	DriverPath    *AccessPath      // Driver index path (provides ordering)
+	ProbePath     *AccessPath      // Probe index path (provides filtering)
+	ProbeIndex    *model.IndexInfo // Probe index metadata
+	ProbeRanges   []*ranger.Range  // Probe range template with handle placeholder
+	KeyOff2IdxOff []int            // Maps handle key offset to probe index column offset
+}
+
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
@@ -118,6 +127,9 @@ type AccessPath struct {
 	IndexMergeIsIntersection bool
 	// IndexMergeAccessMVIndex indicates whether this IndexMerge path accesses a MVIndex.
 	IndexMergeAccessMVIndex bool
+
+	// IndexOnlyJoinInfo is set when this path represents an index-only join.
+	IndexOnlyJoinInfo *IndexOnlyJoinInfo
 
 	StoreType kv.StoreType
 
@@ -226,6 +238,11 @@ func (path *AccessPath) Clone() *AccessPath {
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
 func (path *AccessPath) IsTablePath() bool {
 	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
+}
+
+// IsIndexOnlyJoinPath returns true if this path represents an index-only join.
+func (path *AccessPath) IsIndexOnlyJoinPath() bool {
+	return path.IndexOnlyJoinInfo != nil
 }
 
 // IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.

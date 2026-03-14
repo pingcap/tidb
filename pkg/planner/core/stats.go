@@ -153,6 +153,11 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		return nil, false, err
 	}
 
+	// index-only join path is generated when hints are present.
+	if err := generateIndexOnlyJoinPath(ds); err != nil {
+		return nil, false, err
+	}
+
 	indexForce := false
 	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
 	if indexForce {
