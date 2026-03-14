@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -290,7 +290,7 @@ func expectedDefaultBackupConfig() BackupConfig {
 	defaultConfig := expectedDefaultConfig()
 	return BackupConfig{
 		Config: defaultConfig,
-		GCTTL:  utils.DefaultBRGCSafePointTTL,
+		GCTTL:  gc.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
 		},

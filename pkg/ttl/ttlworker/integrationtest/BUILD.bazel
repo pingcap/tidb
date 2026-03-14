@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "integrationtest_test",
+    timeout = "moderate",
+    srcs = [
+        "helpers_test.go",
+        "manager_job_adapter_test.go",
+        "timer_sync_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 6,
+    deps = [
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/meta/metadef",
+        "//pkg/metrics",
+        "//pkg/parser/ast",
+        "//pkg/session/syssession",
+        "//pkg/testkit",
+        "//pkg/timer/api",
+        "//pkg/timer/tablestore",
+        "//pkg/ttl/cache",
+        "//pkg/ttl/ttlworker",
+        "//pkg/util/mock",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

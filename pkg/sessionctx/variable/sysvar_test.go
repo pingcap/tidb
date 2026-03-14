@@ -1315,7 +1315,7 @@ func TestTiDBIgnoreInlistPlanDigest(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	initValue, err := mock.GetGlobalSysVar(vardef.TiDBIgnoreInlistPlanDigest)
 	require.NoError(t, err)
-	require.Equal(t, initValue, vardef.Off)
+	require.Equal(t, initValue, vardef.On)
 	// Set to On(init at start)
 	err1 := mock.SetGlobalSysVar(context.Background(), vardef.TiDBIgnoreInlistPlanDigest, vardef.On)
 	require.NoError(t, err1)

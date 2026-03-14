@@ -546,9 +546,9 @@ func TestUseClusterIdInGlobalSortPath(t *testing.T) {
 	require.True(t, ok)
 	vardef.CloudStorageURI.Store("s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws")
 	path := handle.GetCloudStorageURI(context.Background(), store)
-	require.Equal(t, "s3://bucket/path/to/folder/"+
-		strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)+
+	require.Equal(t, "s3://bucket/path/to/folder/dxf/"+
+		strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)+"/"+
 		"?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", path)
 	// without cluster id
-	require.Equal(t, "s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", handle.GetCloudStorageURI(context.Background(), nil))
+	require.Equal(t, "s3://bucket/path/to/folder/dxf/?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", handle.GetCloudStorageURI(context.Background(), nil))
 }

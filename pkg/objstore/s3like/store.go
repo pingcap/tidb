@@ -404,13 +404,14 @@ func (rs *Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn fun
 	if opt.ListCount > 0 {
 		maxKeys = int(opt.ListCount)
 	}
+	initialStartAfter := opt.StartAfter
 
 	var (
-		marker    *string
-		cliPrefix = rs.bucketPrefix.PrefixStr()
+		continuationToken *string
+		cliPrefix         = rs.bucketPrefix.PrefixStr()
 	)
 	for {
-		res, err := rs.s3Cli.ListObjects(ctx, prefix, marker, maxKeys)
+		res, err := rs.s3Cli.ListObjects(ctx, prefix, initialStartAfter, continuationToken, maxKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -432,7 +433,8 @@ func (rs *Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn fun
 				return errors.Trace(err)
 			}
 		}
-		marker = res.NextMarker
+		continuationToken = res.NextContinuationToken
+		initialStartAfter = ""
 		if !res.IsTruncated {
 			break
 		}
@@ -629,6 +631,19 @@ func (rs *Storage) Rename(ctx context.Context, oldFileName, newFileName string) 
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// presignableClient is an optional interface for PrefixClient implementations that support presigning.
+type presignableClient interface {
+	PresignObject(ctx context.Context, name string, expire time.Duration) (string, error)
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	if pc, ok := rs.s3Cli.(presignableClient); ok {
+		return pc.PresignObject(ctx, fileName, expire)
+	}
+	return "", errors.New("S3-compatible storage does not support PresignFile")
 }
 
 // Close implements Storage interface.

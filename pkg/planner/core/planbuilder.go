@@ -250,7 +250,10 @@ type PlanBuilder struct {
 	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
+	// read-only meta derived from ast node.
 	hintProcessor *hint.QBHintHandler
+	// mutable state of QBHint when building.
+	hintState *hint.QBHintBuildState
 	// qbOffset is the offsets of current processing select stmts.
 	qbOffset []int
 
@@ -389,6 +392,11 @@ func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	return tables
 }
 
+// GetHintState gets the HintState from the PlanBuilder.
+func (b *PlanBuilder) GetHintState() *hint.QBHintBuildState {
+	return b.hintState
+}
+
 // GetOptFlag gets the OptFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	if b.isSampling {
@@ -466,6 +474,9 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
+	if processor != nil {
+		b.hintState = processor.NewBuildState()
+	}
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
 	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
 	if savedBlockNames == nil {
@@ -505,6 +516,14 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	// Add more fields if they are safe to be reused.
 
 	return b
+}
+
+// HandleUnusedViewHints appends warnings for unused view hints in the current build.
+func (b *PlanBuilder) HandleUnusedViewHints() {
+	if b.hintProcessor == nil {
+		return
+	}
+	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 }
 
 // Build builds the ast node to a Plan.
@@ -750,7 +769,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		if vars.ExtendValue != nil {
 			assign.ExtendValue = &expression.Constant{
 				Value:   vars.ExtendValue.(*driver.ValueExpr).Datum,
-				RetType: &vars.ExtendValue.(*driver.ValueExpr).Type,
+				RetType: vars.ExtendValue.(*driver.ValueExpr).Type.DeepCopy(),
 			}
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
@@ -1483,16 +1502,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// it's possible that all these path are inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
 
@@ -2213,19 +2233,6 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
 		cols.data[pkCol.ID] = struct{}{}
-	}
-	if b.ctx.GetSessionVars().EnableExtendedStats {
-		// Add the columns related to extended stats.
-		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
-		// if someone inserts data into mysql.stats_extended between the two time points, the new added extended stats may not be computed.
-		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-		extendedStatsColIDs, err := statsHandle.CollectColumnsInExtendedStats(tblInfo.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, colID := range extendedStatsColIDs {
-			cols.data[colID] = struct{}{}
-		}
 	}
 	cols.calculated = true
 	return cols.data, nil
@@ -4363,7 +4370,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalo
 	case *driver.ValueExpr:
 		outExpr = &expression.Constant{
 			Value:   x.Datum,
-			RetType: &x.Type,
+			RetType: x.Type.DeepCopy(),
 		}
 	case *driver.ParamMarkerExpr:
 		outExpr, err = expression.ParamMarkerExpression(b.ctx.GetExprCtx(), x, false)
@@ -5197,7 +5204,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 	case *driver.ValueExpr:
 		expr = &expression.Constant{
 			Value:   x.Datum,
-			RetType: &x.Type,
+			RetType: x.Type.DeepCopy(),
 		}
 	default:
 		expr, _, err = b.rewrite(context.TODO(), valueItem, mockTablePlan, nil, true)
@@ -6196,7 +6203,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
-	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
+	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
 	if pc.HistoricalStatsInfo != nil {

@@ -209,12 +209,15 @@ func TestGCServiceSafePoint(t *testing.T) {
 
 	req.NoError(adv.OnTick(ctx))
 	req.Equal(env.serviceGCSafePoint, cp-1)
+	env.fakeCluster.mu.Lock()
+	req.True(env.serviceGCSafePointSet)
+	env.fakeCluster.mu.Unlock()
 
 	env.unregisterTask()
 	req.Eventually(func() bool {
 		env.fakeCluster.mu.Lock()
 		defer env.fakeCluster.mu.Unlock()
-		return env.serviceGCSafePoint != 0 && env.serviceGCSafePointDeleted
+		return env.serviceGCSafePointDeleted
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
@@ -624,9 +627,9 @@ func TestCheckPointLagged(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-	// after some times, the isPaused will be set and ticks are skipped
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	// after the task is paused, ticks should be skipped without error.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 }
 

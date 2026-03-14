@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -185,13 +186,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	if !cfg.SkipPauseGCAndScheduler {
-		sp := utils.BRServiceSafePoint{
+		sp := gc.BRServiceSafePoint{
 			BackupTS: resolvedTs,
-			TTL:      utils.DefaultBRGCSafePointTTL,
-			ID:       utils.MakeSafePointID(),
+			TTL:      gc.DefaultBRGCSafePointTTL,
+			ID:       gc.MakeSafePointID(),
 		}
 		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-		err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+		err = gc.StartServiceSafePointKeeper(ctx, sp, mgr.GetGCManager())
 		if err != nil {
 			return errors.Trace(err)
 		}

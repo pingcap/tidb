@@ -58,6 +58,7 @@ import (
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -342,6 +343,36 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType m
 	}
 }
 
+// Set global index version for new global indexes.
+// Version 1 is needed for non-clustered tables to prevent collisions after
+// EXCHANGE PARTITION due to duplicate _tidb_rowid values.
+// For non-unique indexes, the handle is always encoded in the key.
+// For unique indexes with NULL values, the handle is also encoded in the key
+// (since NULL != NULL, multiple NULLs are allowed).
+// In both cases, we need the partition ID in the key to distinguish rows
+// from different partitions that may have the same _tidb_rowid.
+// Clustered tables don't have this issue and use version 0.
+func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	idxInfo.GlobalIndexVersion = 0
+	if idxInfo.Global && !tblInfo.HasClusteredIndex() {
+		needPartitionInKey := !idxInfo.Unique
+		if !needPartitionInKey {
+			nullCols := getNullColInfos(tblInfo, idxInfo.Columns)
+			if len(nullCols) > 0 {
+				needPartitionInKey = true
+			}
+		}
+		if needPartitionInKey {
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+				if valInt, ok := val.(int); ok {
+					idxInfo.GlobalIndexVersion = uint8(valInt)
+				}
+			})
+		}
+	}
+}
+
 // decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
 func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
@@ -410,6 +441,7 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
+		setGlobalIndexVersion(tblInfo, idxInfo)
 
 		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
 		if err != nil {
@@ -697,15 +729,15 @@ func setIndexVisibility(tblInfo *model.TableInfo, name ast.CIStr, invisible bool
 	}
 }
 
-func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
-	nullCols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
-	for _, colName := range indexInfo.Columns {
+func getNullColInfos(tblInfo *model.TableInfo, cols []*model.IndexColumn) []*model.ColumnInfo {
+	nullCols := make([]*model.ColumnInfo, 0, len(cols))
+	for _, colName := range cols {
 		col := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
 		if !mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag()) {
 			nullCols = append(nullCols, col)
 		}
 	}
-	return nullCols, nil
+	return nullCols
 }
 
 func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
@@ -718,10 +750,7 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
 	if err != nil {
 		return nil, err
 	}
-	nullCols, err := getNullColInfos(tblInfo, indexInfo)
-	if err != nil {
-		return nil, err
-	}
+	nullCols := getNullColInfos(tblInfo, indexInfo.Columns)
 	if len(nullCols) == 0 {
 		return nil, nil
 	}
@@ -1571,7 +1600,7 @@ func checkIfTableReorgWorkCanSkip(
 	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
-	ctx.setDDLLabelForTopSQL(job.Query)
+	ctx.attachTopProfilingInfo(job.Query)
 	if isEmpty, err := checkIfTableIsEmpty(ctx, store, tbl, startTS); err != nil || !isEmpty {
 		return false
 	}
@@ -1582,7 +1611,7 @@ func checkIfTableReorgWorkCanSkip(
 func CheckImportIntoTableIsEmpty(
 	store kv.Storage,
 	sessCtx sessionctx.Context,
-	tbl table.Table,
+	tblInfo *model.TableInfo,
 ) (bool, error) {
 	failpoint.Inject("checkImportIntoTableIsEmpty", func(_val failpoint.Value) {
 		if val, ok := _val.(string); ok {
@@ -1594,6 +1623,10 @@ func CheckImportIntoTableIsEmpty(
 			}
 		}
 	})
+	tbl, err := tables.TableFromMeta(autoid.Allocators{}, tblInfo)
+	if err != nil {
+		return false, err
+	}
 	txn, err := sessCtx.Txn(true)
 	if err != nil {
 		return false, err
@@ -1667,7 +1700,7 @@ func checkIfTempIndexReorgWorkCanSkip(
 	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
-	ctx.setDDLLabelForTopSQL(job.Query)
+	ctx.attachTopProfilingInfo(job.Query)
 	firstIdxID := allIndexInfos[0].ID
 	lastIdxID := allIndexInfos[len(allIndexInfos)-1].ID
 	var globalIdxIDs []int64
@@ -2454,7 +2487,16 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
 				}
-				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
+				actualHandle := handle
+				// For global indexes V1+ on partitioned tables, we need to wrap the handle
+				// with the partition ID to create a PartitionHandle.
+				// This is critical for non-clustered tables after EXCHANGE PARTITION,
+				// where duplicate _tidb_rowid values exist across partitions.
+				// Legacy indexes (version 0) don't use PartitionHandle in the key.
+				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
+				}
+				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}

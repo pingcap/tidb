@@ -162,6 +162,11 @@ type MDLoaderSetupConfig struct {
 	// ScanFileConcurrency specifes the concurrency of scaning source files.
 	ScanFileConcurrency int
 
+	// SkipRealSizeEstimation specifies whether to skip estimating `SourceFileMeta.RealSize` during loader setup.
+	// When enabled, `SourceFileMeta.RealSize` will be set to `SourceFileMeta.FileSize`, and parquet statistics
+	// will not be sampled.
+	SkipRealSizeEstimation bool
+
 	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
 	// and return the partial result.
 	ReturnPartialResultOnError bool
@@ -197,6 +202,14 @@ func WithScanFileConcurrency(concurrency int) MDLoaderSetupOption {
 		if concurrency > 0 {
 			cfg.ScanFileConcurrency = concurrency
 		}
+	}
+}
+
+// WithSkipRealSizeEstimation generates an option that controls whether to skip estimating `SourceFileMeta.RealSize`
+// during loader setup. When enabled, parquet file statistics will not be sampled.
+func WithSkipRealSizeEstimation(skip bool) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.SkipRealSizeEstimation = skip
 	}
 }
 
@@ -483,7 +496,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		}
 
 		// process file size for parquet files
-		if info.FileMeta.Type == SourceTypeParquet {
+		if info.FileMeta.Type == SourceTypeParquet && !s.setupCfg.SkipRealSizeEstimation {
 			v, _ := s.sampledParquetInfos.Load(info.TableName.String())
 			pinfo, _ := v.(parquetInfo)
 			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * pinfo.compressionRatio)
@@ -624,8 +637,13 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 
 	switch res.Type {
 	case SourceTypeSQL, SourceTypeCSV:
-		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
+		if !s.setupCfg.SkipRealSizeEstimation {
+			info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
+		}
 	case SourceTypeParquet:
+		if s.setupCfg.SkipRealSizeEstimation {
+			break
+		}
 		tableName := info.TableName.String()
 
 		// Only sample once for each table

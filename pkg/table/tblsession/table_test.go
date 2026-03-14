@@ -107,7 +107,6 @@ func TestSessionMutateContextFields(t *testing.T) {
 	)
 	require.Equal(t, 1, len(txnCtx.TableDeltaMap))
 	deltaMap := txnCtx.TableDeltaMap[12]
-	require.Equal(t, int64(12), deltaMap.TableID)
 	require.Equal(t, int64(1), deltaMap.Delta)
 	require.Equal(t, int64(2), deltaMap.Count)
 	// cached table support

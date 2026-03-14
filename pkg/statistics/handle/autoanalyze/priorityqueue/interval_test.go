@@ -65,6 +65,22 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	require.Equal(t, time.Duration(3600)*time.Second, avgDuration)
 }
 
+func TestGetAverageAnalysisDurationNegativeRecord(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+
+	// Insert a finished record with end_time earlier than start_time to force a negative duration.
+	// This could happen if the system clock is adjusted backward (rare in practice).
+	insertFinishedJob(tk, "neg_schema", "neg_table", "", "2024-01-01 10:00:00", "2024-01-01 09:00:00")
+
+	sctx := tk.Session().(sessionctx.Context)
+	avgDuration, err := priorityqueue.GetAverageAnalysisDuration(sctx, "neg_schema", "neg_table")
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(priorityqueue.NoRecord), avgDuration)
+}
+
 func insertMultipleFinishedJobs(tk *testkit.TestKit, tableName string, partitionName string) {
 	jobs := []struct {
 		dbName        string
@@ -128,6 +144,21 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	lastFailedDuration, err = priorityqueue.GetLastFailedAnalysisDuration(sctx, "example_schema", "example_table1")
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
+}
+
+func TestGetLastFailedAnalysisDurationNegativeRecord(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+
+	// Insert a failed record whose start_time is in the future to force a negative duration.
+	insertFailedJobWithStartTime(tk, "neg_schema", "neg_table", "", "2037-01-01 00:00:00")
+
+	sctx := tk.Session().(sessionctx.Context)
+	lastFailedDuration, err := priorityqueue.GetLastFailedAnalysisDuration(sctx, "neg_schema", "neg_table")
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Minute, lastFailedDuration)
 }
 
 func initJobs(tk *testkit.TestKit) {

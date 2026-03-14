@@ -3060,6 +3060,7 @@ const (
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
 	ShowGrants
+	ShowMaskingPolicies
 	ShowTriggers
 	ShowProcedureStatus
 	ShowFunctionStatus
@@ -3242,6 +3243,17 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
+		}
+	case ShowMaskingPolicies:
+		ctx.WriteKeyWord("MASKING POLICIES FOR ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+		if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Where")
+			}
 		}
 	case ShowGrants:
 		ctx.WriteKeyWord("GRANTS")
@@ -3991,6 +4003,15 @@ type SplitRegionStmt struct {
 	SplitOpt *SplitOption
 }
 
+type SplitIndexOption struct {
+	stmtNode
+
+	TableLevel bool
+	PrimaryKey bool
+	IndexName  CIStr
+	SplitOpt   *SplitOption
+}
+
 type SplitOption struct {
 	stmtNode
 
@@ -4145,6 +4166,38 @@ func (n *SplitOption) Accept(v Visitor) (Node, bool) {
 		}
 	}
 	return v.Leave(n)
+}
+
+func (n *SplitIndexOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SplitIndexOption)
+
+	node, ok := n.SplitOpt.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.SplitOpt = node.(*SplitOption)
+
+	return v.Leave(n)
+}
+
+func (n *SplitIndexOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SPLIT ")
+
+	// Table split, empty prefix
+	if n.TableLevel {
+	} else if n.PrimaryKey {
+		ctx.WriteKeyWord("PRIMARY KEY ")
+	} else {
+		ctx.WriteKeyWord("INDEX ")
+		ctx.WriteName(n.IndexName.String())
+		ctx.WritePlain(" ")
+	}
+
+	return n.SplitOpt.Restore(ctx)
 }
 
 type FulltextSearchModifier int
