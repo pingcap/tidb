@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -3359,7 +3360,7 @@ func upgradeToVer226(s sessiontypes.Session, ver int64) {
 	// In this case, no further action is needed.
 	expectedPKCols := []string{"restore_id", "restored_ts", "upstream_cluster_id", "segment_id"}
 	pkCols := getPrimaryKeyColsOrEmpty(s, mysql.SystemDB, "tidb_pitr_id_map")
-	if sameStringSlice(pkCols, expectedPKCols) {
+	if slices.Equal(pkCols, expectedPKCols) {
 		return
 	}
 
@@ -3386,18 +3387,6 @@ func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) 
 		cols = append(cols, row.GetString(0))
 	}
 	return cols
-}
-
-func sameStringSlice(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
