@@ -142,7 +142,7 @@ CREATE TABLE mysql.stats_table_data (
 );
 ```
 
-Each partition stores one row. `REPLACE INTO` overwrites stale samples atomically. The serialized collector contains samples, weights, FMSketches, null counts, and total sizes — everything needed to participate in a future merge.
+Each partition stores one row. The serialized blob is a `ReservoirRowSampleCollector` containing sampled rows with all column values (the same structure returned by TiKV during ANALYZE), per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and A-Res weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
 ### Progressive Pruning
 
