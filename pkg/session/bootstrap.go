@@ -1257,7 +1257,8 @@ const (
 
 	// version 226
 	// Ensure `mysql.tidb_pitr_id_map` has `restore_id` and correct primary key.
-	// This is a compatibility fix for upgrade paths where version221 was already used.
+	// This is a compatibility fix for upgrade paths where version221 was reused in
+	// other branches/releases for a different purpose.
 	version226 = 226
 
 	// ...
