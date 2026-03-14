@@ -798,9 +798,20 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		commonNames := make([]string, 0, len(lNames))
 		lNameMap := make(map[string]int, len(lNames))
 		rNameMap := make(map[string]int, len(rNames))
+<<<<<<< HEAD
 		for _, name := range lNames {
 			// Natural join should ignore _tidb_rowid
 			if name.ColName.L == "_tidb_rowid" {
+=======
+		for i, name := range lNames {
+			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
+			if name.ColName.L == model.ExtraHandleName.L ||
+				name.ColName.L == model.ExtraCommitTSName.L ||
+				name.ColName.L == model.ExtraPhysTblIDName.L {
+>>>>>>> 197616859a6 (planner: ignore hidden columns in natural/using join matching (#66069))
+				continue
+			}
+			if lColumns[i].IsHidden {
 				continue
 			}
 			// record left map
@@ -810,9 +821,20 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 				lNameMap[name.ColName.L] = 1
 			}
 		}
+<<<<<<< HEAD
 		for _, name := range rNames {
 			// Natural join should ignore _tidb_rowid
 			if name.ColName.L == "_tidb_rowid" {
+=======
+		for i, name := range rNames {
+			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
+			if name.ColName.L == model.ExtraHandleName.L ||
+				name.ColName.L == model.ExtraCommitTSName.L ||
+				name.ColName.L == model.ExtraPhysTblIDName.L {
+>>>>>>> 197616859a6 (planner: ignore hidden columns in natural/using join matching (#66069))
+				continue
+			}
+			if rColumns[i].IsHidden {
 				continue
 			}
 			// record right map
@@ -849,7 +871,14 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		if lName.ColName.L == "_tidb_rowid" {
 			continue
 		}
+		// Hidden columns are internal-only and shuold not participate in NATURAL/USING column matching.
+		if lColumns[i].IsHidden {
+			continue
+		}
 		for j := commonLen; j < len(rNames); j++ {
+			if rColumns[j].IsHidden {
+				continue
+			}
 			if lName.ColName.L != rNames[j].ColName.L {
 				continue
 			}
