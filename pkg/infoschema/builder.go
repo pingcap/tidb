@@ -1009,6 +1009,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
 	}
+	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
+	b.infoSchema.maskingPoliciesLoadCh = nil
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil

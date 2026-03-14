@@ -75,3 +75,25 @@ func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
 	is.loadMaskingPoliciesIfNeeded()
 	require.Equal(t, 1, calls)
 }
+
+func TestInitWithOldInfoSchemaKeepsMaskingLoadedState(t *testing.T) {
+	oldIS := newInfoSchema(nil)
+	oldIS.maskingPoliciesLoaded = true
+	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
+		7: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("p"),
+			TableID:  42,
+			ColumnID: 7,
+		},
+	}
+
+	builder := NewBuilder(nil, nil, NewData(), false)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
+
+	newIS := builder.infoSchema
+	require.True(t, newIS.maskingPoliciesLoaded)
+	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
+	require.True(t, ok)
+	require.Equal(t, int64(1), policy.ID)
+}
