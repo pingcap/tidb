@@ -176,6 +176,8 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
 
 **Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th column in the original ANALYZE request. On load, the FMSketch array length of the saved collector is compared against the current ANALYZE's collector. If they differ (columns added or dropped), the saved samples are discarded and the partition falls back to merge-based global stats. This check does not detect column type or collation changes with the same column count; a schema fingerprint (column IDs + types) could strengthen this in a future iteration.
 
+**Partial coverage**: If some partitions lack saved samples (e.g., newly created by `REORGANIZE PARTITION`, or never analyzed with the sample-based path), those partitions are skipped during the merge. Global stats are built from the available samples, which may underrepresent the missing partitions. To ensure complete coverage, a full `ANALYZE TABLE` (without partition restriction) should be run after schema changes that add new partitions.
+
 This avoids re-scanning unchanged partitions entirely. The cost is:
 - **I/O**: reading ~500 KB per partition from TiKV (pruned sample blobs)
 - **CPU**: merging N collectors in memory (milliseconds for 1,000 partitions)
