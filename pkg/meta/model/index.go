@@ -362,6 +362,15 @@ func (index *IndexInfo) IsPublic() bool {
 	return index.State == StatePublic
 }
 
+// IsSingleColumnUniqueIndex returns true if the index is public, unique (or
+// primary), has exactly one column, and uses neither a prefix nor a
+// partial-index condition. For such indexes every value appears at most once.
+func (index *IndexInfo) IsSingleColumnUniqueIndex() bool {
+	return index.State == StatePublic &&
+		(index.Unique || index.Primary) && len(index.Columns) == 1 &&
+		!index.HasPrefixIndex() && !index.HasCondition()
+}
+
 // IsColumnarIndex checks whether the index is a columnar index.
 // Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsColumnarIndex() bool {

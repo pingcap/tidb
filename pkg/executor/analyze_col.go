@@ -68,23 +68,11 @@ type AnalyzeColumnsExec struct {
 // single-column unique index whose only column has the given offset.
 func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if isSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == colOffset {
+		if idx.IsSingleColumnUniqueIndex() && idx.Columns[0].Offset == colOffset {
 			return true
 		}
 	}
 	return false
-}
-
-// isSingleColNonPrefixUniqueIndex returns true if the index is public, unique
-// (or primary), has exactly one column, and uses neither a prefix nor a
-// partial-index condition.
-func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
-	return idx.State == model.StatePublic &&
-		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
-		!idx.HasPrefixIndex() && !idx.HasCondition()
 }
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
