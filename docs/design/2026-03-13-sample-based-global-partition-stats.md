@@ -144,7 +144,9 @@ CREATE TABLE mysql.stats_table_data (
 );
 ```
 
-Each partition stores one row. The serialized blob is a `ReservoirRowSampleCollector` containing sampled rows with all column values (the same structure returned by TiKV during ANALYZE), per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and A-Res weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
+Each partition stores one row containing all samples to be persisted for that partition. The serialized blob is a `ReservoirRowSampleCollector` — the same structure returned by TiKV during ANALYZE. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and A-Res weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
+
+The per-partition blob size depends primarily on the number of samples and the number and types of analyzed columns. For a table with 20 integer columns and 500 pruned samples, the blob is roughly 50–100 KB. For 50 mixed-type columns (integers, strings, timestamps) with 3,000–4,000 samples, it grows to 400–700 KB. Tables analyzed with `PREDICATE COLUMNS` will have smaller blobs since fewer columns are sampled.
 
 ### Progressive Pruning
 
@@ -156,7 +158,7 @@ Subsequent partitions: target = (budget / totalPartitions) × (partitionRows / a
                        clamped to [500, MaxSampleSize]
 ```
 
-Larger partitions get proportionally more samples. The per-partition minimum (500) ensures each partition retains enough samples for valid A-Res sub-sampling. For tables with many partitions, the minimum takes precedence over the target budget — e.g., 8,000 partitions × 500 = 4M total samples. In practice this is acceptable: 500 pruned samples per partition produce small blobs (~50–100 KB each), and the total storage remains well below what the full 10,000-sample reservoirs would require.
+Larger partitions get proportionally more samples. The per-partition minimum (500) ensures each partition retains enough samples for valid A-Res sub-sampling. For tables with many partitions, the minimum takes precedence over the target budget — e.g., 8,000 partitions × 500 = 4M total samples. In practice this is acceptable because pruned blobs are much smaller than full reservoirs (see blob size estimates above).
 
 The pruning performs correct A-Res sub-sampling: a smaller reservoir is created and all current samples compete for slots via weighted selection, preserving statistical validity.
 
@@ -280,13 +282,13 @@ Measurements: wall-clock duration, CPU time, memory usage, and accuracy (row cou
 - **Faster global stats for many partitions**: Building histograms from merged samples avoids the expensive O(P) histogram re-bucketing merge. For tables with thousands of partitions, this should significantly reduce ANALYZE time.
 - **Faster single-partition re-analyze**: Rebuilding global stats after a single-partition ANALYZE requires only I/O (loading saved samples) + in-memory merge, not re-merging all partitions' histograms.
 - **Improved global stats quality**: Histograms built from actual sampled data avoid the information loss inherent in histogram merging, potentially improving cardinality estimation.
-- **Additional storage**: Persisted samples add ~400-700 KB per partition. For a table with 1,000 partitions, this is ~400-700 MB in TiKV.
+- **Additional storage**: Persisted samples add ~50–700 KB per partition depending on pruned sample count, number of analyzed columns, and column types (see blob size estimates in the Persisting Samples section). For a table with 1,000 partitions and 50 mixed-type columns, this is ~400–700 MB in TiKV; for narrower tables or predicate-column analysis, storage is proportionally less.
 
 ### Risks
 
 - **Per-bucket NDV is zero**: The sample-based path produces zero per-bucket NDV for all histogram buckets. In practice this is not a regression — the merge-based path also zeroes per-bucket NDV after computing it, with the comment "after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them." The non-partitioned index path similarly zeroes per-bucket NDV via `StandardizeForV2AnalyzeIndex` after region merge. Per-bucket NDV is therefore zero in all current V2 stats paths. Future improvement: since the sample-based path builds histograms from sorted samples, counting distinct values per bucket during construction would be straightforward and could provide per-bucket NDV where neither the merge-based nor the current non-partitioned path does.
 - **Sample staleness**: If a partition's data changes significantly but is not re-analyzed, its saved samples become stale. An incremental rebuild using stale samples produces outdated distribution information for that partition. Mitigation: staleness detection via `ModifyCount` thresholds should trigger re-analyze of modified partitions.
-- **Memory for very wide tables**: The merged collector holds up to 10,000 rows with all column values in memory. For tables with hundreds of columns and large string values, this could be significant. Mitigation: existing column type exclusions (`tidb_analyze_skip_column_types`) already filter blob/json columns from sampling.
+- **Memory for very wide tables**: The merged collector holds up to 10,000 rows with all analyzed column values in memory. For tables with hundreds of columns and large string values, this could be significant. Mitigation: existing column type exclusions (`tidb_analyze_skip_column_types`) already filter blob/json columns from sampling.
 
 ## Investigation & Alternatives
 
