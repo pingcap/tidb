@@ -165,13 +165,13 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(2)})
 		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.00000001})
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.123})
-		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(4)})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(4)})
 		// ExecDetail == nil
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.0})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
-		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(0)})
 		// ExecDetail != nil && d.CommitDetail == nil && d.ScanDetail == nil
 		accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)]
 		accessor.Setter(context.Background(), seVar, items)
@@ -181,7 +181,7 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.0})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
-		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(0)})
 
 		// ExecDetail != nil && d.ScanDetail != nil
 		seVar.StmtCtx.SyncExecDetails.Reset()
