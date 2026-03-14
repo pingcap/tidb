@@ -196,7 +196,8 @@ Persisted samples must be cleaned up when partitions change:
 A new session variable controls the feature:
 
 ```sql
-SET [GLOBAL|SESSION] tidb_enable_sample_based_global_stats = ON;
+SET SESSION tidb_enable_sample_based_global_stats = ON;
+SET GLOBAL tidb_enable_sample_based_global_stats = ON;
 ```
 
 | Property | Value |
