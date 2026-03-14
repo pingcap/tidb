@@ -191,6 +191,8 @@ Persisted samples must be cleaned up when partitions change:
 | `EXCHANGE PARTITION` | Both sides' samples deleted |
 | `REORGANIZE PARTITION` | Old partitions' samples deleted; new partitions have no samples until analyzed |
 
+Cleanup is handled by the existing stats GC path (`GCStats`), which deletes rows by `table_id` from all `mysql.stats_*` tables when a physical table or partition ID becomes orphaned. `mysql.stats_table_data` must be added to this GC sweep. Since rows are keyed by `table_id` (the physical partition ID), the same `table_id`-based deletion used for other stats tables applies directly — no histogram-level or `hist_id`-based cleanup is needed.
+
 ### User Interface
 
 A new session variable controls the feature:
