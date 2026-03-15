@@ -6423,7 +6423,7 @@ func (e *executor) getMaskingPolicyByNameForDDL(
 		}
 	}
 	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
-		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		kv.WithInternalSourceType(ctx, kv.InternalTxnDDL),
 		nil,
 		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy
