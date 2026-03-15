@@ -33,9 +33,9 @@ func TestMaskingPolicyPersistAfterRestart(t *testing.T) {
 	// Verify policy shows in show create table
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
-			"  `id` int NOT NULL AUTO_INCREMENT,\n" +
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  `c` char(120) DEFAULT NULL /* MASKING POLICY `simple_mask` ENABLED */,\n" +
-			"  PRIMARY KEY (`id`)\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -52,9 +52,9 @@ func TestMaskingPolicyPersistAfterRestart(t *testing.T) {
 	// This test should FAIL until the bug is fixed
 	tk2.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
-			"  `id` int NOT NULL AUTO_INCREMENT,\n" +
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  `c` char(120) DEFAULT NULL /* MASKING POLICY `simple_mask` ENABLED */,\n" +
-			"  PRIMARY KEY (`id`)\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
