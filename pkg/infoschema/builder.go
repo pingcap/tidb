@@ -1009,7 +1009,9 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
 	}
-	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
+	// Reset maskingPoliciesLoaded to force reload on first access.
+	// This ensures that newly created/modified/deleted policies are loaded from the database.
+	b.infoSchema.maskingPoliciesLoaded = false
 	b.infoSchema.maskingPoliciesLoadCh = nil
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)

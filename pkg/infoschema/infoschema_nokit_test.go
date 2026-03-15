@@ -76,7 +76,7 @@ func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
-func TestInitWithOldInfoSchemaKeepsMaskingLoadedState(t *testing.T) {
+func TestInitWithOldInfoSchemaResetsMaskingLoadedState(t *testing.T) {
 	oldIS := newInfoSchema(nil)
 	oldIS.maskingPoliciesLoaded = true
 	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
@@ -92,7 +92,9 @@ func TestInitWithOldInfoSchemaKeepsMaskingLoadedState(t *testing.T) {
 	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
 
 	newIS := builder.infoSchema
-	require.True(t, newIS.maskingPoliciesLoaded)
+	// The loaded state should be reset to force reload on first access
+	require.False(t, newIS.maskingPoliciesLoaded)
+	// The policy map should still be copied (as a starting point)
 	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
 	require.True(t, ok)
 	require.Equal(t, int64(1), policy.ID)
