@@ -406,8 +406,12 @@ func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 func applyMaskingPolicyChange(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	// Reset the loaded flag to trigger a full reload on next access.
 	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	// We need to hold the lock to ensure consistency when resetting these fields.
+	b.infoSchema.maskingPolicyMutex.Lock()
 	b.infoSchema.maskingPoliciesLoaded = false
 	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+	b.infoSchema.maskingPoliciesLoadCh = nil
+	b.infoSchema.maskingPolicyMutex.Unlock()
 	return nil, nil
 }
 
