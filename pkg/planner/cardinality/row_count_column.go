@@ -299,7 +299,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		// Calculate if the estimate already covers the full range of realtimeRowCount.
 		// Use a tolerance factor to avoid precision issues.
-		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		atFullRange := cnt >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
 		// handling the out-of-range part if the estimate does not cover the full range.
 		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV

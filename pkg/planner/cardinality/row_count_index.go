@@ -339,7 +339,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 		// Calculate if the estimate already covers the full range of realtimeRowCount.
 		// Use a tolerance factor to avoid precision issues.
-		atFullRange := count.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		atFullRange := count >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
 		// handling the out-of-range part if the estimate does not cover the full range.
 		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
