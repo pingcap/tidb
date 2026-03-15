@@ -227,6 +227,7 @@ The sample-based path falls back transparently to the merge-based path when:
 - The variable is disabled
 - No sample collector is available (e.g., all partition analyses failed)
 - Schema mismatch detected when loading saved samples (columns were added/dropped between analyzes)
+- Some partitions lack saved samples (e.g., newly created partitions or first analysis) — those partitions are skipped during the sample merge and global stats are built from available samples only (see [Partial coverage](#single-partition-re-analyze))
 
 **Upgrade**: No samples exist yet. First ANALYZE with the flag enabled populates them. The merge-based path works as fallback until then.
 
