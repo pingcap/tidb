@@ -6478,10 +6478,16 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 		return errors.Errorf("unsupported alter masking policy type: %d", spec.Tp)
 	}
 	newPolicy.UpdatedAt = time.Now()
+	jobSchemaID := schema.ID
+	// In DDL v1, MaskingPolicyArgs decodes PolicyID from job.SchemaID for alter/drop.
+	// Keep schema.ID in v2 where PolicyID is encoded in typed job args directly.
+	if model.GetJobVerInUse() == model.JobVersion1 {
+		jobSchemaID = policy.ID
+	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
-		SchemaID:       schema.ID,
+		SchemaID:       jobSchemaID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,
@@ -6525,10 +6531,16 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 	newPolicy := policy.Clone()
 	newPolicy.Status = status
 	newPolicy.UpdatedAt = time.Now()
+	jobSchemaID := schema.ID
+	// In DDL v1, MaskingPolicyArgs decodes PolicyID from job.SchemaID for alter/drop.
+	// Keep schema.ID in v2 where PolicyID is encoded in typed job args directly.
+	if model.GetJobVerInUse() == model.JobVersion1 {
+		jobSchemaID = policy.ID
+	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
-		SchemaID:       schema.ID,
+		SchemaID:       jobSchemaID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,
@@ -6564,10 +6576,16 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 	if policy.TableID != tbl.Meta().ID {
 		return errors.Errorf("masking policy %s doesn't belong to table %s", policyName.O, tbl.Meta().Name.O)
 	}
+	jobSchemaID := schema.ID
+	// In DDL v1, MaskingPolicyArgs decodes PolicyID from job.SchemaID for alter/drop.
+	// Keep schema.ID in v2 where PolicyID is encoded in typed job args directly.
+	if model.GetJobVerInUse() == model.JobVersion1 {
+		jobSchemaID = policy.ID
+	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
-		SchemaID:       schema.ID,
+		SchemaID:       jobSchemaID,
 		SchemaName:     policy.DBName.L,
 		TableID:        policy.TableID,
 		TableName:      policy.TableName.L,
