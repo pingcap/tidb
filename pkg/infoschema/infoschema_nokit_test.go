@@ -99,3 +99,27 @@ func TestInitWithOldInfoSchemaCopiesMaskingLoadedState(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(1), policy.ID)
 }
+
+func TestInitWithOldInfoSchemaDoesNotInheritMaskingLoadChannel(t *testing.T) {
+	oldIS := newInfoSchema(nil)
+	oldIS.maskingPoliciesLoaded = false
+	oldIS.maskingPoliciesLoadCh = make(chan struct{})
+	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
+		7: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("p"),
+			TableID:  42,
+			ColumnID: 7,
+		},
+	}
+
+	builder := NewBuilder(nil, nil, NewData(), false)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
+
+	newIS := builder.infoSchema
+	require.Nil(t, newIS.maskingPoliciesLoadCh)
+	require.False(t, newIS.maskingPoliciesLoaded)
+	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
+	require.True(t, ok)
+	require.Equal(t, int64(1), policy.ID)
+}

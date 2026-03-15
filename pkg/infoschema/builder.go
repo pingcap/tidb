@@ -1019,12 +1019,19 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	oldIS.maskingPolicyMutex.RLock()
 	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
 	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
 	}
 	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
-	b.infoSchema.maskingPoliciesLoadCh = oldIS.maskingPoliciesLoadCh
+	// Do not inherit an in-progress loader channel from old infoschema instance.
+	// If loading is in progress during clone, force lazy reload in new infoschema.
+	if oldIS.maskingPoliciesLoadCh != nil {
+		b.infoSchema.maskingPoliciesLoaded = false
+	}
+	b.infoSchema.maskingPoliciesLoadCh = nil
+	oldIS.maskingPolicyMutex.RUnlock()
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
