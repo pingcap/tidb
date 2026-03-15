@@ -2908,7 +2908,7 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma','2-ma'), (3, 'md','3-md'), (4, 'ma','4-ma'), (5, 'md','5-md'), (6, 'ma','6-ma')")
 	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
 	tk.MustContainErrMsg("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST", errMsg)
-	tk1.MustContainErrMsg("alter table t40135 modify column a int NULL", errMsg)
+	tk1.MustExec("alter table t40135 modify column a int NULL")
 	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
 		"t40135 CREATE TABLE `t40135` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -2919,6 +2919,17 @@ func TestIssue40135Ver2(t *testing.T) {
 		"PARTITION BY HASH (`a`) PARTITIONS 6"))
 	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec("admin check table t40135")
+}
+
+func TestModifyPartitionColumnRenameOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_part_mod_rename (a int, b int) partition by hash(a) partitions 2")
+	// Renaming partition column should be rejected by conservative partition-column check.
+	tk.MustContainErrMsg("alter table t_part_mod_rename change column a a_new int",
+		"[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {

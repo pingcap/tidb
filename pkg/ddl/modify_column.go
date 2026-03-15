@@ -1563,6 +1563,9 @@ func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, tblInfo *m
 	if oldCol == nil {
 		oldCol = col
 	}
+	if oldCol.Name.L != newCol.Name.L {
+		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(oldCol.Name.L)
+	}
 
 	oldElems := oldCol.GetElems()
 	newElems := newCol.GetElems()
