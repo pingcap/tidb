@@ -72,7 +72,7 @@ import (
 
 const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
+	DDLOwnerKey             = util.DDLOwnerKey
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
@@ -761,7 +761,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
-		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
+		manager = owner.NewMockManager(ctx, id, opt.Store, util.DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	dist_store "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -62,7 +63,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 
 		var op owner.OpType
 		childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		op, err = owner.GetOwnerOpValue(childCtx, dom.GetEtcdClient(), ddl.DDLOwnerKey)
+		op, err = owner.GetOwnerOpValue(childCtx, dom.GetEtcdClient(), util.DDLOwnerKey)
 		cancel()
 		if err == nil && op.IsSyncedUpgradingState() {
 			break

@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -88,7 +89,7 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	}
 	om.id = uuid.New().String()
 	om.etcdCli = cli
-	om.ownerMgr = owner.NewOwnerManager(ctx, om.etcdCli, Prompt, om.id, DDLOwnerKey)
+	om.ownerMgr = owner.NewOwnerManager(ctx, om.etcdCli, Prompt, om.id, util.DDLOwnerKey)
 	om.started = true
 	return nil
 }

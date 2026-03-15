@@ -27,6 +27,7 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/serverstate",
+        "//pkg/ddl/util",
         "//pkg/distsql/context",
         "//pkg/domain",
         "//pkg/domain/infosync",
