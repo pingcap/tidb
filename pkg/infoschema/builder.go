@@ -104,6 +104,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return []int64{-1}, nil
 	case model.ActionRefreshMeta:
 		return applyRefreshMeta(b, m, diff)
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		return applyMaskingPolicyChange(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -399,6 +401,14 @@ func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 		b.markTableBundleShouldUpdate(opt.TableID)
 	}
 	return tblIDs, nil
+}
+
+func applyMaskingPolicyChange(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	// Reset the loaded flag to trigger a full reload on next access.
+	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	b.infoSchema.maskingPoliciesLoaded = false
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+	return nil, nil
 }
 
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
@@ -1009,10 +1019,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
 	}
-	// Reset maskingPoliciesLoaded to force reload on first access.
-	// This ensures that newly created/modified/deleted policies are loaded from the database.
-	b.infoSchema.maskingPoliciesLoaded = false
-	b.infoSchema.maskingPoliciesLoadCh = nil
+	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
+	b.infoSchema.maskingPoliciesLoadCh = oldIS.maskingPoliciesLoadCh
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
