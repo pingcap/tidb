@@ -130,6 +130,13 @@ The reservoir keeps items with the largest keys. TiDB already implements this al
 
 Key property: merging is **associative** — `merge(merge(A, B), C) == merge(A, merge(B, C))`. This allows streaming: each partition's collector is merged into a running accumulator and then discarded, so memory usage is constant regardless of partition count.
 
+**Sampling method prerequisite**: TiDB V2 stats supports two row-level sampling methods, selected by the ANALYZE options:
+
+- **A-Res (reservoir)**: Used when `NumSamples > 0` (e.g., `ANALYZE TABLE t WITH 10000 SAMPLES`). Each sample carries a random `Weight` used for min-heap competition during merge. This is what enables correct proportional representation across sources of different sizes.
+- **Bernoulli**: Used when `SampleRate > 0` (the V2 default, where `NumSamples = 0` and `SampleRate` is auto-calculated). Each row is independently included with probability `SampleRate`. Samples have `Weight = 0` — there is no weight to compete on during merge.
+
+The sample-based global stats path **requires A-Res**. Bernoulli samples cannot be correctly merged across partitions of different sizes because they lack weights for proportional representation. The current implementation silently falls back to the merge-based path when Bernoulli samples are detected (the collector type assertion fails). This means that with the default V2 settings, enabling `tidb_enable_sample_based_global_stats` alone is not sufficient — the user must also specify `WITH N SAMPLES` or the path will fall back. See Unresolved Questions for options to address this.
+
 ### Persisting Samples for Incremental Rebuild
 
 Each partition's pruned sample collector is serialized via protobuf and stored in `mysql.stats_table_data`, keyed by the partition's physical table ID:
@@ -326,3 +333,5 @@ Store intermediate merge results in a tree structure, enabling O(log N) incremen
 3. **Default ON criteria**: What benchmarks and quality checks should be satisfied before changing the default from OFF to ON?
 
 4. **Interaction with async merge**: The existing `tidb_enable_async_merge_global_stats` merges partition stats asynchronously. How should the sample-based path interact with this? Should sample persistence also be async?
+
+5. **Bernoulli sampling compatibility**: The default V2 ANALYZE uses Bernoulli sampling (`SampleRate`, `Weight = 0`), which lacks the per-sample weights needed for A-Res cross-partition merging. The current implementation silently falls back to merge-based when Bernoulli samples are detected. Options to address this: (a) automatically override to A-Res (`NumSamples = 10000`) when `tidb_enable_sample_based_global_stats` is enabled for partitioned tables; (b) convert Bernoulli samples to weighted by assigning synthetic weights and sub-sampling to a fixed reservoir size before persisting; (c) document `WITH N SAMPLES` as a prerequisite and leave the default unchanged.
