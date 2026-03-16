@@ -18,7 +18,6 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
@@ -37,14 +36,7 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Performance.EnableStatsCacheMemQuota = true
-		conf.Path = "127.0.0.1:2379"
 	})
-	if err := failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockGetCloudStoragePrefix", `return("file:///tmp/tidb/mock-tici-import,1")`); err != nil {
-		panic(err)
-	}
-	if err := failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload", `return(true)`); err != nil {
-		panic(err)
-	}
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

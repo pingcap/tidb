@@ -198,12 +198,10 @@ func TestFTSMultiColumnForTiCI(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
 	}()
 
 	tk.MustExec(`create table t(

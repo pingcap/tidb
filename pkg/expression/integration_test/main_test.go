@@ -17,7 +17,6 @@ package integration_test
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -34,14 +33,7 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
-		conf.Path = "127.0.0.1:2379"
 	})
-	if err := failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockGetCloudStoragePrefix", `return("file:///tmp/tidb/mock-tici-import,1")`); err != nil {
-		panic(err)
-	}
-	if err := failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload", `return(true)`); err != nil {
-		panic(err)
-	}
 	tikv.EnableFailpoints()
 
 	// Some test depends on the values of timeutil.SystemLocation()
