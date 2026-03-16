@@ -61,6 +61,9 @@ var (
 
 // NormalizeTiDBReleaseVersionForNextGen rewrites the legacy placeholder into a nextgen
 // placeholder that follows `v[2-digit-year].[month].[fix-version]`.
+// pkg/parser is Golang project, it cannot use kerneltype pkg to conditionally
+// compile different code for next-gen and classic, so we have to rewrite the
+// placeholder value in this function.
 func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
 	// the version is not set if we run next-gen tidb from IDE.
 	if releaseVersion == legacyTiDBReleaseVersionPlaceholder {
