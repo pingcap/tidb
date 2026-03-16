@@ -475,7 +475,13 @@ type BatchPointGetPlan struct {
 	Lock          bool
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	cost          float64
+
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
+	cost float64
 
 	// required by cost model
 	planCostInit bool
@@ -1343,6 +1349,18 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	p.dbName = dbName
+
+	// Build masking expressions for columns with masking policies
+	is := ctx.GetInfoSchema()
+	if is != nil {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			// Log error but don't fail the plan building
+			logutil.BgLogger().Warn("failed to build masking expressions for BatchPointGet", zap.Error(err))
+		} else {
+			p.MaskingExprs = maskExprs
+		}
+	}
 
 	return p
 }
