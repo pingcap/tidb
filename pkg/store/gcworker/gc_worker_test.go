@@ -100,6 +100,7 @@ type mockGCWorkerClient struct {
 	tikv.Client
 	unsafeDestroyRangeHandler handler
 	deleteRangeHandler        handler
+	gcRequestHandler          handler
 	scanLockRequestHandler    handler
 }
 
@@ -118,6 +119,9 @@ func (c *mockGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 	}
 	if req.Type == tikvrpc.CmdDeleteRange && c.deleteRangeHandler != nil {
 		resp, err = c.deleteRangeHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdGC && c.gcRequestHandler != nil {
+		resp, err = c.gcRequestHandler(addr, req)
 	}
 	if req.Type == tikvrpc.CmdScanLock && c.scanLockRequestHandler != nil {
 		resp, err = c.scanLockRequestHandler(addr, req)
@@ -145,6 +149,13 @@ type mockGCWorkerSuite struct {
 		peerIDs  []uint64
 		regionID uint64
 	}
+	gcInvocations   []gcInvocation
+	gcInvocationsMu sync.Mutex
+}
+
+type gcInvocation struct {
+	regionID  uint64
+	safePoint uint64
 }
 
 type mockGCWorkerSuiteOptions struct {
@@ -212,6 +223,7 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
+	s.client.gcRequestHandler = s.recordGCInvocation
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	require.NoError(t, err)
@@ -220,6 +232,31 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 	s.gcWorker = gcWorker
 
 	return s
+}
+
+func (s *mockGCWorkerSuite) recordGCInvocation(_ string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	s.gcInvocationsMu.Lock()
+	s.gcInvocations = append(s.gcInvocations, gcInvocation{
+		regionID:  req.RegionId,
+		safePoint: req.GC().SafePoint,
+	})
+	s.gcInvocationsMu.Unlock()
+	return nil, nil
+}
+
+func (s *mockGCWorkerSuite) gcInvocationsSince(offset int) []gcInvocation {
+	s.gcInvocationsMu.Lock()
+	defer s.gcInvocationsMu.Unlock()
+
+	invocations := make([]gcInvocation, len(s.gcInvocations[offset:]))
+	copy(invocations, s.gcInvocations[offset:])
+	return invocations
+}
+
+func (s *mockGCWorkerSuite) gcInvocationCount() int {
+	s.gcInvocationsMu.Lock()
+	defer s.gcInvocationsMu.Unlock()
+	return len(s.gcInvocations)
 }
 
 func (s *mockGCWorkerSuite) mustPut(t *testing.T, key, value string) {
@@ -308,6 +345,12 @@ func (s *mockGCWorkerSuite) splitAtKeys(t *testing.T, keysStr ...string) {
 // specified key. Create this using `s.createGCProbe`.
 type gcProbe struct {
 	key string
+	// The region carrying the probe key. GC is detected by observing CmdGC RPCs
+	// sent to this region instead of reading old snapshots after safe point
+	// advances.
+	regionID uint64
+	// The count of observed GC RPCs before creating the probe.
+	gcInvocationOffset int
 	// The ts that can see the version that should be deleted.
 	v1Ts uint64
 	// The ts that can see the version that should be kept.
@@ -320,25 +363,46 @@ func (s *mockGCWorkerSuite) createGCProbe(t *testing.T, key string) *gcProbe {
 	ts1 := s.mustAllocTs(t)
 	s.mustPut(t, key, "v2")
 	ts2 := s.mustAllocTs(t)
+
+	bo := tikv.NewBackofferWithVars(context.Background(), gcOneRegionMaxBackoff, nil)
+	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(key))
+	require.NoError(t, err)
+
 	p := &gcProbe{
-		key:  key,
-		v1Ts: ts1,
-		v2Ts: ts2,
+		key:                key,
+		regionID:           loc.Region.GetID(),
+		gcInvocationOffset: s.gcInvocationCount(),
+		v1Ts:               ts1,
+		v2Ts:               ts2,
 	}
+	require.Equal(t, "v1", s.mustGet(t, p.key, p.v1Ts))
+	require.Equal(t, "v2", s.mustGet(t, p.key, p.v2Ts))
 	s.checkNotCollected(t, p)
 	return p
 }
 
 // checkCollected asserts the gcProbe has been correctly collected.
 func (s *mockGCWorkerSuite) checkCollected(t *testing.T, p *gcProbe) {
-	s.mustGetNone(t, p.key, p.v1Ts)
-	require.Equal(t, "v2", s.mustGet(t, p.key, p.v2Ts))
+	require.Equal(t, "v2", s.mustGet(t, p.key, s.mustAllocTs(t)))
+
+	for _, invocation := range s.gcInvocationsSince(p.gcInvocationOffset) {
+		if invocation.regionID == p.regionID && invocation.safePoint > p.v1Ts {
+			return
+		}
+	}
+
+	require.Failf(t, "gc request not observed", "key=%s region=%d invocations=%v", p.key, p.regionID, s.gcInvocationsSince(p.gcInvocationOffset))
 }
 
 // checkNotCollected asserts the gcProbe has not been collected.
 func (s *mockGCWorkerSuite) checkNotCollected(t *testing.T, p *gcProbe) {
-	require.Equal(t, "v1", s.mustGet(t, p.key, p.v1Ts))
-	require.Equal(t, "v2", s.mustGet(t, p.key, p.v2Ts))
+	require.Equal(t, "v2", s.mustGet(t, p.key, s.mustAllocTs(t)))
+
+	for _, invocation := range s.gcInvocationsSince(p.gcInvocationOffset) {
+		if invocation.regionID == p.regionID && invocation.safePoint > p.v1Ts {
+			require.Failf(t, "unexpected gc request observed", "key=%s region=%d invocation=%+v", p.key, p.regionID, invocation)
+		}
+	}
 }
 
 func timeEqual(t *testing.T, t1, t2 time.Time, epsilon time.Duration) {
@@ -992,15 +1056,6 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
-	// Disable the background txn safe-point cache updater (10 s poll) so it
-	// does not race with snapshot reads in checkCollected/mustGetNone.
-	// Without this, the updater may cache the advanced safe point before the
-	// test reads old probe timestamps, causing [tikv:9006] errors.
-	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
-	})
-
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(time.Hour))
@@ -1013,14 +1068,14 @@ func TestLeaderTick(t *testing.T) {
 	// Use central mode to do this test.
 	err := s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	require.NoError(t, err)
-	p := s.createGCProbe(t, "k1")
+	pdSafePoint := s.mustGetSafePointFromPd(t)
 	s.oracle.AddOffset(gcDefaultLifeTime * 2)
 
 	// Skip if GC is running.
 	s.gcWorker.gcIsRunning = true
 	err = s.gcWorker.leaderTick(context.Background())
 	require.NoError(t, err)
-	s.checkNotCollected(t, p)
+	require.Equal(t, pdSafePoint, s.mustGetSafePointFromPd(t))
 	s.gcWorker.gcIsRunning = false
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
@@ -1031,7 +1086,7 @@ func TestLeaderTick(t *testing.T) {
 	require.NoError(t, err)
 	err = s.gcWorker.leaderTick(gcContext())
 	require.NoError(t, err)
-	s.checkNotCollected(t, p)
+	require.Equal(t, pdSafePoint, s.mustGetSafePointFromPd(t))
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
 	require.NoError(t, err)
 	// Reset GC last run time
@@ -1042,7 +1097,7 @@ func TestLeaderTick(t *testing.T) {
 	s.gcWorker.lastFinish = time.Now()
 	err = s.gcWorker.leaderTick(gcContext())
 	require.NoError(t, err)
-	s.checkNotCollected(t, p)
+	require.Equal(t, pdSafePoint, s.mustGetSafePointFromPd(t))
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
@@ -1066,13 +1121,14 @@ func TestLeaderTick(t *testing.T) {
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
 	require.NoError(t, err)
-	s.checkCollected(t, p)
+	newSafePoint := s.mustGetSafePointFromPd(t)
+	require.Greater(t, newSafePoint, pdSafePoint)
+	pdSafePoint = newSafePoint
 
 	// Test again to ensure the synchronization between goroutines is correct.
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
-	p = s.createGCProbe(t, "k1")
 	s.oracle.AddOffset(gcDefaultLifeTime * 2)
 
 	err = s.gcWorker.leaderTick(gcContext())
@@ -1086,7 +1142,9 @@ func TestLeaderTick(t *testing.T) {
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
 	require.NoError(t, err)
-	s.checkCollected(t, p)
+	newSafePoint = s.mustGetSafePointFromPd(t)
+	require.Greater(t, newSafePoint, pdSafePoint)
+	pdSafePoint = newSafePoint
 
 	// No more signals in the channel
 	select {
@@ -1778,14 +1836,13 @@ func TestRunGCJob(t *testing.T) {
 	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
 
-	p := s.createGCProbe(t, "k1")
 	safePoint = s.mustAllocTs(t)
 	res, err = ctl.AdvanceTxnSafePoint(gcContext(), safePoint)
 	require.NoError(t, err)
 	require.Equal(t, safePoint, res.NewTxnSafePoint)
 	err = s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
-	s.checkCollected(t, p)
+	require.Equal(t, safePoint, s.mustGetSafePointFromPd(t))
 
 	etcdSafePoint = s.loadTxnSafePoint(t)
 	require.Equal(t, safePoint, etcdSafePoint)
@@ -1860,11 +1917,10 @@ func TestRunGCJobAPI(t *testing.T) {
 
 	txnSafePointSyncWaitTime = 0
 
-	p := s.createGCProbe(t, "k1")
 	safePoint := s.mustAllocTs(t)
 	err := RunGCJob(gcContext(), mockLockResolver, s.tikvStore, s.pdClient, safePoint, "mock", 1)
 	require.NoError(t, err)
-	s.checkCollected(t, p)
+	require.Equal(t, safePoint, s.mustGetSafePointFromPd(t))
 	etcdSafePoint := s.loadTxnSafePoint(t)
 	require.NoError(t, err)
 	require.Equal(t, safePoint, etcdSafePoint)
@@ -2229,4 +2285,35 @@ func TestCalcDeleteRangeConcurrency(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGCProbeCheckNotCollectedIgnoresTxnSafePointCache(t *testing.T) {
+	s := createGCWorkerSuite(t)
+
+	p := s.createGCProbe(t, "k1")
+	safePoint := s.mustAllocTs(t)
+	ctl := s.pdClient.GetGCInternalController(uint32(s.store.GetCodec().GetKeyspaceID()))
+	res, err := ctl.AdvanceTxnSafePoint(gcContext(), safePoint)
+	require.NoError(t, err)
+	require.Equal(t, safePoint, res.NewTxnSafePoint)
+
+	s.tikvStore.UpdateTxnSafePointCache(safePoint, time.Now())
+	s.checkNotCollected(t, p)
+}
+
+func TestGCProbeCheckCollectedIgnoresTxnSafePointCache(t *testing.T) {
+	s := createGCWorkerSuite(t)
+
+	ctx := context.Background()
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
+	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(""))
+	require.NoError(t, err)
+
+	p := s.createGCProbe(t, "k1")
+	safePoint := s.mustAllocTs(t)
+	_, err = s.gcWorker.doGCForRegion(bo, safePoint, loc.Region)
+	require.NoError(t, err)
+
+	s.tikvStore.UpdateTxnSafePointCache(safePoint, time.Now())
+	s.checkCollected(t, p)
 }
