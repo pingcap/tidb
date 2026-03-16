@@ -40,9 +40,9 @@ At the moment:
 
 ## Non-goals (not included yet)
 
-- Separate semantics for `WITH SYNC MODE`.
-  Refresh is synchronous today, so `WITH SYNC MODE` is parsed/executed but behaves the same as without it.
-  If async refresh is introduced later, semantics can be redefined.
+- Async execution semantics for `WITH ASYNC MODE`.
+  The syntax is reserved by spec, but async refresh is not implemented yet.
+  `REFRESH MATERIALIZED VIEW ... WITH ASYNC MODE ...` is parsed and rejected by executor.
 - Performance optimization for large MVs (for example large-transaction mitigation, delete cost reduction, swap table strategies).
 - Long-term retention/cleanup strategy for `mysql.tidb_mview_refresh_hist` (TTL/archival policy).
 
@@ -87,10 +87,10 @@ Supported syntax (all use one common transactional framework today):
 ```sql
 REFRESH MATERIALIZED VIEW db.mv COMPLETE;
 REFRESH MATERIALIZED VIEW mv COMPLETE; -- uses current DB
-REFRESH MATERIALIZED VIEW mv WITH SYNC MODE COMPLETE; -- same behavior today (refresh is already synchronous)
+REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE; -- parsed, but rejected: async refresh is not supported yet
 
 REFRESH MATERIALIZED VIEW mv FAST;
-REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST; -- same behavior today (refresh is already synchronous)
+REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST; -- parsed, but rejected: async refresh is not supported yet
 ```
 
 Current note: `FAST` requires `mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO` to be non-`NULL`; otherwise refresh fails.

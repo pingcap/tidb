@@ -128,14 +128,14 @@ func (*serviceHelper) getAllServerInfo(ctx context.Context) (map[string]serverIn
 // It:
 // 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from MVIEW_ID.
-// 3. Executes `REFRESH MATERIALIZED VIEW ... WITH SYNC MODE FAST`.
+// 3. Executes `REFRESH MATERIALIZED VIEW ... FAST`.
 // 4. Reads NEXT_TIME from mysql.tidb_mview_refresh_info.
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
 func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
-		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n FAST`
 		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 	startAt := mvsNow()
@@ -346,10 +346,7 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVRefreshHistSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
 		return err
 	}
-	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention)); err != nil {
-		return err
-	}
-	return nil
+	return purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention))
 }
 
 func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTSO uint64) error {

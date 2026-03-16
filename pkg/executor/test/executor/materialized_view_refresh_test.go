@@ -334,20 +334,20 @@ func TestMaterializedViewRefreshFastMinMaxWhereSeparateIndexes(t *testing.T) {
 		group by g1`)
 
 	tk.MustExec("insert into t_mv_fast_minmax_where values (19001, 1, 1, 1.00, 1, 1), (19002, 2, 2, 2.00, 1, 1)")
-	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where fast")
 	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
 		"1 1 1 1.00 1.00 1",
 		"2 1 2 2.00 2.00 1",
 	))
 
 	tk.MustExec("update t_mv_fast_minmax_where set g1 = 2, v1 = 10, f1 = 2, v2 = 9.00, c1 = 1 where id = 19001")
-	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where fast")
 	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
 		"2 1 2 2.00 2.00 1",
 	))
 
 	tk.MustExec("update t_mv_fast_minmax_where set f1 = 1 where id = 19001")
-	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where fast")
 	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
 		"2 2 12 2.00 9.00 2",
 	))
@@ -709,7 +709,7 @@ func TestMaterializedViewRefreshCompleteMissingRefreshInfoRow(t *testing.T) {
 	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 }
 
-func TestMaterializedViewRefreshWithSyncModeComplete(t *testing.T) {
+func TestMaterializedViewRefreshWithAsyncModeComplete(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -719,8 +719,9 @@ func TestMaterializedViewRefreshWithSyncModeComplete(t *testing.T) {
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
-	tk.MustExec("refresh materialized view mv with sync mode complete")
-	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	err := tk.ExecToErr("refresh materialized view mv with async mode complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "WITH ASYNC MODE is not supported yet")
 }
 
 func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testing.T) {

@@ -40,11 +40,11 @@ This document describes two refresh-level observability modes:
 ```sql
 REFRESH MATERIALIZED VIEW mv FAST DRY RUN;
 REFRESH MATERIALIZED VIEW mv COMPLETE DRY RUN;
-REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST DRY RUN;
+REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST DRY RUN; -- currently rejected because async refresh is unsupported
 
 REFRESH MATERIALIZED VIEW mv FAST WITH PROFILE;
 REFRESH MATERIALIZED VIEW mv COMPLETE WITH PROFILE;
-REFRESH MATERIALIZED VIEW mv WITH SYNC MODE COMPLETE WITH PROFILE;
+REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE WITH PROFILE; -- currently rejected because async refresh is unsupported
 ```
 
 ### Semantics
@@ -259,4 +259,3 @@ Suggested validation commands:
 make parser
 GOCACHE=/tmp/go-build go test ./pkg/executor/test/executor -run <TestName> -tags=intest,deadlock
 ```
-

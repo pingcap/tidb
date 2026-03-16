@@ -321,6 +321,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	apply                 "APPLY"
+	async                 "ASYNC"
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
@@ -651,7 +652,6 @@ import (
 	super                 "SUPER"
 	swaps                 "SWAPS"
 	switchesSym           "SWITCHES"
-	syncKwd               "SYNC"
 	system                "SYSTEM"
 	systemTime            "SYSTEM_TIME"
 	tables                "TABLES"
@@ -1445,7 +1445,7 @@ import (
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
 	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
-	RefreshWithSyncModeOpt                 "REFRESH MATERIALIZED VIEW WITH SYNC MODE option"
+	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
@@ -5614,10 +5614,10 @@ PurgeMaterializedViewLogStmt:
 	}
 
 RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithSyncModeOpt RefreshMaterializedViewType RefreshMaterializedViewObserveOpt
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt RefreshMaterializedViewType RefreshMaterializedViewObserveOpt
 	{
 		observeType := $7.(ast.RefreshMaterializedViewObserveType)
-		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithSyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType), ObserveType: observeType}
+		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithAsyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType), ObserveType: observeType}
 	}
 
 RefreshMaterializedViewType:
@@ -5644,12 +5644,12 @@ RefreshMaterializedViewObserveOpt:
 		$$ = ast.RefreshMaterializedViewObserveProfile
 	}
 
-RefreshWithSyncModeOpt:
+RefreshWithAsyncModeOpt:
 	/* EMPTY */
 	{
 		$$ = false
 	}
-|	"WITH" "SYNC" "MODE"
+|	"WITH" "ASYNC" "MODE"
 	{
 		$$ = true
 	}
@@ -7349,6 +7349,7 @@ UnReservedKeyword:
 |	"WEEK"
 |	"WEIGHT_STRING"
 |	"ANY"
+|	"ASYNC"
 |	"SOME"
 |	"USER"
 |	"IDENTIFIED"
@@ -7364,7 +7365,6 @@ UnReservedKeyword:
 |	"FAST"
 |	"IMMEDIATE"
 |	"REFRESH"
-|	"SYNC"
 |	"MAX_ROWS"
 |	"MIN_ROWS"
 |	"NATIONAL"

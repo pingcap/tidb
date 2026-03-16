@@ -1229,7 +1229,9 @@ func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isI
 	if isInternalSQL {
 		methodOrigin = "automatically"
 	}
-	// In MVP, refresh is synchronous by nature. `WITH SYNC MODE` is accepted and behaves the same.
+	if s.WithAsyncMode {
+		return "", errors.New("refresh materialized view: WITH ASYNC MODE is not supported yet")
+	}
 	return methodType + " " + methodOrigin, nil
 }
 

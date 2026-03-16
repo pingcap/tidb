@@ -8,6 +8,9 @@ create materialized view log on t_mv_txn_66385 (a, b) purge next date_add(now(),
 create materialized view mv_txn_66385 (a, s, cnt) refresh fast next now() as
 select a, sum(b), count(1) from t_mv_txn_66385 group by a;
 
+-- error 1105
+refresh materialized view mv_txn_66385 with async mode complete;
+
 begin;
 -- error 1105
 refresh materialized view mv_txn_66385 complete;
