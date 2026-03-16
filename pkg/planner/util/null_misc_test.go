@@ -1,0 +1,182 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package util
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestIsNullRejectedProofModes(t *testing.T) {
+	sctx := mock.NewContext()
+	exprCtx := sctx.GetExprCtx()
+
+	innerA := newNullRejectIntColumn(1)
+	innerB := newNullRejectIntColumn(2)
+	outerC := newNullRejectIntColumn(3)
+	innerSchema := expression.NewSchema(innerA, innerB)
+
+	gtInnerAZero := newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
+	eqInnerAZero := newNullRejectFunc(t, exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
+	gtOuterCZero := newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), outerC, expression.NewZero())
+	likeWrappedInnerA := newNullRejectLike(t, exprCtx, expression.BuildCastFunction(exprCtx, innerA, types.NewFieldType(mysql.TypeVarString)))
+	coalesceInnerA := newNullRejectFunc(t, exprCtx, ast.Coalesce, types.NewFieldType(mysql.TypeLonglong), innerA, expression.NewOne())
+	coalesceInnerATwo := newNullRejectFunc(t, exprCtx, ast.Coalesce, types.NewFieldType(mysql.TypeLonglong), innerA, newNullRejectIntConst(2))
+	nullSafeEqInnerA := newNullRejectFunc(t, exprCtx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewOne())
+
+	cases := []struct {
+		name     string
+		expr     expression.Expression
+		expected bool
+	}{
+		{
+			name: "or_needs_both_sides_non_true",
+			expr: newNullRejectFunc(t, exprCtx, ast.LogicOr, types.NewFieldType(mysql.TypeTiny),
+				gtInnerAZero,
+				newNullRejectFunc(t, exprCtx, ast.LogicAnd, types.NewFieldType(mysql.TypeTiny), eqInnerAZero, gtOuterCZero)),
+			expected: true,
+		},
+		{
+			name:     "not_uses_must_null",
+			expr:     newNullRejectFunc(t, exprCtx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), gtInnerAZero),
+			expected: true,
+		},
+		{
+			name:     "is_null_accepts_null",
+			expr:     newNullRejectFunc(t, exprCtx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), innerA),
+			expected: false,
+		},
+		{
+			name:     "is_true_rejects_null",
+			expr:     newNullRejectFunc(t, exprCtx, ast.IsTruthWithNull, types.NewFieldType(mysql.TypeTiny), innerA),
+			expected: true,
+		},
+		{
+			name: "not_is_null_rejects_null",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.UnaryNot,
+				types.NewFieldType(mysql.TypeTiny),
+				newNullRejectFunc(t, exprCtx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), innerA),
+			),
+			expected: true,
+		},
+		{
+			name:     "null_preserving_wrapper_propagates_must_null",
+			expr:     likeWrappedInnerA,
+			expected: true,
+		},
+		{
+			name:     "coalesce_constant_fallback_can_still_be_non_true",
+			expr:     newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), coalesceInnerATwo, newNullRejectIntConst(2)),
+			expected: true,
+		},
+		{
+			name:     "null_hiding_wrapper_stays_conservative",
+			expr:     newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), coalesceInnerA, expression.NewZero()),
+			expected: false,
+		},
+		{
+			name: "in_with_all_list_items_null_rejected",
+			expr: newNullRejectFunc(t, exprCtx, ast.In, types.NewFieldType(mysql.TypeTiny),
+				expression.NewOne(), innerA, innerB),
+			expected: true,
+		},
+		{
+			name: "in_with_non_null_candidate_is_not_proven",
+			expr: newNullRejectFunc(t, exprCtx, ast.In, types.NewFieldType(mysql.TypeTiny),
+				expression.NewOne(), innerA, expression.NewOne()),
+			expected: false,
+		},
+		{
+			name:     "null_safe_eq_with_non_null_constant_rejects_null",
+			expr:     nullSafeEqInnerA,
+			expected: true,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, IsNullRejected(sctx, innerSchema, tt.expr, true))
+		})
+	}
+}
+
+// TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
+// drift. When this hash breaks, the builtin set has changed — review whether
+// new functions should be added to nullRejectNullPreservingFunctions or
+// nullRejectRejectNullTests in null_misc.go.
+func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
+	names := expression.RegisteredBuiltinFunctionNames()
+	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
+
+	require.NotEmpty(t, names)
+	require.Equal(t, "a5ce0716b778fb8e0b488d3a11c402d8a8224191757a9e02ece80895d5d67e05", hex.EncodeToString(sum[:]))
+
+	for name := range nullRejectRejectNullTests {
+		require.Contains(t, names, name)
+	}
+}
+
+func newNullRejectIntColumn(id int64) *expression.Column {
+	return &expression.Column{
+		UniqueID: id,
+		ID:       id,
+		Index:    int(id),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newNullRejectStringConst(value string) *expression.Constant {
+	return &expression.Constant{
+		Value:   types.NewStringDatum(value),
+		RetType: types.NewFieldType(mysql.TypeVarString),
+	}
+}
+
+func newNullRejectIntConst(value int64) *expression.Constant {
+	return &expression.Constant{
+		Value:   types.NewIntDatum(value),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newNullRejectFunc(t *testing.T, ctx expression.BuildContext, name string, retType *types.FieldType, args ...expression.Expression) expression.Expression {
+	expr, err := expression.NewFunction(ctx, name, retType, args...)
+	require.NoError(t, err)
+	return expr
+}
+
+func newNullRejectLike(t *testing.T, ctx expression.BuildContext, arg expression.Expression) expression.Expression {
+	return newNullRejectFunc(
+		t,
+		ctx,
+		ast.Like,
+		types.NewFieldType(mysql.TypeTiny),
+		newNullRejectFunc(t, ctx, ast.Trim, types.NewFieldType(mysql.TypeVarString), arg),
+		newNullRejectStringConst("1%"),
+		newNullRejectIntConst(92),
+	)
+}
