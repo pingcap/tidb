@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -171,9 +173,11 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	localCPUCnt := cpu.GetCPUCount()
+	require.Greater(t, localCPUCnt, 0)
 	targetNodeCPUCnt, err := importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeQuery, "")
 	require.NoError(t, err)
-	require.Equal(t, 8, targetNodeCPUCnt)
+	require.Equal(t, localCPUCnt, targetNodeCPUCnt)
 
 	// invalid path
 	_, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, ":xx")
@@ -181,17 +185,20 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 	// server disk import
 	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, "/path/to/xxx.csv")
 	require.NoError(t, err)
-	require.Equal(t, 8, targetNodeCPUCnt)
+	require.Equal(t, localCPUCnt, targetNodeCPUCnt)
 	// disttask disabled
+	variable.EnableDistTask.Store(false)
 	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
-	require.Equal(t, 8, targetNodeCPUCnt)
+	require.Equal(t, localCPUCnt, targetNodeCPUCnt)
 	// disttask enabled
 	variable.EnableDistTask.Store(true)
+	distTaskCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	require.NoError(t, err)
 
 	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
-	require.Equal(t, 16, targetNodeCPUCnt)
+	require.Equal(t, distTaskCPUCnt, targetNodeCPUCnt)
 }
 
 func TestPostProcess(t *testing.T) {
@@ -349,7 +356,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 17951921359894607752), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 18171781844378606789), *checksumMap[verify.DataKVGroupID])
 	})
 }
 

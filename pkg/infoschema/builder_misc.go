@@ -113,3 +113,9 @@ func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model
 		info.setResourceGroup(group)
 	}
 }
+
+// InitMaskingPolicies is deprecated - masking policies are now loaded on first access via delayed loading mechanism.
+// This method is kept for backward compatibility but does nothing.
+func (b *Builder) InitMaskingPolicies(maskingPolicies []*model.MaskingPolicyInfo) {
+	// No-op: masking policies will be loaded on first access via delayed loading
+}

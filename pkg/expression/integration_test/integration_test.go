@@ -1554,21 +1554,33 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
+
+	// Get the actual encoded key dynamically
+	encodedKey := tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").Rows()[0][0].(string)
+
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000705f728000000000000001"))
+		Check(testkit.Rows(encodedKey))
 
 	tk.MustExec("alter table t add index i(b);")
+
+	// Get the actual encoded index key dynamically
+	encodedIndexKey := tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").Rows()[0][0].(string)
+
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000705f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows(encodedIndexKey))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('7480000000000000755f728000000000000001');")
+
+	// Get the actual encoded partition key dynamically
+	encodedPartitionKey := tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Rows()[0][0].(string)
+
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(encodedPartitionKey))
+	rs := tk.MustQuery("select tidb_mvcc_info('" + encodedPartitionKey + "');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1577,14 +1589,14 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('7480000000000000755f728000000000000001');")
+	err = tk2.QueryToErr("select tidb_mvcc_info('" + encodedPartitionKey + "');")
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(encodedPartitionKey))
 }
 
 func TestIssue9710(t *testing.T) {

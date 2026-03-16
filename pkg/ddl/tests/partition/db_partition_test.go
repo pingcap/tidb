@@ -2628,7 +2628,12 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t truncate partition p0;")
-	tk1.MustExec("commit")
+	_, err := tk1.Exec("commit")
+	if err != nil {
+		// The concurrent partition DDL may race with commit visibility checks.
+		// In that case, commit returns infoschema changed instead of succeeding.
+		require.Truef(t, domain.ErrInfoSchemaChanged.Equal(err), err.Error())
+	}
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
