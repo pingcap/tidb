@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -552,6 +553,51 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 		}
 	}
 	return nil
+}
+
+// updateMaskingPolicyNamesAfterRename updates the db_name and table_name in
+// mysql.tidb_masking_policy after a table is renamed.
+func (w *worker) updateMaskingPolicyNamesAfterRename(
+	ctx context.Context,
+	tableID int64,
+	oldDBName, newDBName pmodel.CIStr,
+	oldTableName, newTableName pmodel.CIStr,
+) error {
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		// Check if update is needed
+		if policy.DBName.L == newDBName.L && policy.TableName.L == newTableName.L {
+			continue
+		}
+
+		newPolicy := policy.Clone()
+		newPolicy.DBName = newDBName
+		newPolicy.TableName = newTableName
+		newPolicy.UpdatedAt = time.Now()
+
+		if err = w.updateMaskingPolicyInSysTableWithSess(ctx, newPolicy); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// updateMaskingPolicyInSysTableWithSess updates the masking policy in the sys table
+// using a separate context for operations outside of the DDL job flow.
+func (w *worker) updateMaskingPolicyInSysTableWithSess(ctx context.Context, policy *model.MaskingPolicyInfo) error {
+	const updateSQL = `UPDATE mysql.tidb_masking_policy
+		SET db_name = %?, table_name = %?, updated_at = %?
+		WHERE policy_id = %?`
+	_, err := w.sess.Execute(ctx, updateSQL, "update-masking-policy-names",
+		policy.DBName.O,
+		policy.TableName.O,
+		policy.UpdatedAt,
+		policy.ID,
+	)
+	return errors.Trace(err)
 }
 
 func (w *worker) syncMaskingPolicyForModifiedColumn(
