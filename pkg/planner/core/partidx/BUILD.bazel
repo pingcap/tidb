@@ -9,6 +9,7 @@ go_library(
         "//pkg/expression",
         "//pkg/parser/ast",
         "//pkg/planner/planctx",
+        "//pkg/planner/util",
         "//pkg/util/intest",
         "//pkg/util/ranger",
         "//pkg/util/ranger/context",

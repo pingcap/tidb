@@ -18,7 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
@@ -120,4 +123,180 @@ func TestOnlyPointRange(t *testing.T) {
 	indexPath.Index.Columns = make([]*model.IndexColumn, 2)
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
 	require.False(t, indexPath.OnlyPointRange(tc))
+
+	t.Run("stable null reject fast path", func(t *testing.T) {
+		col := &expression.Column{
+			UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+		schema := expression.NewSchema(col)
+		one := &expression.Constant{
+			Value:   types.NewIntDatum(1),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+
+		gtExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.GT,
+			types.NewFieldType(mysql.TypeTiny),
+			col,
+			one,
+		)
+		require.Equal(t, util.StableNullRejectYes, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, gtExpr))
+		require.Equal(t, util.StableNullRejectYes, util.ClassifyStableNullRejectByColumn(sctx.GetPlanCtx(), col, gtExpr))
+
+		addExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			col,
+			one,
+		)
+		addGTExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.GT,
+			types.NewFieldType(mysql.TypeTiny),
+			addExpr,
+			one,
+		)
+		require.Equal(t, util.StableNullRejectYes, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, addGTExpr))
+		require.Equal(t, util.StableNullRejectYes, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, addExpr))
+
+		two := &expression.Constant{
+			Value:   types.NewIntDatum(2),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		strictCases := []struct {
+			name  string
+			build func() expression.Expression
+		}{
+			{
+				name: "abs",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.Abs,
+						types.NewFieldType(mysql.TypeLonglong),
+						col,
+					)
+				},
+			},
+			{
+				name: "minus",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.Minus,
+						types.NewFieldType(mysql.TypeLonglong),
+						col,
+						one,
+					)
+				},
+			},
+			{
+				name: "mul",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.Mul,
+						types.NewFieldType(mysql.TypeLonglong),
+						col,
+						two,
+					)
+				},
+			},
+			{
+				name: "div",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.Div,
+						types.NewFieldType(mysql.TypeNewDecimal),
+						col,
+						two,
+					)
+				},
+			},
+			{
+				name: "int div",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.IntDiv,
+						types.NewFieldType(mysql.TypeLonglong),
+						col,
+						two,
+					)
+				},
+			},
+			{
+				name: "mod",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.Mod,
+						types.NewFieldType(mysql.TypeLonglong),
+						col,
+						two,
+					)
+				},
+			},
+			{
+				name: "unary minus",
+				build: func() expression.Expression {
+					return expression.NewFunctionInternal(
+						sctx.GetExprCtx(),
+						ast.UnaryMinus,
+						types.NewFieldType(mysql.TypeLonglong),
+						col,
+					)
+				},
+			},
+		}
+		for _, tc := range strictCases {
+			t.Run(tc.name, func(t *testing.T) {
+				strictExpr := tc.build()
+				predicate := expression.NewFunctionInternal(
+					sctx.GetExprCtx(),
+					ast.GT,
+					types.NewFieldType(mysql.TypeTiny),
+					strictExpr,
+					one,
+				)
+				require.Equal(t, util.StableNullRejectYes, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, predicate))
+			})
+		}
+
+		isNullExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.IsNull,
+			types.NewFieldType(mysql.TypeTiny),
+			col,
+		)
+		orExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.LogicOr,
+			types.NewFieldType(mysql.TypeTiny),
+			gtExpr,
+			isNullExpr,
+		)
+		require.Equal(t, util.StableNullRejectNo, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, orExpr))
+
+		notIsNullExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.UnaryNot,
+			types.NewFieldType(mysql.TypeTiny),
+			isNullExpr,
+		)
+		require.Equal(t, util.StableNullRejectYes, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, notIsNullExpr))
+
+		nullEQExpr := expression.NewFunctionInternal(
+			sctx.GetExprCtx(),
+			ast.NullEQ,
+			types.NewFieldType(mysql.TypeTiny),
+			col,
+			one,
+		)
+		require.Equal(t, util.StableNullRejectUnknown, util.ClassifyStableNullRejectBySchema(sctx.GetPlanCtx(), schema, nullEQExpr))
+	})
 }

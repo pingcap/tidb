@@ -311,6 +311,13 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
+		if known, rejected := stableNullRejectForPlanCache(p.SCtx(), innerTable.Schema(), expr); known {
+			if rejected {
+				canBeSimplified = true
+				break
+			}
+			continue
+		}
 		isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
@@ -319,6 +326,27 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	}
 	if canBeSimplified {
 		p.JoinType = base.InnerJoin
+	}
+}
+
+// stableNullRejectForPlanCache only applies the structural classifier to predicates
+// that are plan-cache-sensitive. Otherwise callers should keep the legacy null-reject
+// path unchanged.
+func stableNullRejectForPlanCache(
+	ctx planctx.PlanContext,
+	schema *expression.Schema,
+	expr expression.Expression,
+) (known bool, rejected bool) {
+	if !expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), expr) {
+		return false, false
+	}
+	switch util.ClassifyStableNullRejectBySchema(ctx, schema, expr) {
+	case util.StableNullRejectYes:
+		return true, true
+	case util.StableNullRejectNo:
+		return true, false
+	default:
+		return false, false
 	}
 }
 
@@ -790,6 +818,13 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
+			if known, rejected := stableNullRejectForPlanCache(p.SCtx(), innerTable.Schema(), expr); known {
+				if rejected {
+					canBeSimplified = true
+					break
+				}
+				continue
+			}
 			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 			if isOk {
 				canBeSimplified = true
