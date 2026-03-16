@@ -29,11 +29,9 @@
 
 ## Introduction
 
-This proposal introduces a sample-based approach for building global-level statistics on partitioned tables. Instead of merging per-partition histograms and TopN arrays — which is both lossy and slow — global histograms and TopN are built directly from merged reservoir samples, reusing the same histogram construction logic that already handles the region merge of stats to table and per-partition level TopN and Histograms.
+This proposal introduces a sample-based approach for building global-level statistics on partitioned tables. Instead of merging per-partition histograms and TopN arrays — which is both lossy and slow — global histograms and TopN are built directly from merged samples, reusing the same histogram construction logic that already handles the region merge of stats to table and per-partition level TopN and Histograms.
 
 For non-partitioned tables, TiDB already builds statistics this way: each TiKV region returns a sample collector, all region collectors are merged into a single collector (via A-Res weighted min-heap when using reservoir sampling, or by concatenation when using Bernoulli sampling), and histograms and TopN are built from the merged samples. The current partition-to-global path bypasses this proven infrastructure and instead attempts to merge pre-built histograms and TopN arrays — a fundamentally lossier operation. This proposal replaces that merge with the same sample-based approach already used for regions, applied at the partition-to-global level. The only addition is persisting pruned samples per partition so that future single-partition re-analyzes can load them instead of re-scanning unchanged partitions from TiKV.
-
-By also persisting pruned samples per partition, this design enables incremental global stats rebuilds: re-analyzing a single partition no longer requires re-scanning all other partitions from TiKV.
 
 ## Motivation or Background
 
@@ -63,7 +61,7 @@ For a table with 8,000 partitions, this means that even a single-partition re-an
 
 ### Proposed Solution
 
-Each partition's ANALYZE already produces a reservoir sample collector containing weighted random samples. These collectors can be merged across partitions using weighted reservoir sampling (A-Res algorithm), and the merged samples can be used to build global histograms and TopN directly — bypassing the lossy histogram merge entirely.
+Each partition's ANALYZE already produces a sample collector containing random samples. These collectors can be merged across partitions using weighted sampling (with the A-Res weight fix for Bernoulli described below), and the merged samples can be used to build global histograms and TopN directly — bypassing the lossy histogram merge entirely.
 
 By persisting pruned samples per partition, future single-partition re-analyzes can load saved samples for unchanged partitions from storage and merge them with the fresh partition's samples in memory. This avoids re-scanning unchanged partitions from TiKV.
 
@@ -75,7 +73,7 @@ By persisting pruned samples per partition, future single-partition re-analyzes 
 ANALYZE TABLE t
 
   For each partition Pi (in parallel, up to concurrency limit):
-    1. Scan partition data from TiKV (reservoir sampling)
+    1. Scan partition data from TiKV (sampling)
     2. Build partition histogram + TopN from samples
     3. Save partition stats to mysql.stats_* tables
                               │
@@ -96,7 +94,7 @@ The merge in steps 5-7 is the bottleneck for tables with many partitions: it req
 ANALYZE TABLE t
 
   For each partition Pi (in parallel, up to concurrency limit):
-    1. Scan partition data from TiKV (reservoir sampling)
+    1. Scan partition data from TiKV (sampling)
     2. Build partition histogram + TopN from samples
     3. Save partition stats to mysql.stats_* tables
     4. Prune samples and persist to storage          ◄── NEW
@@ -126,7 +124,7 @@ The A-Res algorithm (Efraimidis & Spirakis, 2006) achieves this. For each item w
 k_i = u_i^(1/w_i)    where u_i ~ Uniform(0, 1)
 ```
 
-The reservoir keeps items with the largest keys. TiDB already implements this algorithm for per-partition sampling. This design reuses it for cross-partition merging.
+The reservoir keeps items with the largest keys. TiDB already implements this algorithm for region-level sampling when `NumSamples > 0`. This design reuses it for cross-partition merging.
 
 Key property: merging is **associative** — `merge(merge(A, B), C) == merge(A, merge(B, C))`. This allows streaming: each partition's collector is merged into a running accumulator and then discarded, so memory usage is constant regardless of partition count.
 
@@ -161,7 +159,7 @@ CREATE TABLE mysql.stats_table_data (
 );
 ```
 
-Each partition stores one row containing all samples to be persisted for that partition. The serialized blob is a `ReservoirRowSampleCollector` — the same structure returned by TiKV during ANALYZE. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and A-Res weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
+Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and A-Res weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
 The per-partition blob size depends primarily on the number of samples and the number and types of analyzed columns. For a table with 20 integer columns and 500 pruned samples, the blob is roughly 50–100 KB. For 50 mixed-type columns (integers, strings, timestamps) with 3,000–4,000 samples, it grows to 400–700 KB. Tables analyzed with `PREDICATE COLUMNS` will have smaller blobs since fewer columns are sampled.
 
@@ -200,7 +198,7 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
 **Partial coverage**: If some partitions lack saved samples (e.g., newly created by `REORGANIZE PARTITION`, or never analyzed with the sample-based path), those partitions are skipped during the merge. Global stats are built from the available samples, which may underrepresent the missing partitions. To ensure complete coverage, a full `ANALYZE TABLE` (without partition restriction) should be run after schema changes that add new partitions.
 
 This avoids re-scanning unchanged partitions entirely. The cost is:
-- **I/O**: reading ~500 KB per partition from TiKV (pruned sample blobs)
+- **I/O**: reading ~50–700 KB per partition from TiKV (pruned sample blobs, depending on column count and types)
 - **CPU**: merging N collectors in memory (milliseconds for 1,000 partitions)
 
 Compared to today's approach of re-merging all P partitions' histograms, this is both faster and produces higher-quality global stats.
@@ -244,7 +242,8 @@ The sample-based path falls back transparently to the merge-based path when:
 - The variable is disabled
 - No sample collector is available (e.g., all partition analyses failed)
 - Schema mismatch detected when loading saved samples (columns were added/dropped between analyzes)
-- Some partitions lack saved samples (e.g., newly created partitions or first analysis) — those partitions are skipped during the sample merge and global stats are built from available samples only (see [Partial coverage](#single-partition-re-analyze))
+
+When some but not all partitions lack saved samples (e.g., newly created partitions or first analysis), those partitions are skipped during the sample merge and global stats are built from available samples only — this is partial coverage, not a full fallback (see [Partial coverage](#single-partition-re-analyze)).
 
 **Upgrade**: No samples exist yet. First ANALYZE with the flag enabled populates them. The merge-based path works as fallback until then.
 
