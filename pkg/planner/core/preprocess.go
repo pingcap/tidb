@@ -667,7 +667,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.TableName:
 		// Skip resolving TableName nodes that come from locking clauses; they are bound later against FROM aliases.
 		if n := len(p.lockSelectCtxStack); n > 0 {
-			if p.lockSelectCtxStack[n-1].isLockClauseTable(x) {
+			if _, ok := p.lockSelectCtxStack[n-1].lockClauseTables[x]; ok {
 				break
 			}
 		}
@@ -1857,12 +1857,6 @@ func newLockSelectCtx(lockTables []*ast.TableName) lockSelectCtx {
 		qualifiedMap:     make(map[string]lockRef),
 		orderedRefs:      make([]lockRef, 0),
 	}
-}
-
-// isLockClauseTable reports whether the TableName node belongs to this SELECT's locking clause.
-func (c *lockSelectCtx) isLockClauseTable(tableName *ast.TableName) bool {
-	_, ok := c.lockClauseTables[tableName]
-	return ok
 }
 
 func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
