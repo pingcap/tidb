@@ -45,8 +45,8 @@
       "select * from t0 left outer join t11 on a0=a1 where t0.b0 in (t0.b0, t11.b1)",
       "select * from t0 left outer join t11 on a0=a1 where '5' not in (t0.b0, t11.b1)",
       "select * from t0 left outer join t11 on a0=a1 where '1' in (t0.b0, t11.b1)",
-      "select * from t0 left outer join t11 on a0=a1 where t0.b0 in ('5', t11.b1) -- some = in the in list is not null filtering",
-      "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering"
+      "select * from t0 left outer join t11 on a0=a1 where t0.b0 in ('5', t11.b1) -- negative case. an outer-side equality arm can still make IN true",
+      "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- negative case. an outer-side equality arm can still make IN true"
     ]
   },
   {

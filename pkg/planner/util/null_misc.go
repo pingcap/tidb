@@ -74,19 +74,27 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 // is not null rejecting since constant in (outer-table.col1, NULL) is not false/unknown.
 func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 	innerSchema *expression.Schema, skipPlanCacheCheck bool) bool {
+	lhs := expr.GetArgs()[0]
+	retType := expr.GetType(ctx.GetExprCtx().GetEvalCtx())
 	for i, arg := range expr.GetArgs() {
-		if i > 0 {
-			newArgs := make([]expression.Expression, 0, 2)
-			newArgs = append(newArgs, expr.GetArgs()[0])
-			newArgs = append(newArgs, arg)
-			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ,
-				expr.GetType(ctx.GetExprCtx().GetEvalCtx()), newArgs...)
-			if err != nil {
-				return false
-			}
-			if !(isNullRejectedSimpleExpr(ctx, innerSchema, eQCondition, skipPlanCacheCheck)) {
-				return false
-			}
+		if i == 0 {
+			continue
+		}
+		eqExpr, err := expression.NewFunction(
+			ctx.GetExprCtx(),
+			ast.EQ,
+			retType,
+			lhs,
+			arg,
+		)
+		if err != nil {
+			return false
+		}
+		if isNullRejectedSimpleExpr(ctx, innerSchema, eqExpr, skipPlanCacheCheck) {
+			continue
+		}
+		if !inListEqualArmRejectsNull(ctx, lhs, arg, eqExpr) {
+			return false
 		}
 	}
 	return true
@@ -131,7 +139,11 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 
 // IsNullRejectedByInnerColumn is a conservative null-reject checker for a single inner column.
 // It is intended for plan-cache-sensitive rewrites where parameter values must stay symbolic.
-func IsNullRejectedByInnerColumn(ctx planctx.PlanContext, targetCol *expression.Column, predicate expression.Expression) bool {
+func IsNullRejectedByInnerColumn(
+	ctx planctx.PlanContext,
+	targetCol *expression.Column,
+	predicate expression.Expression,
+) bool {
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	return isNullRejectedConservative(ctx, predicate, nullRejectColumnProbe{
 		evalCtx:   ctx.GetExprCtx().GetEvalCtx(),
@@ -139,9 +151,12 @@ func IsNullRejectedByInnerColumn(ctx planctx.PlanContext, targetCol *expression.
 	})
 }
 
-func isNullRejectedConservative(ctx planctx.PlanContext, predicate expression.Expression, probe nullRejectColumnProbe) bool {
-	switch expr := predicate.(type) {
-	case *expression.ScalarFunction:
+func isNullRejectedConservative(
+	ctx planctx.PlanContext,
+	predicate expression.Expression,
+	probe nullRejectColumnProbe,
+) bool {
+	if expr, ok := predicate.(*expression.ScalarFunction); ok {
 		switch expr.FuncName.L {
 		case ast.LogicAnd:
 			for _, arg := range expr.GetArgs() {
@@ -164,20 +179,45 @@ func isNullRejectedConservative(ctx planctx.PlanContext, predicate expression.Ex
 	return isNullRejectedConservativeLeaf(ctx, predicate, probe)
 }
 
-func isNullRejectedConservativeInList(ctx planctx.PlanContext, expr *expression.ScalarFunction, probe nullRejectColumnProbe) bool {
+func isNullRejectedConservativeInList(
+	ctx planctx.PlanContext,
+	expr *expression.ScalarFunction,
+	probe nullRejectColumnProbe,
+) bool {
+	lhs := expr.GetArgs()[0]
+	retType := expr.GetType(ctx.GetExprCtx().GetEvalCtx())
 	for i, arg := range expr.GetArgs() {
 		if i == 0 {
 			continue
 		}
-		eqExpr, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, expr.GetType(ctx.GetExprCtx().GetEvalCtx()), expr.GetArgs()[0], arg)
-		if err != nil || !isNullRejectedConservative(ctx, eqExpr, probe) {
+		eqExpr, err := expression.NewFunction(
+			ctx.GetExprCtx(),
+			ast.EQ,
+			retType,
+			lhs,
+			arg,
+		)
+		if err != nil {
+			return false
+		}
+		if isNullRejectedConservative(ctx, eqExpr, probe) {
+			continue
+		}
+		if !inListEqualArmRejectsNull(ctx, lhs, arg, eqExpr) {
 			return false
 		}
 	}
 	return true
 }
 
-func isNullRejectedConservativeLeaf(ctx planctx.PlanContext, expr expression.Expression, probe nullRejectColumnProbe) bool {
+func isNullRejectedConservativeLeaf(
+	ctx planctx.PlanContext,
+	expr expression.Expression,
+	probe nullRejectColumnProbe,
+) bool {
+	if exprAlwaysNullForNullReject(expr, probe) {
+		return true
+	}
 	if immutableConst, ok := expr.(*expression.Constant); ok {
 		return immutableConstRejectsNull(ctx, immutableConst)
 	}
@@ -202,6 +242,31 @@ func isNullRejectedConservativeLeaf(ctx planctx.PlanContext, expr expression.Exp
 			(exprAlwaysNullForNullReject(args[0], probe) || exprAlwaysNullForNullReject(args[1], probe))
 	}
 	return exprAlwaysNullForNullReject(expr, probe)
+}
+
+func immutableConstExprRejectsNull(ctx planctx.PlanContext, expr expression.Expression) bool {
+	if !allConstants(ctx.GetExprCtx(), expr) {
+		return false
+	}
+	return isNullRejectedSimpleExpr(ctx, expression.NewSchema(), expr, false)
+}
+
+func inListEqualArmRejectsNull(
+	ctx planctx.PlanContext,
+	lhs expression.Expression,
+	rhs expression.Expression,
+	eqExpr expression.Expression,
+) bool {
+	// `x = NULL` is always NULL, so NULL arms never spoil IN-list null rejection.
+	if immutableConstIsNull(lhs) || immutableConstIsNull(rhs) {
+		return true
+	}
+	return immutableConstExprRejectsNull(ctx, eqExpr)
+}
+
+func immutableConstIsNull(expr expression.Expression) bool {
+	c, ok := expr.(*expression.Constant)
+	return ok && !isMutableConst(c) && c.Value.IsNull()
 }
 
 func exprAlwaysNullForNullReject(expr expression.Expression, probe nullRejectColumnProbe) bool {

@@ -774,7 +774,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+			isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
 			if isOk {
 				canBeSimplified = true
 				break

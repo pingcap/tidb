@@ -18,7 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
@@ -120,4 +123,56 @@ func TestOnlyPointRange(t *testing.T) {
 	indexPath.Index.Columns = make([]*model.IndexColumn, 2)
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
 	require.False(t, indexPath.OnlyPointRange(tc))
+}
+
+func TestIsNullRejectedByInnerColumn(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		do := domain.GetDomain(sctx)
+		do.StatsHandle().Close()
+	}()
+
+	col := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	one := &expression.Constant{
+		Value:   types.NewIntDatum(1),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	zero := &expression.Constant{
+		Value:   types.NewIntDatum(0),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	tests := []struct {
+		name string
+		expr expression.Expression
+	}{
+		{
+			name: "in-list constant false arm",
+			expr: expression.NewFunctionInternal(
+				sctx.GetExprCtx(),
+				ast.In,
+				types.NewFieldType(mysql.TypeTiny),
+				one,
+				col,
+				zero,
+			),
+		},
+		{
+			name: "raw column under and",
+			expr: expression.NewFunctionInternal(
+				sctx.GetExprCtx(),
+				ast.LogicAnd,
+				types.NewFieldType(mysql.TypeTiny),
+				col,
+				one,
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		require.True(t, util.IsNullRejectedByInnerColumn(sctx.GetPlanCtx(), col, tt.expr), tt.name)
+	}
 }

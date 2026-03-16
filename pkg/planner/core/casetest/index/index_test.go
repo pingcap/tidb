@@ -407,6 +407,35 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx3")
 		tk.MustExec("execute stmt2 using @b, @c")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		// A fixed FALSE/NULL IN-list arm does not spoil NULL rejection on the inner column.
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx4(b) where a is not null)")
+		tk.MustExec("prepare stmt3 from 'select * from t use index(idx4) where b = ? and 1 in (a, 0)'")
+		tk.MustExec("set @d = 123")
+		tk.MustExec("execute stmt3 using @d")
+		tk.MustExec("execute stmt3 using @d")
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx4")
+		tk.MustExec("execute stmt3 using @d")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		// A raw inner-side column under AND remains NULL-propagating for the shared checker.
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx5(b) where a is not null)")
+		tk.MustExec("prepare stmt4 from 'select * from t use index(idx5) where b = ? and a and ?'")
+		tk.MustExec("set @e = 123")
+		tk.MustExec("set @f = 1")
+		tk.MustExec("execute stmt4 using @e, @f")
+		tk.MustExec("execute stmt4 using @e, @f")
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx5")
+		tk.MustExec("execute stmt4 using @e, @f")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	})
 }
 
