@@ -133,17 +133,19 @@ Key property: merging is **associative** — `merge(merge(A, B), C) == merge(A, 
 **Sampling method compatibility**: TiDB V2 stats supports two row-level sampling methods, selected by the ANALYZE options:
 
 - **A-Res (reservoir)**: Used when `NumSamples > 0` (e.g., `ANALYZE TABLE t WITH 10000 SAMPLES`). Each sample carries a random `Weight` used for min-heap competition during merge. This is what enables correct proportional representation across sources of different sizes.
-- **Bernoulli**: Used when `SampleRate > 0` (the V2 default, where `NumSamples = 0` and `SampleRate` is auto-calculated). Each row is independently included with probability `SampleRate`. Currently samples have `Weight = 0`, but this can be fixed by deriving the weight from the same random draw used for the Bernoulli decision:
+- **Bernoulli**: Used when `SampleRate > 0` (the V2 default, where `NumSamples = 0` and `SampleRate` is auto-calculated). Each row is independently included with probability `SampleRate`. Currently samples have `Weight = 0` in the `tipb.RowSample` proto returned by TiKV, but this can be fixed in TiKV's analyze coprocessor by deriving the weight from the same random draw used for the Bernoulli decision:
 
 ```go
+// Pseudocode for TiKV's Bernoulli sampling (currently discards the random value)
 rngFloat := rng.Float64()
-if rngFloat > s.SampleRate {
-    return
+if rngFloat > sampleRate {
+    skip row
 }
-Weight: int64(rngFloat * float64(math.MaxInt64))
+// Derive weight from the same draw — zero additional cost
+RowSample.Weight = int64(rngFloat * float64(math.MaxInt64))
 ```
 
-This produces weights uniformly distributed in `[0, SampleRate × MaxInt64]` with zero additional cost — the random value is already generated for the include/exclude decision. These weights enable A-Res sub-sampling when pruning for persistence and correct proportional representation during cross-partition merging, making Bernoulli samples fully compatible with the sample-based global stats path.
+This produces weights uniformly distributed in `[0, SampleRate × MaxInt64]` with zero additional cost — the random value is already generated for the include/exclude decision. TiDB already copies the weight from the proto response (`pbSample.Weight`), so no TiDB-side deserialization changes are needed. These weights enable A-Res sub-sampling when pruning for persistence and correct proportional representation during cross-partition merging, making Bernoulli samples fully compatible with the sample-based global stats path.
 
 ### Persisting Samples for Incremental Rebuild
 
@@ -342,4 +344,4 @@ Store intermediate merge results in a tree structure, enabling O(log N) incremen
 
 4. **Interaction with async merge**: The existing `tidb_enable_async_merge_global_stats` merges partition stats asynchronously. How should the sample-based path interact with this? Should sample persistence also be async?
 
-5. **Bernoulli sampling compatibility**: The default V2 ANALYZE uses Bernoulli sampling (`SampleRate`, `Weight = 0`). The current implementation silently falls back to merge-based when Bernoulli samples are detected. The proposed fix is to derive the weight from the same `rng.Float64()` value already used for the Bernoulli decision (see Weighted Reservoir Sampling section), making both sampling methods produce weighted samples compatible with the sample-based global stats path. This change also benefits the existing region merge within a single partition by enabling proper weighted sub-sampling.
+5. **Bernoulli sampling compatibility**: The default V2 ANALYZE uses Bernoulli sampling (`SampleRate`, `Weight = 0` in the proto). The current implementation silently falls back to merge-based when Bernoulli samples are detected. The proposed fix is a TiKV-side change: derive the `RowSample.Weight` from the same random draw already used for the Bernoulli decision (see Weighted Reservoir Sampling section). TiDB already copies the weight through from the proto, so no TiDB deserialization changes are needed — only removing the `isReservoir` type assertion gate that currently causes the fallback. This change also benefits the existing region merge within a single partition by enabling proper weighted sub-sampling.
