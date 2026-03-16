@@ -130,12 +130,20 @@ The reservoir keeps items with the largest keys. TiDB already implements this al
 
 Key property: merging is **associative** — `merge(merge(A, B), C) == merge(A, merge(B, C))`. This allows streaming: each partition's collector is merged into a running accumulator and then discarded, so memory usage is constant regardless of partition count.
 
-**Sampling method prerequisite**: TiDB V2 stats supports two row-level sampling methods, selected by the ANALYZE options:
+**Sampling method compatibility**: TiDB V2 stats supports two row-level sampling methods, selected by the ANALYZE options:
 
 - **A-Res (reservoir)**: Used when `NumSamples > 0` (e.g., `ANALYZE TABLE t WITH 10000 SAMPLES`). Each sample carries a random `Weight` used for min-heap competition during merge. This is what enables correct proportional representation across sources of different sizes.
-- **Bernoulli**: Used when `SampleRate > 0` (the V2 default, where `NumSamples = 0` and `SampleRate` is auto-calculated). Each row is independently included with probability `SampleRate`. Samples have `Weight = 0` — there is no weight to compete on during merge.
+- **Bernoulli**: Used when `SampleRate > 0` (the V2 default, where `NumSamples = 0` and `SampleRate` is auto-calculated). Each row is independently included with probability `SampleRate`. Currently samples have `Weight = 0`, but this can be fixed by deriving the weight from the same random draw used for the Bernoulli decision:
 
-The sample-based global stats path **requires A-Res**. Bernoulli samples cannot be correctly merged across partitions of different sizes because they lack weights for proportional representation. The current implementation silently falls back to the merge-based path when Bernoulli samples are detected (the collector type assertion fails). This means that with the default V2 settings, enabling `tidb_enable_sample_based_global_stats` alone is not sufficient — the user must also specify `WITH N SAMPLES` or the path will fall back. See Unresolved Questions for options to address this.
+```go
+rngFloat := rng.Float64()
+if rngFloat > s.SampleRate {
+    return
+}
+Weight: int64(rngFloat * float64(math.MaxInt64))
+```
+
+This produces weights uniformly distributed in `[0, SampleRate × MaxInt64]` with zero additional cost — the random value is already generated for the include/exclude decision. These weights enable A-Res sub-sampling when pruning for persistence and correct proportional representation during cross-partition merging, making Bernoulli samples fully compatible with the sample-based global stats path.
 
 ### Persisting Samples for Incremental Rebuild
 
@@ -334,4 +342,4 @@ Store intermediate merge results in a tree structure, enabling O(log N) incremen
 
 4. **Interaction with async merge**: The existing `tidb_enable_async_merge_global_stats` merges partition stats asynchronously. How should the sample-based path interact with this? Should sample persistence also be async?
 
-5. **Bernoulli sampling compatibility**: The default V2 ANALYZE uses Bernoulli sampling (`SampleRate`, `Weight = 0`), which lacks the per-sample weights needed for A-Res cross-partition merging. The current implementation silently falls back to merge-based when Bernoulli samples are detected. Options to address this: (a) automatically override to A-Res (`NumSamples = 10000`) when `tidb_enable_sample_based_global_stats` is enabled for partitioned tables; (b) convert Bernoulli samples to weighted by assigning synthetic weights and sub-sampling to a fixed reservoir size before persisting; (c) document `WITH N SAMPLES` as a prerequisite and leave the default unchanged.
+5. **Bernoulli sampling compatibility**: The default V2 ANALYZE uses Bernoulli sampling (`SampleRate`, `Weight = 0`). The current implementation silently falls back to merge-based when Bernoulli samples are detected. The proposed fix is to derive the weight from the same `rng.Float64()` value already used for the Bernoulli decision (see Weighted Reservoir Sampling section), making both sampling methods produce weighted samples compatible with the sample-based global stats path. This change also benefits the existing region merge within a single partition by enabling proper weighted sub-sampling.
