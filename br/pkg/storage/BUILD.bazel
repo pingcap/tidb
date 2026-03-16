@@ -97,6 +97,7 @@ go_test(
     srcs = [
         "azblob_test.go",
         "batch_test.go",
+        "compatibility_for_test.go",
         "compress_test.go",
         "gcs_test.go",
         "local_test.go",
