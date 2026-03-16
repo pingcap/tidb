@@ -28,6 +28,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/channel",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disk",
