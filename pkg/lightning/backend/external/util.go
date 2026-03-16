@@ -44,6 +44,10 @@ import (
 
 const (
 	metaName = "meta.json"
+	// seekPropsOffsetsConcurrencyLimit limits the number of concurrently opened
+	// stats readers to avoid overwhelming the object storage client and causing
+	// excessive request queueing.
+	seekPropsOffsetsConcurrencyLimit = 512
 )
 
 // seekPropsOffsets reads the statistic files to find the largest offset of
@@ -72,6 +76,7 @@ func seekPropsOffsets(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(seekPropsOffsetsConcurrencyLimit)
 	for i := range paths {
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)

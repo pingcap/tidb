@@ -19,13 +19,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+type openBlockingStorage struct {
+	storeapi.Storage
+
+	startedCh chan struct{}
+	proceedCh chan struct{}
+
+	inFlight    atomic.Int64
+	maxInFlight atomic.Int64
+}
+
+func (s *openBlockingStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
+	cur := s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+
+	for {
+		max := s.maxInFlight.Load()
+		if cur <= max {
+			break
+		}
+		if s.maxInFlight.CompareAndSwap(max, cur) {
+			break
+		}
+	}
+
+	s.startedCh <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.proceedCh:
+	}
+	return s.Storage.Open(ctx, path, option)
+}
 
 func TestSeekPropsOffsets(t *testing.T) {
 	ctx := context.Background()
@@ -131,6 +169,74 @@ func TestSeekPropsOffsets(t *testing.T) {
 	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key3"), []byte("key999")}, []string{file1, file2, file3, file4}, store)
 	require.NoError(t, err)
 	require.Equal(t, [][]uint64{{30, 20, 0, 30}, {50, 40, 0, 50}}, got)
+}
+
+func TestSeekPropsOffsetsConcurrencyLimit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	baseStore := objstore.NewMemStorage()
+	paths := make([]string, 0, 1024)
+	for i := range 1024 {
+		p := fmt.Sprintf("/test-%d", i)
+		paths = append(paths, p)
+		require.NoError(t, baseStore.WriteFile(ctx, p, nil))
+	}
+
+	startedCh := make(chan struct{}, len(paths))
+	proceedCh := make(chan struct{})
+	storage := &openBlockingStorage{
+		Storage:   baseStore,
+		startedCh: startedCh,
+		proceedCh: proceedCh,
+	}
+
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(proceedCh) }) }
+	defer unblock()
+
+	doneCh := make(chan error, 1)
+	go func() {
+		_, err := seekPropsOffsets(ctx, []kv.Key{[]byte("key2.5")}, paths, storage)
+		doneCh <- err
+	}()
+
+	var doneOnce sync.Once
+	var doneErr error
+	waitDone := func(timeout time.Duration) error {
+		doneOnce.Do(func() {
+			select {
+			case doneErr = <-doneCh:
+			case <-time.After(timeout):
+				doneErr = fmt.Errorf("timeout waiting seekPropsOffsets to return")
+			}
+		})
+		return doneErr
+	}
+
+	t.Cleanup(func() {
+		unblock()
+		_ = waitDone(5 * time.Second)
+	})
+
+	const wantLimit = int64(seekPropsOffsetsConcurrencyLimit)
+	for i := int64(0); i < wantLimit; i++ {
+		select {
+		case <-startedCh:
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for %d concurrent opens", wantLimit)
+		}
+	}
+
+	select {
+	case <-startedCh:
+		t.Fatalf("seekPropsOffsets opened more than %d readers concurrently", wantLimit)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	unblock()
+	require.NoError(t, waitDone(5*time.Second))
+	require.LessOrEqual(t, storage.maxInFlight.Load(), wantLimit)
 }
 
 func TestGetAllFileNames(t *testing.T) {
