@@ -224,21 +224,16 @@ Cleanup is handled by the existing stats GC path (`GCStats`), which deletes rows
 
 ### User Interface
 
-A new session variable controls the feature:
-
-```sql
-SET SESSION tidb_enable_sample_based_global_stats = ON;
-SET GLOBAL tidb_enable_sample_based_global_stats = ON;
-```
+A session variable `tidb_enable_sample_based_global_stats` guards the feature during development and serves as a fallback to the merge-based path if needed. The goal is to enable it by default once the implementation is validated.
 
 | Property | Value |
 |----------|-------|
 | Scope | SESSION, GLOBAL |
-| Default | OFF |
+| Default | ON |
 | Type | Boolean |
 | Prerequisite | Analyze Version 2 with dynamic partition pruning |
 
-When enabled, ANALYZE for partitioned tables will collect samples, persist pruned copies, and build global stats from merged samples instead of merging histograms.
+When enabled, ANALYZE for partitioned tables will collect samples, persist pruned copies, and build global stats from merged samples instead of merging histograms. Setting it to OFF reverts to the merge-based path.
 
 ### Fallback and Compatibility
 
@@ -345,7 +340,7 @@ Store intermediate merge results in a tree structure, enabling O(log N) incremen
 
 2. **Staleness policy**: When loading saved samples for incremental rebuild, should there be a staleness threshold (e.g., skip partitions whose `ModifyCount` exceeds X% of `Count`)? Currently, any saved sample is used regardless of age.
 
-3. **Default ON criteria**: What benchmarks and quality checks should be satisfied before changing the default from OFF to ON?
+3. **Removing the variable**: The variable defaults to ON. Once the implementation is stable and validated, should the variable be removed entirely, making the sample-based path the only option?
 
 4. **Interaction with async merge**: The existing `tidb_enable_async_merge_global_stats` merges partition stats asynchronously. How should the sample-based path interact with this? Should sample persistence also be async?
 
