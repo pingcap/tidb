@@ -252,3 +252,26 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
 		Check(testkit.Rows())
 }
+
+func TestRevokeAllColumnPrivKeepsOtherColumnPrivs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE t2 (c1 int, c2 int)")
+
+	// Revoking ALL from one column must not clear table-level Column_priv aggregation
+	// while other columns on the same table still retain column privileges.
+	tk.MustExec("GRANT SELECT(c1), UPDATE(c2) ON t2 TO u1")
+	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1' and table_name='t2'").
+		Check(testkit.RowsWithSep(" | ", " | Select,Update"))
+	tk.MustQuery("select column_name,column_priv from mysql.columns_priv where user='u1' and table_name='t2' order by column_name").
+		Check(testkit.Rows("c1 Select", "c2 Update"))
+
+	tk.MustExec("REVOKE ALL(c1) ON t2 FROM u1")
+
+	tk.MustQuery("select column_name,column_priv from mysql.columns_priv where user='u1' and table_name='t2' order by column_name").
+		Check(testkit.Rows("c2 Update"))
+	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1' and table_name='t2'").
+		Check(testkit.RowsWithSep(" | ", " | Update"))
+}

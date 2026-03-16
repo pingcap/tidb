@@ -353,6 +353,18 @@ SHOW GRANTS;
 Grants for User
 GRANT USAGE ON *.* TO 'column'@'%'
 GRANT SELECT(`a`), INSERT(`c`), UPDATE(`a`, `b`) ON `privilege__privileges`.`column_table` TO 'column'@'%'
+CREATE USER revoke_all_column_user;
+CREATE TABLE revoke_all_column_t (c1 int, c2 int);
+GRANT SELECT(c1), UPDATE(c2) ON privilege__privileges.revoke_all_column_t TO revoke_all_column_user;
+REVOKE ALL(c1) ON privilege__privileges.revoke_all_column_t FROM revoke_all_column_user;
+SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user = 'revoke_all_column_user' AND host = '%' AND db = 'privilege__privileges' AND table_name = 'revoke_all_column_t';
+table_priv	column_priv
+	Update
+SELECT column_name, column_priv FROM mysql.columns_priv WHERE user = 'revoke_all_column_user' AND host = '%' AND db = 'privilege__privileges' AND table_name = 'revoke_all_column_t' ORDER BY column_name;
+column_name	column_priv
+c2	Update
+DROP USER revoke_all_column_user;
+DROP TABLE revoke_all_column_t;
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
 desc privilege__privileges.fieldlistt1;

@@ -386,6 +386,52 @@ func removePrivFromColumnPriv(ctx context.Context, e sqlexec.SQLExecutor,
 	return err
 }
 
+// syncColumnPrivInTablePriv rebuilds mysql.tables_priv.Column_priv from the
+// remaining mysql.columns_priv rows for the same table.
+func syncColumnPrivInTablePriv(ctx context.Context, sctx sessionctx.Context, host, user, db, table string) error {
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx,
+		`SELECT Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?`,
+		mysql.SystemDB,
+		mysql.ColumnPrivTable,
+		user,
+		host,
+		db,
+		table)
+	if err != nil {
+		return err
+	}
+	rows, fields, err := getRowsAndFields(sctx, rs)
+	if err != nil {
+		return err
+	}
+
+	var columnPrivs []string
+	for _, row := range rows {
+		if fields[0].Column.GetType() != mysql.TypeSet {
+			continue
+		}
+		for _, priv := range SetFromString(row.GetSet(0).Name) {
+			columnPrivs = addToSet(columnPrivs, priv)
+		}
+	}
+
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql,
+		"UPDATE %n.%n SET Column_priv=%? WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?",
+		mysql.SystemDB, mysql.TablePrivTable, setToString(columnPrivs), user, host, db, table)
+	_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+
+	sql.Reset()
+	sqlescape.MustFormatSQL(sql,
+		"DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Table_priv='' AND Column_priv=''",
+		mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+	_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	return err
+}
+
 // checkTablePrivTbl indicates whether we should check Column_priv in mysql.tables_priv if no corresponding column privileges
 // exists in mysql.columns_priv anymore.
 func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string, checkTablePrivTbl bool) error {
@@ -425,8 +471,16 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 	}
 
 	if checkTablePrivTbl {
-		sql := strings.Join([]string{"SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_priv LIKE '%%", priv.Priv.String(), "%%';"}, "")
-		exists, err := recordExists(internalSession, sql, mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, e.Level.TableName)
+		tblName := e.Level.TableName
+		if tbl != nil {
+			tblName = tbl.Meta().Name.O
+		}
+		if priv.Priv == mysql.AllPriv {
+			return syncColumnPrivInTablePriv(ctx, internalSession, host, user, dbName, tblName)
+		}
+		args := []any{mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tblName, mysql.Priv2SetStr[priv.Priv]}
+		sql := "SELECT 1 FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND FIND_IN_SET(%?, Column_priv) > 0 LIMIT 1"
+		exists, err := recordExists(internalSession, sql, args...)
 		if err != nil {
 			return err
 		}
