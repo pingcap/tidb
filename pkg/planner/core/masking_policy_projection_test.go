@@ -111,3 +111,37 @@ func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
 		case when current_role() != 'NONE' then mask_full(c, '*') else c end`)
 	tkUser.MustQuery("select c from t_identity").Check(testkit.Rows("secret"))
 }
+
+func TestMaskingPolicyBatchPointGet(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_batch_pointget")
+	tk.MustExec("create table t_batch_pointget(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_batch_pointget values (1, 'secret'), (2, 'hidden'), (3, 'confidential')")
+	tk.MustExec("create masking policy p_batch on t_batch_pointget(c) as mask_full(c, '*') enable")
+
+	// Test BatchPointGet with WHERE pk IN (...) - this should return masked values
+	tk.MustQuery("select c from t_batch_pointget where id in (1, 2)").Check(testkit.Rows("******", "******"))
+
+	// Test BatchPointGet with multiple values
+	tk.MustQuery("select c from t_batch_pointget where id in (1, 2, 3)").Check(testkit.Rows("******", "******", "******"))
+
+	// Test BatchPointGet with multiple columns
+	tk.MustQuery("select id, c from t_batch_pointget where id in (1, 2)").Check(testkit.Rows("1 ******", "2 ******"))
+
+	// Test BatchPointGet with expression using masked column
+	tk.MustQuery("select concat(c, '-') from t_batch_pointget where id in (1)").Check(testkit.Rows("******-"))
+
+	// Test BatchPointGet with unique index IN clause
+	tk.MustExec("create unique index idx_c on t_batch_pointget(c)")
+	tk.MustQuery("select c from t_batch_pointget where c in ('secret', 'hidden')").Check(testkit.Rows("******", "******"))
+
+	// Predicate should still use original value (should not find masked values)
+	rows := tk.MustQuery("select c from t_batch_pointget where c in ('******')").Rows()
+	require.Len(t, rows, 0)
+
+	// Test single value in IN (might use PointGet or BatchPointGet)
+	tk.MustQuery("select c from t_batch_pointget where id in (1)").Check(testkit.Rows("******"))
+}
+
