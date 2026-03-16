@@ -358,9 +358,6 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-<<<<<<< HEAD
-
-=======
 	tk.MustExec("use planReplayer")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
 
@@ -373,7 +370,6 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	defer tk.MustExec(fmt.Sprintf("set global tidb_mem_quota_binding_cache = %d", originBindingCacheQuota))
 
 	tk.MustExec("admin reload bindings")
->>>>>>> 2bfef26da35 (pkg/server/handler/optimizor: stabilize plan replayer tests (#65735))
 	// 3-3. check whether binding takes effect
 	require.Eventually(t, func() bool {
 		tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
