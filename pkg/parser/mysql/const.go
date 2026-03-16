@@ -40,7 +40,7 @@ const (
 	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
 	// tidbXPlaceholderReleaseVersion is the default release version for nextgen when no
 	// release version is injected during build, such as when running in IDE.
-	tidbXPlaceholderReleaseVersion = "v26.3.0"
+	tidbXPlaceholderReleaseVersion = "v26.3.0-this-is-a-placeholder"
 	// TiDBXVerMinYear is set to 2025 just for sanity check.
 	// our first release of next-gen since 2025
 	TiDBXVerMinYear = 2025
@@ -70,7 +70,7 @@ func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
 }
 
 // BuildTiDBXReleaseVersion converts mysql.TiDBReleaseVersion into the nextgen visible
-// version format `CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
+// version format `CLOUD.<4-digit-year-2-digit-month>.<fix-version><optional-pre-release>`.
 func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 	if !strings.HasPrefix(releaseVersion, "v") {
 		return "", errors.Errorf("invalid TiDB release version %q, should start with 'v'", releaseVersion)
