@@ -124,7 +124,6 @@ func TestWindowWithOuterJoinAndCTE(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t0, t1")
-		defer tk.MustExec("drop table if exists t0, t1")
 		tk.MustExec(`CREATE TABLE t0 (
   id bigint NOT NULL,
   k0 int NOT NULL,
@@ -142,6 +141,8 @@ func TestWindowWithOuterJoinAndCTE(t *testing.T) {
   d1 float NOT NULL,
   PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec("insert into t0 values (1, 10, 'z', 100, 10, 'a', 5), (2, 20, 'y', 200, 20, 'b', 15), (3, 30, 'x', 300, 30, 'c', 25)")
+		tk.MustExec("insert into t1 values (1, 10, 12.34, 11.0), (2, 20, 23.45, 21.0), (3, 30, 34.56, 31.0)")
 
 		var input []string
 		var output []struct {
