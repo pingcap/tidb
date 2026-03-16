@@ -1103,6 +1103,7 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	schemaCacheV2 := tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1"))
 
 	for _, testCase := range []struct {
 		sql    string
@@ -1132,8 +1133,7 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		var covered bool
 		ctx := context.WithValue(context.Background(), "cover-check", &covered)
 		tk.MustQueryWithContext(ctx, testCase.sql)
-		if testCase.sql == "select count(1) from (select table_name from information_schema.tables) t" ||
-			testCase.sql == "select table_name, table_catalog from information_schema.tables" {
+		if schemaCacheV2 {
 			continue
 		}
 		require.Equal(t, testCase.expect, covered, testCase.sql)
