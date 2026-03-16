@@ -19,13 +19,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +68,15 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 func reportCache(tsr *RemoteTopSQLReporter) {
 	tsr.doReport(&ReportData{
 		DataRecords: tsr.collecting.take().getReportRecords().toProto(keyspaceName),
+		SQLMetas:    tsr.normalizedSQLMap.take().toProto(keyspaceName),
+		PlanMetas:   tsr.normalizedPlanMap.take().toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan),
+	})
+}
+
+func reportCacheWithRU(tsr *RemoteTopSQLReporter, ruRecords []tipb.TopRURecord) {
+	tsr.doReport(&ReportData{
+		DataRecords: tsr.collecting.take().getReportRecords().toProto(keyspaceName),
+		RURecords:   ruRecords,
 		SQLMetas:    tsr.normalizedSQLMap.take().toProto(keyspaceName),
 		PlanMetas:   tsr.normalizedPlanMap.take().toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan),
 	})
@@ -196,6 +208,46 @@ func TestCollectAndEvicted(t *testing.T) {
 		require.Equal(t, keyspaceName, sqlMeta.KeyspaceName)
 		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
+}
+
+func TestEffectiveReportIntervalSecondsTopSQLIndependentFromTopRU(t *testing.T) {
+	// Contract: TopRU item interval changes must not mutate TopSQL report interval.
+	// We toggle TopRU enable/disable and invalid interval inputs to verify isolation.
+	topsqlstate.DisableTopSQL()
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	origTopSQLInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
+	t.Cleanup(func() {
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(origTopSQLInterval)
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.ResetTopRUItemInterval()
+	})
+
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(60)
+	topsqlstate.ResetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(15)
+
+	require.Equal(t, int64(60), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	topsqlstate.EnableTopRU()
+	require.Equal(t, int64(60), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(10)
+	topsqlstate.SetTopRUItemInterval(1)
+	require.Equal(t, int64(10), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(30)
+	topsqlstate.ResetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(0)
+	require.Equal(t, int64(30), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	require.Equal(t, int64(30), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
 }
 
 func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
@@ -722,17 +774,428 @@ func TestProcessStmtStatsData(t *testing.T) {
 	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtNetworkInBytes+data.DataRecords[5].Items[0].StmtNetworkOutBytes)
 }
 
+// TestReporterChannelsFullDropsAndMetrics covers the backpressure risk path:
+// when internal channels are full, reporter should drop fast (no panic/hang)
+// and account drops via the corresponding metrics counters.
+func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+
+	ruData := stmtstats.RUIncrementMap{
+		stmtstats.RUKey{
+			User:       "u1",
+			SQLDigest:  stmtstats.BinaryDigest("sql1"),
+			PlanDigest: stmtstats.BinaryDigest("plan1"),
+		}: &stmtstats.RUIncrement{
+			TotalRU:      1,
+			ExecCount:    1,
+			ExecDuration: 1,
+		},
+	}
+
+	beforeCollectRUDrop := readCounter(t, reporter_metrics.IgnoreCollectRUChannelFullCounter)
+	tsr.collectRUIncrementsChan <- ruData
+	tsr.collectRUIncrementsChan <- ruData // fill collectRUIncrementsChan (buffer=2)
+	doneCollect := make(chan struct{})
+	go func() {
+		tsr.CollectRUIncrements(ruData) // should drop immediately when channel is full
+		close(doneCollect)
+	}()
+	select {
+	case <-doneCollect:
+	case <-time.After(time.Second):
+		t.Fatal("CollectRUIncrements should not block when collectRUIncrementsChan is full")
+	}
+	require.Equal(t, 2, len(tsr.collectRUIncrementsChan))
+	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreCollectRUChannelFullCounter)-beforeCollectRUDrop, 1e-9)
+
+	beforeReportDrop := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
+	origInterval := topsqlstate.GetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S)
+	t.Cleanup(func() {
+		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
+	})
+
+	tsr.reportCollectedDataChan <- collectedData{} // fill reportCollectedDataChan (buffer=1)
+	doneReport := make(chan struct{})
+	go func() {
+		tsr.takeDataAndSendToReportChan(60) // should drop immediately when report channel is full
+		close(doneReport)
+	}()
+	select {
+	case <-doneReport:
+	case <-time.After(time.Second):
+		t.Fatal("takeDataAndSendToReportChan should not block when reportCollectedDataChan is full")
+	}
+	require.Equal(t, 1, len(tsr.reportCollectedDataChan))
+	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)-beforeReportDrop, 1e-9)
+}
+
+// TestReporterBackpressureAndDropScenario covers the reporter backpressure
+// scenario end-to-end: bounded drop under channel pressure, metrics observability,
+// and recovery once consumer resumes.
+func TestReporterBackpressureAndDropScenario(t *testing.T) {
+	origNowFunc := nowFunc
+	var currentUnix int64 = 1
+	nowFunc = func() time.Time {
+		return time.Unix(atomic.LoadInt64(&currentUnix), 0)
+	}
+	t.Cleanup(func() { nowFunc = origNowFunc })
+
+	origInterval := topsqlstate.GetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S)
+	t.Cleanup(func() {
+		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
+	})
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	defer tsr.Close()
+	sinkCh := make(chan *ReportData, 4)
+	require.NoError(t, tsr.Register(newMockDataSink(sinkCh)))
+
+	go tsr.collectRUWorker()
+
+	sendBatch := func(ts int64, reportEnd uint64) {
+		atomic.StoreInt64(&currentUnix, ts)
+		tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
+			{
+				User:       "bp-user",
+				SQLDigest:  stmtstats.BinaryDigest("bp-sql"),
+				PlanDigest: stmtstats.BinaryDigest("bp-plan"),
+			}: {
+				TotalRU:      float64(ts),
+				ExecCount:    1,
+				ExecDuration: 1,
+			},
+		})
+		bucketStart := uint64(ts) - uint64(ts)%15
+		require.Eventually(t, func() bool {
+			tsr.ruAggregator.mu.Lock()
+			defer tsr.ruAggregator.mu.Unlock()
+			_, ok := tsr.ruAggregator.buckets[bucketStart]
+			return ok
+		}, time.Second, 10*time.Millisecond)
+		done := make(chan struct{})
+		go func() {
+			tsr.takeDataAndSendToReportChan(reportEnd)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("takeDataAndSendToReportChan should not block under backpressure")
+		}
+	}
+
+	beforeDrop := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
+	sendBatch(1, 60)   // fill reportCollectedDataChan (buffer=1)
+	sendBatch(61, 120) // drop under backpressure (no report worker consuming yet)
+	require.Equal(t, 1, len(tsr.reportCollectedDataChan))
+	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)-beforeDrop, 1e-9)
+
+	reportWorkerDone := make(chan struct{})
+	go func() {
+		tsr.reportWorker()
+		close(reportWorkerDone)
+	}()
+
+	var firstPayload *ReportData
+	select {
+	case firstPayload = <-sinkCh:
+	case <-time.After(time.Second):
+		t.Fatal("reporter should recover and send payload after consumer resumes")
+	}
+	require.NotNil(t, firstPayload)
+	require.NotEmpty(t, firstPayload.RURecords)
+	require.Empty(t, firstPayload.DataRecords, "TopSQL shared path should remain untouched in RU-only scenario")
+	require.Eventually(t, func() bool {
+		return len(tsr.reportCollectedDataChan) == 0
+	}, time.Second, 10*time.Millisecond)
+
+	dropAfterRecover := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
+	sendBatch(121, 180)
+	var secondPayload *ReportData
+	select {
+	case secondPayload = <-sinkCh:
+	case <-time.After(time.Second):
+		t.Fatal("reporter should continue working after backpressure recovery")
+	}
+	require.NotNil(t, secondPayload)
+	require.NotEmpty(t, secondPayload.RURecords)
+	require.InDelta(t, 0.0, readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)-dropAfterRecover, 1e-9)
+
+	tsr.Close()
+	select {
+	case <-reportWorkerDone:
+	case <-time.After(time.Second):
+		t.Fatal("reportWorker should exit on reporter close")
+	}
+}
+
+// TestTopRUPipelineInProcessIntegration covers the core in-process TopRU
+// pipeline across modules: CollectRUIncrements -> worker/aggregation -> report
+// payload, including same-key accumulation and no duplicate window emission.
+func TestTopRUPipelineInProcessIntegration(t *testing.T) {
+	origNowFunc := nowFunc
+	var currentUnix int64 = 1
+	nowFunc = func() time.Time {
+		return time.Unix(atomic.LoadInt64(&currentUnix), 0)
+	}
+	t.Cleanup(func() { nowFunc = origNowFunc })
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+	tsr.BindKeyspaceName([]byte("ks-pipeline"))
+
+	ch := make(chan *ReportData, 2)
+	require.NoError(t, tsr.Register(newMockDataSink(ch)))
+	go tsr.collectRUWorker()
+	go tsr.reportWorker()
+
+	hotSQLDigest, hotPlanDigest := []byte("sql-hot"), []byte("plan-hot")
+	coldSQLDigest, coldPlanDigest := []byte("sql-cold"), []byte("plan-cold")
+	tsr.RegisterSQL(hotSQLDigest, "select /* hot */ 1", false)
+	tsr.RegisterPlan(hotPlanDigest, "hot-plan", false)
+	tsr.RegisterSQL(coldSQLDigest, "select /* cold */ 1", false)
+	tsr.RegisterPlan(coldPlanDigest, "cold-plan", false)
+
+	hotKey := stmtstats.RUKey{
+		User:       "user-hot",
+		SQLDigest:  stmtstats.BinaryDigest("sql-hot"),
+		PlanDigest: stmtstats.BinaryDigest("plan-hot"),
+	}
+	coldKey := stmtstats.RUKey{
+		User:       "user-cold",
+		SQLDigest:  stmtstats.BinaryDigest("sql-cold"),
+		PlanDigest: stmtstats.BinaryDigest("plan-cold"),
+	}
+
+	tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
+		hotKey: &stmtstats.RUIncrement{
+			TotalRU:      10,
+			ExecCount:    1,
+			ExecDuration: 100,
+		},
+		coldKey: &stmtstats.RUIncrement{
+			TotalRU:      3,
+			ExecCount:    1,
+			ExecDuration: 30,
+		},
+	})
+	tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
+		hotKey: &stmtstats.RUIncrement{
+			TotalRU:      7,
+			ExecCount:    2,
+			ExecDuration: 70,
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		tsr.ruAggregator.mu.Lock()
+		defer tsr.ruAggregator.mu.Unlock()
+		return len(tsr.ruAggregator.buckets) > 0
+	}, time.Second, 10*time.Millisecond)
+
+	tsr.takeDataAndSendToReportChan(60)
+
+	var payload *ReportData
+	select {
+	case payload = <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for TopRU pipeline report payload")
+	}
+
+	require.NotEmpty(t, payload.RURecords)
+	hotRec := findRURecordByDigest(payload.RURecords, "user-hot", "sql-hot", "plan-hot")
+	require.NotNil(t, hotRec)
+	coldRec := findRURecordByDigest(payload.RURecords, "user-cold", "sql-cold", "plan-cold")
+	require.NotNil(t, coldRec)
+
+	hotTotalRU, hotExecCount := 0.0, uint64(0)
+	for _, item := range hotRec.Items {
+		hotTotalRU += item.TotalRu
+		hotExecCount += item.ExecCount
+	}
+	require.InDelta(t, 17.0, hotTotalRU, 1e-9)
+	require.Equal(t, uint64(3), hotExecCount)
+
+	coldTotalRU := 0.0
+	for _, item := range coldRec.Items {
+		coldTotalRU += item.TotalRu
+	}
+	require.InDelta(t, 3.0, coldTotalRU, 1e-9)
+
+	_, ok := findSQLMeta(payload.SQLMetas, hotSQLDigest)
+	require.True(t, ok, "missing SQL meta for hot key")
+	_, ok = findSQLMeta(payload.SQLMetas, coldSQLDigest)
+	require.True(t, ok, "missing SQL meta for cold key")
+	_, ok = findPlanMeta(payload.PlanMetas, hotPlanDigest)
+	require.True(t, ok, "missing plan meta for hot key")
+	_, ok = findPlanMeta(payload.PlanMetas, coldPlanDigest)
+	require.True(t, ok, "missing plan meta for cold key")
+
+	tsr.takeDataAndSendToReportChan(61)
+	require.Never(t, func() bool {
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}, 300*time.Millisecond, 10*time.Millisecond)
+}
+
+// TestTopRUPipelineGracefulShutdown covers shutdown risk: workers should exit
+// cleanly without panic/hang, and unclosed RU tail data is not force-flushed.
+func TestTopRUPipelineGracefulShutdown(t *testing.T) {
+	origNowFunc := nowFunc
+	var currentUnix int64 = 1
+	nowFunc = func() time.Time {
+		return time.Unix(atomic.LoadInt64(&currentUnix), 0)
+	}
+	t.Cleanup(func() { nowFunc = origNowFunc })
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	ch := make(chan *ReportData, 1)
+	require.NoError(t, tsr.Register(newMockDataSink(ch)))
+
+	collectDone := make(chan struct{})
+	reportDone := make(chan struct{})
+	go func() {
+		tsr.collectRUWorker()
+		close(collectDone)
+	}()
+	go func() {
+		tsr.reportWorker()
+		close(reportDone)
+	}()
+
+	tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
+		{
+			User:       "shutdown-user",
+			SQLDigest:  stmtstats.BinaryDigest("sql-shutdown"),
+			PlanDigest: stmtstats.BinaryDigest("plan-shutdown"),
+		}: &stmtstats.RUIncrement{
+			TotalRU:      5,
+			ExecCount:    1,
+			ExecDuration: 50,
+		},
+	})
+	require.Eventually(t, func() bool {
+		tsr.ruAggregator.mu.Lock()
+		defer tsr.ruAggregator.mu.Unlock()
+		return len(tsr.ruAggregator.buckets) > 0
+	}, time.Second, 10*time.Millisecond)
+
+	closeDone := make(chan struct{})
+	go func() {
+		tsr.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("reporter close should not hang")
+	}
+	select {
+	case <-collectDone:
+	case <-time.After(time.Second):
+		t.Fatal("collectRUWorker should exit on close")
+	}
+	select {
+	case <-reportDone:
+	case <-time.After(time.Second):
+		t.Fatal("reportWorker should exit on close")
+	}
+
+	select {
+	case <-ch:
+		t.Fatal("unexpected payload: shutdown should not flush unclosed TopRU tail window")
+	default:
+	}
+
+	// Idempotent close should return promptly as well.
+	closeDoneAgain := make(chan struct{})
+	go func() {
+		tsr.Close()
+		close(closeDoneAgain)
+	}()
+	select {
+	case <-closeDoneAgain:
+	case <-time.After(time.Second):
+		t.Fatal("second close should be non-blocking")
+	}
+}
+
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
 	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval)
 	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts, ds
 }
 
-func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	tsr, _ := initializeCache(maxSQLNum, 120)
-	for i := range b.N {
-		populateCache(tsr, 0, maxSQLNum, uint64(i))
+func populateCacheWithRU(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64, ruRecords []tipb.TopRURecord) {
+	// register normalized sql
+	for i := begin; i < end; i++ {
+		key := []byte("sqlDigest" + strconv.Itoa(i+1))
+		value := "sqlNormalized" + strconv.Itoa(i+1)
+		tsr.RegisterSQL(key, value, false)
 	}
+	// register normalized plan
+	for i := begin; i < end; i++ {
+		key := []byte("planDigest" + strconv.Itoa(i+1))
+		value := "planNormalized" + strconv.Itoa(i+1)
+		tsr.RegisterPlan(key, value, false)
+	}
+	// collect
+	var records []collector.SQLCPUTimeRecord
+	for i := begin; i < end; i++ {
+		records = append(records, collector.SQLCPUTimeRecord{
+			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
+			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
+			CPUTimeMs:  uint32(i + 1),
+		})
+	}
+	tsr.processCPUTimeData(timestamp, records)
+	reportCacheWithRU(tsr, ruRecords)
+}
+
+func makeTopRURecordsForBench(numUsers, numSQLsPerUser int) []tipb.TopRURecord {
+	agg := newRUWindowAggregator()
+	batch := makeRUBatch(numUsers, numSQLsPerUser)
+	agg.addBatchToBucket(1, batch)
+	agg.addBatchToBucket(16, batch)
+	agg.addBatchToBucket(31, batch)
+	agg.addBatchToBucket(46, batch)
+	return agg.takeReportRecords(60, 60, keyspaceName)
+}
+
+// BenchmarkTopSQLCollectAndIncrementFrequency extends the existing TopSQL benchmark with feature-matrix cases.
+// Risk covered: TopRU on/off should not cause abnormal performance regressions on TopSQL-only reporter path.
+func BenchmarkTopSQLCollectAndIncrementFrequency(b *testing.B) {
+	ruRecords := makeTopRURecordsForBench(100, 100)
+
+	b.Run("TopSQLOnly", func(b *testing.B) {
+		tsr, _ := initializeCache(maxSQLNum, 120)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			populateCache(tsr, 0, maxSQLNum, uint64(i))
+		}
+	})
+	b.Run("TopRUOnly", func(b *testing.B) {
+		tsr, _ := initializeCache(maxSQLNum, 120)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tsr.doReport(&ReportData{RURecords: ruRecords})
+		}
+	})
+	b.Run("TopSQLAndTopRU", func(b *testing.B) {
+		tsr, _ := initializeCache(maxSQLNum, 120)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			populateCacheWithRU(tsr, 0, maxSQLNum, uint64(i), ruRecords)
+		}
+	})
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
@@ -744,4 +1207,70 @@ func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
 		end += maxSQLNum
 		populateCache(tsr, begin, end, uint64(i))
 	}
+}
+
+// BenchmarkReporterBackpressure provides an in-process performance scenario for
+// reporter backpressure path and exports drop rate as a benchmark metric.
+func BenchmarkReporterBackpressure(b *testing.B) {
+	origInterval := topsqlstate.GetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S)
+	b.Cleanup(func() {
+		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
+	})
+
+	b.Run("normal", func(b *testing.B) {
+		tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+		b.Cleanup(tsr.Close)
+
+		drainDone := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-drainDone:
+					return
+				case <-tsr.reportCollectedDataChan:
+				}
+			}
+		}()
+		b.Cleanup(func() { close(drainDone) })
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tsr.takeDataAndSendToReportChan(60)
+		}
+	})
+
+	b.Run("backpressure", func(b *testing.B) {
+		tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+		b.Cleanup(tsr.Close)
+		tsr.reportCollectedDataChan <- collectedData{} // keep channel full to trigger drop path
+
+		beforeDrop := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tsr.takeDataAndSendToReportChan(60)
+		}
+		b.StopTimer()
+
+		dropped := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter) - beforeDrop
+		b.ReportMetric(dropped, "drop_total")
+		if b.N > 0 {
+			b.ReportMetric(dropped/float64(b.N), "drop/op")
+		}
+	})
+}
+
+func readCounterValue(c interface{ Write(*dto.Metric) error }) float64 {
+	pb := &dto.Metric{}
+	if err := c.Write(pb); err != nil {
+		return 0
+	}
+	return pb.GetCounter().GetValue()
+}
+
+func readCounter(t *testing.T, c interface{ Write(*dto.Metric) error }) float64 {
+	t.Helper()
+	pb := &dto.Metric{}
+	require.NoError(t, c.Write(pb))
+	return pb.GetCounter().GetValue()
 }
