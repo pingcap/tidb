@@ -1629,16 +1629,16 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 
-	// Build masking expressions for columns with masking policies
+// Build masking expressions for columns with masking policies
 	is := ctx.GetInfoSchema()
 	if is != nil {
 		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
 		if err != nil {
-			// Log error but don't fail the plan building
-			logutil.BgLogger().Warn("failed to build masking expressions for PointGet", zap.Error(err))
-		} else {
-			p.MaskingExprs = maskExprs
+			// Fail-closed: If masking expression cannot be built, fail the query
+			// instead of returning raw values which would leak sensitive data
+			return nil
 		}
+		p.MaskingExprs = maskExprs
 	}
 
 	return p
