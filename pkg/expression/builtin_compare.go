@@ -134,6 +134,13 @@ func (c *coalesceFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	resultFieldType.AddFlag(flag)
 
 	retEvalTp := resultFieldType.EvalType()
+	// BIT type is a hybrid type that maps to ETInt via EvalType(), but aggregation
+	// functions like MIN/MAX expect BIT values to be evaluated as ETString.
+	// Force ETString here so that the String signature is used, which is consistent
+	// with how Column.EvalString handles BIT (via the Hybrid path).
+	if resultFieldType.GetType() == mysql.TypeBit {
+		retEvalTp = types.ETString
+	}
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
 	for range args {
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)

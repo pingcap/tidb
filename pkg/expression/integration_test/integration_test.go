@@ -4445,3 +4445,36 @@ func TestDeepCopyRetType(t *testing.T) {
 	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
 	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
 }
+
+// TestControlFuncsBitType tests that control functions (COALESCE, CASE WHEN, IF,
+// IFNULL) correctly handle BIT type columns when used inside aggregation
+// functions like MIN/MAX. Previously these would panic with "index out of range"
+// because the control function chose an Int evaluation signature while the
+// aggregation expected a String evaluation signature for BIT types.
+// See https://github.com/pingcap/tidb/issues/67007
+// See https://github.com/pingcap/tidb/issues/67008
+func TestControlFuncsBitType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (active BIT)")
+	tk.MustExec("insert into t1 (active) values (0)")
+
+	// Issue #67007: MIN(COALESCE(bit_col)) panicked with index out of range.
+	tk.MustQuery("select MIN(COALESCE(t1.active)) from t1 group by t1.active").Check(testkit.Rows("\x00"))
+	tk.MustQuery("select MAX(COALESCE(t1.active)) from t1 group by t1.active").Check(testkit.Rows("\x00"))
+
+	// Issue #67008: CASE WHEN with BIT type inside INTERSECT panicked.
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (active BIT, updated_at DATETIME)")
+	tk.MustExec("insert into t2 (active, updated_at) values (1, '2023-12-01 10:00:00')")
+	// This should not panic.
+	tk.MustQuery("select CASE WHEN NULLIF(t2.updated_at, 1) THEN t2.active ELSE t2.active END from t2 INTERSECT select 1").Check(testkit.Rows("1"))
+
+	// IF with BIT column inside aggregation.
+	tk.MustQuery("select MIN(IF(true, t1.active, t1.active)) from t1 group by t1.active").Check(testkit.Rows("\x00"))
+
+	// IFNULL with BIT column inside aggregation.
+	tk.MustQuery("select MIN(IFNULL(t1.active, t1.active)) from t1 group by t1.active").Check(testkit.Rows("\x00"))
+}
