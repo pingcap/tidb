@@ -51,7 +51,6 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
-	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -303,7 +302,6 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
-	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -364,7 +362,6 @@ func TestLoadNullStatsFile(t *testing.T) {
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
 	// Creating and running the server
-	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
