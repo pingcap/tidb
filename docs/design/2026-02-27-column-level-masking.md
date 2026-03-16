@@ -163,10 +163,27 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
 
 ### Built-in masking functions
 
-- `MASK_PARTIAL(col, preserve_left, preserve_right, mask_char)`
-- `MASK_FULL(col, mask_char_or_default)`
-- `MASK_NULL(col)`
-- `MASK_DATE(col, format_or_template)`
+- `MASK_PARTIAL(col, pad, start, length)` - Masks a portion of the string with the specified pad character, starting from the `start` position for `length` characters
+  - `col`: The column to mask (string type)
+  - `pad`: Single character used for masking (e.g., '*', 'X')
+  - `start`: Starting position (0-indexed) where masking begins
+  - `length`: Number of characters to mask
+  - Example: `MASK_PARTIAL(credit_card, '*', 0, 12)` masks first 12 chars of credit card number
+
+- `MASK_FULL(col, mask_char)` - Masks the entire column value by repeating the specified character
+  - `col`: The column to mask (string, datetime, or numeric types)
+  - `mask_char`: Single character used for masking (e.g., '*', 'X')
+  - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
+  - Example: `MASK_FULL(ssn, 'X')` returns 'XXXXXXXXX' for a 9-digit SSN
+
+- `MASK_NULL(col)` - Returns NULL for the column value
+  - `col`: The column to mask (any supported type)
+  - Example: `MASK_NULL(salary)` always returns NULL
+
+- `MASK_DATE(col, date_literal)` - Replaces the date value with a fixed date literal
+  - `col`: The date/time column to mask
+  - `date_literal`: Fixed date string in 'YYYY-MM-DD' format (e.g., '1970-01-01')
+  - Example: `MASK_DATE(birth_date, '1970-01-01')` returns '1970-01-01' for any date value
 
 ### Supported column types
 
@@ -259,6 +276,57 @@ This design prioritizes predictable SQL behavior and lower rollout risk:
 - Keeps storage and predicate semantics unchanged (AT RESULT), reducing execution-path regressions.
 - Uses per-column binding with stable internal IDs to survive rename operations.
 - Adds optional `RESTRICT ON` controls to satisfy stricter compliance needs without forcing Oracle-like restrictions by default.
+
+### Example Usage
+
+```sql
+-- Example 1: MASK_PARTIAL - mask middle characters of a phone number
+CREATE MASKING POLICY p_mask_phone AS
+  MASK_PARTIAL(phone, '*', 3, 4) ENABLE;
+
+CREATE TABLE contacts (
+  id INT PRIMARY KEY,
+  name VARCHAR(100),
+  phone VARCHAR(20)
+);
+
+ALTER TABLE contacts
+  ADD MASKING POLICY p_mask_phone ON (phone) ENABLE;
+
+INSERT INTO contacts VALUES (1, 'Alice', '1234567890');
+-- Query returns: '123****890' (masked in the middle)
+SELECT phone FROM contacts WHERE id = 1;
+
+-- Example 2: MASK_FULL - completely mask SSN
+CREATE MASKING POLICY p_mask_ssn AS
+  MASK_FULL(ssn, 'X') ENABLE;
+
+ALTER TABLE employees
+  ADD MASKING POLICY p_mask_ssn ON (ssn) ENABLE;
+
+-- Query returns: 'XXXXXXXXX' for any 9-digit SSN
+SELECT ssn FROM employees WHERE id = 1;
+
+-- Example 3: MASK_DATE - normalize birth dates
+CREATE MASKING POLICY p_mask_birthdate AS
+  MASK_DATE(birth_date, '1970-01-01') ENABLE;
+
+ALTER TABLE users
+  ADD MASKING POLICY p_mask_birthdate ON (birth_date) ENABLE;
+
+-- Query returns: '1970-01-01' for any birth date
+SELECT birth_date FROM users WHERE id = 1;
+
+-- Example 4: MASK_NULL - hide salary information
+CREATE MASKING POLICY p_mask_salary AS
+  MASK_NULL(salary) ENABLE;
+
+ALTER TABLE employees
+  ADD MASKING POLICY p_mask_salary ON (salary) ENABLE;
+
+-- Query returns: NULL for all salary values
+SELECT salary FROM employees WHERE id = 1;
+```
 
 ## Compatibility
 
