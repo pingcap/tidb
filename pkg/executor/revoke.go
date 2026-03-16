@@ -126,7 +126,8 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	users := userSpecToUserList(e.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
 
 // Checks that dynamic privileges are only of global scope.
@@ -425,7 +426,7 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 
 	if checkTablePrivTbl {
 		sql := strings.Join([]string{"SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_priv LIKE '%%", priv.Priv.String(), "%%';"}, "")
-		exists, err := recordExists(internalSession, sql, mysql.SystemDB, mysql.ColumnPrivTable, user, host, e.Level.DBName, e.Level.TableName)
+		exists, err := recordExists(internalSession, sql, mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, e.Level.TableName)
 		if err != nil {
 			return err
 		}
