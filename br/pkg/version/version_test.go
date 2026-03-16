@@ -528,9 +528,9 @@ func tidbDetectServerInfoCases() []detectServerInfoCase {
 		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(5, 2, 1, "")},
 		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
 		{10, "8.0.11-TiDB-CLOUD.202603.0", ServerTypeTiDB, mkVer(26, 3, 0, "")},
-		{11, "8.0.11-TiDB-CLOUD.202603.3-1c7827b003-dirty", ServerTypeTiDB, mkVer(26, 3, 3, "")},
+		{11, "8.0.11-TiDB-CLOUD.202603.3-1c7827b003-dirty", ServerTypeTiDB, mkVer(26, 3, 3, "1c7827b003-dirty")},
 		{12, "Release Version: CLOUD.202603.2\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 2, "")},
-		{12, "Release Version: CLOUD.202603.5-1c7827b003-dirty\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 5, "")},
+		{12, "Release Version: CLOUD.202603.5-1c7827b003-dirty\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 5, "1c7827b003-dirty")},
 		{13, "8.0.11-TiDB-X-CLOUD.202603.0", ServerTypeTiDB, mkVer(0, 0, 0, "")},
 	}
 }

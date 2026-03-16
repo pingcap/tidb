@@ -395,9 +395,9 @@ var (
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select version()` result for cloud version format.
-	tidbCloudServerVersionRegex = regexp.MustCompile(`TiDB-CLOUD\.(\d{4})(\d{2})\.(\d+)`)
+	tidbCloudServerVersionRegex = regexp.MustCompile(`TiDB-CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result for cloud release version format.
-	tidbCloudReleaseVersionRegex = regexp.MustCompile(`Release Version:\s*CLOUD\.(\d{4})(\d{2})\.(\d+)`)
+	tidbCloudReleaseVersionRegex = regexp.MustCompile(`Release Version:\s*CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result with full release version
 	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|CLOUD\.\d{6}\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)`)
 )
@@ -410,10 +410,10 @@ func parseTiDBXVersionToSemver(versionStr string) string {
 	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
 	// BR version checks can keep working on semver-like values.
 	match := tidbCloudServerVersionRegex.FindStringSubmatch(versionStr)
-	if len(match) != 4 {
+	if len(match) != 6 {
 		match = tidbCloudReleaseVersionRegex.FindStringSubmatch(versionStr)
 	}
-	if len(match) != 4 {
+	if len(match) != 6 {
 		return ""
 	}
 	year, err := strconv.Atoi(match[1])
@@ -428,7 +428,7 @@ func parseTiDBXVersionToSemver(versionStr string) string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("%d.%d.%d", year-2000, month, patch)
+	return fmt.Sprintf("%d.%d.%d%s", year-2000, month, patch, match[4])
 }
 
 // ParseServerInfo parses exported server type and version info from version string
