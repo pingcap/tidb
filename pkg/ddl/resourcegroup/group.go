@@ -20,8 +20,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-// MaxGroupNameLength is max length of the name of a resource group
-const MaxGroupNameLength = 32
+// MaxGroupNameLength is max length of the name of a resource group.
+// MySQL allows up to 64 characters for resource group names.
+const MaxGroupNameLength = 64
 
 // NewGroupFromOptions creates a new resource group from the given options.
 func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings) (*rmpb.ResourceGroup, error) {

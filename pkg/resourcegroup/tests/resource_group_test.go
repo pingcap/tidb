@@ -704,9 +704,30 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		err: resourcegroup.ErrInvalidResourceGroupDuplicatedMode,
 	})
 
+	// Boundary test: 64 characters (max allowed, should succeed)
 	tests = append(tests, TestCase{
-		name:      "error case: duplicated mode",
-		groupName: "test_group_too_looooooooooooooooooooooooooooooooooooooooooooooooong",
+		name:      "success case: group name at max length (64 chars)",
+		groupName: "test_group_not_too_loooooooooooooooooooooooooooooooooooooooooong",
+		input: &model.ResourceGroupSettings{
+			RURate: 1000,
+		},
+		output: &rmpb.ResourceGroup{
+			Name: "test_group_not_too_loooooooooooooooooooooooooooooooooooooooooong",
+			Mode: rmpb.GroupMode_RUMode,
+			RUSettings: &rmpb.GroupRequestUnitSettings{
+				RU: &rmpb.TokenBucket{
+					Settings: &rmpb.TokenLimitSettings{
+						FillRate: 1000,
+					},
+				},
+			},
+		},
+	})
+
+	// Boundary test: 65 characters (exceeds max, should fail)
+	tests = append(tests, TestCase{
+		name:      "error case: group name too long",
+		groupName: "test_group_too_looooooooooooooooooooooooooooooooooooooooooooooong",
 		input: &model.ResourceGroupSettings{
 			CPULimiter:       "8",
 			IOReadBandwidth:  "3000Mi",
