@@ -1293,8 +1293,11 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
+// applyMasking controls whether masking policies are applied to the projected columns.
+// When false, columns use original values (for HAVING, ORDER BY, set operators).
+// When true, masking is applied (for final result output).
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool, applyMasking bool) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1336,7 +1339,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		if considerWindow && !isWindowFuncField {
 			col := p.Schema().Columns[i]
 			expr := expression.Expression(col)
-			if !field.Auxiliary {
+			if applyMasking && !field.Auxiliary {
 				maskExprs, err := getMaskExprs(p)
 				if err != nil {
 					return nil, nil, 0, err
@@ -1379,7 +1382,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		}
 
 		p = np
-		if !field.Auxiliary {
+		if applyMasking && !field.Auxiliary {
 			maskExprs, err := getMaskExprs(p)
 			if err != nil {
 				return nil, nil, 0, err
@@ -1622,6 +1625,64 @@ func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldNa
 	return policy, tblInfo, colInfo
 }
 
+// buildFinalProjectionWithMasking builds a final projection that applies masking policies
+// to the result. This implements the "AT RESULT" semantics where masking is applied
+// only after all relational operations (HAVING, ORDER BY, set operators) have been
+// computed using original values.
+func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
+	if b.is == nil || p == nil {
+		return p, nil
+	}
+	sv := b.ctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		// Internal SQL should not be rewritten by masking policies.
+		return p, nil
+	}
+	if len(b.is.AllMaskingPolicies()) == 0 {
+		return p, nil
+	}
+
+	// Build masking expressions
+	maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if maskExprs == nil {
+		// No masking needed, return original plan
+		return p, nil
+	}
+
+	// Build a projection that applies masking to the first oldLen columns (non-auxiliary)
+	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
+	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
+	newNames := make([]*types.FieldName, 0, oldLen)
+
+	for i := 0; i < oldLen; i++ {
+		col := p.Schema().Columns[i]
+		// Apply masking substitution to the column
+		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), col, p.Schema(), maskExprs)
+
+		proj.Exprs = append(proj.Exprs, expr)
+
+		// Create a new column for the masked result
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		// Preserve the original column ID for masking policy lookup
+		newCol.ID = col.ID
+		newCol.SetCoercibility(col.Coercibility())
+		newCol.SetRepertoire(col.Repertoire())
+		schema.Append(newCol)
+		newNames = append(newNames, p.OutputNames()[i])
+	}
+
+	proj.SetSchema(schema)
+	proj.SetOutputNames(newNames)
+	proj.SetChildren(p)
+	return proj, nil
+}
+
 func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {
 	b.optFlag = b.optFlag | rule.FlagBuildKeyInfo
 	b.optFlag = b.optFlag | rule.FlagPushDownAgg
@@ -1837,6 +1898,13 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+	setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
@@ -4059,7 +4127,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
+	// applyMasking=false: Use original values for HAVING, ORDER BY, etc. Masking will be applied later.
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -4097,7 +4166,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// In such case plan `p` is not changed, so we don't have to build another projection.
 		if hasWindowFuncField {
 			// Now we build the window function fields.
-			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			// applyMasking=false: Use original values. Masking will be applied later.
+			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false, false)
 			if err != nil {
 				return nil, err
 			}
@@ -4137,6 +4207,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+	p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
+	if err != nil {
+		return nil, err
 	}
 
 	sel.Fields.Fields = originalFields
