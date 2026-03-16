@@ -544,10 +544,7 @@ func buildMVTablePKHandleCols(
 // inferSumArgNotNullByOffset infers SUM argument nullability from base-table column flags.
 // If SUM(arg) is known NOT NULL, executor does not need a matching COUNT(arg) dependency.
 func inferSumArgNotNullByOffset(local *buildLocalResult) map[int]bool {
-	if local == nil || local.baseTable == nil {
-		return nil
-	}
-	if len(local.baseTable.Columns) == 0 || len(local.aggCols) == 0 {
+	if local == nil || local.baseTable == nil || len(local.baseTable.Columns) == 0 || len(local.aggCols) == 0 {
 		return nil
 	}
 
@@ -860,12 +857,16 @@ func isCountStarOrOneArg(arg ast.ExprNode) bool {
 	if !ok {
 		return false
 	}
-	switch x := v.GetValue().(type) {
+	return isIntegerLiteralOne(v.GetValue())
+}
+
+func isIntegerLiteralOne(v any) bool {
+	switch x := v.(type) {
+	case int:
+		return x == 1
 	case int64:
 		return x == 1
 	case uint64:
-		return x == 1
-	case int:
 		return x == 1
 	default:
 		return false
