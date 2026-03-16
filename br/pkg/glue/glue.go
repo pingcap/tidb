@@ -57,6 +57,7 @@ type Session interface {
 	CreateTable(ctx context.Context, dbName pmodel.CIStr, table *model.TableInfo,
 		cs ...ddl.CreateTableOption) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
+	CreateMaskingPolicy(ctx context.Context, policy *model.MaskingPolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
 	GetSessionCtx() sessionctx.Context

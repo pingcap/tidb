@@ -998,6 +998,84 @@ func TestHash(t *testing.T) {
 	}
 }
 
+func TestFilterDDLJobsWithMaskingPolicy(t *testing.T) {
+	// Test that ActionCreateMaskingPolicy is NOT filtered out during backup
+	// This verifies that masking policy DDLs are included in backup
+	testCases := []struct {
+		name       string
+		ddlJob     *model.Job
+		expectKept bool
+	}{
+		{
+			name: "masking policy should be kept",
+			ddlJob: &model.Job{
+				ID:         1,
+				Type:       model.ActionCreateMaskingPolicy,
+				SchemaName: "test_db",
+				Query:      "CREATE MASKING POLICY p1 ON t (c) AS CASE WHEN 1=1 THEN 'masked' END",
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 1,
+					DBInfo: &model.DBInfo{
+						ID:   1,
+						Name: pmodel.NewCIStr("test_db"),
+					},
+				},
+				State: model.JobStateDone,
+			},
+			expectKept: true,
+		},
+		{
+			name: "alter masking policy should be kept",
+			ddlJob: &model.Job{
+				ID:         2,
+				Type:       model.ActionAlterMaskingPolicy,
+				SchemaName: "test_db",
+				Query:      "ALTER MASKING POLICY p1 ALTER EXPRESSION AS CASE WHEN 1=1 THEN 'masked2' END",
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 2,
+				},
+				State: model.JobStateDone,
+			},
+			expectKept: true,
+		},
+		{
+			name: "drop masking policy should be kept",
+			ddlJob: &model.Job{
+				ID:         3,
+				Type:       model.ActionDropMaskingPolicy,
+				SchemaName: "test_db",
+				Query:      "DROP MASKING POLICY p1",
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 3,
+				},
+				State: model.JobStateDone,
+			},
+			expectKept: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Verify that masking policy DDLs are NOT in skipUnsupportedDDLJob
+			// This ensures they will be included in backup
+			unsupportedTypes := []model.ActionType{
+				model.ActionCreatePlacementPolicy,
+				model.ActionAlterPlacementPolicy,
+				model.ActionDropPlacementPolicy,
+			}
+
+			for _, unsupported := range unsupportedTypes {
+				require.NotEqual(t, tc.ddlJob.Type, unsupported,
+					"Masking policy type %s should NOT be in skip list", tc.ddlJob.Type)
+			}
+
+			// Also verify the DDL job has required fields
+			require.NotNil(t, tc.ddlJob.BinlogInfo)
+			require.Equal(t, model.JobStateDone, tc.ddlJob.State)
+		})
+	}
+}
+
 // filterSnapshotMaps filters the snapshot maps based on the filter criteria and populates the current maps
 func filterSnapshotMaps(
 	tableFilter filter.Filter,

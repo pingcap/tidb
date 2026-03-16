@@ -94,6 +94,18 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 				zap.Error(err))
 		}
 		return errors.Trace(err)
+	case model.ActionCreateMaskingPolicy:
+		// Handle masking policy from DDL job
+		args, err := model.GetMaskingPolicyArgs(ddlJob)
+		if err != nil {
+			log.Error("get masking policy args failed", zap.Error(err))
+			return errors.Trace(err)
+		}
+		err = db.se.CreateMaskingPolicy(ctx, args.Policy)
+		if err != nil {
+			log.Error("create masking policy failed", zap.Stringer("policy", args.Policy.Name), zap.Error(err))
+		}
+		return errors.Trace(err)
 	}
 
 	if ddlJob.Query == "" {
