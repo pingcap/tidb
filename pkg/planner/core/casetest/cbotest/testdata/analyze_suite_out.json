@@ -260,7 +260,7 @@
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexReader(Probe) 12475.01 root  index:Selection",
           "  └─Selection 12475.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) lt(test.t2.b, plus(test.t1.b, 1)) gt(test.t2.b, minus(test.t1.b, 1))], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
         ]
       },
       {
