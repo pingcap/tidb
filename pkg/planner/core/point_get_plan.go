@@ -506,6 +506,17 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	}
 	p.DBName = dbName
 
+	// Build masking expressions for columns with masking policies.
+	is := ctx.GetInfoSchema()
+	if is != nil {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to build masking expressions for BatchPointGet", zap.Error(err))
+		} else {
+			p.MaskingExprs = maskExprs
+		}
+	}
+
 	return p
 }
 
@@ -765,6 +776,95 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p
 }
+
+// buildMaskingExprsForPointGet builds masking expressions for PointGet/BatchPointGet fast paths.
+// It mirrors the projection masking logic so fast paths cannot bypass masking policies.
+func buildMaskingExprsForPointGet(
+	ctx context.Context,
+	sctx base.PlanContext,
+	is infoschema.InfoSchema,
+	schema *expression.Schema,
+	names []*types.FieldName,
+) ([]expression.Expression, error) {
+	if sctx == nil || is == nil || schema == nil {
+		return nil, nil
+	}
+	cols := schema.Columns
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+
+	sv := sctx.GetSessionVars()
+	if sv == nil || sv.InRestrictedSQL {
+		// Internal SQL should not be rewritten by masking policies.
+		return nil, nil
+	}
+	if len(is.AllMaskingPolicies()) == 0 {
+		return nil, nil
+	}
+
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+	schemaVersion := is.SchemaMetaVersion()
+	hasMask := false
+
+	for i, col := range cols {
+		name := names[i]
+		if name == nil || name.Hidden {
+			continue
+		}
+		tblName := name.OrigTblName
+		if tblName.L == "" {
+			tblName = name.TblName
+		}
+		if tblName.L == "" {
+			continue
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		if colName.L == "" {
+			continue
+		}
+		dbName := name.DBName
+		if dbName.L == "" {
+			dbName = ast.NewCIStr(sv.CurrentDB)
+		}
+		if dbName.L == "" {
+			continue
+		}
+		tbl, err := is.TableByName(ctx, dbName, tblName)
+		if err != nil {
+			continue
+		}
+		tblInfo := tbl.Meta()
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+		if colInfo == nil || colInfo.ID != col.ID {
+			continue
+		}
+		policy, ok := is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+		if !ok || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(sctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		if err != nil {
+			return nil, err
+		}
+		if placeholder == nil {
+			continue
+		}
+		replaceExprs[i] = expression.ColumnSubstitute(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		hasMask = true
+	}
+	if !hasMask {
+		return nil, nil
+	}
+	return replaceExprs, nil
+}
+
 
 func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
