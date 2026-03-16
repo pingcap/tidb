@@ -1144,7 +1144,6 @@ func TestLeaderTick(t *testing.T) {
 	require.NoError(t, err)
 	newSafePoint = s.mustGetSafePointFromPd(t)
 	require.Greater(t, newSafePoint, pdSafePoint)
-	pdSafePoint = newSafePoint
 
 	// No more signals in the channel
 	select {
