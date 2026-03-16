@@ -498,3 +498,279 @@ func TestBasicReadFile(t *testing.T) {
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestParquetParserWrapper(t *testing.T) {
+	const (
+		rowCnt   = 256
+		groupCnt = 2
+	)
+
+	dir := t.TempDir()
+	fileName := "fixed-len-byte-array.parquet"
+
+	pc := []ParquetColumn{
+		{
+			Name:      "fixed",
+			Type:      parquet.Types.FixedLenByteArray,
+			Converted: schema.ConvertedTypes.None,
+			TypeLen:   8,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]parquet.FixedLenByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					defLevels[i] = 1
+					vals[i] = parquet.FixedLenByteArray(fmt.Sprintf("k%07d", i))
+				}
+				return vals, defLevels
+			},
+		},
+		{
+			Name:      "val",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					defLevels[i] = 1
+					vals[i] = int64(i)
+				}
+				return vals, defLevels
+			},
+		},
+	}
+	err := WriteParquetFile(
+		dir,
+		fileName,
+		pc,
+		rowCnt,
+		parquet.WithDataPageSize(256),
+		parquet.WithBatchSize(32),
+		parquet.WithMaxRowGroupLength(int64(rowCnt/groupCnt)),
+	)
+	require.NoError(t, err)
+
+	readRows := func(threshold int) ([]string, []int64) {
+		origThreshold := rowGroupInMemoryThreshold
+		rowGroupInMemoryThreshold = threshold
+		defer func() {
+			rowGroupInMemoryThreshold = origThreshold
+		}()
+
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+
+		gotFixed := make([]string, 0, rowCnt)
+		gotInt := make([]int64, 0, rowCnt)
+		for range rowCnt {
+			require.NoError(t, parser.ReadRow())
+			last := parser.LastRow()
+			gotFixed = append(gotFixed, last.Row[0].GetString())
+			gotInt = append(gotInt, last.Row[1].GetInt64())
+			parser.RecycleRow(last)
+		}
+		require.ErrorIs(t, parser.ReadRow(), io.EOF)
+		return gotFixed, gotInt
+	}
+
+	gotFixedInMemory, gotIntInMemory := readRows(1 << 30)
+	gotFixedOnDemand, gotIntOnDemand := readRows(1)
+	require.Equal(t, gotFixedOnDemand, gotFixedInMemory)
+	require.Equal(t, gotIntOnDemand, gotIntInMemory)
+
+	for i := range rowCnt {
+		require.Equal(t, fmt.Sprintf("k%07d", i), gotFixedInMemory[i])
+		require.Equal(t, int64(i), gotIntInMemory[i])
+	}
+}
+
+// getStringFromParquetByteOld is the previous implementation used to convert
+// parquet byte to string. It's only used to generate expected results in tests.
+func getStringFromParquetByteOld(rawBytes []byte, scale int) string {
+	negative := rawBytes[0] > 127
+	if negative {
+		for i := range rawBytes {
+			rawBytes[i] = ^rawBytes[i]
+		}
+		for i := len(rawBytes) - 1; i >= 0; i-- {
+			rawBytes[i]++
+			if rawBytes[i] != 0 {
+				break
+			}
+		}
+	}
+
+	intValue := big.NewInt(0)
+	intValue = intValue.SetBytes(rawBytes)
+	val := fmt.Sprintf("%0*d", scale, intValue)
+	dotIndex := len(val) - scale
+	var res strings.Builder
+	if negative {
+		res.WriteByte('-')
+	}
+	if dotIndex == 0 {
+		res.WriteByte('0')
+	} else {
+		res.WriteString(val[:dotIndex])
+	}
+	if scale > 0 {
+		res.WriteByte('.')
+		res.WriteString(val[dotIndex:])
+	}
+	return res.String()
+}
+
+func TestBinaryToDecimalStr(t *testing.T) {
+	type testCase struct {
+		rawBytes []byte
+		scale    int
+	}
+
+	// Small basics.
+	tcs := []testCase{
+		{[]byte{0x01}, 3},
+		{[]byte{0x05}, 0},
+		{[]byte{0xff}, 0},
+		{[]byte{0xff}, 3},
+		{[]byte{0xff, 0xff}, 0},
+		{[]byte{0x01}, 5},
+		{[]byte{0x0a}, 1},
+	}
+
+	// Longer scales and longer inputs.
+	pattern := []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
+	makeFull := func(n int) []byte {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = pattern[i%len(pattern)]
+		}
+		return b
+	}
+	zeroN := func(n int) []byte { return make([]byte, n) }
+	oneN := func(n int) []byte { return append(make([]byte, n-1), 0x01) }
+	negOneN := func(n int) []byte { return bytes.Repeat([]byte{0xff}, n) }
+	negMinN := func(n int) []byte {
+		b := make([]byte, n)
+		b[0] = 0x80
+		return b
+	}
+
+	// Bound total digits to avoid exceeding mysql.MaxDecimalWidth.
+	appendCases := func(n int, scales []int) {
+		for _, sc := range scales {
+			tcs = append(tcs,
+				testCase{zeroN(n), sc},
+				testCase{oneN(n), sc},
+				testCase{negOneN(n), sc},
+				testCase{makeFull(n), sc},
+			)
+		}
+	}
+
+	// 16 bytes (~39 digits max) safe up to scale 32.
+	appendCases(16, []int{8, 12, 16, 32})
+
+	// Extra carry/edge patterns (kept to small scales).
+	tcs = append(tcs,
+		testCase{negMinN(16), 0},
+		testCase{negMinN(16), 8},
+	)
+	for i, tc := range tcs {
+		rawCopy := append([]byte(nil), tc.rawBytes...)
+		rawCopy2 := append([]byte(nil), tc.rawBytes...)
+		expected := getStringFromParquetByteOld(tc.rawBytes, tc.scale)
+
+		// test string conversion
+		strNew := getStringFromParquetByte(rawCopy, tc.scale)
+		require.Equal(t, expected, string(strNew))
+
+		// test MyDecimal conversion
+		var dec types.MyDecimal
+		err := dec.FromParquetArray(rawCopy2, tc.scale)
+		require.NoError(t, err)
+		require.Equal(t, expected, dec.String(),
+			"raw=%x scale=%d idx=%d", tc.rawBytes, tc.scale, i)
+	}
+}
+
+func TestParquetDecimalFromInt64(t *testing.T) {
+	type testCase struct {
+		value    int64
+		scale    int32
+		expected string
+	}
+
+	tcs := []testCase{
+		{0, 0, "0"},
+		{0, 3, "0.000"},
+		{0, 6, "0.000000"},
+		{123, 0, "123"},
+		{123, 3, "0.123"},
+		{-7, 0, "-7"},
+		{-7, 2, "-0.07"},
+		{1, 3, "0.001"},
+		{10, 1, "1.0"},
+		{-1, 4, "-0.0001"},
+	}
+
+	for _, tc := range tcs {
+		// No decimal meta or scale=0: stored as int64.
+		var dec types.MyDecimal
+		err := setParquetDecimalFromInt64(tc.value, &dec,
+			schema.DecimalMetadata{IsSet: true, Scale: tc.scale})
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, dec.String())
+	}
+
+	// Test overflow
+	var dec types.MyDecimal
+	raw := bytes.Repeat([]byte{0x7f}, 40)
+	require.ErrorIs(t, types.ErrOverflow, dec.FromParquetArray(raw, 0))
+}
+
+func TestTrackingAllocatorReallocatePreservesPrefix(t *testing.T) {
+	allocator := &trackingAllocator{}
+	buf := allocator.Allocate(8)
+	require.Equal(t, uintptr(0), addressOf(buf)%allocatorAlignment)
+	require.Equal(t, int64(8+allocatorAlignment), allocator.currentAllocation.Load())
+	for i := range len(buf) {
+		buf[i] = byte(i + 1)
+	}
+
+	grown := allocator.Reallocate(16, buf)
+	require.Equal(t, 16, len(grown))
+	require.Equal(t, uintptr(0), addressOf(grown)%allocatorAlignment)
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, grown[:8])
+	require.Equal(t, int64(16+allocatorAlignment), allocator.currentAllocation.Load())
+	require.Equal(t, int64(8+16+2*allocatorAlignment), allocator.peakAllocation.Load())
+
+	shrunk := allocator.Reallocate(4, grown)
+	require.Equal(t, 4, len(shrunk))
+	require.Equal(t, []byte{1, 2, 3, 4}, shrunk)
+	require.Equal(t, int64(16+allocatorAlignment), allocator.currentAllocation.Load())
+
+	allocator.Free(shrunk)
+	require.Equal(t, int64(0), allocator.currentAllocation.Load())
+}
+
+func TestTrackingAllocatorReallocateZeroLengthAndGrow(t *testing.T) {
+	allocator := &trackingAllocator{}
+	buf := allocator.Allocate(8)
+	require.Equal(t, int64(8+allocatorAlignment), allocator.currentAllocation.Load())
+
+	zero := allocator.Reallocate(0, buf)
+	require.Len(t, zero, 0)
+	// Reallocating to zero length doesn't free the backing allocation.
+	require.Equal(t, int64(8+allocatorAlignment), allocator.currentAllocation.Load())
+
+	grown := allocator.Reallocate(16, zero)
+	require.Len(t, grown, 16)
+	require.Equal(t, uintptr(0), addressOf(grown)%allocatorAlignment)
+	require.Equal(t, int64(16+allocatorAlignment), allocator.currentAllocation.Load())
+	require.Equal(t, int64(8+16+2*allocatorAlignment), allocator.peakAllocation.Load())
+
+	allocator.Free(grown)
+	require.Equal(t, int64(0), allocator.currentAllocation.Load())
+}
+>>>>>>> b194391126a (importinto: use memory-per-core for import and backfill budgeting (#66564))

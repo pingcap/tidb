@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -46,6 +47,17 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	// writerMemBudgetRatio reserves per-thread memory for KV writer buffers in
+	// getWriterMemorySizeLimit.
+	// This is an empirically chosen value and may not be optimal.
+	writerMemBudgetRatio = 0.5
+	// readerMemBudgetRatio reserves total task memory for parquet reader and
+	// decode overhead when estimating concurrency.
+	// This is an empirically chosen value and may not be optimal.
+	readerMemBudgetRatio = 0.3
 )
 
 // importStepExecutor is a executor for import step.
@@ -64,6 +76,10 @@ type importStepExecutor struct {
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
 	dataBlockSize           int
+	// concurrency is the number of workers to use for encode and sort.
+	// For parquet format, this is capped by memory to avoid OOM.
+	concurrency      int
+	estimateConcOnce sync.Once
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -119,6 +135,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
 	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
 	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
+	s.concurrency = int(s.GetResource().CPU.Capacity())
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
@@ -127,6 +144,62 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD:pkg/disttask/importinto/task_executor.go
+=======
+// estimateAndSetConcurrency estimates the memory usage for the data reader
+// and adjusts concurrency if needed. For parquet format, it reads the first
+// row group with a tracking allocator to measure peak memory. This should only
+// be called once.
+func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chunks []importer.Chunk) {
+	if len(chunks) == 0 || chunks[0].Type != mydump.SourceTypeParquet {
+		return
+	}
+
+	targetChunk := chunks[0]
+	for _, chunk := range chunks[1:] {
+		if chunk.FileSize > targetChunk.FileSize {
+			targetChunk = chunk
+		}
+	}
+
+	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path)
+	if err != nil {
+		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
+			zap.Error(err))
+		return
+	}
+	if peakMem <= 0 {
+		return
+	}
+
+	totalMem := s.GetResource().Mem.Capacity()
+	// Use a fixed fraction of total memory for parquet reader-side budget.
+	readerMemBudget := int64(float64(totalMem) * readerMemBudgetRatio)
+	memBasedConcurrency := max(1, int(readerMemBudget/peakMem))
+
+	if memBasedConcurrency < s.concurrency {
+		s.logger.Warn("adjusting concurrency based on parquet memory estimation; consider reducing parquet data page size or row group size to lower reader memory usage",
+			zap.Int("cpu-concurrency", s.concurrency),
+			zap.Int("mem-concurrency", memBasedConcurrency),
+			zap.String("total-mem", units.BytesSize(float64(totalMem))),
+			zap.String("reader-mem-budget", units.BytesSize(float64(readerMemBudget))),
+			zap.String("peak-mem-per-reader", units.BytesSize(float64(peakMem))),
+		)
+		s.concurrency = memBasedConcurrency
+	}
+}
+
+// Accepted implements Collector.Accepted interface.
+func (s *importStepExecutor) Accepted(bytes int64) {
+	s.summary.Bytes.Add(bytes)
+}
+
+// Processed implements Collector.Processed interface.
+func (s *importStepExecutor) Processed(_, rowCnt int64) {
+	s.summary.RowCnt.Add(rowCnt)
+}
+
+>>>>>>> b194391126a (importinto: use memory-per-core for import and backfill budgeting (#66564)):pkg/dxf/importinto/task_executor.go
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
@@ -175,6 +248,10 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
+	s.estimateConcOnce.Do(func() {
+		s.estimateAndSetConcurrency(ctx, subtaskMeta.Chunks)
+	})
+
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
@@ -187,7 +264,11 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
+<<<<<<< HEAD:pkg/disttask/importinto/task_executor.go
 	op := newEncodeAndSortOperator(wctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+=======
+	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, s.concurrency)
+>>>>>>> b194391126a (importinto: use memory-per-core for import and backfill budgeting (#66564)):pkg/dxf/importinto/task_executor.go
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)

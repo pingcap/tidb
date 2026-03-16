@@ -94,8 +94,13 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
+<<<<<<< HEAD
 	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
+=======
+	memSizePerCon := res.MemoryPerCore()
+	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount)
+>>>>>>> b194391126a (importinto: use memory-per-core for import and backfill budgeting (#66564))
 
 	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(

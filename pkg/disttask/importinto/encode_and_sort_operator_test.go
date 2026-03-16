@@ -200,6 +200,7 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 
 			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
 			dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(&proto.StepResource{
+				CPU: proto.NewAllocatable(1),
 				Mem: proto.NewAllocatable(2 * units.GiB),
 			}, &importer.Plan{
 				DesiredTableInfo: info,

@@ -273,7 +273,21 @@ func (ti *TableImporter) GetKeySpace() []byte {
 	return ti.keyspace
 }
 
+<<<<<<< HEAD
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+=======
+// GetKVStore gets the kv store.
+func (ti *TableImporter) GetKVStore() tidbkv.Storage {
+	return ti.kvStore
+}
+
+// EstimateParquetReaderMemory estimates parser memory for the parquet file path.
+func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
+	return mydump.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+}
+
+func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+>>>>>>> b194391126a (importinto: use memory-per-core for import and backfill budgeting (#66564))
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{
