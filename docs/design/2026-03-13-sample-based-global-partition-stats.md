@@ -324,9 +324,9 @@ Scan all partition data in a single pass to build global stats directly, without
 
 ### Alternative 3: Persist Full Samples (No Pruning)
 
-Store the full 10,000-sample collector per partition instead of pruning.
+Store the full sample set per partition instead of pruning. For A-Res this is up to `MaxSampleSize` samples (default 10,000 for V1; for V2 with Bernoulli the count varies with the auto-calculated sample rate and partition size, often exceeding 10,000 for large partitions).
 
-**Rejected because**: Storage cost would be ~5 MB per partition (vs ~500 KB pruned). For 1,000 partitions, this is 5 GB vs 500 MB. Progressive pruning preserves statistical validity within a bounded storage budget.
+**Rejected because**: Storage cost scales with both sample count and the number and types of analyzed columns. For a table with 50 mixed-type columns and 10,000 unpruned samples, the blob is roughly 5–10 MB per partition. Pruning to 500–4,000 samples reduces this to ~50–700 KB per partition (see blob size estimates in the Persisting Samples section). For 1,000 partitions, full samples would require 5–10 GB vs 50–700 MB pruned. Progressive pruning preserves statistical validity within a bounded storage budget.
 
 ### Alternative 4: Binary Tree of Merged Results
 
