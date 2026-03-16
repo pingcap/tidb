@@ -132,5 +132,5 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 
 	require.NoError(t, initVersions(config.GetGlobalConfig()))
 	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
-	require.Equal(t, "8.0.11-TiDB-X-CLOUD.202603.0", mysql.ServerVersion)
+	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
 }

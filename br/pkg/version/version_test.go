@@ -13,7 +13,6 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -520,7 +519,7 @@ func commonDetectServerInfoCases() []detectServerInfoCase {
 	}
 }
 
-func classicDetectServerInfoCases() []detectServerInfoCase {
+func tidbDetectServerInfoCases() []detectServerInfoCase {
 	mkVer := makeVersion
 	return []detectServerInfoCase{
 		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
@@ -528,33 +527,22 @@ func classicDetectServerInfoCases() []detectServerInfoCase {
 		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
 		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(5, 2, 1, "")},
 		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
-		{10, "8.0.11-TiDB-X-CLOUD.202603.0", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-		{11, "Release Version: TiDB-X-CLOUD.202603.0\nEdition: Community", ServerTypeTiDB, mkVer(0, 0, 0, "")},
+		{10, "8.0.11-TiDB-CLOUD.202603.0", ServerTypeTiDB, mkVer(26, 3, 0, "")},
+		{11, "8.0.11-TiDB-CLOUD.202603.3-1c7827b003-dirty", ServerTypeTiDB, mkVer(26, 3, 3, "")},
+		{12, "Release Version: CLOUD.202603.2\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 2, "")},
+		{12, "Release Version: CLOUD.202603.5-1c7827b003-dirty\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 5, "")},
+		{13, "8.0.11-TiDB-X-CLOUD.202603.0", ServerTypeTiDB, mkVer(0, 0, 0, "")},
 	}
 }
 
-func nextGenDetectServerInfoCases() []detectServerInfoCase {
-	mkVer := makeVersion
-	return []detectServerInfoCase{
-		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-		{10, "8.0.11-TiDB-X-CLOUD.202603.0", ServerTypeTiDB, mkVer(26, 3, 0, "")},
-		{10, "8.0.11-TiDB-X-CLOUD.202603.0-xxxx", ServerTypeTiDB, mkVer(26, 3, 0, "")},
-		{11, "Release Version: TiDB-X-CLOUD.202603.0\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 0, "")},
-	}
-}
-
-func runDetectServerInfoCases(t *testing.T, cases []detectServerInfoCase) {
+func TestDetectServerInfo(t *testing.T) {
 	t.Helper()
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 
-	for _, tc := range cases {
+	for _, tc := range append(commonDetectServerInfoCases(), tidbDetectServerInfoCases()...) {
 		cmt := fmt.Sprintf("test case number: %d", tc.tag)
 
 		tidbVersionQuery := mock.ExpectQuery("SELECT tidb_version\\(\\);")
@@ -579,14 +567,6 @@ func runDetectServerInfoCases(t *testing.T, cases []detectServerInfoCase) {
 		}
 		require.NoError(t, mock.ExpectationsWereMet(), cmt)
 	}
-}
-
-func TestDetectServerInfo(t *testing.T) {
-	if kerneltype.IsClassic() {
-		runDetectServerInfoCases(t, append(commonDetectServerInfoCases(), classicDetectServerInfoCases()...))
-		return
-	}
-	runDetectServerInfoCases(t, append(commonDetectServerInfoCases(), nextGenDetectServerInfoCases()...))
 }
 
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {

@@ -35,8 +35,7 @@ const (
 	VersionSeparator = "-TiDB-"
 
 	// tidbXReleaseVersionPrefix is used in `select tidb_version()` output of nextgen.
-	// we always add the `-CLOUD` as we don't have OP version in nextgen now.
-	tidbXReleaseVersionPrefix = "TiDB-X-CLOUD."
+	tidbXReleaseVersionPrefix = "CLOUD."
 
 	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
 	// tidbXPlaceholderReleaseVersion is the default release version for nextgen when no
@@ -71,7 +70,7 @@ func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
 }
 
 // BuildTiDBXReleaseVersion converts mysql.TiDBReleaseVersion into the nextgen visible
-// version format `TiDB-X-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
+// version format `CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
 func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 	if !strings.HasPrefix(releaseVersion, "v") {
 		return "", errors.Errorf("invalid TiDB release version %q, should start with 'v'", releaseVersion)
@@ -93,13 +92,13 @@ func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
 }
 
 // BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version
-// format `8.0.11-TiDB-X-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
+// format `8.0.11-TiDB-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
 func BuildTiDBXServerVersion(releaseVersion string) (string, error) {
 	tidbXReleaseVersion, err := BuildTiDBXReleaseVersion(releaseVersion)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, strings.TrimPrefix(tidbXReleaseVersion, "TiDB-")), nil
+	return fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, tidbXReleaseVersion), nil
 }
 
 // Header information.

@@ -17,7 +17,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
@@ -395,18 +394,25 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-	// `select version()` or `select tidb_version()` result for nextgen
-	tidbXVersionRegex = regexp.MustCompile(`TiDB-X-CLOUD\.(\d{4})(\d{2})\.(\d+)`)
+	// `select version()` result for cloud version format.
+	tidbCloudServerVersionRegex = regexp.MustCompile(`TiDB-CLOUD\.(\d{4})(\d{2})\.(\d+)`)
+	// `select tidb_version()` result for cloud release version format.
+	tidbCloudReleaseVersionRegex = regexp.MustCompile(`Release Version:\s*CLOUD\.(\d{4})(\d{2})\.(\d+)`)
 	// `select tidb_version()` result with full release version
-	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|TiDB-X-CLOUD\.\d{6}\.\d+)`)
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|CLOUD\.\d{6}\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)`)
 )
 
 func parseTiDBXVersionToSemver(versionStr string) string {
-	// NextGen exposes release version as TiDB-X-CLOUD.<YYYYMM>.<patch>[-<pre-release>].
+	// Cloud release version is exposed as
+	// TiDB-CLOUD.<YYYYMM>.<patch> or Release Version: CLOUD.<YYYYMM>.<patch>
+	// (optionally with pre-release suffix).
 	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
 	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
 	// BR version checks can keep working on semver-like values.
-	match := tidbXVersionRegex.FindStringSubmatch(versionStr)
+	match := tidbCloudServerVersionRegex.FindStringSubmatch(versionStr)
+	if len(match) != 4 {
+		match = tidbCloudReleaseVersionRegex.FindStringSubmatch(versionStr)
+	}
 	if len(match) != 4 {
 		return ""
 	}
@@ -447,15 +453,15 @@ func ParseServerInfo(src string) ServerInfo {
 
 	var versionStr string
 	if serverInfo.ServerType == ServerTypeTiDB {
-		if kerneltype.IsNextGen() {
-			versionStr = parseTiDBXVersionToSemver(src)
+		if isReleaseVersion {
+			versionStr = tidbReleaseVersionRegex.FindString(src)
 		} else {
-			if isReleaseVersion {
-				versionStr = tidbReleaseVersionRegex.FindString(src)
-			} else {
-				versionStr = tidbVersionRegex.FindString(src)
-				versionStr = strings.TrimPrefix(versionStr, "-")
-			}
+			versionStr = tidbVersionRegex.FindString(src)
+			versionStr = strings.TrimPrefix(versionStr, "-")
+		}
+		// try to parse TiDB-X version if Classic tidb version parsing fails.
+		if versionStr == "" {
+			versionStr = parseTiDBXVersionToSemver(src)
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {

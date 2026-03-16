@@ -759,7 +759,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	theVersion := "8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"
 	if kerneltype.IsNextGen() {
-		theVersion = "8.0.11-TiDB-X-CLOUD.202603.1"
+		theVersion = "8.0.11-TiDB-CLOUD.202603.1"
 	}
 	mock.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow(theVersion))
