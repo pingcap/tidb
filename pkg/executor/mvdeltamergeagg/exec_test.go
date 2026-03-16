@@ -1785,34 +1785,18 @@ func TestNoOpWhenAggValueUnchanged(t *testing.T) {
 	require.Equal(t, uint8(0), writer.results[0].UpdateTouchedBitmap[0])
 }
 
-func TestMarkChangedRowsByColumnFloat32(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeFloat)
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
-
-	chk.AppendFloat32(0, 1.5)
-	chk.AppendFloat32(1, 1.5)
-
-	chk.AppendFloat32(0, 2.5)
-	chk.AppendFloat32(1, 2.0)
-
-	chk.AppendNull(0)
-	chk.AppendNull(1)
-
-	chk.AppendNull(0)
-	chk.AppendFloat32(1, 3.0)
-
-	assertChangedMask(t, chk, ft, []bool{false, true, false, true})
-}
-
-func TestMarkChangedRowsByColumnString(t *testing.T) {
+func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
+	sctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)
+	ft.SetCharset("utf8mb4")
+	ft.SetCollate("utf8mb4_general_ci")
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
 
-	chk.AppendString(0, "abc")
-	chk.AppendString(1, "abc")
+	chk.AppendString(0, "A")
+	chk.AppendString(1, "a")
 
-	chk.AppendString(0, "abc")
-	chk.AppendString(1, "abd")
+	chk.AppendString(0, "Ab")
+	chk.AppendString(1, "ac")
 
 	chk.AppendNull(0)
 	chk.AppendNull(1)
@@ -1820,103 +1804,75 @@ func TestMarkChangedRowsByColumnString(t *testing.T) {
 	chk.AppendNull(0)
 	chk.AppendString(1, "x")
 
-	assertChangedMask(t, chk, ft, []bool{false, true, false, true})
-}
-
-func TestMarkChangedRowsByColumnTime(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeDatetime)
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
-
-	t1 := types.NewTime(types.FromDate(2026, 2, 1, 10, 0, 0, 0), mysql.TypeDatetime, 0)
-	t2 := types.NewTime(types.FromDate(2026, 2, 1, 10, 0, 1, 0), mysql.TypeDatetime, 0)
-
-	chk.AppendTime(0, t1)
-	chk.AppendTime(1, t1)
-
-	chk.AppendTime(0, t1)
-	chk.AppendTime(1, t2)
-
-	chk.AppendNull(0)
-	chk.AppendNull(1)
-
-	chk.AppendNull(0)
-	chk.AppendTime(1, t1)
-
-	assertChangedMask(t, chk, ft, []bool{false, true, false, true})
-}
-
-func TestMarkChangedRowsByColumnDuration(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeDuration)
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
-
-	d1 := types.NewDuration(0, 0, 1, 0, 0)
-	d2 := types.NewDuration(0, 0, 2, 0, 0)
-
-	chk.AppendDuration(0, d1)
-	chk.AppendDuration(1, d1)
-
-	chk.AppendDuration(0, d1)
-	chk.AppendDuration(1, d2)
-
-	chk.AppendNull(0)
-	chk.AppendNull(1)
-
-	chk.AppendNull(0)
-	chk.AppendDuration(1, d1)
-
-	assertChangedMask(t, chk, ft, []bool{false, true, false, true})
-}
-
-func TestMarkChangedRowsByColumnJSON(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeJSON)
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
-
-	j1 := types.CreateBinaryJSON(int64(1))
-	j2 := types.CreateBinaryJSON(int64(2))
-
-	chk.AppendJSON(0, j1)
-	chk.AppendJSON(1, j1)
-
-	chk.AppendJSON(0, j1)
-	chk.AppendJSON(1, j2)
-
-	chk.AppendNull(0)
-	chk.AppendNull(1)
-
-	chk.AppendNull(0)
-	chk.AppendJSON(1, j1)
-
-	assertChangedMask(t, chk, ft, []bool{false, true, false, true})
-}
-
-func TestMarkChangedRowsByColumnVector(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
-
-	v1 := types.MustCreateVectorFloat32([]float32{1, 2})
-	v2 := types.MustCreateVectorFloat32([]float32{1, 3})
-
-	chk.AppendVectorFloat32(0, v1)
-	chk.AppendVectorFloat32(1, v1)
-
-	chk.AppendVectorFloat32(0, v1)
-	chk.AppendVectorFloat32(1, v2)
-
-	chk.AppendNull(0)
-	chk.AppendNull(1)
-
-	chk.AppendNull(0)
-	chk.AppendVectorFloat32(1, v1)
-
-	assertChangedMask(t, chk, ft, []bool{false, true, false, true})
-}
-
-func assertChangedMask(t *testing.T, chk *chunk.Chunk, ft *types.FieldType, expected []bool) {
-	t.Helper()
-	mask := make([]bool, chk.NumRows())
-	err := markChangedRowsByColumn(mask, chk.Column(0), chk.Column(1), ft)
+	updateRows := []int{0, 1, 2, 3}
+	updateChanged := make([]bool, len(updateRows))
+	updateTouchedBitmap := make([]uint8, len(updateRows))
+	err := markUpdateTouchedRowsByColumn(
+		updateRows,
+		updateChanged,
+		updateTouchedBitmap,
+		1,
+		0,
+		chk.Column(0),
+		chk.Column(1),
+		ft,
+		sctx.GetSessionVars().StmtCtx.TypeCtx(),
+	)
 	require.NoError(t, err)
-	require.Equal(t, expected, mask)
+	require.Equal(t, []bool{true, true, false, true}, updateChanged)
+	require.Equal(t, []uint8{1, 1, 0, 1}, updateTouchedBitmap)
+}
+
+func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T) {
+	sctx := mock.NewContext()
+
+	enumFT := types.NewFieldType(mysql.TypeEnum)
+	enumFT.SetCharset("utf8mb4")
+	enumFT.SetCollate("utf8mb4_general_ci")
+	enumChk := chunk.NewChunkWithCapacity([]*types.FieldType{enumFT, enumFT}, 1)
+	enumChk.AppendEnum(0, types.Enum{Name: "x", Value: 1})
+	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
+
+	enumChanged := make([]bool, 1)
+	enumBitmap := make([]uint8, 1)
+	err := markUpdateTouchedRowsByColumn(
+		[]int{0},
+		enumChanged,
+		enumBitmap,
+		1,
+		0,
+		enumChk.Column(0),
+		enumChk.Column(1),
+		enumFT,
+		sctx.GetSessionVars().StmtCtx.TypeCtx(),
+	)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false}, enumChanged)
+	require.Equal(t, []uint8{0}, enumBitmap)
+
+	setFT := types.NewFieldType(mysql.TypeSet)
+	setFT.SetCharset("utf8mb4")
+	setFT.SetCollate("utf8mb4_general_ci")
+	setChk := chunk.NewChunkWithCapacity([]*types.FieldType{setFT, setFT}, 1)
+	setChk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
+	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
+
+	setChanged := make([]bool, 1)
+	setBitmap := make([]uint8, 1)
+	err = markUpdateTouchedRowsByColumn(
+		[]int{0},
+		setChanged,
+		setBitmap,
+		1,
+		0,
+		setChk.Column(0),
+		setChk.Column(1),
+		setFT,
+		sctx.GetSessionVars().StmtCtx.TypeCtx(),
+	)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false}, setChanged)
+	require.Equal(t, []uint8{0}, setBitmap)
 }
 
 func TestMVDeltaMergeAggRuntimeStatsString(t *testing.T) {
