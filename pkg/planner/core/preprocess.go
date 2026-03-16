@@ -270,11 +270,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkSelectNoopFuncs(node)
 		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
-		var lockTables []*ast.TableName
-		if node.LockInfo != nil {
-			lockTables = node.LockInfo.Tables
-		}
-		p.lockSelectCtxStack = append(p.lockSelectCtxStack, newLockSelectCtx(lockTables))
+		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -666,16 +662,16 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.TableName:
 		// Skip resolving TableName nodes that come from locking clauses; they are bound later against FROM aliases.
-		if n := len(p.lockSelectCtxStack); n > 0 {
-			if _, ok := p.lockSelectCtxStack[n-1].lockClauseTables[x]; ok {
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			if _, ok := lockCtx.lockClauseTables[x]; ok {
 				break
 			}
 		}
 		p.handleTableName(x)
 	case *ast.TableSource:
-		if n := len(p.lockSelectCtxStack); n > 0 {
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
 			if v, ok := x.Source.(*ast.TableName); ok {
-				p.lockSelectCtxStack[n-1].collect(v, x.AsName)
+				lockCtx.collect(v, x.AsName)
 			}
 		}
 	case *ast.Join:
@@ -738,9 +734,9 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
-		if n := len(p.lockSelectCtxStack); n > 0 {
-			p.checkLockClauseTables(x, &p.lockSelectCtxStack[n-1])
-			p.lockSelectCtxStack = p.lockSelectCtxStack[:n-1]
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			p.checkLockClauseTables(x, lockCtx)
+			p.popLockSelectCtx()
 		}
 	case *ast.SetOprStmt:
 		if x.With != nil {
@@ -1880,6 +1876,28 @@ func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
 		}
 	}
 	c.orderedRefs = append(c.orderedRefs, ref)
+}
+
+func (p *preprocessor) pushLockSelectCtx(sel *ast.SelectStmt) {
+	var lockTables []*ast.TableName
+	if sel.LockInfo != nil {
+		lockTables = sel.LockInfo.Tables
+	}
+	p.lockSelectCtxStack = append(p.lockSelectCtxStack, newLockSelectCtx(lockTables))
+}
+
+func (p *preprocessor) getLockSelectCtxStackTop() *lockSelectCtx {
+	if len(p.lockSelectCtxStack) == 0 {
+		return nil
+	}
+	return &p.lockSelectCtxStack[len(p.lockSelectCtxStack)-1]
+}
+
+func (p *preprocessor) popLockSelectCtx() {
+	if len(p.lockSelectCtxStack) == 0 {
+		return
+	}
+	p.lockSelectCtxStack = p.lockSelectCtxStack[:len(p.lockSelectCtxStack)-1]
 }
 
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
