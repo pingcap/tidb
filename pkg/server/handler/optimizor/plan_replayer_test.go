@@ -93,6 +93,7 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
+	server.RunInGoTestChan = make(chan struct{})
 	srv, err := server.NewServer(cfg, driver)
 	srv.SetDomain(dom)
 	require.NoError(t, err)

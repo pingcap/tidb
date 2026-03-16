@@ -42,6 +42,7 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
