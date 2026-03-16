@@ -145,6 +145,10 @@ RowSample.Weight = int64(rngFloat * float64(math.MaxInt64))
 
 This produces weights uniformly distributed in `[0, SampleRate × MaxInt64]` with zero additional cost — the random value is already generated for the include/exclude decision. TiDB already copies the weight from the proto response (`pbSample.Weight`), so no TiDB-side deserialization changes are needed. These weights enable A-Res sub-sampling when pruning for persistence and correct proportional representation during cross-partition merging, making Bernoulli samples fully compatible with the sample-based global stats path.
 
+Note: Bernoulli sampling produces a variable number of samples per region (proportional to data size × sample rate), unlike the fixed-size reservoir. When pruning for persistence, all samples — regardless of how many Bernoulli produced — compete for slots via weighted selection, so the pruned output is always a fixed-size reservoir.
+
+**TiKV version compatibility**: If a new TiDB (expecting weights) talks to an old TiKV (pre-weight-fix, `Weight = 0` for Bernoulli), the sample-based path should detect the zero weights and fall back to merge-based. This ensures rolling upgrades work correctly.
+
 ### Persisting Samples for Incremental Rebuild
 
 Each partition's pruned sample collector is serialized via protobuf and stored in `mysql.stats_table_data`, keyed by the partition's physical table ID:
@@ -159,13 +163,13 @@ CREATE TABLE mysql.stats_table_data (
 );
 ```
 
-Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and A-Res weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
+Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and per-sample weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
 The per-partition blob size depends primarily on the number of samples and the number and types of analyzed columns. For a table with 20 integer columns and 500 pruned samples, the blob is roughly 50–100 KB. For 50 mixed-type columns (integers, strings, timestamps) with 3,000–4,000 samples, it grows to 400–700 KB. Tables analyzed with `PREDICATE COLUMNS` will have smaller blobs since fewer columns are sampled.
 
 ### Progressive Pruning
 
-Persisting the full reservoir (up to 10,000 samples) per partition would use excessive storage. Instead, a target budget (default 30,000 samples) determines proportional allocation:
+Persisting the full sample set per partition (up to 10,000 for reservoir sampling, or variable for Bernoulli) would use excessive storage. Instead, a target budget (default 30,000 samples) determines proportional allocation:
 
 ```text
 First partition:       target = budget / totalPartitions
@@ -262,6 +266,7 @@ When some but not all partitions lack saved samples (e.g., newly created partiti
 - Save/load round-trip for serialized collectors produces identical results.
 - Progressive pruning allocates budgets proportionally across partitions of varying sizes.
 - Merge order does not affect resulting global stats (within sampling variance).
+- Both sampling methods (A-Res with `NumSamples` and Bernoulli with `SampleRate`) produce weighted samples that merge correctly across partitions of different sizes.
 
 ### Scenario Tests
 
@@ -270,6 +275,7 @@ When some but not all partitions lack saved samples (e.g., newly created partiti
 3. **Schema change between analyzes**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path.
 4. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
 5. **Empty partitions**: Partitions with zero rows are handled gracefully during merge.
+6. **Old TiKV (Bernoulli Weight=0)**: When TiKV does not populate Bernoulli weights, the sample-based path detects zero weights and falls back to merge-based.
 
 ### Compatibility Tests
 
@@ -311,7 +317,7 @@ Measurements: wall-clock duration, CPU time, memory usage, and accuracy (row cou
 
 ### Alternative 1: Improve the Merge-Based Path
 
-A combined TopN+histogram merge was prototyped ([PR #66221](https://github.com/pingcap/tidb/pull/66221)) that replaces the O(P² × T × H) TopN merge with an O(T × P) hash-map merge and extracts histogram bucket-upper-bound repeats into TopN counters during bucket collection. This eliminated the count inflation problem and achieved 5–11× speedup on the merge step itself (e.g., 4.85s → 432ms for 10,000 partitions).
+A combined TopN+histogram merge was prototyped ([PR #66221](https://github.com/pingcap/tidb/pull/66221)) that replaces the O(P² × T × log B) TopN merge with an O(T × P) hash-map merge and extracts histogram bucket-upper-bound repeats into TopN counters during bucket collection. This eliminated the count inflation problem and achieved 5–11× speedup on the merge step itself (e.g., 4.85s → 432ms for 10,000 partitions).
 
 **Rejected because**: Even with the improved merge, the fundamental limitation remains — bucket boundaries optimized for individual partitions cannot be perfectly combined, and the merge still uses heuristic overlap estimation. The improved merge also does not solve the single-partition re-analyze performance problem, since it still requires loading and re-merging all P partitions' histograms. The sample-based approach sidesteps both issues entirely by building histograms from raw data rather than merging pre-built approximations.
 
