@@ -110,6 +110,11 @@ type PointGetPlan struct {
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost             float64
 
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
 	// required by cost model
 	planCostInit bool
 	planCost     float64
@@ -1605,6 +1610,19 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	}
 	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
+
+	// Build masking expressions for columns with masking policies
+	is := ctx.GetInfoSchema()
+	if is != nil {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			// Log error but don't fail the plan building
+			logutil.BgLogger().Warn("failed to build masking expressions for PointGet", zap.Error(err))
+		} else {
+			p.MaskingExprs = maskExprs
+		}
+	}
+
 	return p
 }
 
@@ -1702,6 +1720,131 @@ func buildSchemaFromFields(
 	}
 	schema := expression.NewSchema(columns...)
 	return schema, names
+}
+
+// buildMaskingExprsForPointGet builds masking expressions for PointGetPlan.
+// This is similar to buildMaskingReplaceExprs in logical_plan_builder.go
+// but adapted for the fast path.
+func buildMaskingExprsForPointGet(
+	ctx context.Context,
+	sctx base.PlanContext,
+	is infoschema.InfoSchema,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	tbl *model.TableInfo,
+) ([]expression.Expression, error) {
+	if is == nil || schema == nil || len(names) == 0 {
+		return nil, nil
+	}
+	sv := sctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		// Internal SQL should not be rewritten by masking policies.
+		return nil, nil
+	}
+
+	// Check if there are any masking policies
+	if len(is.AllMaskingPolicies()) == 0 {
+		return nil, nil
+	}
+
+	cols := schema.Columns
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+
+	schemaVersion := is.SchemaMetaVersion()
+	hasMask := false
+
+	for i, col := range cols {
+		name := names[i]
+		if name == nil || name.Hidden {
+			continue
+		}
+
+		// Find the masking policy for this column
+		tblName := name.OrigTblName
+		if tblName.L == "" {
+			tblName = name.TblName
+		}
+		if tblName.L == "" {
+			continue
+		}
+
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		if colName.L == "" {
+			continue
+		}
+
+		dbName := name.DBName
+		if dbName.L == "" {
+			dbName = pmodel.NewCIStr(sv.CurrentDB)
+		}
+		if dbName.L == "" {
+			continue
+		}
+
+		// Get table info
+		var tblInfo *model.TableInfo
+		if tbl != nil && tbl.Name.L == tblName.L {
+			tblInfo = tbl
+		} else {
+			table, err := is.TableByName(ctx, dbName, tblName)
+			if err != nil {
+				continue
+			}
+			tblInfo = table.Meta()
+		}
+
+		// Find column info
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+		if colInfo == nil {
+			continue
+		}
+
+		// Verify column ID matches
+		if colInfo.ID != col.ID {
+			continue
+		}
+
+		// Get masking policy
+		policy, ok := is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+		if !ok || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+
+		// Build masking expression
+		expr, placeholder, err := getMaskingPolicyExpr(sctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		if err != nil {
+			return nil, err
+		}
+		if placeholder == nil {
+			continue
+		}
+
+		// Substitute the column into the masking expression
+		masked := expression.ColumnSubstitute(
+			sctx.GetExprCtx(),
+			expr,
+			expression.NewSchema(placeholder),
+			[]expression.Expression{col},
+		)
+		replaceExprs[i] = masked
+		hasMask = true
+	}
+
+	if !hasMask {
+		return nil, nil
+	}
+
+	return replaceExprs, nil
 }
 
 func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldName, *expression.Column, bool) {

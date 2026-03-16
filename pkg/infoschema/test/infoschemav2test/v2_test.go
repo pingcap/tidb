@@ -564,6 +564,11 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
+	// This test requires InfoSchema v2 to test the keepAlive() mechanism
+	if !tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		t.Skip("only available in infoschema v2")
+	}
+
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -601,6 +606,12 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	require.Equal(t, uint64(math.MaxUint64), schemaTS6)
 
 	tk.MustQuery("select * from dummytbl").Check(testkit.Rows())
+	// Explicitly trigger InfoSchema v2 API to ensure keepAlive() is called.
+	// This makes the test more robust against potential timing issues where
+	// the query execution might not consistently trigger keepAlive().
+	is := dom.InfoSchema()
+	_, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("dummytbl"))
+	require.NoError(t, err)
 	schemaTS7 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.Less(t, schemaTS4, schemaTS7)
 

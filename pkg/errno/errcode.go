@@ -1130,6 +1130,8 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
@@ -1148,8 +1150,8 @@ const (
 	ErrGlobalIndexNotExplicitlySet = 8264
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
-
-	ErrInvalidAffinityOption = 8266
+	ErrInvalidAffinityOption              = 8266
+	ErrForbiddenDDL                       = 8267
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1162,6 +1164,12 @@ const (
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
 
+	// Reserved for future use.
+	ErrEngineAttributeInvalidFormat             = 8270
+	ErrStorageClassInvalidSpec                  = 8271
+	ErrModifyColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrAccessDeniedToMaskedColumn               = 8274
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

@@ -786,6 +786,14 @@ type SessionVars struct {
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
 
+	// The Cached Plan for this execution, it should be *plannercore.PlanCacheValue.
+	PlanCacheValue any
+
+	// maskingPolicyExprCache caches compiled masking policy expressions per schema version.
+	maskingPolicyExprCache any
+	// maskingPolicyExprCacheSchemaVersion is the schema version for maskingPolicyExprCache.
+	maskingPolicyExprCacheSchemaVersion int64
+
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
 

@@ -1,0 +1,412 @@
+[
+  {
+    "id": "P0-DDL-01",
+    "scenario": "Create, replace, and IF NOT EXISTS behavior",
+    "coverage_cases": [
+      {
+        "name": "Policy lifecycle and observability (IT-MASK-P0-001)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "IF NOT EXISTS idempotency (IT-MASK-P0-006)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-DDL-02",
+    "scenario": "One-policy-per-column uniqueness",
+    "coverage_cases": [
+      {
+        "name": "Duplicate policy on same column returns 8268 (IT-MASK-P0-001)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-DDL-03",
+    "scenario": "Enable / disable state transitions",
+    "coverage_cases": [
+      {
+        "name": "Enable/disable state reflected by SHOW MASKING POLICIES (IT-MASK-P0-001)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-DDL-04",
+    "scenario": "Modify expression and RESTRICT ON values",
+    "coverage_cases": [
+      {
+        "name": "RESTRICT ON runtime and NONE toggle (IT-MASK-P0-004)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Expression update path in DDL unit tests",
+        "file": "pkg/ddl/masking_policy_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_ddl"]
+    }
+  },
+  {
+    "id": "P0-DDL-05",
+    "scenario": "Drop policy metadata cleanup",
+    "coverage_cases": [
+      {
+        "name": "Drop policy count in mysql.tidb_masking_policy",
+        "file": "pkg/ddl/masking_policy_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["ut_ddl"]
+    }
+  },
+  {
+    "id": "P0-DDL-06",
+    "scenario": "Cascade cleanup after DROP COLUMN / DROP TABLE",
+    "coverage_cases": [
+      {
+        "name": "Drop column and drop table cascade observation (IT-MASK-P0-005/008)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-DDL-07",
+    "scenario": "Binding stability on rename table / rename column",
+    "coverage_cases": [
+      {
+        "name": "Rename table keeps policy binding (IT-MASK-P0-005)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Rename column binding and expression rewrite observation (IT-MASK-P0-009)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-DDL-08",
+    "scenario": "DDL guard for type/length/precision change",
+    "coverage_cases": [
+      {
+        "name": "Modify column length/precision under active policies (IT-MASK-P0-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "fail_if_result_contains",
+      "required_steps": ["it_column_masking"],
+      "patterns": [
+        "`c` varchar(64) DEFAULT NULL /* MASKING POLICY `p_modify_guard_c` ENABLED */",
+        "`d` datetime(6) DEFAULT NULL /* MASKING POLICY `p_modify_guard_d` ENABLED */"
+      ],
+      "fail_status": "FAIL",
+      "pass_status": "PASS"
+    }
+  },
+  {
+    "id": "P0-DDL-09",
+    "scenario": "Unsupported targets (temporary/system/view)",
+    "coverage_cases": [
+      {
+        "name": "Unsupported target checks with 8006/8200/1347 (IT-MASK-P0-008)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-DDL-10",
+    "scenario": "Unsupported columns (generated/unsupported type)",
+    "coverage_cases": [
+      {
+        "name": "Generated/unsupported column checks with 3106/8200 (IT-MASK-P0-008)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-AUTH-01",
+    "scenario": "Dynamic privilege boundary for CREATE/ALTER/DROP masking policy",
+    "coverage_cases": [
+      {
+        "name": "Privilege matrix for masking policy statements",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-AUTH-02",
+    "scenario": "current_user() operators (IN/NOT IN/=/!=)",
+    "coverage_cases": [
+      {
+        "name": "Current user operator set in integration (IT-MASK-P0-001/007)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Current identity operators in DDL unit tests",
+        "file": "pkg/ddl/masking_policy_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_ddl"]
+    }
+  },
+  {
+    "id": "P0-AUTH-03",
+    "scenario": "current_role() behavior under SET ROLE switch",
+    "coverage_cases": [
+      {
+        "name": "Role switch integration check (IT-MASK-P0-003)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-CORE-01",
+    "scenario": "AT RESULT semantics for where/join/group/order",
+    "coverage_cases": [
+      {
+        "name": "AT RESULT base and advanced query checks (IT-MASK-P0-002/007)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-CORE-02",
+    "scenario": "Projection expression consumes masked output",
+    "coverage_cases": [
+      {
+        "name": "concat(c, ...) integration check (IT-MASK-P0-002)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Projection unit test",
+        "file": "pkg/planner/core/masking_policy_projection_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_planner"]
+    }
+  },
+  {
+    "id": "P0-RES-01",
+    "scenario": "RESTRICT ON INSERT INTO ... SELECT",
+    "coverage_cases": [
+      {
+        "name": "Runtime restrict integration check (IT-MASK-P0-004)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Planner restrict unit test",
+        "file": "pkg/planner/core/masking_policy_restrict_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_planner"]
+    }
+  },
+  {
+    "id": "P0-RES-02",
+    "scenario": "RESTRICT ON UPDATE ... (SELECT ...)",
+    "coverage_cases": [
+      {
+        "name": "Runtime restrict integration check (IT-MASK-P0-004)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Planner restrict unit test",
+        "file": "pkg/planner/core/masking_policy_restrict_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_planner"]
+    }
+  },
+  {
+    "id": "P0-RES-03",
+    "scenario": "RESTRICT ON DELETE ... (SELECT ...)",
+    "coverage_cases": [
+      {
+        "name": "Runtime restrict integration check (IT-MASK-P0-004)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Planner restrict unit test",
+        "file": "pkg/planner/core/masking_policy_restrict_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_planner"]
+    }
+  },
+  {
+    "id": "P0-RES-04",
+    "scenario": "RESTRICT ON CTAS",
+    "coverage_cases": [],
+    "rule": {
+      "type": "fixed",
+      "status": "N/A",
+      "evidence": "CREATE TABLE ... SELECT is not implemented in the current branch."
+    }
+  },
+  {
+    "id": "P0-RES-05",
+    "scenario": "RESTRICT ON NONE allows statements",
+    "coverage_cases": [
+      {
+        "name": "NONE toggle integration check (IT-MASK-P0-004)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Planner NONE toggle unit test",
+        "file": "pkg/planner/core/masking_policy_restrict_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_planner"]
+    }
+  },
+  {
+    "id": "P0-FUNC-01",
+    "scenario": "MASK_FULL behavior and boundaries",
+    "coverage_cases": [
+      {
+        "name": "MASK_FULL integration coverage",
+        "file": "tests/integrationtest/t/expression/builtin.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_expression_builtin"]
+    }
+  },
+  {
+    "id": "P0-FUNC-02",
+    "scenario": "MASK_PARTIAL behavior and boundaries",
+    "coverage_cases": [
+      {
+        "name": "MASK_PARTIAL integration coverage",
+        "file": "tests/integrationtest/t/expression/builtin.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_expression_builtin"]
+    }
+  },
+  {
+    "id": "P0-FUNC-03",
+    "scenario": "MASK_NULL behavior",
+    "coverage_cases": [
+      {
+        "name": "MASK_NULL integration coverage",
+        "file": "tests/integrationtest/t/expression/builtin.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_expression_builtin"]
+    }
+  },
+  {
+    "id": "P0-FUNC-04",
+    "scenario": "MASK_DATE behavior and template validation",
+    "coverage_cases": [
+      {
+        "name": "MASK_DATE integration coverage",
+        "file": "tests/integrationtest/t/expression/builtin.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_expression_builtin"]
+    }
+  },
+  {
+    "id": "P0-OBS-01",
+    "scenario": "SHOW MASKING POLICIES observability",
+    "coverage_cases": [
+      {
+        "name": "SHOW output integration checks (IT-MASK-P0-001/006)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "SHOW unit checks",
+        "file": "pkg/executor/show_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_executor_show"]
+    }
+  },
+  {
+    "id": "P0-OBS-02",
+    "scenario": "SHOW CREATE TABLE masking comment visibility",
+    "coverage_cases": [
+      {
+        "name": "SHOW CREATE integration checks (IT-MASK-P0-001)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "SHOW CREATE unit checks",
+        "file": "pkg/executor/show_test.go"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking", "ut_executor_show"]
+    }
+  }
+]

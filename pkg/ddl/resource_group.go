@@ -202,7 +202,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
-		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.BoolValue)
+		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.Burstable == ast.BurstableUnlimited)
 	case ast.ResourcePriority:
 		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
@@ -211,13 +211,13 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 		resourceGroupSettings.IOReadBandwidth = opt.StrValue
 	case ast.ResourceUnitIOWriteBandwidth:
 		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
-	case ast.ResourceBurstableOpiton:
+	case ast.ResourceBurstable, ast.ResourceBurstableOpiton:
 		// Some about BurstLimit(b):
 		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
 		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
 		//   - If b > 0, that means the limiter is limited capacity. (current not used).
 		limit := int64(0)
-		if opt.BoolValue {
+		if opt.Burstable == ast.BurstableModerated || opt.Burstable == ast.BurstableUnlimited {
 			limit = -1
 		}
 		resourceGroupSettings.BurstLimit = limit

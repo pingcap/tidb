@@ -957,7 +957,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddColumn:
 		ver, err = w.onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(jobCtx, job)
+		ver, err = w.onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(jobCtx, job)
 	case model.ActionSetDefaultValue:
@@ -1018,6 +1018,12 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterTableAttributes(jobCtx, job)
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(jobCtx, job)
+	case model.ActionCreateMaskingPolicy:
+		ver, err = w.onCreateMaskingPolicy(jobCtx, job)
+	case model.ActionAlterMaskingPolicy:
+		ver, err = w.onAlterMaskingPolicy(jobCtx, job)
+	case model.ActionDropMaskingPolicy:
+		ver, err = w.onDropMaskingPolicy(jobCtx, job)
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(jobCtx, job)
 	case model.ActionDropPlacementPolicy:

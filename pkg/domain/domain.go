@@ -387,6 +387,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to fetch them during initialization
+	// maskingPolicies, err := do.fetchMaskingPolicies(m)
+	// if err != nil {
+	// 	return nil, false, currentSchemaVersion, nil, err
+	// }
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := do.infoCache.Data
@@ -404,6 +411,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to initialize them here
+	// builder.InitMaskingPolicies(maskingPolicies)
 	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
@@ -464,6 +474,43 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 		return nil, err
 	}
 	return allResourceGroups, nil
+}
+
+// fetchMaskingPolicies is deprecated - masking policies are now loaded on first access via delayed loading mechanism.
+// This method is kept for reference but is no longer called during initialization.
+// func (do *Domain) fetchMaskingPolicies(m meta.Reader) ([]*model.MaskingPolicyInfo, error) {
+// 	bootstrapVersion, err := m.GetBootstrapVersion()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	// mysql.tidb_masking_policy is introduced in bootstrap version 224.
+// 	if bootstrapVersion < 224 {
+// 		return nil, nil
+// 	}
+// 	logutil.BgLogger().Info("fetchMaskingPolicies: calling LoadMaskingPolicies", zap.Int64("bootstrapVersion", bootstrapVersion))
+// 	// Load all masking policies directly from system table via SQL query
+// 	policies, err := infoschema.LoadMaskingPolicies(do.sysFacHack)
+// 	if err != nil {
+// 		logutil.BgLogger().Error("fetchMaskingPolicies: LoadMaskingPolicies failed", zap.Error(err))
+// 		return nil, err
+// 	}
+// 	logutil.BgLogger().Info("fetchMaskingPolicies: LoadMaskingPolicies succeeded", zap.Int("count", len(policies)))
+// 	return policies, nil
+// }
+
+func findSystemTableInfoByName(schemas []*model.DBInfo, dbName, tableName string) *model.TableInfo {
+	for _, dbInfo := range schemas {
+		if !strings.EqualFold(dbInfo.Name.L, dbName) {
+			continue
+		}
+		for _, tblInfo := range dbInfo.Deprecated.Tables {
+			if strings.EqualFold(tblInfo.Name.L, tableName) {
+				return tblInfo
+			}
+		}
+		break
+	}
+	return nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
@@ -663,6 +710,19 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		}
 	}
 
+	// Load masking policies from system table to ensure they are not lost during diff load.
+	// This is necessary because masking policies are stored separately in mysql.tidb_masking_policy
+	// and are not part of the schema diff mechanism.
+	// Masking policies will be loaded on first access via delayed loading mechanism
+	// No need to initialize them here
+	// maskingPolicies, err := do.fetchMaskingPolicies(m)
+	// if err != nil {
+	// 	logutil.BgLogger().Warn("failed to fetch masking policies during diff load", zap.Error(err))
+	// 	// Don't fail the entire diff load, just log the warning
+	// } else {
+	// 	builder.InitMaskingPolicies(maskingPolicies)
+	// }
+
 	is := builder.Build(startTS)
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
@@ -680,7 +740,16 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	return do.infoCache.GetLatest()
+	is := do.infoCache.GetLatest()
+	if is == nil {
+		logutil.BgLogger().Warn("Domain.InfoSchema returns nil, using empty InfoSchema")
+		// Return a basic empty InfoSchema to prevent nil interface panic
+		// when callers do type assertion: .(infoschema.InfoSchema)
+		return &infoschema.SessionExtendedInfoSchema{
+			InfoSchema: infoschema.MockInfoSchema(nil),
+		}
+	}
+	return is
 }
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
