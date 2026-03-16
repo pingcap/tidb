@@ -328,11 +328,11 @@ Store the full sample set per partition instead of pruning. For A-Res this is up
 
 **Rejected because**: Storage cost scales with both sample count and the number and types of analyzed columns. For a table with 50 mixed-type columns and 10,000 unpruned samples, the blob is roughly 5–10 MB per partition. Pruning to 500–4,000 samples reduces this to ~50–700 KB per partition (see blob size estimates in the Persisting Samples section). For 1,000 partitions, full samples would require 5–10 GB vs 50–700 MB pruned. Progressive pruning preserves statistical validity within a bounded storage budget.
 
-### Alternative 4: Binary Tree of Merged Results
+### Future Extension: Binary Tree of Merged Results
 
 Store intermediate merge results in a tree structure, enabling O(log N) incremental updates instead of O(N).
 
-**Rejected for initial implementation because**: The I/O cost of reading all N partitions' pruned samples is acceptable for realistic partition counts. Merging N collectors in memory takes < 100ms for 1,000 partitions. The simplicity of per-partition-only storage (no cache invalidation, trivial DDL handling) outweighs the marginal I/O savings. This optimization can be added later if profiling shows I/O is the bottleneck.
+**Postponed**: The I/O cost of reading all N partitions' pruned samples is acceptable for realistic partition counts. Merging N collectors in memory takes < 100ms for 1,000 partitions. The simplicity of per-partition-only storage (no cache invalidation, trivial DDL handling) outweighs the marginal I/O savings for now. This optimization can be added later if profiling shows I/O is the bottleneck for very large partition counts.
 
 ## Unresolved Questions
 
