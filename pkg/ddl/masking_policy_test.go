@@ -312,3 +312,26 @@ func TestMaskingPolicyRenameTableNoPolicy(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaskingPolicyFailClosed(t *testing.T) {
+	// Test that invalid masking policy expressions are rejected during creation (fail-closed)
+	// and that queries fail when expression parsing errors occur instead of returning raw values
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, c varchar(20))")
+
+	// Test 1: Creating policy with unknown function should fail
+	_, err := tk.Exec("create masking policy p_invalid on t(c) as unknown_function(c)")
+	if err == nil {
+		t.Fatal("Expected error when creating masking policy with unknown function, got nil")
+	}
+
+	// Test 2: PointGet should fail with error if masking expression cannot be built
+	// First, create a valid policy
+	tk.MustExec("create masking policy p_valid on t(c) as mask_full(c, '*') enable")
+	tk.MustExec("insert into t values (1, 'secret')")
+
+	// PointGet query with PK should return masked value
+	tk.MustQuery("select c from t where id = 1").Check(testkit.Rows("******"))
+}

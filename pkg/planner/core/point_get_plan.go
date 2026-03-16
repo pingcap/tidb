@@ -509,7 +509,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	// Build masking expressions for columns with masking policies.
 	is := ctx.GetInfoSchema()
 	if is != nil {
-		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names)
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to build masking expressions for BatchPointGet", zap.Error(err))
 		} else {
@@ -774,6 +774,19 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 
 	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
+
+// Build masking expressions for columns with masking policies
+	is := ctx.GetInfoSchema()
+	if is != nil {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			// Fail-closed: If masking expression cannot be built, fail the query
+			// instead of returning raw values which would leak sensitive data
+			return nil
+		}
+		p.MaskingExprs = maskExprs
+	}
+
 	return p
 }
 
@@ -785,6 +798,7 @@ func buildMaskingExprsForPointGet(
 	is infoschema.InfoSchema,
 	schema *expression.Schema,
 	names []*types.FieldName,
+	tblInfo *model.TableInfo,
 ) ([]expression.Expression, error) {
 	if sctx == nil || is == nil || schema == nil {
 		return nil, nil
@@ -840,16 +854,19 @@ func buildMaskingExprsForPointGet(
 		if err != nil {
 			continue
 		}
-		tblInfo := tbl.Meta()
-		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+		metaTblInfo := tbl.Meta()
+		if tblInfo != nil && metaTblInfo.ID != tblInfo.ID {
+			continue
+		}
+		colInfo := model.FindColumnInfo(metaTblInfo.Columns, colName.L)
 		if colInfo == nil || colInfo.ID != col.ID {
 			continue
 		}
-		policy, ok := is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+		policy, ok := is.MaskingPolicyByTableColumn(metaTblInfo.ID, colInfo.ID)
 		if !ok || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
 			continue
 		}
-		expr, placeholder, err := getMaskingPolicyExpr(sctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		expr, placeholder, err := getMaskingPolicyExpr(sctx.GetExprCtx(), sv, schemaVersion, policy, metaTblInfo, colInfo)
 		if err != nil {
 			return nil, err
 		}

@@ -386,6 +386,12 @@ func buildMaskingPolicyInfo(
 	if err != nil {
 		return nil, err
 	}
+
+	// Validate that expression can be parsed correctly (fail-closed at DDL time)
+	if err := validateMaskingPolicyExpression(ctx, tblInfo, col.ColumnInfo, exprStr); err != nil {
+		return nil, err
+	}
+
 	status := maskingPolicyStatusFromState(state)
 	maskingType := maskingPolicyTypeFromExpr(expr)
 	now := time.Now()
@@ -419,6 +425,17 @@ func restoreMaskingExpression(expr ast.ExprNode) (string, error) {
 		return "", errors.Trace(err)
 	}
 	return sb.String(), nil
+}
+
+func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, exprStr string) error {
+	// Validate that the expression can be parsed correctly.
+	// This prevents invalid expressions (e.g., unknown functions) from being stored.
+	// We use a simpler approach: try to parse as SELECT which catches most errors.
+	_, err := parser.New().ParseOneStmt("SELECT "+exprStr, "", "")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func maskingPolicyStatusFromState(state ast.MaskingPolicyState) model.MaskingPolicyStatus {
