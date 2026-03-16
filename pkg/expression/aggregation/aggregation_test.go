@@ -182,6 +182,50 @@ func TestCheckAggPushDownSumInt(t *testing.T) {
 	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
 }
 
+func TestCheckAggPushDownMaxMinCount(t *testing.T) {
+	ctx := mock.NewContext()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	for _, funcName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+		desc, err := NewAggFuncDesc(ctx, funcName, []expression.Expression{col}, false)
+		require.NoError(t, err)
+
+		desc.Mode = CompleteMode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
+
+		desc.Mode = Partial1Mode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		desc.Mode = FinalMode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		desc.Mode = Partial2Mode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		finalCountCol := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+		finalValueCol := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+		finalDesc, err := NewAggFuncDesc(ctx, funcName, []expression.Expression{finalCountCol, finalValueCol}, false)
+		require.NoError(t, err)
+		finalDesc.Mode = FinalMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), finalDesc, kv.TiFlash))
+		finalDesc.Mode = Partial2Mode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), finalDesc, kv.TiFlash))
+		finalDesc.Mode = CompleteMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), finalDesc, kv.TiFlash))
+		finalDesc.Mode = Partial1Mode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), finalDesc, kv.TiFlash))
+
+		// Still denied on TiKV even if two-stage shape.
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), finalDesc, kv.TiKV))
+
+		desc.Mode = DedupMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+	}
+}
+
 func TestNewDistAggFuncSumInt(t *testing.T) {
 	ctx := mock.NewContext()
 	fieldTps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
