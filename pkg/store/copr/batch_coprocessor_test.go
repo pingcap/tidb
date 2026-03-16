@@ -170,6 +170,76 @@ func (m *cancelAwareFullTextMockShardClient) ScanRanges(ctx context.Context, _ i
 
 func (m *cancelAwareFullTextMockShardClient) Close() {}
 
+var errFullTextTaskBuildUsesPlainCtx = errors.New("fulltext task build uses plain ctx")
+
+type deadlineInspectingFullTextMockShardClient struct{}
+
+func (m *deadlineInspectingFullTextMockShardClient) ScanRanges(ctx context.Context, _ int64, _ int64, _ []kv.KeyRange, _ int) ([]*ShardWithAddr, error) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return nil, errors.New("fulltext task build unexpectedly used deadline ctx")
+	}
+	return nil, errFullTextTaskBuildUsesPlainCtx
+}
+
+func (m *deadlineInspectingFullTextMockShardClient) Close() {}
+
+func TestSendBatchFullTextUsesCallerContextNotBackofferContext(t *testing.T) {
+	client := &deadlineInspectingFullTextMockShardClient{}
+	cache := NewTiCIShardCache(client)
+
+	req := &kv.Request{
+		StoreType:        kv.TiFlash,
+		BatchCop:         true,
+		FullText:         true,
+		MaxExecutionTime: 1,
+		KeyRanges:        kv.NewNonPartitionedKeyRanges([]kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}}),
+	}
+	req.FullTextInfo.TableID = 1
+	req.FullTextInfo.IndexID = 2
+	req.FullTextInfo.ExecutorID = "executor-1"
+
+	clientResp := (&CopClient{
+		store: &Store{
+			kvStore: &kvStore{TiCIShardCache: cache},
+		},
+	}).sendBatch(context.Background(), req, nil, &kv.ClientSendOption{})
+
+	_, err := clientResp.Next(context.Background())
+	require.ErrorIs(t, err, errFullTextTaskBuildUsesPlainCtx)
+}
+
+func TestRetryBatchCopTaskForFullTextUsesCallerContextNotBackofferContext(t *testing.T) {
+	client := &deadlineInspectingFullTextMockShardClient{}
+	cache := NewTiCIShardCache(client)
+	ctx := context.Background()
+
+	bo := backoff.NewBackofferWithVars(ctx, 1, nil)
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	bo.TiKVBackoffer().SetCtx(timeoutCtx)
+
+	it := &batchCopIterator{
+		store: &kvStore{TiCIShardCache: cache},
+		req:   &kv.Request{FullText: true},
+	}
+	it.req.FullTextInfo.TableID = 1
+	it.req.FullTextInfo.IndexID = 2
+	it.req.FullTextInfo.ExecutorID = "executor-1"
+
+	task := &batchCopTask{
+		TableShardInfos: []*coprocessor.TableShardInfos{{
+			ExecutorId: "executor-1",
+			ShardInfos: []*coprocessor.ShardInfo{{
+				ShardId: 1,
+				Ranges:  []*coprocessor.KeyRange{{Start: []byte("a"), End: []byte("b")}},
+			}},
+		}},
+	}
+
+	_, err := it.retryBatchCopTask(ctx, bo, task)
+	require.ErrorIs(t, err, errFullTextTaskBuildUsesPlainCtx)
+}
+
 func TestSendBatchFullTextUsesContextForTaskBuild(t *testing.T) {
 	client := &cancelAwareFullTextMockShardClient{wait: 100 * time.Millisecond}
 	cache := NewTiCIShardCache(client)

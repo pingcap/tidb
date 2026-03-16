@@ -1252,7 +1252,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	} else {
 		if req.StoreType == kv.TiFlash && req.FullText {
 			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-			tasks, err = buildBatchCopTasksForFullText(bo.GetCtx(), c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
+			tasks, err = buildBatchCopTasksForFullText(ctx, c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
 		} else {
 			// TODO: merge the if branch.
 			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
@@ -1416,7 +1416,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 			b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
 		}
 		return buildBatchCopTasksForFullText(
-			bo.GetCtx(),
+			ctx,
 			b.store,
 			b.req.FullTextInfo.TableID,
 			b.req.FullTextInfo.IndexID,
