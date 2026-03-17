@@ -2906,9 +2906,37 @@ func TestIssue40135Ver2(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', c varchar(255), index(a)) PARTITION BY HASH (a) PARTITIONS 6")
 	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma','2-ma'), (3, 'md','3-md'), (4, 'ma','4-ma'), (5, 'md','5-md'), (6, 'ma','6-ma')")
+
+	// Trigger a concurrent rename attempt while another DDL is running.
+	var fired atomic.Bool
+	renameErrCh := make(chan error, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if !fired.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			_, err := tk1.Exec("alter table t40135 change column a a_new int")
+			renameErrCh <- err
+		}()
+	})
+
 	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
 	tk.MustContainErrMsg("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST", errMsg)
-	tk1.MustExec("alter table t40135 modify column a int NULL")
+
+	// If the hook was not triggered, still execute the rename once as fallback.
+	var renameErr error
+	if fired.Load() {
+		select {
+		case renameErr = <-renameErrCh:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for concurrent rename result")
+		}
+	} else {
+		_, renameErr = tk1.Exec("alter table t40135 change column a a_new int")
+	}
+	require.ErrorContains(t, renameErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	require.NotContains(t, renameErr.Error(), "Unknown column")
+
 	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
 		"t40135 CREATE TABLE `t40135` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -2917,6 +2945,10 @@ func TestIssue40135Ver2(t *testing.T) {
 		"  KEY `a` (`a`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 6"))
+
+	// Ensure subsequent DDL can still proceed after both rejected operations.
+	tk.MustExec("alter table t40135 add column d int default 0")
+	tk.MustExec("alter table t40135 drop column d")
 	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec("admin check table t40135")
 }
