@@ -45,7 +45,7 @@ After all partitions are analyzed, global stats are built by merging per-partiti
 
 **It is lossy.** The merge compounds approximation errors in three ways:
 
-1. **TopN count inflation.** When a TopN value from one partition is not in another partition's TopN, the merge estimates its count from the histogram using `totalRows/NDV` (uniform assumption). This estimate accumulates across partitions. Testing with 20 partitions showed a value with true count=120 inflated to 1,920 (16×), causing the merge to pick the wrong value for global TopN.
+1. **TopN count inflation.** When a TopN value from one partition is not in another partition's TopN, the merge estimates its count from the histogram using `totalRows/NDV` (uniform assumption). This estimate accumulates across partitions. Testing with 20 partitions showed a value with true count=120 inflated to 1,920 (16×), causing the merge to pick the wrong value for global TopN ([test](https://github.com/mjonss/tidb/commit/fb7e5208172ecfa8fd6805893c3edf0c951acdd2)).
 
 2. **Histogram boundary misalignment.** Bucket boundaries optimized for individual partitions do not align across partitions. The merge uses linear interpolation to estimate bucket overlap — a heuristic that compounds errors when applied across many partitions. The TopN merge also mutates partition histograms (removing values via binary search) before they are merged, further reducing histogram quality.
 
