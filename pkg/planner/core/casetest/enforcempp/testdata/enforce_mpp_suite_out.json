@@ -175,7 +175,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
+        "SQL": "explain format='brief' select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -186,14 +186,14 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
+        "SQL": "explain format='brief' select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
         "Plan": [
           "Point_Get 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
+        "SQL": "explain format='brief' select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
         "Plan": [
           "Point_Get 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
@@ -227,7 +227,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select count(*) from t where a=1 -- 2. replica not ready",
+        "SQL": "explain format='brief' select count(*) from t where a=1 -- 2. replica not ready",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(Column#9)->Column#7",
           "└─IndexReader 1.00 root  index:StreamAgg",
@@ -249,7 +249,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select count(*) from t where a=1 -- 3. isolation_engine not match",
+        "SQL": "explain format='brief' select count(*) from t where a=1 -- 3. isolation_engine not match",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(Column#9)->Column#7",
           "└─IndexReader 1.00 root  index:StreamAgg",
@@ -405,7 +405,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' SELECT count(*) from t where a=1; -- 1. static partition prune",
+        "SQL": "EXPLAIN format='brief' SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#5",
           "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
@@ -778,7 +778,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t group by d;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c) from t group by d;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -797,7 +797,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c), count(a) from t group by d;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c), count(a) from t group by d;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -818,7 +818,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t group by b+d;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c) from t group by b+d;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -839,7 +839,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t group by b+d, a+b;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c) from t group by b+d, a+b;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -860,7 +860,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c), count(*) from t group by date_format(d,'%Y');",
+        "SQL": "EXPLAIN format='brief' select count(distinct c), count(*) from t group by date_format(d,'%Y');",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -882,7 +882,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');",
+        "SQL": "EXPLAIN format='brief' select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -904,7 +904,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select d, count(distinct c), sum(a), max(b), count(*) from t group by d;",
+        "SQL": "EXPLAIN format='brief' select d, count(distinct c), sum(a), max(b), count(*) from t group by d;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -926,7 +926,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
+        "SQL": "EXPLAIN format='brief' select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -948,7 +948,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, a, count(b), count(distinct c) from t group by date_format(d,'%Y'), a;",
+        "SQL": "EXPLAIN format='brief' select date_format(d,'%Y') as df, a, count(b), count(distinct c) from t group by date_format(d,'%Y'), a;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -970,7 +970,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, a, count(b), avg(distinct c) from t group by date_format(d,'%Y'), a;",
+        "SQL": "EXPLAIN format='brief' select date_format(d,'%Y') as df, a, count(b), avg(distinct c) from t group by date_format(d,'%Y'), a;",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -992,7 +992,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
+        "SQL": "EXPLAIN format='brief' select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
         "Plan": [
           "Projection 8000.00 root  test.t.d, test.t.e, Column#8, Column#9, Column#10",
           "└─HashAgg 8000.00 root  group by:test.t.d, test.t.e, funcs:min(test.t.b)->Column#8, funcs:count(distinct test.t.c)->Column#9, funcs:bit_or(test.t.a)->Column#10, funcs:firstrow(test.t.d)->test.t.d, funcs:firstrow(test.t.e)->test.t.e",
@@ -1006,7 +1006,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
+        "SQL": "EXPLAIN format='brief' select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
         "Plan": [
           "Projection 8000.00 root  test.t.a, Column#8, Column#9, Column#10",
           "└─HashAgg 8000.00 root  group by:Column#16, funcs:count(Column#13)->Column#8, funcs:avg(distinct Column#14)->Column#9, funcs:count(distinct Column#15)->Column#10, funcs:firstrow(Column#16)->test.t.a",
@@ -1020,7 +1020,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out",
+        "SQL": "EXPLAIN format='brief' select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1047,7 +1047,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct b) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct b) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1064,7 +1064,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1081,7 +1081,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct e) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct e) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1098,7 +1098,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a,b,c,e) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct a,b,c,e) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1115,7 +1115,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c), count(a), count(*) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c), count(a), count(*) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1132,7 +1132,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b), count(a), count(*), count(distinct c) from t;",
+        "SQL": "EXPLAIN format='brief' select sum(b), count(a), count(*), count(distinct c) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1150,7 +1150,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
+        "SQL": "EXPLAIN format='brief' select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
         "Plan": [
           "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1169,7 +1169,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
+        "SQL": "EXPLAIN format='brief' select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
         "Plan": [
           "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1189,7 +1189,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
+        "SQL": "EXPLAIN format='brief' select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
         "Plan": [
           "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1209,7 +1209,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b), count(distinct a, b, e), count(a+b) from t;",
+        "SQL": "EXPLAIN format='brief' select sum(b), count(distinct a, b, e), count(a+b) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1227,7 +1227,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct b), json_objectagg(d,c) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct b), json_objectagg(d,c) from t;",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(distinct Column#10)->Column#8, funcs:json_objectagg(Column#11, Column#12)->Column#9",
           "└─Projection 10000.00 root  test.t.b->Column#10, cast(test.t.d, var_string(10))->Column#11, test.t.c->Column#12",
@@ -1243,7 +1243,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c+a), count(a) from t;",
+        "SQL": "EXPLAIN format='brief' select count(distinct c+a), count(a) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1258,7 +1258,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b), count(distinct c+a, b, e), count(a+b) from t;",
+        "SQL": "EXPLAIN format='brief' select sum(b), count(distinct c+a, b, e), count(a+b) from t;",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1278,7 +1278,7 @@
     "Name": "TestMPPMultiDistinct3Stage",
     "Cases": [
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1302,7 +1302,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a), count(distinct b) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1327,7 +1327,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b), count(c) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a), count(distinct b), count(c) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1353,7 +1353,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b), count(c+1) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a), count(distinct b), count(c+1) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1379,7 +1379,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b), sum(c) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a), count(distinct b), sum(c) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1406,7 +1406,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1434,7 +1434,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a+b), sum(c) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a+b), sum(c) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1456,7 +1456,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a+b), count(distinct b+c), count(c) from t",
+        "SQL": "EXPLAIN format='brief' select count(distinct a+b), count(distinct b+c), count(c) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1478,7 +1478,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain FORMAT = 'brief' select count(distinct a,c), count(distinct b,c), count(c) from t",
+        "SQL": "explain format='brief' select count(distinct a,c), count(distinct b,c), count(c) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1499,7 +1499,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain FORMAT = 'brief' select count(distinct a), count(distinct b), count(*) from t",
+        "SQL": "explain format='brief' select count(distinct a), count(distinct b), count(*) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1525,7 +1525,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain FORMAT = 'brief' select count(distinct a), count(distinct b), avg(c+d) from t",
+        "SQL": "explain format='brief' select count(distinct a), count(distinct b), avg(c+d) from t",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1555,7 +1555,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where t.a not in (select s.a from s); -- 1. anti semi join, one join key",
+        "SQL": "EXPLAIN format='brief' select * from t where t.a not in (select s.a from s); -- 1. anti semi join, one join key",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1568,7 +1568,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition",
+        "SQL": "EXPLAIN format='brief' select * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1581,7 +1581,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two join key",
+        "SQL": "EXPLAIN format='brief' select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two join key",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1594,7 +1594,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c); -- 4. anti semi join, two join key + other condition",
+        "SQL": "EXPLAIN format='brief' select * from t where (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c); -- 4. anti semi join, two join key + other condition",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1607,7 +1607,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select *, t.a not in (select s.a from s) from t; -- 5. left anti semi join, one join key",
+        "SQL": "EXPLAIN format='brief' select *, t.a not in (select s.a from s) from t; -- 5. left anti semi join, one join key",
         "Plan": [
           "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1620,7 +1620,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select *, t.a not in (select s.a from s where t.c > s.c) from t; -- 6. left anti semi join, one join key + other condition",
+        "SQL": "EXPLAIN format='brief' select *, t.a not in (select s.a from s where t.c > s.c) from t; -- 6. left anti semi join, one join key + other condition",
         "Plan": [
           "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1633,7 +1633,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
+        "SQL": "EXPLAIN format='brief' select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
         "Plan": [
           "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1646,7 +1646,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition",
+        "SQL": "EXPLAIN format='brief' select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition",
         "Plan": [
           "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1659,7 +1659,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
+        "SQL": "EXPLAIN format='brief' select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1674,7 +1674,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN FORMAT = 'brief' select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
+        "SQL": "EXPLAIN format='brief' select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
