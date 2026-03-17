@@ -29,10 +29,10 @@ Sort	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t.b, plan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' select min(b), max(c) from t use index(primary) group by d;
 id	estRows	task	access object	operator info
-Sort	8000.00	root		Column#5, Column#6
-└─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(Column#7)->Column#5, funcs:max(Column#8)->Column#6
+Sort	8000.00	root		Column#6, Column#7
+└─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(Column#8)->Column#6, funcs:max(Column#9)->Column#7
   └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t.b)->Column#7, funcs:max(planner__core__casetest__rule__rule_result_reorder.t.c)->Column#8
+    └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t.b)->Column#8, funcs:max(planner__core__casetest__rule__rule_result_reorder.t.c)->Column#9
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' select min(b), max(c) from t use index(primary) group by a;
 id	estRows	task	access object	operator info
@@ -98,7 +98,7 @@ Insert	N/A	root		N/A
 explain FORMAT='brief' insert into t select t1.a, t2.b, t1.c+t2.c from t t1, t t2 where t1.a=t2.a;
 id	estRows	task	access object	operator info
 Insert	N/A	root		N/A
-└─Projection	12500.00	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column#10
+└─Projection	12500.00	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column#12
   └─MergeJoin	12500.00	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -107,7 +107,7 @@ Insert	N/A	root		N/A
 explain FORMAT='brief' insert into t select min(a), max(b), sum(c) from t group by a;
 id	estRows	task	access object	operator info
 Insert	N/A	root		N/A
-└─Projection	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t.a->Column#7, planner__core__casetest__rule__rule_result_reorder.t.b->Column#8, cast(planner__core__casetest__rule__rule_result_reorder.t.c, decimal(32,0) BINARY)->Column#9
+└─Projection	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t.a->Column#8, planner__core__casetest__rule__rule_result_reorder.t.b->Column#9, cast(planner__core__casetest__rule__rule_result_reorder.t.c, decimal(32,0) BINARY)->Column#10
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' delete from t;
@@ -280,7 +280,7 @@ id	estRows	task	access object	operator info
 Batch_Point_Get	4.00	root	table:t1, index:b(b)	keep order:true, desc:false
 explain FORMAT='brief' select * from t1 where a > 10 union all select * from t2 where b > 20;
 id	estRows	task	access object	operator info
-Sort	6666.67	root		Column#9, Column#10, Column#11, Column#12
+Sort	6666.67	root		Column#11, Column#12, Column#13, Column#14
 └─Union	6666.67	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
@@ -289,8 +289,8 @@ Sort	6666.67	root		Column#9, Column#10, Column#11, Column#12
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain FORMAT='brief' select * from t1 where a > 10 union distinct select * from t2 where b > 20;
 id	estRows	task	access object	operator info
-Sort	5333.33	root		Column#9, Column#10, Column#11, Column#12
-└─HashAgg	5333.33	root		group by:Column#10, Column#11, Column#12, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12
+Sort	5333.33	root		Column#11, Column#12, Column#13, Column#14
+└─HashAgg	5333.33	root		group by:Column#11, Column#12, Column#13, Column#14, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12, funcs:firstrow(Column#13)->Column#13, funcs:firstrow(Column#14)->Column#14
   └─Union	6666.67	root		
     ├─TableReader	3333.33	root		data:TableRangeScan
     │ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
@@ -317,29 +317,29 @@ Sort	2666.67	root		planner__core__casetest__rule__rule_result_reorder.t1.a, plan
     └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
 explain FORMAT='brief' select sum(b) over(partition by a) as sum_b from t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		Column#6->Column#7
-└─Sort	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.a, Column#6
-  └─Window	10000.00	root		sum(cast(planner__core__casetest__rule__rule_result_reorder.t1.b, decimal(10,0) BINARY))->Column#6 over(partition by planner__core__casetest__rule__rule_result_reorder.t1.a)
+Projection	10000.00	root		Column#7->Column#8
+└─Sort	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.a, Column#7
+  └─Window	10000.00	root		sum(cast(planner__core__casetest__rule__rule_result_reorder.t1.b, decimal(10,0) BINARY))->Column#7 over(partition by planner__core__casetest__rule__rule_result_reorder.t1.a)
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 explain FORMAT='brief' select min(a), max(b), sum(c) from t1 group by d;
 id	estRows	task	access object	operator info
-Sort	8000.00	root		Column#5, Column#6, Column#7
-└─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#8)->Column#5, funcs:max(Column#9)->Column#6, funcs:sum(Column#10)->Column#7
+Sort	8000.00	root		Column#6, Column#7, Column#8
+└─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#9)->Column#6, funcs:max(Column#10)->Column#7, funcs:sum(Column#11)->Column#8
   └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#8, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#9, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#10
+    └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#9, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#10, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#11
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain FORMAT='brief' select min(a), max(b), sum(c) from t1 group by d having max(b) < 20;
 id	estRows	task	access object	operator info
-Sort	6400.00	root		Column#5, Column#6, Column#7
-└─Selection	6400.00	root		lt(Column#6, 20)
-  └─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7
+Sort	6400.00	root		Column#6, Column#7, Column#8
+└─Selection	6400.00	root		lt(Column#7, 20)
+  └─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#12)->Column#6, funcs:max(Column#13)->Column#7, funcs:sum(Column#14)->Column#8
     └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#11, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#12, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#13
+      └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#12, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#13, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#14
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain FORMAT='brief' select case when a=1 then 'a1' when a=2 then 'a2' else 'ax' end from t1 ;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		case(eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 1), a1, eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 2), a2, ax)->Column#5
+Projection	10000.00	root		case(eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 1), a1, eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 2), a2, ax)->Column#6
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 set tidb_partition_prune_mode='dynamic';

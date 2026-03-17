@@ -57,7 +57,7 @@ id	a	b	c
 9	1i	90	900
 explain select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 where a < '8' and b < 90 and c != 500 limit 4;
 id	estRows	task	access object	operator info
-Projection_7	4.00	root		executor__index_lookup_pushdown.t1.id, executor__index_lookup_pushdown.t1.a, plus(executor__index_lookup_pushdown.t1.b, 1)->Column#5, plus(executor__index_lookup_pushdown.t1.c, 2)->Column#6
+Projection_7	4.00	root		executor__index_lookup_pushdown.t1.id, executor__index_lookup_pushdown.t1.a, plus(executor__index_lookup_pushdown.t1.b, 1)->Column#6, plus(executor__index_lookup_pushdown.t1.c, 2)->Column#7
 └─Limit_9	4.00	root		offset:0, count:4
   └─IndexLookUp_15	4.00	root		
     ├─Limit_16(Build)	4.00	cop[tikv]		offset:0, count:4
@@ -255,14 +255,14 @@ select @@last_plan_from_cache;
 1
 explain select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
 id	estRows	task	access object	operator info
-HashAgg_12	1.00	root		funcs:count(Column#8)->Column#5
+HashAgg_12	1.00	root		funcs:count(Column#9)->Column#6
 └─IndexLookUp_13	1.00	root		
-  ├─HashAgg_14(Build)	1.00	cop[tikv]		funcs:count(1)->Column#8
+  ├─HashAgg_14(Build)	1.00	cop[tikv]		funcs:count(1)->Column#9
   │ └─Selection_15	1111.11	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
   │   └─LocalIndexLookUp_17	3333.33	cop[tikv]		index handle offsets:[2]
   │     ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t1, index:i(a, b)	range:("1i",+inf], keep order:false, stats:pseudo
   │     └─TableRowIDScan_16(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_7(Probe)	0.00	cop[tikv]		funcs:count(1)->Column#8
+  └─HashAgg_7(Probe)	0.00	cop[tikv]		funcs:count(1)->Column#9
     └─Selection_11	0.00	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
       └─TableRowIDScan_10	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;

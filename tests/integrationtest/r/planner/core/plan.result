@@ -420,20 +420,20 @@ affected rows: 0
 info: 
 explain format='brief' (select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;
 id	estRows	task	access object	operator info
-TopN	273.00	root		Column#9, offset:0, count:273
+TopN	273.00	root		Column#11, offset:0, count:273
 └─Union	546.00	root		
-  ├─Projection	273.00	root		cast(Column#4, varbinary(274) BINARY)->Column#9, planner__core__plan.t1.c3->Column#10
-  │ └─Projection	273.00	root		locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3)->Column#4, planner__core__plan.t1.c3
+  ├─Projection	273.00	root		cast(Column#5, varbinary(274) BINARY)->Column#11, planner__core__plan.t1.c3->Column#12
+  │ └─Projection	273.00	root		locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3)->Column#5, planner__core__plan.t1.c3
   │   └─Projection	273.00	root		planner__core__plan.t1.c3
-  │     └─TopN	273.00	root		Column#11, offset:0, count:273
-  │       └─Projection	10000.00	root		planner__core__plan.t1.c3, cast(locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3), varbinary(274) BINARY)->Column#11
+  │     └─TopN	273.00	root		Column#13, offset:0, count:273
+  │       └─Projection	10000.00	root		planner__core__plan.t1.c3, cast(locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3), varbinary(274) BINARY)->Column#13
   │         └─TableReader	10000.00	root		data:TableFullScan
   │           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection	273.00	root		cast(to_binary(Column#8), varbinary(274) BINARY)->Column#9, cast(planner__core__plan.t2.c1, tinyblob BINARY)->Column#10
-    └─Projection	273.00	root		concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)->Column#8, planner__core__plan.t2.c1
+  └─Projection	273.00	root		cast(to_binary(Column#10), varbinary(274) BINARY)->Column#11, cast(planner__core__plan.t2.c1, tinyblob BINARY)->Column#12
+    └─Projection	273.00	root		concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)->Column#10, planner__core__plan.t2.c1
       └─Projection	273.00	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2
-        └─TopN	273.00	root		Column#12, offset:0, count:273
-          └─Projection	10000.00	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2, cast(to_binary(concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)), varbinary(274) BINARY)->Column#12
+        └─TopN	273.00	root		Column#14, offset:0, count:273
+          └─Projection	10000.00	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2, cast(to_binary(concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)), varbinary(274) BINARY)->Column#14
             └─IndexReader	10000.00	root		index:IndexFullScan
               └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:k1(c2, c1)	keep order:false, stats:pseudo
 drop table if exists golang1, golang2;

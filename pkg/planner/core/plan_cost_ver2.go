@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -149,6 +150,14 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		columns = p.tblCols
 	} else { // TiFlash
 		columns = p.schema.Columns
+	}
+	// _tidb_commit_ts is not a real extra column stored in the disk, and it should not bring extra cost, so we exclude
+	// it from the cost here.
+	for i, col := range columns {
+		if col.ID == model.ExtraCommitTSID {
+			columns = slices.Delete(slices.Clone(columns), i, i+1)
+			break
+		}
 	}
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)

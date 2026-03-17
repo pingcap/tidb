@@ -111,14 +111,14 @@ set tidb_enable_clustered_index='ON';
 create table cluster_index_t(a int, b int, c int, primary key (a, b));
 explain format = 'brief' (select max(a) from t) union (select min(a) from t);
 id	estRows	task	access object	operator info
-HashAgg	2.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
+HashAgg	2.00	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
 └─Union	2.00	root		
-  ├─StreamAgg	1.00	root		funcs:max(planner__core__casetest__integration.t.a)->Column#2
+  ├─StreamAgg	1.00	root		funcs:max(planner__core__casetest__integration.t.a)->Column#3
   │ └─Limit	1.00	root		offset:0, count:1
   │   └─TableReader	1.00	root		data:Limit
   │     └─Limit	1.00	cop[tikv]		offset:0, count:1
   │       └─TableFullScan	1.00	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
-  └─StreamAgg	1.00	root		funcs:min(planner__core__casetest__integration.t.a)->Column#4
+  └─StreamAgg	1.00	root		funcs:min(planner__core__casetest__integration.t.a)->Column#6
     └─Limit	1.00	root		offset:0, count:1
       └─TableReader	1.00	root		data:Limit
         └─Limit	1.00	cop[tikv]		offset:0, count:1
@@ -126,12 +126,12 @@ HashAgg	2.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 explain format = 'brief' select min(a), max(a) from cluster_index_t;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
-├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.a)->Column#5
+├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.a)->Column#6
 │ └─Limit	1.00	root		offset:0, count:1
 │   └─TableReader	1.00	root		data:Limit
 │     └─Limit	1.00	cop[tikv]		offset:0, count:1
 │       └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, desc, stats:pseudo
-└─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#4
+└─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#5
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
@@ -139,28 +139,28 @@ HashJoin	1.00	root		CARTESIAN inner join
 explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
-├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.b)->Column#5
+├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.b)->Column#6
 │ └─Limit	1.00	root		offset:0, count:1
 │   └─TableReader	1.00	root		data:Limit
 │     └─Limit	1.00	cop[tikv]		offset:0, count:1
 │       └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
-└─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#4
+└─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#5
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
         └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, stats:pseudo
 explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5
+StreamAgg	1.00	root		funcs:min(Column#9)->Column#5, funcs:max(Column#10)->Column#6
 └─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#8, funcs:max(planner__core__casetest__integration.cluster_index_t.a)->Column#9
+  └─StreamAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#9, funcs:max(planner__core__casetest__integration.cluster_index_t.a)->Column#10
     └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__integration.cluster_index_t.b, 1)
       └─TableFullScan	10000.00	cop[tikv]	table:cluster_index_t	keep order:false, stats:pseudo
 explain format = 'brief' select min(b), max(b) from cluster_index_t where b = 1;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5
+StreamAgg	1.00	root		funcs:min(Column#9)->Column#5, funcs:max(Column#10)->Column#6
 └─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#8, funcs:max(planner__core__casetest__integration.cluster_index_t.b)->Column#9
+  └─StreamAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#9, funcs:max(planner__core__casetest__integration.cluster_index_t.b)->Column#10
     └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__integration.cluster_index_t.b, 1)
       └─TableFullScan	10000.00	cop[tikv]	table:cluster_index_t	keep order:false, stats:pseudo
 set tidb_enable_clustered_index=DEFAULT;
@@ -176,17 +176,17 @@ Projection	9990.00	root		planner__core__casetest__integration.t.b
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Selection(Probe)	7992.00	root		not(isnull(planner__core__casetest__integration.t.a))
     └─Projection	9990.00	root		planner__core__casetest__integration.t.a
-      └─TopN	9990.00	root		Column#7, offset:0, count:1
-        └─Projection	9990.00	root		planner__core__casetest__integration.t.a, plus(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)->Column#7
+      └─TopN	9990.00	root		Column#9, offset:0, count:1
+        └─Projection	9990.00	root		planner__core__casetest__integration.t.a, plus(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)->Column#9
           └─TableReader	9990.00	root		data:TopN
             └─TopN	9990.00	cop[tikv]		plus(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a), offset:0, count:1
               └─TableFullScan	99900000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc format = 'brief' select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__integration.t.a
-└─Projection	1.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11
-  └─TopN	1.00	root		Column#13, offset:0, count:1
-    └─Projection	10000.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11, and(eq(planner__core__casetest__integration.t.b, 1), Column#11)->Column#13
+└─Projection	1.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#14
+  └─TopN	1.00	root		Column#16, offset:0, count:1
+    └─Projection	10000.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#14, and(eq(planner__core__casetest__integration.t.b, 1), Column#14)->Column#16
       └─HashJoin	10000.00	root		left outer semi join, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)]
         ├─TableReader(Build)	10000.00	root		data:TableFullScan
         │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -194,10 +194,10 @@ Projection	1.00	root		planner__core__casetest__integration.t.a
           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 desc format = 'brief' select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1;
 id	estRows	task	access object	operator info
-TopN	1.00	root		Column#4, offset:0, count:1
-└─Projection	10000.00	root		Column#4, planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b
-  └─HashJoin	10000.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.b, Column#4)]
-    ├─Projection(Build)	8000.00	root		plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)->Column#4
+TopN	1.00	root		Column#5, offset:0, count:1
+└─Projection	10000.00	root		Column#5, planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b
+  └─HashJoin	10000.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.b, Column#5)]
+    ├─Projection(Build)	8000.00	root		plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)->Column#5
     │ └─TableReader	8000.00	root		data:Selection
     │   └─Selection	8000.00	cop[tikv]		not(isnull(plus(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)))
     │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -209,7 +209,7 @@ create table t(a int, b int);
 insert into t values(1, 1), (2, 1), (3, 2), (4, 2), (5, 2);
 explain select approx_percentile(a, 50) from t;
 id	estRows	task	access object	operator info
-HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 50)->Column#4
+HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 50)->Column#5
 └─TableReader_11	10000.00	root		data:TableFullScan_10
   └─TableFullScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_percentile(a, 50) from t;
@@ -217,7 +217,7 @@ approx_percentile(a, 50)
 3
 explain select approx_percentile(a, 10) from t;
 id	estRows	task	access object	operator info
-HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 10)->Column#4
+HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 10)->Column#5
 └─TableReader_11	10000.00	root		data:TableFullScan_10
   └─TableFullScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_percentile(a, 10) from t;
@@ -225,7 +225,7 @@ approx_percentile(a, 10)
 1
 explain select approx_percentile(a, 10+70) from t;
 id	estRows	task	access object	operator info
-HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 80)->Column#4
+HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 80)->Column#5
 └─TableReader_11	10000.00	root		data:TableFullScan_10
   └─TableFullScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_percentile(a, 10+70) from t;
@@ -233,7 +233,7 @@ approx_percentile(a, 10+70)
 4
 explain select approx_percentile(a, 10*10) from t;
 id	estRows	task	access object	operator info
-HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 100)->Column#4
+HashAgg_5	1.00	root		funcs:approx_percentile(planner__core__casetest__integration.t.a, 100)->Column#5
 └─TableReader_11	10000.00	root		data:TableFullScan_10
   └─TableFullScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_percentile(a, 10*10) from t;
@@ -241,9 +241,9 @@ approx_percentile(a, 10*10)
 5
 explain select approx_percentile(a, 50) from t group by b order by b;
 id	estRows	task	access object	operator info
-Projection_6	8000.00	root		Column#4->Column#5
+Projection_6	8000.00	root		Column#5->Column#6
 └─Sort_7	8000.00	root		planner__core__casetest__integration.t.b
-  └─HashAgg_9	8000.00	root		group by:planner__core__casetest__integration.t.b, funcs:approx_percentile(planner__core__casetest__integration.t.a, 50)->Column#4, funcs:firstrow(planner__core__casetest__integration.t.b)->planner__core__casetest__integration.t.b
+  └─HashAgg_9	8000.00	root		group by:planner__core__casetest__integration.t.b, funcs:approx_percentile(planner__core__casetest__integration.t.a, 50)->Column#5, funcs:firstrow(planner__core__casetest__integration.t.b)->planner__core__casetest__integration.t.b
     └─TableReader_13	10000.00	root		data:TableFullScan_12
       └─TableFullScan_12	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_percentile(a, 50) from t group by b order by b;
@@ -255,8 +255,8 @@ create table t(a int);
 insert into t values(1),(1),(2);
 explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1;
 id	estRows	task	access object	operator info
-TopN	1.00	root		Column#3, offset:0, count:1
-└─StreamAgg	8000.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#3
+TopN	1.00	root		Column#4, offset:0, count:1
+└─StreamAgg	8000.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#4
   └─Sort	10000.00	root		planner__core__casetest__integration.t.a
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -265,8 +265,8 @@ c
 1
 explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by c;
 id	estRows	task	access object	operator info
-Sort	8000.00	root		Column#3
-└─StreamAgg	8000.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#3
+Sort	8000.00	root		Column#4
+└─StreamAgg	8000.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#4
   └─Sort	10000.00	root		planner__core__casetest__integration.t.a
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -276,9 +276,9 @@ c
 2
 explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
 id	estRows	task	access object	operator info
-Projection	1.00	root		Column#3->Column#4
+Projection	1.00	root		Column#4->Column#5
 └─Limit	1.00	root		offset:0, count:1
-  └─StreamAgg	1.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#3, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+  └─StreamAgg	1.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#4, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
     └─Sort	1.25	root		planner__core__casetest__integration.t.a
       └─TableReader	1.25	root		data:TableFullScan
         └─TableFullScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -287,8 +287,8 @@ c
 2
 explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		Column#3->Column#4
-└─StreamAgg	8000.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#3, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+Projection	8000.00	root		Column#4->Column#5
+└─StreamAgg	8000.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#4, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
   └─Sort	10000.00	root		planner__core__casetest__integration.t.a
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -525,7 +525,7 @@ create table t(c int);
 insert t values(10), (8), (7), (9), (11);
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1);
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#7
+HashAgg	1.00	root		funcs:count(1)->Column#9
 └─HashJoin	7992.00	root		semi join, equal:[eq(planner__core__casetest__integration.test.id, planner__core__casetest__integration.test.id)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.test.id))
@@ -535,7 +535,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id);
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#7
+HashAgg	1.00	root		funcs:count(1)->Column#9
 └─HashJoin	7992.00	root		semi join, equal:[eq(planner__core__casetest__integration.test.id, planner__core__casetest__integration.test.id)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.test.id))
@@ -545,7 +545,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2);
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#7
+HashAgg	1.00	root		funcs:count(1)->Column#9
 └─Apply	10000.00	root		CARTESIAN semi join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -626,7 +626,7 @@ KEY i6 (key6)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 explain format = 'brief' SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6);
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#10
+StreamAgg	1.00	root		funcs:count(1)->Column#11
 └─IndexMerge	0.02	root		type: union
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:i4(key4)	range:[42,42], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:i1(key1)	range:[4,4], keep order:false, stats:pseudo
@@ -974,7 +974,7 @@ select @@tidb_enable_index_merge;
 set tidb_enable_index_merge = on;
 explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
 id	estRows	task	access object	operator info
-Projection	15.99	root		1->Column#5
+Projection	15.99	root		1->Column#6
 └─Selection	15.99	root		or(eq(planner__core__casetest__integration.t1.c1, "de"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(from_base64(to_base64(planner__core__casetest__integration.t1.c1)), "ab")))
   └─IndexMerge	19.99	root		type: union
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:["de","de"], keep order:false, stats:pseudo
@@ -985,7 +985,7 @@ select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and fro
 1
 explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
 id	estRows	task	access object	operator info
-Projection	17.99	root		1->Column#5
+Projection	17.99	root		1->Column#6
 └─Selection	0.04	root		or(eq(planner__core__casetest__integration.t1.c1, "ab"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(char_length(left(planner__core__casetest__integration.t1.c1, 10)), 10)))
   └─IndexMerge	19.99	root		type: union
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:["ab","ab"], keep order:false, stats:pseudo
@@ -996,7 +996,7 @@ select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and cha
 1
 explain format=brief select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
 id	estRows	task	access object	operator info
-Projection	15.99	root		1->Column#6
+Projection	15.99	root		1->Column#7
 └─Selection	15.99	root		or(eq(planner__core__casetest__integration.tt1.c1, "de"), and(eq(planner__core__casetest__integration.tt1.c2, "10"), eq(from_base64(to_base64(planner__core__casetest__integration.tt1.c3)), "10")))
   └─IndexMerge	19.99	root		type: union
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt1, index:idx_0(c1)	range:["de","de"], keep order:false, stats:pseudo
@@ -1007,7 +1007,7 @@ select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and f
 1
 explain format=brief select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));
 id	estRows	task	access object	operator info
-Projection	2.40	root		1->Column#3
+Projection	2.40	root		1->Column#4
 └─Selection	2.40	root		or(eq(planner__core__casetest__integration.tt2.c1, -3896405), and(in(planner__core__casetest__integration.tt2.pk, 1, 53330), istrue_with_null(cast(to_base64(left(cast(planner__core__casetest__integration.tt2.pk, var_string(20)), 5)), double BINARY))))
   └─IndexMerge	3.00	root		type: union
     ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:tt2, index:c1(c1)	range:[-3896405,-3896405], keep order:false, stats:pseudo
@@ -1018,7 +1018,7 @@ select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt
 1
 explain format=brief select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
 id	estRows	task	access object	operator info
-Projection	5098.44	root		1->Column#5
+Projection	5098.44	root		1->Column#6
 └─Selection	2825.66	root		or(lt(planner__core__casetest__integration.tt3.c1, -10), and(lt(planner__core__casetest__integration.tt3.c2, 10), eq(reverse(cast(planner__core__casetest__integration.tt3.c3, var_string(20))), "2")))
   └─IndexMerge	5542.21	root		type: union
     ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:tt3, index:c1(c1)	range:[-inf,-10), keep order:false, stats:pseudo
@@ -1029,7 +1029,7 @@ select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reve
 1
 explain format=brief select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
 id	estRows	task	access object	operator info
-Projection	8000.00	root		1->Column#5
+Projection	8000.00	root		1->Column#6
 └─Selection	8000.00	root		or(eq(planner__core__casetest__integration.t1.c1, "de"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(from_base64(to_base64(planner__core__casetest__integration.t1.c1)), "ab")))
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1210,11 +1210,11 @@ create table ta(a int, b int);
 set sql_mode='';
 explain format = 'brief' select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;
 id	estRows	task	access object	operator info
-Sort	1.00	root		Column#6
-└─Projection	1.00	root		floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#6, Column#5
-  └─HashAgg	1.00	root		group by:Column#13, funcs:count(Column#11)->Column#5, funcs:firstrow(Column#12)->Column#4
-    └─Projection	10000.00	root		planner__core__casetest__integration.t1.c1->Column#11, Column#4->Column#12, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#13
-      └─Projection	10000.00	root		setvar(rownum, plus(getvar(rownum), 1))->Column#4, planner__core__casetest__integration.t1.c1
+Sort	1.00	root		Column#7
+└─Projection	1.00	root		floor(div(cast(Column#5, decimal(20,0) BINARY), 2))->Column#7, Column#6
+  └─HashAgg	1.00	root		group by:Column#14, funcs:count(Column#12)->Column#6, funcs:firstrow(Column#13)->Column#5
+    └─Projection	10000.00	root		planner__core__casetest__integration.t1.c1->Column#12, Column#5->Column#13, floor(div(cast(Column#5, decimal(20,0) BINARY), 2))->Column#14
+      └─Projection	10000.00	root		setvar(rownum, plus(getvar(rownum), 1))->Column#5, planner__core__casetest__integration.t1.c1
         └─HashJoin	10000.00	root		CARTESIAN inner join
           ├─Projection(Build)	1.00	root		setvar(rownum, -1)->Column#1
           │ └─TableDual	1.00	root		rows:1
@@ -1222,40 +1222,40 @@ Sort	1.00	root		Column#6
             └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select @n:=@n+1 as e from ta group by e;
 id	estRows	task	access object	operator info
-Projection	1.00	root		setvar(n, plus(getvar(n), 1))->Column#4
-└─HashAgg	1.00	root		group by:Column#8, funcs:firstrow(1)->Column#7
-  └─Projection	10000.00	root		setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#8
+Projection	1.00	root		setvar(n, plus(getvar(n), 1))->Column#5
+└─HashAgg	1.00	root		group by:Column#9, funcs:firstrow(1)->Column#8
+  └─Projection	10000.00	root		setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#9
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select @n:=@n+a as e from ta group by e;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#4
-└─HashAgg	8000.00	root		group by:Column#7, funcs:firstrow(Column#6)->planner__core__casetest__integration.ta.a
-  └─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#6, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#7
+Projection	8000.00	root		setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#5
+└─HashAgg	8000.00	root		group by:Column#8, funcs:firstrow(Column#7)->planner__core__casetest__integration.ta.a
+  └─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#7, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#8
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select @n:=@n+1 as e from ta) tt group by e;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		group by:Column#4, funcs:firstrow(Column#4)->Column#4
-└─Projection	10000.00	root		setvar(n, plus(getvar(n), 1))->Column#4
+HashAgg	1.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
+└─Projection	10000.00	root		setvar(n, plus(getvar(n), 1))->Column#5
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select @n:=@n+a as e from ta) tt group by e;
 id	estRows	task	access object	operator info
-HashAgg	8000.00	root		group by:Column#4, funcs:firstrow(Column#4)->Column#4
-└─Projection	10000.00	root		setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#4
+HashAgg	8000.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
+└─Projection	10000.00	root		setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#5
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select a from ta group by @n:=@n+1;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		group by:Column#5, funcs:firstrow(Column#4)->planner__core__casetest__integration.ta.a
-└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#4, setvar(n, plus(getvar(n), 1))->Column#5
+HashAgg	1.00	root		group by:Column#6, funcs:firstrow(Column#5)->planner__core__casetest__integration.ta.a
+└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#5, setvar(n, plus(getvar(n), 1))->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select a from ta group by @n:=@n+a;
 id	estRows	task	access object	operator info
-HashAgg	8000.00	root		group by:Column#5, funcs:firstrow(Column#4)->planner__core__casetest__integration.ta.a
-└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#4, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#5
+HashAgg	8000.00	root		group by:Column#6, funcs:firstrow(Column#5)->planner__core__casetest__integration.ta.a
+└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#5, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 set sql_mode=default;
@@ -1274,50 +1274,50 @@ create table t8 (a int key);
 create definer=`root`@`127.0.0.1` view v4 as (select a from t7) union (select a from t8);
 explain format='brief' select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
 id	estRows	task	access object	operator info
-HashAgg	2.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	2.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	2.00	root		
   ├─Point_Get	1.00	root	table:t1	handle:1
-  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#3
+  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#5
     └─Point_Get	1.00	root	table:t2	handle:1
 select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
 a
 explain format='brief' select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
 id	estRows	task	access object	operator info
-HashAgg	2.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	2.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	2.00	root		
   ├─Point_Get	1.00	root	table:t1	handle:1
-  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#3
+  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#5
     └─Point_Get	1.00	root	table:t2	handle:1
 select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
 a
 explain format='brief' select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
 id	estRows	task	access object	operator info
-HashAgg	5333.33	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	5333.33	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	6666.67	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf], keep order:false, stats:pseudo
-  └─Projection	3333.33	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#3
+  └─Projection	3333.33	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#5
     └─TableReader	3333.33	root		data:TableRangeScan
       └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(1,+inf], keep order:false, stats:pseudo
 select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
 a
 explain format='brief' select * from v2 where a = 'test';
 id	estRows	task	access object	operator info
-HashAgg	16.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	16.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	20.00	root		
   ├─Point_Get	1.00	root	table:t3, clustered index:PRIMARY(a)	
-  └─Projection	10.00	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Projection	10.00	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
     └─Point_Get	1.00	root	table:t4, clustered index:PRIMARY(a)	
 select * from v2 where a = 'test';
 a
 explain format='brief' select * from v2 where a = 1;
 id	estRows	task	access object	operator info
-HashAgg	12800.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	12800.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	16000.00	root		
   ├─TableReader	8000.00	root		data:Selection
   │ └─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__integration.t3.a, double BINARY), 1)
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─Projection	8000.00	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Projection	8000.00	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
     └─TableReader	8000.00	root		data:Selection
       └─Selection	8000.00	cop[tikv]		eq(cast(cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), double BINARY), 1)
         └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
@@ -1325,21 +1325,21 @@ select * from v2 where a = 1;
 a
 explain format='brief' select * from v2 where a > 'test';
 id	estRows	task	access object	operator info
-HashAgg	5333.33	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	5333.33	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	6666.67	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t3	range:("test",+inf], keep order:false, stats:pseudo
-  └─Projection	3333.33	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Projection	3333.33	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
     └─TableReader	3333.33	root		data:TableRangeScan
       └─TableRangeScan	3333.33	cop[tikv]	table:t4	range:("test",+inf], keep order:false, stats:pseudo
 select * from v2 where a > 'test';
 a
 explain format='brief' select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
 id	estRows	task	access object	operator info
-HashAgg	6408.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	6408.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	8010.00	root		
   ├─Point_Get	1.00	root	table:t5, clustered index:PRIMARY(a)	
-  └─Projection	8000.00	root		cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Projection	8000.00	root		cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
     └─TableReader	8000.00	root		data:Selection
       └─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), "test")
         └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
@@ -1347,11 +1347,11 @@ select * from v3 where a = 'test' -- the condition shouldn't be downcast through
 a
 explain format='brief' select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too;
 id	estRows	task	access object	operator info
-HashAgg	9066.67	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	9066.67	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	11333.33	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t5	range:("test",+inf], keep order:false, stats:pseudo
-  └─Projection	8000.00	root		cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Projection	8000.00	root		cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
     └─TableReader	8000.00	root		data:Selection
       └─Selection	8000.00	cop[tikv]		gt(cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), "test")
         └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
@@ -1359,23 +1359,23 @@ select * from v3 where a > 'test' -- the condition shouldn't be downcast through
 a
 explain format='brief' select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 id	estRows	task	access object	operator info
-HashAgg	6408.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	6408.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	8010.00	root		
   ├─Point_Get	1.00	root	table:t7, clustered index:PRIMARY(a)	
-  └─Selection	8000.00	root		eq(Column#3, "test")
-    └─Projection	10000.00	root		cast(planner__core__casetest__integration.t8.a, varchar(100) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Selection	8000.00	root		eq(Column#5, "test")
+    └─Projection	10000.00	root		cast(planner__core__casetest__integration.t8.a, varchar(100) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
       └─TableReader	10000.00	root		data:TableFullScan
         └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
 select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 a
 explain format='brief' select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 id	estRows	task	access object	operator info
-HashAgg	9066.67	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
+HashAgg	9066.67	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
 └─Union	11333.33	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t7	range:("test",+inf], keep order:false, stats:pseudo
-  └─Selection	8000.00	root		gt(Column#3, "test")
-    └─Projection	10000.00	root		cast(planner__core__casetest__integration.t8.a, varchar(100) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
+  └─Selection	8000.00	root		gt(Column#5, "test")
+    └─Projection	10000.00	root		cast(planner__core__casetest__integration.t8.a, varchar(100) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#5
       └─TableReader	10000.00	root		data:TableFullScan
         └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
 select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
@@ -1385,7 +1385,7 @@ drop table if exists t;
 create table t (id int, value decimal(10,5));
 desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#10
+StreamAgg	1.00	root		funcs:count(1)->Column#13
 └─HashJoin	1.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
   ├─Selection(Build)	0.80	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
   │ └─TopN	1.00	root		planner__core__casetest__integration.t.value, offset:0, count:1
@@ -1401,7 +1401,7 @@ StreamAgg	1.00	root		funcs:count(1)->Column#10
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#10
+StreamAgg	1.00	root		funcs:count(1)->Column#13
 └─HashJoin	1.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
   ├─Selection(Build)	0.80	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
   │ └─TopN	1.00	root		planner__core__casetest__integration.t.value, offset:0, count:1
@@ -1803,15 +1803,15 @@ create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,
 explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Projection	0.00	root		test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21
-  └─IndexJoin	0.00	root		inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))
+└─Projection	0.00	root		test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#19, Column#20, Column#21, Column#22
+  └─IndexJoin	0.00	root		inner join, inner:TableReader, outer key:Column#21, Column#22, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#21, test.tt.c), eq(Column#22, test.tt.d), other cond:or(or(and(eq(Column#21, 11), eq(test.tt.d, 111)), and(eq(Column#21, 22), eq(test.tt.d, 222))), or(and(eq(Column#21, 33), eq(test.tt.d, 333)), and(eq(Column#21, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#22, 111)), and(eq(test.tt.c, 22), eq(Column#22, 222))), or(and(eq(test.tt.c, 33), eq(Column#22, 333)), and(eq(test.tt.c, 44), eq(Column#22, 444))))
     ├─Union(Build)	0.00	root		
-    │ ├─Projection	0.00	root		1->Column#18, 2->Column#19, 3->Column#20, 4->Column#21
+    │ ├─Projection	0.00	root		1->Column#19, 2->Column#20, 3->Column#21, 4->Column#22
     │ │ └─TableDual	0.00	root		rows:0
-    │ ├─Projection	0.00	root		2->Column#18, 3->Column#19, 4->Column#20, 5->Column#21
+    │ ├─Projection	0.00	root		2->Column#19, 3->Column#20, 4->Column#21, 5->Column#22
     │ │ └─TableDual	0.00	root		rows:0
-    │ └─Projection	0.00	root		3->Column#18, 4->Column#19, 5->Column#20, 6->Column#21
+    │ └─Projection	0.00	root		3->Column#19, 4->Column#20, 5->Column#21, 6->Column#22
     │   └─TableDual	0.00	root		rows:0
     └─TableReader(Probe)	0.00	root		data:Selection
       └─Selection	0.00	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))
-        └─TableRangeScan	0.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo
+        └─TableRangeScan	0.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo

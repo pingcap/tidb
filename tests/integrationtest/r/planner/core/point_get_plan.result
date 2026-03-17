@@ -9,7 +9,7 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:t, index:idx(a)	
 explain format='brief' select t.*, _tidb_rowid, date_format(a, "") from t where a = 1;
 id	estRows	task	access object	operator info
-Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, planner__core__point_get_plan.t._tidb_rowid, date_format(cast(planner__core__point_get_plan.t.a, datetime BINARY), )->Column#4
+Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, planner__core__point_get_plan.t._tidb_rowid, date_format(cast(planner__core__point_get_plan.t.a, datetime BINARY), )->Column#5
 └─Point_Get	1.00	root	table:t, index:idx(a)	
 begin;
 insert into t values (1, 1);
@@ -19,11 +19,11 @@ Point_Get	1.00	root	table:t, index:idx(a)
 commit;
 explain format='brief' select count(_tidb_rowid) from t where a=1;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->Column#4
+StreamAgg	1.00	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->Column#5
 └─Point_Get	1.00	root	table:t, index:idx(a)	
 explain format='brief' select *, date_format(b, "") from t where a =1 for update;
 id	estRows	task	access object	operator info
-Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column#4
+Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column#5
 └─SelectLock	1.00	root		for update 0
   └─Point_Get	1.00	root	table:t, index:idx(a)	
 create table t1 (pk int, a int, b int, primary key(pk), unique key(a));

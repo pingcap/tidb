@@ -2598,11 +2598,11 @@ insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3');
 insert into t3 values (2,2.1),(3,3);
 explain format = 'brief' select * from t3 union select * from t1;
 id	estRows	task	access object	operator info
-HashAgg	16000.00	root		group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8
+HashAgg	16000.00	root		group by:Column#10, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10
 └─Union	20000.00	root		
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─Projection	10000.00	root		executor__executor.t1.a->Column#7, cast(executor__executor.t1.b, decimal(30,10) BINARY)->Column#8
+  └─Projection	10000.00	root		executor__executor.t1.a->Column#9, cast(executor__executor.t1.b, decimal(30,10) BINARY)->Column#10
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t3 union select * from t1;
@@ -2617,7 +2617,7 @@ id	estRows	task	access object	operator info
 Union	20000.00	root		
 ├─TableReader	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection	10000.00	root		executor__executor.t1.a->Column#7, cast(executor__executor.t1.b, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
+└─Projection	10000.00	root		executor__executor.t1.a->Column#9, cast(executor__executor.t1.b, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#10
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 union all select * from t1;
@@ -2662,13 +2662,13 @@ NULL	NULL
 explain format = 'brief' select * from t1 union all select * from t2 union all select * from t3;
 id	estRows	task	access object	operator info
 Union	30000.00	root		
-├─Projection	10000.00	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+├─Projection	10000.00	root		executor__executor.t1.a->Column#13, cast(executor__executor.t1.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#14
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-├─Projection	10000.00	root		executor__executor.t2.a->Column#10, cast(executor__executor.t2.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+├─Projection	10000.00	root		executor__executor.t2.a->Column#13, cast(executor__executor.t2.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#14
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection	10000.00	root		executor__executor.t3.a->Column#10, cast(executor__executor.t3.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+└─Projection	10000.00	root		executor__executor.t3.a->Column#13, cast(executor__executor.t3.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#14
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 union all select * from t3;
@@ -2686,12 +2686,12 @@ NULL	3
 3	3.0000000000
 explain format = 'brief' select * from t1 union all select * from t2 except select * from t3;
 id	estRows	task	access object	operator info
-HashJoin	12800.00	root		anti semi join, equal:[nulleq(Column#10, executor__executor.t3.a)], other cond:nulleq(cast(Column#11, double BINARY), cast(executor__executor.t3.b, double BINARY))
+HashJoin	12800.00	root		anti semi join, equal:[nulleq(Column#13, executor__executor.t3.a)], other cond:nulleq(cast(Column#14, double BINARY), cast(executor__executor.t3.b, double BINARY))
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashAgg(Probe)	16000.00	root		group by:Column#10, Column#11, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11
+└─HashAgg(Probe)	16000.00	root		group by:Column#13, Column#14, funcs:firstrow(Column#13)->Column#13, funcs:firstrow(Column#14)->Column#14
   └─Union	20000.00	root		
-    ├─Projection	10000.00	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+    ├─Projection	10000.00	root		executor__executor.t1.a->Column#13, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#14
     │ └─TableReader	10000.00	root		data:TableFullScan
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TableReader	10000.00	root		data:TableFullScan
@@ -2722,7 +2722,7 @@ NULL	NULL
 explain format = 'brief' select * from t1 union all select * from t2 intersect select * from t3;
 id	estRows	task	access object	operator info
 Union	16400.00	root		
-├─Projection	10000.00	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+├─Projection	10000.00	root		executor__executor.t1.a->Column#13, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#14
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─HashJoin	6400.00	root		semi join, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t2.b, double BINARY), cast(executor__executor.t3.b, double BINARY))
@@ -2779,7 +2779,7 @@ select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#7
+StreamAgg	1.00	root		funcs:count(1)->Column#9
 └─MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
   ├─TableDual(Build)	0.00	root		rows:0
   └─TableDual(Probe)	0.00	root		rows:0
@@ -2802,7 +2802,7 @@ select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#7
+StreamAgg	1.00	root		funcs:count(1)->Column#9
 └─MergeJoin	0.00	root		left outer join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
   ├─TableDual(Build)	0.00	root		rows:0
   └─TableDual(Probe)	0.00	root		rows:0
@@ -2831,7 +2831,7 @@ insert into t2 values (1),(2),(null),(null);
 insert into t3 values (2),(3);
 explain format='brief' select * from t3 union select * from t1;
 id	estRows	task	access object	operator info
-HashAgg	16000.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
+HashAgg	16000.00	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
 └─Union	20000.00	root		
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -2912,10 +2912,10 @@ NULL
 3
 explain format='brief' select * from t1 union all select * from t2 except select * from t3;
 id	estRows	task	access object	operator info
-HashJoin	12800.00	root		anti semi join, equal:[nulleq(Column#7, executor__executor.t3.a)]
+HashJoin	12800.00	root		anti semi join, equal:[nulleq(Column#10, executor__executor.t3.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashAgg(Probe)	16000.00	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
+└─HashAgg(Probe)	16000.00	root		group by:Column#10, funcs:firstrow(Column#10)->Column#10
   └─Union	20000.00	root		
     ├─TableReader	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -3022,7 +3022,7 @@ NULL
 3
 explain format='brief' select * from t1 union (select * from t2 union all select * from t3);
 id	estRows	task	access object	operator info
-HashAgg	24000.00	root		group by:Column#8, funcs:firstrow(Column#8)->Column#8
+HashAgg	24000.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
 └─Union	30000.00	root		
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -3039,8 +3039,8 @@ NULL
 3
 explain format='brief' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
 id	estRows	task	access object	operator info
-HashJoin	5120.00	root		anti semi join, equal:[nulleq(executor__executor.t1.a, Column#9)]
-├─HashAgg(Build)	16000.00	root		group by:Column#9, funcs:firstrow(Column#9)->Column#9
+HashJoin	5120.00	root		anti semi join, equal:[nulleq(executor__executor.t1.a, Column#13)]
+├─HashAgg(Build)	16000.00	root		group by:Column#13, funcs:firstrow(Column#13)->Column#13
 │ └─Union	20000.00	root		
 │   ├─TableReader	10000.00	root		data:TableFullScan
 │   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -4148,28 +4148,28 @@ insert into t values(1);
 set tidb_track_aggregate_memory_usage = off;
 explain analyze select /*+ HASH_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
+HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#5)->Column#4	N/A	N/A
 └─TableReader_10	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_5	<num> Bytes	N/A
-  └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+  └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#5	N/A	N/A
     └─TableFullScan_8	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
+StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#5)->Column#4	N/A	N/A
 └─TableReader_15	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_8	<num> Bytes	N/A
-  └─StreamAgg_8	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+  └─StreamAgg_8	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#5	N/A	N/A
     └─TableFullScan_13	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 set tidb_track_aggregate_memory_usage = on;
 explain analyze select /*+ HASH_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	<num> Bytes
+HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#5)->Column#4	<num> KB	<num> Bytes
 └─TableReader_10	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_5	<num> Bytes	N/A
-  └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+  └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#5	N/A	N/A
     └─TableFullScan_8	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	N/A
+StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#5)->Column#4	<num> KB	N/A
 └─TableReader_15	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_8	<num> Bytes	N/A
-  └─StreamAgg_8	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+  └─StreamAgg_8	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#5	N/A	N/A
     └─TableFullScan_13	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 set tidb_track_aggregate_memory_usage = default;
 drop table if exists testbind;
@@ -4213,9 +4213,9 @@ create table t1 (a int, b int);
 insert into t1 values (1,2),(2,3),(3,4);
 explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_11	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#5)->Column#4	<num> KB	<num> Bytes
+HashAgg_11	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#6)->Column#5	<num> KB	<num> Bytes
 └─TableReader_12	1.00	1	root	NULL	time.*loops.*cop_task.*	data:HashAgg_6	<num> Bytes	N/A
-  └─HashAgg_6	1.00	1	cop[tikv]	NULL	tikv_task:.*	funcs:count(1)->Column#5	N/A	N/A
+  └─HashAgg_6	1.00	1	cop[tikv]	NULL	tikv_task:.*	funcs:count(1)->Column#6	N/A	N/A
     └─Selection_10	3323.33	3	cop[tikv]	NULL	tikv_task:.*	lt(executor__executor.t1.a, 10)	N/A	N/A
       └─TableFullScan_9	10000.00	3	cop[tikv]	table:t1	tikv_task:.*	keep order:false, stats:pseudo	N/A	N/A
 set global tidb_txn_mode='';

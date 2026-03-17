@@ -632,6 +632,18 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+// NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
+func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(tp.GetFlag() | mysql.UnsignedFlag)
+	return &expression.Column{
+		RetType:  tp,
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraCommitTSID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
+	}
+}
+
 func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
 	if len(ds.PushedDownConds) < 1 {
 		return
