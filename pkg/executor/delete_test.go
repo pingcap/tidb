@@ -217,8 +217,10 @@ WHERE c1 = 3
 	tk.MustExec("DROP DATABASE IF EXISTS repro41_delete")
 }
 
-// TestDeleteWithExistsSubquerySameTableSimple verifies that DELETE FROM t WHERE EXISTS (SELECT 1 FROM t)
-// treats the inner t as the current row, so each row satisfies EXISTS and all rows are deleted.
+// TestDeleteWithExistsSubquerySameTableSimple verifies that DELETE FROM t WHERE EXISTS (SELECT 1 FROM t WHERE a = 2)
+// treats the inner t as the current row: only the row with a=2 satisfies EXISTS, so only that row is deleted.
+// With the old (wrong) full-scan semantics the inner would see all rows and EXISTS would be true for every
+// outer row, deleting all rows. So this test fails under the old implementation and passes with the fix.
 func TestDeleteWithExistsSubquerySameTableSimple(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -227,8 +229,9 @@ func TestDeleteWithExistsSubquerySameTableSimple(t *testing.T) {
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
 
-	tk.MustExec("DELETE FROM t WHERE EXISTS (SELECT 1 FROM t t2 WHERE t2.a = t.a)")
-	tk.MustQuery("SELECT COUNT(*) FROM t").Check(testkit.Rows("0"))
+	tk.MustExec("DELETE FROM t WHERE EXISTS (SELECT 1 FROM t WHERE a = 2)")
+	tk.MustQuery("SELECT COUNT(*) FROM t").Check(testkit.Rows("2"))
+	tk.MustQuery("SELECT * FROM t ORDER BY a").Check(testkit.Rows("1 10", "3 30"))
 }
 
 // TestDeleteWithExistsSubqueryDifferentTable ensures that when the subquery references

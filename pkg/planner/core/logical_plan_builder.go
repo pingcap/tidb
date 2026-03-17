@@ -5018,9 +5018,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		dbName = ast.NewCIStr(sessionVars.CurrentDB)
 	}
 
-	// When inside a subquery, resolve same-table reference to outer scope so that
+	// When inside a DELETE/UPDATE subquery, resolve same-table reference to outer scope so that
 	// e.g. DELETE FROM t3 WHERE EXISTS (SELECT ... FROM t3 ...) sees the current row.
-	if len(b.outerSchemas) > 0 {
+	// Only do this in DML context; in SELECT we leave same-name FROM to normal resolution
+	// (e.g. SELECT * FROM t WHERE a < (SELECT max(a) FROM t) must scan t, not current row).
+	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerSchemas) > 0 {
 		if outerSchema, outerNames := findOuterScopeTable(b, dbName, tn.Name); outerSchema != nil {
 			p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, dbName, tn.Name, asName)
 			if p != nil {
