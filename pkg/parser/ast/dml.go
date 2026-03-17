@@ -603,6 +603,9 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 		if needParen {
 			ctx.WritePlain(")")
 		}
+		if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
+			return errors.New("column list provided without alias for derived table")
+		}
 		if asName := n.AsName.String(); asName != "" {
 			ctx.WriteKeyWord(" AS ")
 			ctx.WriteName(asName)
