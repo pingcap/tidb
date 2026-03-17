@@ -25,8 +25,8 @@ run_sql "USE $DB;"
 run_sql "CREATE TABLE t (id INT PRIMARY KEY, c VARCHAR(100));"
 
 # Insert some data
-run_sql "INSERT INTO t VALUES (1, 'abc');"
-run_sql "INSERT INTO t VALUES (2, 'def');"
+run_sql "INSERT INTO ${DB}.t VALUES (1, 'abc');"
+run_sql "INSERT INTO ${DB}.t VALUES (2, 'def');"
 
 # Create a masking policy
 # Note: This test verifies that masking policy DDL is included in backup
@@ -49,7 +49,7 @@ echo "restore start..."
 run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 # Verify the table is restored
-table_count=$(run_sql "USE $DB; SELECT COUNT(*) FROM t;" | tail -n 1)
+table_count=$(run_sql "SELECT COUNT(*) FROM ${DB}.t;" | tail -n 1)
 if [ "$table_count" != "2" ]; then
     echo "TEST: [$TEST_NAME] failed! Expected 2 rows, got $table_count"
     exit 1
