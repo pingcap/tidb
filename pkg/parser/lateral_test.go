@@ -151,22 +151,34 @@ func TestLateralParsing(t *testing.T) {
 			require.NoError(t, err, "Failed to parse restored SQL: %s", restored)
 			require.NotNil(t, stmt2)
 
-			// Verify AST flag: check if LATERAL table sources exist
-			if tc.checkLateral {
-				selectStmt, ok := stmt.(*ast.SelectStmt)
-				require.True(t, ok, "Statement should be SelectStmt")
-				require.NotNil(t, selectStmt.From, "FROM clause should not be nil")
+			// Verify AST flags on both original and round-tripped statements.
+			for _, stmtToCheck := range []struct {
+				label string
+				node  ast.StmtNode
+			}{
+				{"original", stmt},
+				{"round-trip", stmt2},
+			} {
+				selectStmt, ok := stmtToCheck.node.(*ast.SelectStmt)
+				require.True(t, ok, "[%s] Statement should be SelectStmt", stmtToCheck.label)
+				require.NotNil(t, selectStmt.From, "[%s] FROM clause should not be nil", stmtToCheck.label)
 
-				// Verify at least one LATERAL table source exists in the FROM clause
-				lateralTS := findLateralTableSource(selectStmt.From.TableRefs)
-				require.NotNil(t, lateralTS, "LATERAL TableSource not found in AST for: %s", tc.sql)
+				if tc.checkLateral {
+					lateralTS := findLateralTableSource(selectStmt.From.TableRefs)
+					require.NotNil(t, lateralTS, "[%s] LATERAL TableSource not found for: %s", stmtToCheck.label, tc.sql)
 
-				// Verify column names if expected
-				if len(tc.columnNames) > 0 {
-					require.Len(t, lateralTS.ColumnNames, len(tc.columnNames), "column name count mismatch")
-					for i, expected := range tc.columnNames {
-						require.Equal(t, expected, lateralTS.ColumnNames[i].L, "column name mismatch at index %d", i)
+					if len(tc.columnNames) > 0 {
+						require.Len(t, lateralTS.ColumnNames, len(tc.columnNames),
+							"[%s] column name count mismatch", stmtToCheck.label)
+						for i, expected := range tc.columnNames {
+							require.Equal(t, expected, lateralTS.ColumnNames[i].L,
+								"[%s] column name mismatch at index %d", stmtToCheck.label, i)
+						}
 					}
+				} else {
+					lateralTS := findLateralTableSource(selectStmt.From.TableRefs)
+					require.Nil(t, lateralTS, "[%s] Lateral should be false for non-LATERAL query: %s",
+						stmtToCheck.label, tc.sql)
 				}
 			}
 		})
