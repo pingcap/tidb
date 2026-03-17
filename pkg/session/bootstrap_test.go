@@ -2593,6 +2593,64 @@ func TestTiDBUpgradeToVer219(t *testing.T) {
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
 }
 
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo225(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version224
+	ver224 := version224
+	seV224 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver224))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV224, ver224)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV224, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	ver, err := getBootstrapVersion(seV224)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver224), ver)
+	seV224.Close()
+
+	// upgrade to current version
+	dom.Close()
+	storeBootstrappedLock.Lock()
+	delete(storeBootstrapped, store.UUID())
+	storeBootstrappedLock.Unlock()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
+}
+
 func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
