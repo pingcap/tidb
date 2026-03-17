@@ -20,32 +20,45 @@ import (
 )
 
 // Statement summary metrics.
+const (
+	// StmtSummaryTypeV1 marks metrics reported by the legacy statement summary implementation.
+	StmtSummaryTypeV1 = "v1"
+	// StmtSummaryTypeV2 marks metrics reported by the persistent statement summary implementation.
+	StmtSummaryTypeV2 = "v2"
+)
+
 var (
 	// StmtSummaryWindowRecordCount is a gauge that tracks the number of statement
 	// summary records in the current statement summary window.
-	StmtSummaryWindowRecordCount prometheus.Gauge
+	StmtSummaryWindowRecordCount *prometheus.GaugeVec
 
 	// StmtSummaryWindowEvictedCount is a gauge that tracks the number of LRU
 	// evictions that have occurred in the current statement summary window.
 	// This value resets to 0 when the window rotates.
-	StmtSummaryWindowEvictedCount prometheus.Gauge
+	StmtSummaryWindowEvictedCount *prometheus.GaugeVec
 )
 
 // InitStmtSummaryMetrics initializes statement summary metrics.
 func InitStmtSummaryMetrics() {
-	StmtSummaryWindowRecordCount = metricscommon.NewGauge(
+	StmtSummaryWindowRecordCount = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "stmt_summary",
 			Name:      "window_record_count",
-			Help:      "The number of statement summary records in the current statement summary window (V2 persistent mode only).",
-		})
+			Help:      "The number of statement summary records currently tracked by statement summary.",
+		}, []string{LblType})
 
-	StmtSummaryWindowEvictedCount = metricscommon.NewGauge(
+	StmtSummaryWindowEvictedCount = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "stmt_summary",
 			Name:      "window_evicted_count",
-			Help:      "The number of LRU evictions in the current statement summary window (V2 persistent mode only).",
-		})
+			Help:      "The number of LRU evictions in the current statement summary window.",
+		}, []string{LblType})
+}
+
+// SetStmtSummaryWindowMetrics reports statement summary window metrics for a given implementation type.
+func SetStmtSummaryWindowMetrics(typ string, recordCount, evictedCount float64) {
+	StmtSummaryWindowRecordCount.WithLabelValues(typ).Set(recordCount)
+	StmtSummaryWindowEvictedCount.WithLabelValues(typ).Set(evictedCount)
 }

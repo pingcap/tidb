@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -92,6 +93,8 @@ type stmtSummaryByDigestMap struct {
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
+	// currentWindowEvictedCount counts LRU evictions observed in the current interval.
+	currentWindowEvictedCount int64
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -321,6 +324,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		newSsMap.currentWindowEvictedCount++
 		historySize := newSsMap.historySize()
 		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
@@ -377,6 +381,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 		// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+		ssMap.currentWindowEvictedCount = 0
 	}
 
 	beginTime := ssMap.beginTimeForCurInterval
@@ -397,6 +402,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if exist {
 		StmtDigestKeyPool.Put(key)
 	}
+	ssMap.updateMetricsLocked()
 }
 
 // Clear removes all statement summaries.
@@ -407,6 +413,8 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.summaryMap.DeleteAll()
 	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
+	ssMap.currentWindowEvictedCount = 0
+	ssMap.updateMetricsLocked()
 }
 
 // clearInternal removes all statement summaries which are internal summaries.
@@ -423,6 +431,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 			ssMap.summaryMap.Delete(key)
 		}
 	}
+	ssMap.updateMetricsLocked()
 }
 
 // clearHistory removes history for all statement summaries, leaving only the current interval.
@@ -515,13 +524,23 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
-	return ssMap.summaryMap.SetCapacity(value)
+	err := ssMap.summaryMap.SetCapacity(value)
+	ssMap.updateMetricsLocked()
+	return err
 }
 
 // Used by tests
 // nolint: unused
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
 	return int(ssMap.optMaxStmtCount.Load())
+}
+
+func (ssMap *stmtSummaryByDigestMap) updateMetricsLocked() {
+	metrics.SetStmtSummaryWindowMetrics(
+		metrics.StmtSummaryTypeV1,
+		float64(ssMap.summaryMap.Size()),
+		float64(ssMap.currentWindowEvictedCount),
+	)
 }
 
 // SetHistorySize sets the history size for all summaries.

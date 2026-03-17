@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -35,12 +36,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
 func fakePlanDigestGenerator() string {
 	return "point_get"
+}
+
+func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, gauge.Write(m))
+	return m.GetGauge().GetValue()
 }
 
 func TestSetUp(t *testing.T) {
@@ -1220,6 +1230,65 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 	datums := reader.GetStmtSummaryCurrentRows()
 	// due to evictions happened in cache, an additional record will be appended to the table.
 	require.Equal(t, 2, len(datums))
+}
+
+func TestStmtSummaryMetrics(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	require.NoError(t, ssMap.SetMaxStmtCount(2))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	})
+
+	ssMap.beginTimeForCurInterval = time.Now().Unix() + 60
+	stmtExecInfo := generateAnyExecInfo()
+
+	stmtExecInfo.Digest = "digest1"
+	ssMap.AddStatement(stmtExecInfo)
+	stmtExecInfo.Digest = "digest2"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	stmtExecInfo.Digest = "digest3"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	ssMap.beginTimeForCurInterval = time.Now().Unix() - ssMap.refreshInterval() - 1
+	stmtExecInfo.Digest = "digest3"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	ssMap.Clear()
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+}
+
+func TestStmtSummaryMetricsAfterCapacityChange(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	require.NoError(t, ssMap.SetMaxStmtCount(3))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	})
+
+	ssMap.beginTimeForCurInterval = time.Now().Unix() + 60
+	stmtExecInfo := generateAnyExecInfo()
+
+	stmtExecInfo.Digest = "digest1"
+	ssMap.AddStatement(stmtExecInfo)
+	stmtExecInfo.Digest = "digest2"
+	ssMap.AddStatement(stmtExecInfo)
+	stmtExecInfo.Digest = "digest3"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 3.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	require.NoError(t, ssMap.SetMaxStmtCount(1))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
 }
 
 // Test setting EnableStmtSummary to 0.

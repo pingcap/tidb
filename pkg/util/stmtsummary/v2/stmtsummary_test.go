@@ -19,8 +19,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, gauge.Write(m))
+	return m.GetGauge().GetValue()
+}
 
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
@@ -76,6 +86,10 @@ func TestWindowEvictedCountResetOnRotate(t *testing.T) {
 	ss := NewStmtSummary4Test(2)
 	defer ss.Close()
 	require.NoError(t, ss.SetMaxStmtCount(2))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	})
 
 	// Fill the LRU cache and trigger evictions.
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
@@ -84,10 +98,19 @@ func TestWindowEvictedCountResetOnRotate(t *testing.T) {
 	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
 	require.Equal(t, 2, ss.window.lru.Size())
 	require.Equal(t, int64(2), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
 
 	// Rotate creates a new window with a fresh counter.
 	ss.rotate(timeNow())
 	require.Equal(t, int64(0), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
 
 	// Add more records in the new window.
 	ss.Add(GenerateStmtExecInfo4Test("digest5"))
@@ -95,6 +118,11 @@ func TestWindowEvictedCountResetOnRotate(t *testing.T) {
 	ss.Add(GenerateStmtExecInfo4Test("digest7")) // evicts digest5
 	require.Equal(t, int64(1), ss.window.evictedCount.Load())
 	require.Equal(t, 2, ss.window.lru.Size())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
 }
 
 func TestStmtSummaryFlush(t *testing.T) {

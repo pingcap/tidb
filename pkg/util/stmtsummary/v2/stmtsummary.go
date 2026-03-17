@@ -355,8 +355,11 @@ func (s *StmtSummary) rotateLoop() {
 // updateMetrics reports the current window's record count and eviction count
 // to Prometheus gauges. Must be called with windowLock held.
 func (s *StmtSummary) updateMetrics() {
-	metrics.StmtSummaryWindowRecordCount.Set(float64(s.window.lru.Size()))
-	metrics.StmtSummaryWindowEvictedCount.Set(float64(s.window.evictedCount.Load()))
+	metrics.SetStmtSummaryWindowMetrics(
+		metrics.StmtSummaryTypeV2,
+		float64(s.window.lru.Size()),
+		float64(s.window.evictedCount.Load()),
+	)
 }
 
 func (s *StmtSummary) rotate(now time.Time) {

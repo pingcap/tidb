@@ -52,6 +52,7 @@ go_test(
     shard_count = 15,
     deps = [
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/testkit/testsetup",
@@ -59,6 +60,8 @@ go_test(
         "//pkg/util",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
