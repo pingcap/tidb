@@ -182,6 +182,30 @@ func TestFieldCase(t *testing.T) {
 	require.EqualError(t, err, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }
 
+func TestHandleTableOptionSecurityPolicy(t *testing.T) {
+	tbl := &model.TableInfo{}
+	opts := []*ast.TableOption{{Tp: ast.TableOptionSecurityPolicy, StrValue: "policy_a"}}
+	err := handleTableOptions(opts, tbl)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.SecurityPolicy)
+	require.Equal(t, "policy_a", tbl.SecurityPolicy.O)
+}
+
+func TestColumnSecuredWithOption(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("create table t (a int secured with label_a)", "", "")
+	require.NoError(t, err)
+
+	createStmt := stmt.(*ast.CreateTableStmt)
+	colDef := createStmt.Cols[0]
+	ctx := NewMetaBuildContextWithSctx(mock.NewContext())
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
+	require.NoError(t, err)
+	require.NotNil(t, col.SecurityLabel)
+
+	require.Equal(t, "label_a", col.SecurityLabel.O)
+}
+
 func TestIgnorableSpec(t *testing.T) {
 	specs := []ast.AlterTableType{
 		ast.AlterTableOption,

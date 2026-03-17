@@ -1067,6 +1067,10 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
+	b.err = ivs.initLBACGuard()
+	if b.err != nil {
+		return nil
+	}
 
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -2865,6 +2869,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
+	b.err = updateExec.initLBACGuard()
+	if b.err != nil {
+		return nil
+	}
 	return updateExec
 }
 
@@ -2915,6 +2923,10 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 		return nil
 	}
 	deleteExec.fkCascades, b.err = b.buildTblID2FKCascadeExecs(tblID2table, v.FKCascades)
+	if b.err != nil {
+		return nil
+	}
+	b.err = deleteExec.initLBACGuard()
 	if b.err != nil {
 		return nil
 	}

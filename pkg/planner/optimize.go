@@ -510,6 +510,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
+		if err := core.CheckLBACColumnAccess(sctx, pm, builder.GetLBACVisitInfo()); err != nil {
+			return nil, nil, 0, err
+		}
 	}
 
 	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {

@@ -16,10 +16,10 @@ package privilege
 
 import (
 	"fmt"
-
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -130,6 +130,8 @@ type Manager interface {
 
 	//GetUserResources gets the max user connections for the account identified by the user and host
 	GetUserResources(user, host string) (int64, error)
+
+	GetSecurityLabelCache() *lbac.SecurityLabelCache
 }
 
 const key keyType = 0
@@ -150,4 +152,17 @@ func GetPrivilegeManager(ctx privilegeManagerKeyProvider) Manager {
 		return v
 	}
 	return nil
+}
+
+// GetSecurityLabelCache returns the LBAC cache stored in the privilege manager of ctx.
+func GetSecurityLabelCache(ctx privilegeManagerKeyProvider) (*lbac.SecurityLabelCache, error) {
+	pm := GetPrivilegeManager(ctx)
+	if pm == nil {
+		return nil, lbac.ErrLBACCacheUnavailable
+	}
+	cache := pm.GetSecurityLabelCache()
+	if cache == nil {
+		return nil, lbac.ErrLBACCacheUnavailable
+	}
+	return cache, nil
 }

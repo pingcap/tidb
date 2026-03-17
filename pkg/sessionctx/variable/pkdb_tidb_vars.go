@@ -19,12 +19,15 @@ const (
 	PKDBExtraDataType = "pkdb_extra_data_type"
 	// PKDBEnableEAL indicates whether to enable the EAL feature.
 	PKDBEnableEAL = "pkdb_eal"
+	// TiDBEnableLBAC is used to enable or disable LBAC enforcement on TiDB.
+	TiDBEnableLBAC = "pkdb_lbac"
 )
 
 // Default TiDB system variable values.
 const (
 	DefTiDBXEnableLocalRPCOpt          = false
 	DefTiDBEnableLabelSecurity         = false
+	DefTiDBEnableLBAC                  = false
 	DefTiDBEnableLoginHistory          = false
 	DefTiDBLoginHistoryRetainDuration  = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize          = 256
@@ -44,6 +47,7 @@ const UnspecifiedServerID = 0
 // Process global variables.
 var (
 	EnableLabelSecurity = atomic.NewBool(DefTiDBEnableLabelSecurity)
+	EnableLBAC          = atomic.NewBool(DefTiDBEnableLBAC)
 
 	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
 	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)

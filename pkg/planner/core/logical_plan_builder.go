@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -3873,7 +3874,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 		originalFields = sel.Fields.Fields
 	}
-
 	var gbyExprs []ast.ExprNode
 	if sel.GroupBy != nil {
 		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
@@ -4848,6 +4848,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
+	result, err = b.applyLBACRowFilter(result, tableInfo)
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -5452,7 +5456,7 @@ func pruneAndBuildColPositionInfoForDelete(
 		tblInfo := tbl.Meta()
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || variable.EnableLBAC.Load() {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
 			if err != nil {
 				return nil, nil, err
@@ -5739,6 +5743,101 @@ func (b *PlanBuilder) buildLabelSecurityInfo(targetPlan base.Plan, tn *ast.Table
 	return nil
 }
 
+func (b *PlanBuilder) applyLBACRowFilter(plan base.LogicalPlan, tableInfo *model.TableInfo) (base.LogicalPlan, error) {
+	if !variable.EnableLBAC.Load() {
+		return plan, nil
+	}
+	if tableInfo.SecurityPolicy == nil || tableInfo.SecurityPolicy.L == "" {
+		return plan, nil
+	}
+	labelColumnID := tableInfo.GetSecurityLabelColumnID()
+	if labelColumnID == 0 {
+		return plan, nil
+	}
+	if b.inUpdateStmt || b.inDeleteStmt {
+		return plan, nil
+	}
+	currentUser := b.ctx.GetSessionVars().User
+	if currentUser == nil {
+		return plan, nil
+	}
+	userName, hostName := auth.GetUserAndHostName(currentUser)
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		return plan, nil
+	}
+
+	cache, err := privilege.GetSecurityLabelCache(b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	accessCtx, err := lbac.NewSecurityLabelAccessChecker(cache, userName, hostName, ast.SecurityLabelAccessTypeRead)
+	if err != nil {
+		return nil, err
+	}
+	exempted, err := accessCtx.IsExempted(tableInfo.SecurityPolicy.L)
+	if err != nil {
+		return nil, err
+	}
+	if exempted {
+		return plan, nil
+	}
+	grantLabels, err := accessCtx.RowFilterLabelValues(tableInfo.SecurityPolicy.L)
+	if err != nil {
+		return nil, err
+	}
+	labelColumn := findColumnByID(plan.Schema(), labelColumnID)
+	if labelColumn == nil {
+		return nil, errors.New("security policy label column not found in plan schema")
+	}
+	cond, err := b.buildLBACDominatesPredicate(labelColumn, grantLabels)
+	if err != nil {
+		return nil, err
+	}
+	selection := logicalop.LogicalSelection{Conditions: []expression.Expression{cond}}.Init(b.ctx, b.getSelectOffset())
+	selection.SetChildren(plan)
+	return selection, nil
+}
+
+func findColumnByID(schema *expression.Schema, columnID int64) *expression.Column {
+	if schema == nil {
+		return nil
+	}
+	for _, col := range schema.Columns {
+		if col.ID == columnID {
+			return col
+		}
+	}
+	return nil
+}
+
+func (b *PlanBuilder) buildLBACDominatesPredicate(col *expression.Column, grantLabels [][]byte) (expression.Expression, error) {
+	tp := types.NewFieldType(mysql.TypeTiny)
+	if len(grantLabels) == 0 {
+		return &expression.Constant{Value: types.NewDatum(0), RetType: tp}, nil
+	}
+	labelTp := types.NewFieldType(mysql.TypeLongBlob)
+	labelTp.SetCharset(charset.CharsetBin)
+	labelTp.SetCollate(charset.CollationBin)
+	conds := make([]expression.Expression, 0, len(grantLabels))
+	for _, label := range grantLabels {
+		if len(label) == 0 {
+			continue
+		}
+		arg0 := &expression.Constant{Value: types.NewBytesDatum(label), RetType: labelTp}
+		fn, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.LBACDominates, tp, arg0, col)
+		if err != nil {
+			return nil, err
+		}
+		conds = append(conds, fn)
+	}
+	if len(conds) == 0 {
+		return &expression.Constant{Value: types.NewDatum(0), RetType: tp}, nil
+	}
+	return expression.ComposeDNFCondition(b.ctx.GetExprCtx(), conds...), nil
+}
+
 // GetUpdateColumnsInfo get the update columns info.
 func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
 	colsInfo := make([]*table.Column, size)
@@ -5867,6 +5966,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		userName, hostName := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 		authErr := plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", userName, hostName, name.OrigColName.L, name.OrigTblName.L)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, name.DBName.L, name.OrigTblName.L, name.OrigColName.L, authErr)
+		b.appendLBACWriteVisitInfoByName(name.DBName.L, name.OrigTblName.L, name.OrigColName.L)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -7765,7 +7865,7 @@ func (b *PlanBuilder) getUserLabelAndTablePolicy(userName string, dbName string,
 	if err != nil {
 		return "", "", "", err
 	}
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabelSecurity)
 	defer b.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 

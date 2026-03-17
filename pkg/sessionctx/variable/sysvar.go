@@ -3531,6 +3531,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLabelSecurity.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableLBAC, Value: BoolToOnOff(DefTiDBEnableLBAC), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+		EnableLBAC.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableLBAC.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: SPCacheSize, Value: strconv.Itoa(DefStoredProgramCacheSize), Type: TypeInt, MinValue: 0, MaxValue: 524288, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {

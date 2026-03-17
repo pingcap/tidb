@@ -311,7 +311,9 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 	}
 	defer func() {
 		if rewriter.planCtx != nil {
-			rewriter.planCtx.builder.appendColumnsToVisitedInfo(rewriter.planCtx.columnVisited, priv)
+			builder := rewriter.planCtx.builder
+			builder.appendColumnsToVisitedInfo(rewriter.planCtx.columnVisited, priv)
+			builder.appendColumnsToLBACVisitInfo(rewriter.planCtx.columnVisited, priv)
 		}
 	}()
 	exprNode.Accept(rewriter)
@@ -2825,6 +2827,36 @@ func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName
 				plannererrors.ErrColumnaccessDenied.FastGenByArgs(strings.ToUpper(mysql.Priv2Str[priv.column]), user, host, colName.Name.L, colName.Table.L),
 			)
 		}
+	}
+}
+
+func (b *PlanBuilder) appendColumnsToLBACVisitInfo(columnVisited []*ast.ColumnName, priv *checkedPrivilege) {
+	if !variable.EnableLBAC.Load() || b == nil || b.is == nil || priv == nil || priv.column != mysql.SelectPriv {
+		return
+	}
+	for _, colName := range columnVisited {
+		if colName == nil || colName.Schema.L == "" || colName.Table.L == "" || colName.Name.L == "" {
+			continue
+		}
+		tbl, err := b.is.TableByName(context.Background(), colName.Schema, colName.Table)
+		if err != nil {
+			continue
+		}
+		tableInfo := tbl.Meta()
+		if tableInfo == nil || tableInfo.SecurityPolicy == nil || tableInfo.SecurityPolicy.L == "" {
+			continue
+		}
+		colInfo := model.FindColumnInfo(tableInfo.Columns, colName.Name.L)
+		if colInfo == nil || colInfo.SecurityLabel == nil || colInfo.SecurityLabel.O == "" {
+			continue
+		}
+		b.lbacVisitInfo = append(b.lbacVisitInfo, ColumnVisitInfo{
+			PolicyName: tableInfo.SecurityPolicy.L,
+			LabelName:  colInfo.SecurityLabel.L,
+			Table:      colName.Table.L,
+			Column:     colName.Name.L,
+			AccessType: ast.SecurityLabelAccessTypeRead,
+		})
 	}
 }
 

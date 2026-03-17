@@ -55,6 +55,7 @@ const (
 	SubTypeXML                 byte = 2
 	SubTypeIntervalYearToMonth byte = 3
 	SubTypeIntervalDayToSecond byte = 4
+	SubTypeSecurityLabel       byte = 5
 )
 
 // Flag information.

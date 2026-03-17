@@ -105,6 +105,15 @@ func (v *visitInfo) Equals(other *visitInfo) bool {
 		v.dynamicWithGrant == other.dynamicWithGrant
 }
 
+// ColumnVisitInfo records label metadata for column references.
+type ColumnVisitInfo struct {
+	PolicyName string
+	LabelName  string
+	Table      string
+	Column     string
+	AccessType ast.SecurityLabelAccessType
+}
+
 // clauseCode indicates in which clause the column is currently.
 type clauseCode int
 
@@ -223,6 +232,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
+	lbacVisitInfo []ColumnVisitInfo
 	tableHintInfo []*hint.PlanHints
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
@@ -373,6 +383,87 @@ func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
+}
+
+// GetLBACVisitInfo returns label-based access info for the plan.
+func (b *PlanBuilder) GetLBACVisitInfo() []ColumnVisitInfo {
+	return b.lbacVisitInfo
+}
+
+func (b *PlanBuilder) appendLBACWriteVisitInfo(tableInfo *model.TableInfo, tblName, colName string) {
+	if b == nil || !variable.EnableLBAC.Load() || tableInfo == nil {
+		return
+	}
+	if tableInfo.SecurityPolicy == nil || tableInfo.SecurityPolicy.L == "" {
+		return
+	}
+	colInfo := model.FindColumnInfo(tableInfo.Columns, colName)
+	if colInfo == nil || colInfo.SecurityLabel == nil || colInfo.SecurityLabel.L == "" {
+		return
+	}
+	b.lbacVisitInfo = append(b.lbacVisitInfo, ColumnVisitInfo{
+		PolicyName: tableInfo.SecurityPolicy.L,
+		LabelName:  colInfo.SecurityLabel.L,
+		Table:      tblName,
+		Column:     colName,
+		AccessType: ast.SecurityLabelAccessTypeWrite,
+	})
+}
+
+func (b *PlanBuilder) appendLBACWriteVisitInfoByName(dbName, tblName, colName string) {
+	if !variable.EnableLBAC.Load() {
+		return
+	}
+	if dbName == "" || tblName == "" || colName == "" {
+		return
+	}
+	tbl, err := b.is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+	if err != nil {
+		return
+	}
+	b.appendLBACWriteVisitInfo(tbl.Meta(), tblName, colName)
+}
+
+func (b *PlanBuilder) appendLBACVisitInfoForInsert(insertPlan *Insert) {
+	tableInfo := insertPlan.Table.Meta()
+	// Collect columns explicitly listed in the INSERT target list; otherwise use all writable columns.
+	tableCols := insertPlan.Table.Cols()
+	targetCols := tableCols
+	if len(insertPlan.Columns) > 0 {
+		names := make([]string, 0, len(insertPlan.Columns))
+		for _, col := range insertPlan.Columns {
+			names = append(names, col.Name.L)
+		}
+		missingIdx := -1
+		targetCols, missingIdx = table.FindColumns(tableCols, names, tableInfo.PKIsHandle)
+		if missingIdx >= 0 {
+			return
+		}
+	}
+	for _, col := range targetCols {
+		if col == nil || col.IsGenerated() || col.Offset >= len(insertPlan.tableColNames) {
+			continue
+		}
+		name := insertPlan.tableColNames[col.Offset]
+		if name == nil {
+			continue
+		}
+		b.appendLBACWriteVisitInfo(tableInfo, name.OrigTblName.L, name.OrigColName.L)
+	}
+	for _, assign := range insertPlan.OnDuplicate {
+		if assign == nil || assign.Col == nil {
+			continue
+		}
+		idx := assign.Col.Index
+		if idx < 0 || idx >= len(insertPlan.tableColNames) {
+			continue
+		}
+		name := insertPlan.tableColNames[idx]
+		if name == nil {
+			continue
+		}
+		b.appendLBACWriteVisitInfo(tableInfo, name.OrigTblName.L, name.OrigColName.L)
+	}
 }
 
 // GetIsForUpdateRead gets if the PlanBuilder use forUpdateRead
@@ -585,7 +676,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt, *ast.CancelDistributionJobStmt,
-		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt:
+		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt,
+		*ast.CreateSecurityLabelComponentStmt, *ast.DropSecurityLabelComponentStmt, *ast.CreateSecurityPolicyStmt, *ast.DropSecurityPolicyStmt,
+		*ast.CreateSecurityLabelStmt, *ast.DropSecurityLabelStmt, *ast.GrantSecurityLabelStmt, *ast.RevokeSecurityLabelStmt,
+		*ast.GrantExemptionStmt, *ast.RevokeExemptionStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3908,6 +4002,18 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		if err != nil {
 			return nil, err
 		}
+	case *ast.CreateSecurityLabelComponentStmt, *ast.DropSecurityLabelComponentStmt,
+		*ast.CreateSecurityPolicyStmt, *ast.DropSecurityPolicyStmt,
+		*ast.CreateSecurityLabelStmt, *ast.DropSecurityLabelStmt,
+		*ast.GrantSecurityLabelStmt, *ast.RevokeSecurityLabelStmt,
+		*ast.GrantExemptionStmt, *ast.RevokeExemptionStmt:
+		checker := privilege.GetPrivilegeManager(b.ctx)
+		activeRoles := b.ctx.GetSessionVars().ActiveRoles
+		// Require CREATE ROLE or CREATE USER privilege to manage security labels and policies.
+		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) &&
+			!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE or CREATE USER")
+		}
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
 		// If you have the SUPER privilege, you can kill all threads and statements unless SEM is enabled.
@@ -4384,6 +4490,10 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	err = insertPlan.buildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
 	if err != nil {
 		return nil, err
+	}
+
+	if variable.EnableLBAC.Load() {
+		b.appendLBACVisitInfoForInsert(insertPlan)
 	}
 
 	err = b.buildLabelSecurityInfo(insertPlan, tn)

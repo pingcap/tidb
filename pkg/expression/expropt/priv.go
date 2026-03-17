@@ -17,6 +17,7 @@ package expropt
 import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	lbac "github.com/pingcap/tidb/pkg/privilege/lbac"
 )
 
 // PrivilegeChecker provides privilege check for expressions.
@@ -25,6 +26,8 @@ type PrivilegeChecker interface {
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
 	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
 	RequestDynamicVerification(privName string, grantable bool) bool
+	// GetSecurityLabelCache returns the LBAC security label cache.
+	GetSecurityLabelCache() *lbac.SecurityLabelCache
 }
 
 var _ exprctx.OptionalEvalPropProvider = PrivilegeCheckerProvider(nil)

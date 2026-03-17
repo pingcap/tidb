@@ -745,6 +745,7 @@ label_accessible
 last_day
 last_insert_id
 lastval
+lbac_dominates
 lcase
 le
 least
@@ -819,6 +820,8 @@ rpad
 rtrim
 schema
 sec_to_time
+seclabel
+seclabel_to_char
 second
 session_user
 setval

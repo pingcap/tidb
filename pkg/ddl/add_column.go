@@ -535,6 +535,9 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
+			case ast.ColumnOptionSecuredWith:
+				label := pmodel.NewCIStr(v.StrValue)
+				col.SecurityLabel = &label
 			case ast.ColumnOptionGenerated:
 				sb.Reset()
 				err = v.Expr.Restore(restoreCtx)

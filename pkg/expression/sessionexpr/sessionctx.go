@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
+	lbac "github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -300,6 +301,15 @@ func (ctx *EvalContext) RequestDynamicVerification(privName string, grantable bo
 		return true
 	}
 	return checker.RequestDynamicVerification(ctx.sctx.GetSessionVars().ActiveRoles, privName, grantable)
+}
+
+// GetSecurityLabelCache returns the LBAC metadata cache if available.
+func (ctx *EvalContext) GetSecurityLabelCache() *lbac.SecurityLabelCache {
+	checker := privilege.GetPrivilegeManager(ctx.sctx)
+	if checker == nil {
+		return nil
+	}
+	return checker.GetSecurityLabelCache()
 }
 
 // GetParamValue returns the value of the parameter by index.

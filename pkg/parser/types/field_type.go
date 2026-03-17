@@ -356,6 +356,16 @@ func (ft *FieldType) GetSubType() byte {
 	return ft.subType
 }
 
+// SetSecurityLabel sets the subtype of the FieldType to SubTypeSecurityLabel.
+func (ft *FieldType) SetSecurityLabel() {
+	ft.subType = mysql.SubTypeSecurityLabel
+}
+
+// IsSecurityLabel return true if the filed type is security label.
+func (ft *FieldType) IsSecurityLabel() bool {
+	return ft.subType == mysql.SubTypeSecurityLabel
+}
+
 // ArrayType return the type of the array.
 func (ft *FieldType) ArrayType() *FieldType {
 	if !ft.array {
@@ -511,8 +521,11 @@ func (ft *FieldType) CompactStr() string {
 			ts = "array"
 		}
 	case mysql.TypeLongBlob:
-		if ft.subType == mysql.SubTypeXML {
+		switch ft.subType {
+		case mysql.SubTypeXML:
 			ts = "xml"
+		case mysql.SubTypeSecurityLabel:
+			ts = "securitylabel"
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')

@@ -201,6 +201,26 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAlterRange(x)
 	case *ast.DropQueryWatchStmt:
 		err = e.executeDropQueryWatch(x)
+	case *ast.CreateSecurityLabelComponentStmt:
+		err = executeCreateSecurityLabelComponent(ctx, e.Ctx(), x)
+	case *ast.DropSecurityLabelComponentStmt:
+		err = executeDropSecurityLabelComponent(ctx, e.Ctx(), x)
+	case *ast.CreateSecurityPolicyStmt:
+		err = executeCreateSecurityPolicy(ctx, e.Ctx(), x)
+	case *ast.DropSecurityPolicyStmt:
+		err = executeDropSecurityPolicy(ctx, e.Ctx(), x)
+	case *ast.CreateSecurityLabelStmt:
+		err = executeCreateSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.DropSecurityLabelStmt:
+		err = executeDropSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.GrantSecurityLabelStmt:
+		err = executeGrantSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.RevokeSecurityLabelStmt:
+		err = executeRevokeSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.GrantExemptionStmt:
+		err = executeGrantExemption(ctx, e.Ctx(), x)
+	case *ast.RevokeExemptionStmt:
+		err = executeRevokeExemption(ctx, e.Ctx(), x)
 	}
 	e.done = true
 	return err
@@ -2865,7 +2885,10 @@ func (e *SimpleExec) autoNewTxn() bool {
 	// Data definition language (DDL) statements that define or modify database objects.
 	// (handled in DDL package)
 	// Statements that implicitly use or modify tables in the mysql database.
-	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt:
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt,
+		*ast.CreateSecurityLabelComponentStmt, *ast.DropSecurityLabelComponentStmt, *ast.CreateSecurityPolicyStmt, *ast.DropSecurityPolicyStmt,
+		*ast.CreateSecurityLabelStmt, *ast.DropSecurityLabelStmt, *ast.GrantSecurityLabelStmt, *ast.RevokeSecurityLabelStmt,
+		*ast.GrantExemptionStmt, *ast.RevokeExemptionStmt:
 		return true
 	// Transaction-control and locking statements.  BEGIN, LOCK TABLES, SET autocommit = 1 (if the value is not already 1), START TRANSACTION, UNLOCK TABLES.
 	// (handled in other place)
@@ -2959,7 +2982,7 @@ func (e *SimpleExec) executeAdminLBACEnable(s *ast.AdminStmt) error {
 	if err != nil {
 		return err
 	}
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabelSecurity)
 	defer clearSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	defer func() {

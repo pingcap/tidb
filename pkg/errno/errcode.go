@@ -1170,6 +1170,11 @@ const (
 	ErrRowLabelUnAccessible = 8800
 	ErrInvalidValueOfType   = 8801
 
+	// LBAC errors.
+	ErrLBACInvalid       = 8802
+	ErrLBACNotFound      = 8803
+	ErrLBACAlreadyExists = 8804
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

@@ -1728,6 +1728,10 @@ func GetModifiableColumnJob(
 		}
 	}
 
+	if err = validateColumnSecurityLabelForTable(ctx, sctx, t.Meta(), newCol.ColumnInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	var newAutoRandBits uint64
 	if newAutoRandBits, err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
@@ -2046,6 +2050,9 @@ func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			if err != nil {
 				return errors.Trace(err)
 			}
+		case ast.ColumnOptionSecuredWith:
+			label := pmodel.NewCIStr(opt.StrValue)
+			col.SecurityLabel = &label
 		case ast.ColumnOptionNotNull:
 			col.AddFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionNull:

@@ -328,6 +328,7 @@ type createFunctionPrefix struct {
 	zerofill          "ZEROFILL"
 
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
+	access                     "ACCESS"
 	account                    "ACCOUNT"
 	action                     "ACTION"
 	addColumnarReplicaOnDemand "ADD_COLUMNAR_REPLICA_ON_DEMAND"
@@ -344,6 +345,7 @@ type createFunctionPrefix struct {
 	ascii                      "ASCII"
 	attribute                  "ATTRIBUTE"
 	attributes                 "ATTRIBUTES"
+	authorized                 "AUTHORIZED"
 	autoextendSize             "AUTOEXTEND_SIZE"
 	autoIdCache                "AUTO_ID_CACHE"
 	autoIncrement              "AUTO_INCREMENT"
@@ -396,6 +398,8 @@ type createFunctionPrefix struct {
 	commit                     "COMMIT"
 	committed                  "COMMITTED"
 	compact                    "COMPACT"
+	component                  "COMPONENT"
+	components                 "COMPONENTS"
 	compressed                 "COMPRESSED"
 	compression                "COMPRESSION"
 	compressionLevel           "COMPRESSION_LEVEL"
@@ -459,6 +463,7 @@ type createFunctionPrefix struct {
 	exchange                   "EXCHANGE"
 	exclusive                  "EXCLUSIVE"
 	execute                    "EXECUTE"
+	exemption                  "EXEMPTION"
 	expansion                  "EXPANSION"
 	expire                     "EXPIRE"
 	explore                    "EXPLORE"
@@ -505,12 +510,14 @@ type createFunctionPrefix struct {
 	issuer                     "ISSUER"
 	jsonType                   "JSON"
 	keyBlockSize               "KEY_BLOCK_SIZE"
+	label                      "LABEL"
 	labels                     "LABELS"
 	language                   "LANGUAGE"
 	last                       "LAST"
 	lastval                    "LASTVAL"
 	lastBackup                 "LAST_BACKUP"
 	lbac                       "LBAC"
+	lbacRules                  "LBACRULES"
 	less                       "LESS"
 	level                      "LEVEL"
 	list                       "LIST"
@@ -570,6 +577,7 @@ type createFunctionPrefix struct {
 	onDuplicate                "ON_DUPLICATE"
 	open                       "OPEN"
 	optional                   "OPTIONAL"
+	override                   "OVERRIDE"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
 	pageChecksum               "PAGE_CHECKSUM"
@@ -633,6 +641,7 @@ type createFunctionPrefix struct {
 	role                       "ROLE"
 	rollback                   "ROLLBACK"
 	rollup                     "ROLLUP"
+	root                       "ROOT"
 	routine                    "ROUTINE"
 	rowCount                   "ROW_COUNT"
 	rowFormat                  "ROW_FORMAT"
@@ -647,7 +656,9 @@ type createFunctionPrefix struct {
 	secondaryEngineAttribute   "SECONDARY_ENGINE_ATTRIBUTE"
 	secondaryLoad              "SECONDARY_LOAD"
 	secondaryUnload            "SECONDARY_UNLOAD"
+	secured                    "SECURED"
 	security                   "SECURITY"
+	securityLabelType          "SECURITYLABEL"
 	sendCredentialsToTiKV      "SEND_CREDENTIALS_TO_TIKV"
 	separator                  "SEPARATOR"
 	sequence                   "SEQUENCE"
@@ -721,6 +732,7 @@ type createFunctionPrefix struct {
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
 	transactional              "TRANSACTIONAL"
+	tree                       "TREE"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -731,6 +743,7 @@ type createFunctionPrefix struct {
 	unbounded                  "UNBOUNDED"
 	uncommitted                "UNCOMMITTED"
 	undefined                  "UNDEFINED"
+	under                      "UNDER"
 	unicodeSym                 "UNICODE"
 	unknown                    "UNKNOWN"
 	unset                      "UNSET"
@@ -1020,149 +1033,159 @@ type createFunctionPrefix struct {
 	ConditionNumber                 "Diagnostics number"
 
 %type	<statement>
-	AdminStmt                  "Check table statement or show ddl statement"
-	AlterDatabaseStmt          "Alter database statement"
-	AlterTableStmt             "Alter table statement"
-	AlterUserStmt              "Alter user statement"
-	AlterInstanceStmt          "Alter instance statement"
-	AlterRangeStmt             "Alter data range configuration statement"
-	AlterPolicyStmt            "Alter Placement Policy statement"
-	AlterResourceGroupStmt     "Alter Resource Group statement"
-	AlterProcedureStmt         "Alter procedurce attributes statement"
-	AlterSequenceStmt          "Alter sequence statement"
-	AnalyzeTableStmt           "Analyze table statement"
-	BeginTransactionStmt       "BEGIN TRANSACTION statement"
-	BinlogStmt                 "Binlog base64 statement"
-	BRIEStmt                   "BACKUP or RESTORE statement"
-	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
-	CancelDistributionJobStmt  "CANCEL DISTRIBUTION JOB statement"
-	CommitStmt                 "COMMIT statement"
-	CreateTableStmt            "CREATE TABLE statement"
-	CreateViewStmt             "CREATE VIEW  statement"
-	CreateUserStmt             "CREATE User statement"
-	CreateRoleStmt             "CREATE Role statement"
-	CreateDatabaseStmt         "Create Database Statement"
-	CreateIndexStmt            "CREATE INDEX statement"
-	CreateBindingStmt          "CREATE BINDING statement"
-	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
-	CreateProcedureStmt        "CREATE PROCEDURE statement"
-	CreateTriggerStmt          "CREATE TRIGGER statement"
-	CreateStoredFunctionStmt   "CREATE FUNCTION statement for stored function"
-	AddQueryWatchStmt          "ADD QUERY WATCH statement"
-	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
-	CreateSequenceStmt         "CREATE SEQUENCE statement"
-	CreateStatisticsStmt       "CREATE STATISTICS statement"
-	DoStmt                     "Do statement"
-	DropDatabaseStmt           "DROP DATABASE statement"
-	DropFunctionStmt           "DROP FUNCTION statement"
-	DropIndexStmt              "DROP INDEX statement"
-	DropProcedureStmt          "DROP PROCEDURE statement"
-	DropTriggerStmt            "DROP TRIGGER statement"
-	DropQueryWatchStmt         "DROP QUERY WATCH statement"
-	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
-	DropStatisticsStmt         "DROP STATISTICS statement"
-	DropStatsStmt              "DROP STATS statement"
-	DropTableStmt              "DROP TABLE statement"
-	DropSequenceStmt           "DROP SEQUENCE statement"
-	DropUserStmt               "DROP USER"
-	DropRoleStmt               "DROP ROLE"
-	DropViewStmt               "DROP VIEW statement"
-	DropBindingStmt            "DROP BINDING  statement"
-	DropPolicyStmt             "DROP PLACEMENT POLICY statement"
-	DeallocateStmt             "Deallocate prepared statement"
-	DeleteFromStmt             "DELETE FROM statement"
-	DeleteWithoutUsingStmt     "Normal DELETE statement"
-	DeleteWithUsingStmt        "DELETE USING statement"
-	DistributeTableStmt        "Distribute table statement"
-	EmptyStmt                  "empty statement"
-	ExecuteStmt                "Execute statement"
-	ExplainStmt                "EXPLAIN statement"
-	ExplainableStmt            "explainable statement"
-	FlushStmt                  "Flush statement"
-	FlashbackTableStmt         "Flashback table statement"
-	FlashbackToTimestampStmt   "Flashback cluster statement"
-	FlashbackDatabaseStmt      "Flashback Database statement"
-	GrantStmt                  "Grant statement"
-	GrantProxyStmt             "Grant proxy statement"
-	GrantRoleStmt              "Grant role statement"
-	InsertIntoStmt             "INSERT INTO statement"
-	CallStmt                   "CALL statement"
-	ImportIntoStmt             "IMPORT INTO statement"
-	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
-	KillStmt                   "Kill statement"
-	LoadDataStmt               "Load data statement"
-	LoadStatsStmt              "Load statistic statement"
-	LockStatsStmt              "Lock statistic statement"
-	UnlockStatsStmt            "Unlock statistic statement"
-	LockTablesStmt             "Lock tables statement"
-	NonTransactionalDMLStmt    "Non-transactional DML statement"
-	OptimizeTableStmt          "OPTIMIZE statement"
-	PlanReplayerStmt           "Plan replayer statement"
-	PreparedStmt               "PreparedStmt"
-	ProcedureProcStmt          "The entrance of procedure statements which contains all kinds of statements in procedure"
-	ProcedureStatementStmt     "The normal statements in procedure, such as dml, select, set ..."
-	SelectStmt                 "SELECT statement"
-	SelectStmtWithClause       "common table expression SELECT statement"
-	StartTransactionStmt       "START TRANSACTION statement"
-	RenameTableStmt            "rename table statement"
-	RenameUserStmt             "rename user statement"
-	ReplaceIntoStmt            "REPLACE INTO statement"
-	RecoverTableStmt           "recover table statement"
-	RevokeStmt                 "Revoke statement"
-	RevokeRoleStmt             "Revoke role statement"
-	RollbackStmt               "ROLLBACK statement"
-	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
-	SavepointStmt              "SAVEPOINT statement"
-	SplitRegionStmt            "Split index region statement"
-	SetStmt                    "Set variable statement"
-	SetBindingStmt             "Set binding statement"
-	SetRoleStmt                "Set active role statement"
-	SetDefaultRoleStmt         "Set default statement for some user"
-	ShowStmt                   "Show engines/databases/tables/user/columns/warnings/status statement"
-	Statement                  "statement"
-	TraceStmt                  "TRACE statement"
-	TraceableStmt              "traceable statement"
-	TruncateTableStmt          "TRUNCATE TABLE statement"
-	UnlockTablesStmt           "Unlock tables statement"
-	UpdateStmt                 "UPDATE statement"
-	SetOprStmt                 "Union/Except/Intersect select statement"
-	SetOprStmtWithLimitOrderBy "Union/Except/Intersect select statement with limit and order by"
-	SetOprStmtWoutLimitOrderBy "Union/Except/Intersect select statement without limit and order by"
-	UseStmt                    "USE statement"
-	ShutdownStmt               "SHUTDOWN statement"
-	RestartStmt                "RESTART statement"
-	RecommendIndexStmt         "RECOMMEND INDEX statement"
-	CreateViewSelectOpt        "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
-	BindableStmt               "Statement that can be created binding on"
-	UpdateStmtNoWith           "Update statement without CTE clause"
-	HelpStmt                   "HELP statement"
-	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
-	CancelImportStmt           "CANCEL IMPORT JOB statement"
-	ProcedureUnlabeledBlock    "The statement block without label in procedure"
-	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
-	SimpleWhenThen             "Procedure case when then"
-	SearchWhenThen             "Procedure search when then"
-	ProcedureReturnStmt        "The return statement in stored function, expressed by return expr"
-	ProcedureIfstmt            "The if statement in procedure, expressed by if ... elseif .. else ... end if"
-	procedurceElseIfs          "The else block in procedure, expressed by elseif or else or nil"
-	ProcedureIf                "The if block in procedure, expressed by expr then statement procedurceElseIfs"
-	ProcedureUnlabelLoopBlock  "The loop block without label in procedure "
-	ProcedureUnlabelLoopStmt   "The loop statement in procedure, expressed by repeat/do while/loop"
-	ProcedureCaseStmt          "Case statement in procedure, expressed by `case ... when.. then ..`"
-	ProcedureSimpleCase        "The simpe case statement in procedure, expressed by `case expr when expr then statement ... end case`"
-	ProcedureSearchedCase      "The searched case statement in procedure, expressed by `case when expr then statement ... end case`"
-	ProcedureCursorSelectStmt  "The select stmt can used in procedure cursor."
-	ProcedureOpenCur           "The open cursor statement in procedure, expressed by `open ...`"
-	ProcedureCloseCur          "The close cursor statement in procedure, expressed by `close ...`"
-	ProcedureFetchInto         "The fetch into statement in procedure, expressed by `fetch ... into ...`"
-	ProcedureHcond             "The handler value statement in procedure, expressed by condition_value"
-	ProcedurceCond             "The handler code statement in procedure, expressed by code error num or `sqlstate ...`"
-	ProcedureLabeledBlock      "The statement block with label in procedure"
-	ProcedurelabeledLoopStmt   "The loop block with label in procedure"
-	ProcedureIterate           "The iterate statement in procedure, expressed by `iterate ...`"
-	ProcedureLeave             "The leave statement in procedure, expressed by `leave ...`"
-	SignalStmt                 "The signal statment, User actively declares errors"
-	GetDiagnosticsStmt         "The get diagnostics statement, get prev SQL error information"
+	AdminStmt                        "Check table statement or show ddl statement"
+	AlterDatabaseStmt                "Alter database statement"
+	AlterTableStmt                   "Alter table statement"
+	AlterUserStmt                    "Alter user statement"
+	AlterInstanceStmt                "Alter instance statement"
+	AlterRangeStmt                   "Alter data range configuration statement"
+	AlterPolicyStmt                  "Alter Placement Policy statement"
+	AlterResourceGroupStmt           "Alter Resource Group statement"
+	AlterProcedureStmt               "Alter procedurce attributes statement"
+	AlterSequenceStmt                "Alter sequence statement"
+	AnalyzeTableStmt                 "Analyze table statement"
+	BeginTransactionStmt             "BEGIN TRANSACTION statement"
+	BinlogStmt                       "Binlog base64 statement"
+	BRIEStmt                         "BACKUP or RESTORE statement"
+	CalibrateResourceStmt            "CALIBRATE RESOURCE statement"
+	CancelDistributionJobStmt        "CANCEL DISTRIBUTION JOB statement"
+	CommitStmt                       "COMMIT statement"
+	CreateTableStmt                  "CREATE TABLE statement"
+	CreateViewStmt                   "CREATE VIEW  statement"
+	CreateUserStmt                   "CREATE User statement"
+	CreateRoleStmt                   "CREATE Role statement"
+	CreateDatabaseStmt               "Create Database Statement"
+	CreateIndexStmt                  "CREATE INDEX statement"
+	CreateBindingStmt                "CREATE BINDING statement"
+	CreatePolicyStmt                 "CREATE PLACEMENT POLICY statement"
+	CreateSecurityLabelComponentStmt "CREATE SECURITY LABEL COMPONENT statement"
+	CreateSecurityPolicyStmt         "CREATE SECURITY POLICY statement"
+	CreateSecurityLabelStmt          "CREATE SECURITY LABEL statement"
+	DropSecurityLabelComponentStmt   "DROP SECURITY LABEL COMPONENT statement"
+	DropSecurityPolicyStmt           "DROP SECURITY POLICY statement"
+	DropSecurityLabelStmt            "DROP SECURITY LABEL statement"
+	GrantSecurityLabelStmt           "GRANT SECURITY LABEL statement"
+	RevokeSecurityLabelStmt          "REVOKE SECURITY LABEL statement"
+	GrantExemptionStmt               "GRANT EXEMPTION statement"
+	RevokeExemptionStmt              "REVOKE EXEMPTION statement"
+	CreateProcedureStmt              "CREATE PROCEDURE statement"
+	CreateTriggerStmt                "CREATE TRIGGER statement"
+	CreateStoredFunctionStmt         "CREATE FUNCTION statement for stored function"
+	AddQueryWatchStmt                "ADD QUERY WATCH statement"
+	CreateResourceGroupStmt          "CREATE RESOURCE GROUP statement"
+	CreateSequenceStmt               "CREATE SEQUENCE statement"
+	CreateStatisticsStmt             "CREATE STATISTICS statement"
+	DoStmt                           "Do statement"
+	DropDatabaseStmt                 "DROP DATABASE statement"
+	DropFunctionStmt                 "DROP FUNCTION statement"
+	DropIndexStmt                    "DROP INDEX statement"
+	DropProcedureStmt                "DROP PROCEDURE statement"
+	DropTriggerStmt                  "DROP TRIGGER statement"
+	DropQueryWatchStmt               "DROP QUERY WATCH statement"
+	DropResourceGroupStmt            "DROP RESOURCE GROUP statement"
+	DropStatisticsStmt               "DROP STATISTICS statement"
+	DropStatsStmt                    "DROP STATS statement"
+	DropTableStmt                    "DROP TABLE statement"
+	DropSequenceStmt                 "DROP SEQUENCE statement"
+	DropUserStmt                     "DROP USER"
+	DropRoleStmt                     "DROP ROLE"
+	DropViewStmt                     "DROP VIEW statement"
+	DropBindingStmt                  "DROP BINDING  statement"
+	DropPolicyStmt                   "DROP PLACEMENT POLICY statement"
+	DeallocateStmt                   "Deallocate prepared statement"
+	DeleteFromStmt                   "DELETE FROM statement"
+	DeleteWithoutUsingStmt           "Normal DELETE statement"
+	DeleteWithUsingStmt              "DELETE USING statement"
+	DistributeTableStmt              "Distribute table statement"
+	EmptyStmt                        "empty statement"
+	ExecuteStmt                      "Execute statement"
+	ExplainStmt                      "EXPLAIN statement"
+	ExplainableStmt                  "explainable statement"
+	FlushStmt                        "Flush statement"
+	FlashbackTableStmt               "Flashback table statement"
+	FlashbackToTimestampStmt         "Flashback cluster statement"
+	FlashbackDatabaseStmt            "Flashback Database statement"
+	GrantStmt                        "Grant statement"
+	GrantProxyStmt                   "Grant proxy statement"
+	GrantRoleStmt                    "Grant role statement"
+	InsertIntoStmt                   "INSERT INTO statement"
+	CallStmt                         "CALL statement"
+	ImportIntoStmt                   "IMPORT INTO statement"
+	ImportFromSelectStmt             "SELECT statement of IMPORT INTO"
+	KillStmt                         "Kill statement"
+	LoadDataStmt                     "Load data statement"
+	LoadStatsStmt                    "Load statistic statement"
+	LockStatsStmt                    "Lock statistic statement"
+	UnlockStatsStmt                  "Unlock statistic statement"
+	LockTablesStmt                   "Lock tables statement"
+	NonTransactionalDMLStmt          "Non-transactional DML statement"
+	OptimizeTableStmt                "OPTIMIZE statement"
+	PlanReplayerStmt                 "Plan replayer statement"
+	PreparedStmt                     "PreparedStmt"
+	ProcedureProcStmt                "The entrance of procedure statements which contains all kinds of statements in procedure"
+	ProcedureStatementStmt           "The normal statements in procedure, such as dml, select, set ..."
+	SelectStmt                       "SELECT statement"
+	SelectStmtWithClause             "common table expression SELECT statement"
+	StartTransactionStmt             "START TRANSACTION statement"
+	RenameTableStmt                  "rename table statement"
+	RenameUserStmt                   "rename user statement"
+	ReplaceIntoStmt                  "REPLACE INTO statement"
+	RecoverTableStmt                 "recover table statement"
+	RevokeStmt                       "Revoke statement"
+	RevokeRoleStmt                   "Revoke role statement"
+	RollbackStmt                     "ROLLBACK statement"
+	ReleaseSavepointStmt             "RELEASE SAVEPOINT statement"
+	SavepointStmt                    "SAVEPOINT statement"
+	SplitRegionStmt                  "Split index region statement"
+	SetStmt                          "Set variable statement"
+	SetBindingStmt                   "Set binding statement"
+	SetRoleStmt                      "Set active role statement"
+	SetDefaultRoleStmt               "Set default statement for some user"
+	ShowStmt                         "Show engines/databases/tables/user/columns/warnings/status statement"
+	Statement                        "statement"
+	TraceStmt                        "TRACE statement"
+	TraceableStmt                    "traceable statement"
+	TruncateTableStmt                "TRUNCATE TABLE statement"
+	UnlockTablesStmt                 "Unlock tables statement"
+	UpdateStmt                       "UPDATE statement"
+	SetOprStmt                       "Union/Except/Intersect select statement"
+	SetOprStmtWithLimitOrderBy       "Union/Except/Intersect select statement with limit and order by"
+	SetOprStmtWoutLimitOrderBy       "Union/Except/Intersect select statement without limit and order by"
+	UseStmt                          "USE statement"
+	ShutdownStmt                     "SHUTDOWN statement"
+	RestartStmt                      "RESTART statement"
+	RecommendIndexStmt               "RECOMMEND INDEX statement"
+	CreateViewSelectOpt              "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
+	BindableStmt                     "Statement that can be created binding on"
+	UpdateStmtNoWith                 "Update statement without CTE clause"
+	HelpStmt                         "HELP statement"
+	ShardableStmt                    "Shardable statement that can be used in non-transactional DMLs"
+	CancelImportStmt                 "CANCEL IMPORT JOB statement"
+	ProcedureUnlabeledBlock          "The statement block without label in procedure"
+	ProcedureBlockContent            "The statement block in procedure expressed with 'Begin ... End'"
+	SimpleWhenThen                   "Procedure case when then"
+	SearchWhenThen                   "Procedure search when then"
+	ProcedureReturnStmt              "The return statement in stored function, expressed by return expr"
+	ProcedureIfstmt                  "The if statement in procedure, expressed by if ... elseif .. else ... end if"
+	procedurceElseIfs                "The else block in procedure, expressed by elseif or else or nil"
+	ProcedureIf                      "The if block in procedure, expressed by expr then statement procedurceElseIfs"
+	ProcedureUnlabelLoopBlock        "The loop block without label in procedure "
+	ProcedureUnlabelLoopStmt         "The loop statement in procedure, expressed by repeat/do while/loop"
+	ProcedureCaseStmt                "Case statement in procedure, expressed by `case ... when.. then ..`"
+	ProcedureSimpleCase              "The simpe case statement in procedure, expressed by `case expr when expr then statement ... end case`"
+	ProcedureSearchedCase            "The searched case statement in procedure, expressed by `case when expr then statement ... end case`"
+	ProcedureCursorSelectStmt        "The select stmt can used in procedure cursor."
+	ProcedureOpenCur                 "The open cursor statement in procedure, expressed by `open ...`"
+	ProcedureCloseCur                "The close cursor statement in procedure, expressed by `close ...`"
+	ProcedureFetchInto               "The fetch into statement in procedure, expressed by `fetch ... into ...`"
+	ProcedureHcond                   "The handler value statement in procedure, expressed by condition_value"
+	ProcedurceCond                   "The handler code statement in procedure, expressed by code error num or `sqlstate ...`"
+	ProcedureLabeledBlock            "The statement block with label in procedure"
+	ProcedurelabeledLoopStmt         "The loop block with label in procedure"
+	ProcedureIterate                 "The iterate statement in procedure, expressed by `iterate ...`"
+	ProcedureLeave                   "The leave statement in procedure, expressed by `leave ...`"
+	SignalStmt                       "The signal statment, User actively declares errors"
+	GetDiagnosticsStmt               "The get diagnostics statement, get prev SQL error information"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1205,6 +1228,10 @@ type createFunctionPrefix struct {
 	ColumnSetValueList                     "insert statement set value by column name list"
 	CompareOp                              "Compare opcode"
 	ColumnOption                           "column definition option"
+	LBACComponentDef                       "LBAC component definition"
+	LBACTreeDef                            "LBAC component tree definition"
+	LBACTreeDefOpt                         "LBAC component tree definition option"
+	LBACTreeNodeDef                        "LBAC component tree node definition"
 	ColumnOptionList                       "column definition option list"
 	VirtualOrStored                        "indicate generated column is stored or not"
 	ColumnOptionListOpt                    "optional column definition option list"
@@ -1338,6 +1365,16 @@ type createFunctionPrefix struct {
 	PartitionMethod                        "Partition method"
 	PartitionOpt                           "Partition option"
 	PartitionNameList                      "Partition name list"
+	ComponentNameList                      "Component name list"
+	SecurityComponentSpec                  "Security component specification"
+	SecurityComponentSpecList              "Security component specification list"
+	SecurityLabelUserList                  "security label user list"
+	SecurityLabelUser                      "security label user"
+	GrantSecurityLabelAccessList           "Grant security label access list"
+	GrantSecurityLabelAccess               "Grant security label access"
+	ExemptionRule                          "Exemption Rule"
+	SecurityPolicyOpt                      "Security policy option"
+	SecurityPolicyRuleOpt                  "Security policy rule option"
 	PartitionNameListOpt                   "table partition names list optional"
 	PartitionNumOpt                        "PARTITION NUM option"
 	PartDefValuesOpt                       "VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
@@ -3877,6 +3914,10 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"SECURED" "WITH" Identifier
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSecuredWith, StrValue: $3}
 	}
 |	"ENCRYPTION" EqOpt EncryptionOpt
 	{
@@ -6929,6 +6970,8 @@ UnReservedKeyword:
 |	"COMPRESSED"
 |	"CONSISTENCY"
 |	"CONSISTENT"
+|	"COMPONENT"
+|	"COMPONENTS"
 |	"CONTAINS"
 |	"CURRENT"
 |	"DATA"
@@ -6970,6 +7013,7 @@ UnReservedKeyword:
 |	"HELP"
 |	"HOUR"
 |	"INSERT_METHOD"
+|	"LABEL"
 |	"LESS"
 |	"LOCAL"
 |	"LAST"
@@ -6996,6 +7040,7 @@ UnReservedKeyword:
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"ROOT"
 |	"RULE"
 |	"SESSION"
 |	"SIGNED"
@@ -7017,11 +7062,13 @@ UnReservedKeyword:
 |	"TIME" %prec lowerThanStringLitToken
 |	"TIMEOUT"
 |	"TIMESTAMP" %prec lowerThanStringLitToken
+|	"TREE"
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
 |	"TSO"
 |	"UNBOUNDED"
+|	"UNDER"
 |	"UNKNOWN"
 |	"UNSET"
 |	"VALUE" %prec lowerThanValueKeyword
@@ -7313,6 +7360,13 @@ UnReservedKeyword:
 |	"NUMBER"
 |	"STACKED"
 |	"RETURNED_SQLSTATE"
+|	"ACCESS"
+|	"AUTHORIZED"
+|	"EXEMPTION"
+|	"LBACRULES"
+|	"OVERRIDE"
+|	"SECURED"
+|	"SECURITYLABEL"
 
 TiDBKeyword:
 	"ADMIN"
@@ -12631,6 +12685,16 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateSecurityLabelComponentStmt
+|	CreateSecurityPolicyStmt
+|	CreateSecurityLabelStmt
+|	DropSecurityLabelComponentStmt
+|	DropSecurityPolicyStmt
+|	DropSecurityLabelStmt
+|	GrantSecurityLabelStmt
+|	RevokeSecurityLabelStmt
+|	GrantExemptionStmt
+|	RevokeExemptionStmt
 |	CreateProcedureStmt
 |	CreateTriggerStmt
 |	CreateStoredFunctionStmt
@@ -13092,6 +13156,10 @@ TableOption:
 	{
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
+	}
+|	"SECURITY" "POLICY" Identifier
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionSecurityPolicy, StrValue: $3}
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
 	{
@@ -13665,6 +13733,14 @@ StringType:
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
+		$$ = tp
+	}
+|	"SECURITYLABEL"
+	{
+		tp := types.NewFieldType(mysql.TypeLongBlob)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSecurityLabel()
 		$$ = tp
 	}
 |	"VECTOR" OptVectorElementType OptFieldLen
@@ -15838,6 +15914,263 @@ AlterPolicyStmt:
 			PolicyName:       model.NewCIStr($5),
 			PlacementOptions: $6.([]*ast.PlacementOption),
 		}
+	}
+
+CreateSecurityLabelComponentStmt:
+	"CREATE" "SECURITY" "LABEL" "COMPONENT" Identifier LBACComponentDef
+	{
+		def := $6.(*ast.LBACComponentDef)
+		$$ = &ast.CreateSecurityLabelComponentStmt{
+			Name:             model.NewCIStr($5),
+			LBACComponentDef: *def,
+		}
+	}
+
+LBACComponentDef:
+	"ARRAY" '(' StringList ')'
+	{
+		$$ = &ast.LBACComponentDef{
+			Type:     ast.LBACComponentTypeArray,
+			Elements: $3.([]string),
+		}
+	}
+|	"SET" '(' StringList ')'
+	{
+		$$ = &ast.LBACComponentDef{
+			Type:     ast.LBACComponentTypeSet,
+			Elements: $3.([]string),
+		}
+	}
+|	"TREE" LBACTreeDefOpt
+	{
+		$$ = &ast.LBACComponentDef{
+			Type: ast.LBACComponentTypeTree,
+			Tree: $2.(*ast.LBACTreeDef),
+		}
+	}
+
+LBACTreeDefOpt:
+	'(' LBACTreeDef ')'
+	{
+		$$ = $2.(*ast.LBACTreeDef)
+	}
+
+LBACTreeDef:
+	LBACTreeNodeDef
+	{
+		treeDef, _ := $1.(*ast.LBACTreeNode)
+		$$ = &ast.LBACTreeDef{
+			Nodes: []*ast.LBACTreeNode{treeDef},
+		}
+	}
+|	LBACTreeDef ',' LBACTreeNodeDef
+	{
+		treeDef, _ := $1.(*ast.LBACTreeDef)
+		treeDef.Nodes = append(treeDef.Nodes, $3.(*ast.LBACTreeNode))
+		$$ = treeDef
+	}
+
+LBACTreeNodeDef:
+	stringLit "ROOT"
+	{
+		$$ = &ast.LBACTreeNode{
+			Name:   $1,
+			IsRoot: true,
+		}
+	}
+|	stringLit "UNDER" stringLit
+	{
+		$$ = &ast.LBACTreeNode{
+			Name:   $1,
+			Parent: $3,
+			IsRoot: false,
+		}
+	}
+
+CreateSecurityPolicyStmt:
+	"CREATE" "SECURITY" "POLICY" Identifier "COMPONENTS" ComponentNameList SecurityPolicyRuleOpt SecurityPolicyOpt
+	{
+		$$ = &ast.CreateSecurityPolicyStmt{
+			Name:       model.NewCIStr($4),
+			Components: $6.([]model.CIStr),
+			Rule:       $7.(ast.SecurityPolicyRuleOption),
+			Option:     $8.(ast.SecurityPolicyOption),
+		}
+	}
+
+CreateSecurityLabelStmt:
+	"CREATE" "SECURITY" "LABEL" Identifier '.' Identifier SecurityComponentSpecList
+	{
+		$$ = &ast.CreateSecurityLabelStmt{
+			PolicyName: model.NewCIStr($4),
+			LabelName:  model.NewCIStr($6),
+			Components: $7.([]*ast.SecurityLabelComponentSpec),
+		}
+	}
+
+DropSecurityLabelComponentStmt:
+	"DROP" "SECURITY" "LABEL" "COMPONENT" Identifier
+	{
+		$$ = &ast.DropSecurityLabelComponentStmt{
+			Name: model.NewCIStr($5),
+		}
+	}
+
+DropSecurityPolicyStmt:
+	"DROP" "SECURITY" "POLICY" Identifier
+	{
+		$$ = &ast.DropSecurityPolicyStmt{
+			Name: model.NewCIStr($4),
+		}
+	}
+
+DropSecurityLabelStmt:
+	"DROP" "SECURITY" "LABEL" Identifier '.' Identifier
+	{
+		$$ = &ast.DropSecurityLabelStmt{
+			PolicyName: model.NewCIStr($4),
+			LabelName:  model.NewCIStr($6),
+		}
+	}
+
+GrantSecurityLabelStmt:
+	"GRANT" "SECURITY" "LABEL" Identifier '.' Identifier "TO" SecurityLabelUserList "FOR" GrantSecurityLabelAccessList
+	{
+		$$ = &ast.GrantSecurityLabelStmt{
+			PolicyName:  model.NewCIStr($4),
+			LabelName:   model.NewCIStr($6),
+			Users:       $8.([]*ast.UserSpec),
+			AccessTypes: $10.([]ast.SecurityLabelAccessType),
+		}
+	}
+
+RevokeSecurityLabelStmt:
+	"REVOKE" "SECURITY" "LABEL" Identifier '.' Identifier "FROM" SecurityLabelUserList
+	{
+		$$ = &ast.RevokeSecurityLabelStmt{
+			PolicyName: model.NewCIStr($4),
+			LabelName:  model.NewCIStr($6),
+			Users:      $8.([]*ast.UserSpec),
+		}
+	}
+
+GrantExemptionStmt:
+	"GRANT" "EXEMPTION" "ON" "RULE" ExemptionRule "FOR" Identifier "TO" SecurityLabelUserList
+	{
+		$$ = &ast.GrantExemptionStmt{
+			Rule:       $5.(ast.ExemptionRule),
+			PolicyName: model.NewCIStr($7),
+			Users:      $9.([]*ast.UserSpec),
+		}
+	}
+
+RevokeExemptionStmt:
+	"REVOKE" "EXEMPTION" "ON" "RULE" ExemptionRule "FOR" Identifier "FROM" SecurityLabelUserList
+	{
+		$$ = &ast.RevokeExemptionStmt{
+			Rule:       $5.(ast.ExemptionRule),
+			PolicyName: model.NewCIStr($7),
+			Users:      $9.([]*ast.UserSpec),
+		}
+	}
+
+SecurityComponentSpec:
+	"COMPONENT" Identifier StringList
+	{
+		$$ = &ast.SecurityLabelComponentSpec{
+			ComponentName: model.NewCIStr($2),
+			Values:        $3.([]string),
+		}
+	}
+
+SecurityComponentSpecList:
+	SecurityComponentSpec
+	{
+		$$ = []*ast.SecurityLabelComponentSpec{$1.(*ast.SecurityLabelComponentSpec)}
+	}
+|	SecurityComponentSpecList SecurityComponentSpec
+	{
+		$$ = append($1.([]*ast.SecurityLabelComponentSpec), $2.(*ast.SecurityLabelComponentSpec))
+	}
+
+ComponentNameList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|	ComponentNameList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
+
+SecurityPolicyRuleOpt:
+	{
+		$$ = ast.SecurityPolicyRuleNone
+	}
+|	"WITH" "LBACRULES"
+	{
+		$$ = ast.SecurityPolicyRuleLBACRules
+	}
+
+SecurityPolicyOpt:
+	{
+		$$ = ast.SecurityPolicyNone
+	}
+|	"OVERRIDE" "NOT" "AUTHORIZED" "WRITE" "SECURITY" "LABEL"
+	{
+		$$ = ast.SecurityPolicyOverride
+	}
+|	"RESTRICT" "NOT" "AUTHORIZED" "WRITE" "SECURITY" "LABEL"
+	{
+		$$ = ast.SecurityPolicyRestrict
+	}
+
+ExemptionRule:
+	"ALL"
+	{
+		$$ = ast.ExemptionRuleAll
+	}
+
+SecurityLabelUserList:
+	SecurityLabelUser
+	{
+		$$ = []*ast.UserSpec{$1.(*ast.UserSpec)}
+	}
+|	SecurityLabelUserList ',' SecurityLabelUser
+	{
+		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+SecurityLabelUser:
+	"USER" Username
+	{
+		$$ = &ast.UserSpec{
+			User: $2.(*auth.UserIdentity),
+		}
+	}
+
+GrantSecurityLabelAccessList:
+	GrantSecurityLabelAccess
+	{
+		$$ = []ast.SecurityLabelAccessType{$1.(ast.SecurityLabelAccessType)}
+	}
+|	GrantSecurityLabelAccessList ',' GrantSecurityLabelAccess
+	{
+		$$ = append($1.([]ast.SecurityLabelAccessType), $3.(ast.SecurityLabelAccessType))
+	}
+
+GrantSecurityLabelAccess:
+	"READ" "ACCESS"
+	{
+		$$ = ast.SecurityLabelAccessTypeRead
+	}
+|	"WRITE" "ACCESS"
+	{
+		$$ = ast.SecurityLabelAccessTypeWrite
+	}
+|	"ALL" "ACCESS"
+	{
+		$$ = ast.SecurityLabelAccessTypeAll
 	}
 
 /********************************************************************************************

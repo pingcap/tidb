@@ -1081,6 +1081,10 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return errors.Trace(err)
 	}
 
+	if err = validateTablePolicyAndLabels(e.ctx, ctx, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = rewritePartitionQueryString(ctx, s.Partition, tbInfo); err != nil {
 		return err
 	}
@@ -2256,6 +2260,9 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	// Added column has existed and if_not_exists flag is true.
 	if col == nil {
 		return nil
+	}
+	if err = validateColumnSecurityLabelForTable(e.ctx, ctx, tbInfo, col.ColumnInfo); err != nil {
+		return errors.Trace(err)
 	}
 	err = CheckAfterPositionExists(tbInfo, spec.Position)
 	if err != nil {

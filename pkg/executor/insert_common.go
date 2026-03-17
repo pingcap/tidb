@@ -100,6 +100,8 @@ type InsertValues struct {
 	PolicyName  string // The label policy name binded to this table.
 	UserLabel   string // The label binded to current user.
 	LabelColumn string // The column name of this table used to store label value.
+
+	lbacGuard *lbacDMLGuard
 }
 
 type defaultVal struct {
@@ -693,6 +695,15 @@ func IsLabelAccessible(ctx expression.BuildContext, rowLbl types.Datum, userLbl 
 	return true, nil
 }
 
+func (e *InsertValues) initLBACGuard() (err error) {
+	if !variable.EnableLBAC.Load() {
+		return nil
+	}
+
+	e.lbacGuard, err = newLBACDMLGuard(e.Ctx(), e.Table.Meta())
+	return err
+}
+
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 // When lazyFillAutoID is true, fill row will lazily handle auto increment datum for lazy batch allocation.
@@ -743,6 +754,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 					return nil, exeerrors.ErrRowLabelUnAccessible.GenWithStackByArgs(row[i].GetString(), e.UserLabel)
 				}
 				labelEvaluated = true
+			}
+			if e.lbacGuard != nil && c.ID == e.lbacGuard.labelColID {
+				labelDatum, err := e.lbacGuard.EnforceWriteLabel(row[i])
+				if err != nil {
+					return nil, err
+				}
+				row[i] = labelDatum
 			}
 		}
 	}
@@ -1398,6 +1416,11 @@ func (e *InsertValues) removeRow(
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
 		return false, err
+	}
+	if e.lbacGuard != nil {
+		if err := e.lbacGuard.CheckRowLabelAccess(oldRow[e.lbacGuard.labelColOffset]); err != nil {
+			return false, err
+		}
 	}
 
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
