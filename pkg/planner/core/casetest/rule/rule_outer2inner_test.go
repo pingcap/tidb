@@ -175,6 +175,35 @@ FROM t0
 	})
 }
 
+// TestOuter2InnerLateralSelection verifies that the outer2inner rule does NOT
+// convert Apply→Join when the Apply originates from a LATERAL derived table.
+// The IsLateral guard in pruneRedundantApply must prevent the rewrite even when
+// a null-filtering Selection sits above the Apply.
+func TestOuter2InnerLateralSelection(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a1 int, b1 int)")
+		tk.MustExec("create table t2(a2 int, b2 int)")
+
+		var input Input
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		suiteData := GetOuter2InnerSuiteData()
+		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			plan := tk.MustQuery("explain format = 'brief' " + sql)
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+}
+
 // can not add this test case to TestOuter2Inner because the collation_connection is different
 func TestOuter2InnerIssue55886(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
