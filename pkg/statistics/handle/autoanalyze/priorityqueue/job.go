@@ -142,7 +142,8 @@ func isValidToAnalyze(
 
 	// Last analysis just failed, we should not analyze it again.
 	// Use <= 1 second to handle timing precision issues where TIMESTAMPDIFF might return 1 instead of 0.
-	if lastFailedAnalysisDuration == justFailed || lastFailedAnalysisDuration == 1 {
+	// Note: time.Second is the correct comparison (1 second), not the literal 1 (1 nanosecond).
+	if lastFailedAnalysisDuration == justFailed || lastFailedAnalysisDuration == time.Second {
 		// The last analysis failed, we should not analyze it again.
 		logutil.StatsSampleLogger().Info(
 			"Skip analysis because the last analysis just failed",

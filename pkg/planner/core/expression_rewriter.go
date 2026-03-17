@@ -502,7 +502,9 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		return nil, 0, err
 	}
 	restrictOp := ast.MaskingPolicyRestrictOpNone
-	if b.inUpdateStmt && planCtx.curClause == fieldList {
+	// For UPDATE statements, restrict masked reads in both SELECT list (fieldList)
+	// and WHERE clause (whereClause) subqueries to prevent bypassing RESTRICT ON UPDATE_SELECT
+	if b.inUpdateStmt && (planCtx.curClause == fieldList || planCtx.curClause == whereClause) {
 		restrictOp = ast.MaskingPolicyRestrictOpUpdateSelect
 	} else if b.inDeleteStmt && planCtx.curClause == whereClause {
 		restrictOp = ast.MaskingPolicyRestrictOpDeleteSelect

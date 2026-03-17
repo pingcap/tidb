@@ -1629,7 +1629,11 @@ func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldNa
 // to the result. This implements the "AT RESULT" semantics where masking is applied
 // only after all relational operations (HAVING, ORDER BY, set operators) have been
 // computed using original values.
-func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
+//
+// The originalFields parameter contains the original SELECT field expressions before
+// they were materialized. This allows us to correctly apply masking to wrapper expressions
+// like CONCAT(c, '') or CAST(c AS CHAR) by processing the original expression tree.
+func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, originalFields []*ast.SelectField) (base.LogicalPlan, error) {
 	if b.is == nil || p == nil {
 		return p, nil
 	}
@@ -1641,7 +1645,73 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	if len(b.is.AllMaskingPolicies()) == 0 {
 		return p, nil
 	}
+	if len(originalFields) == 0 {
+		// No original fields available, fall back to simple column-based masking
+		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
+	}
 
+	// Build masking expressions from the current plan (which has the source columns)
+	maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if maskExprs == nil {
+		// No masking needed, return original plan
+		return p, nil
+	}
+
+	// Build a projection that applies masking using the original expression trees
+	// This ensures that wrapper expressions like CONCAT(c, '') get properly masked
+	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
+	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
+	newNames := make([]*types.FieldName, 0, oldLen)
+
+	for i := 0; i < oldLen && i < len(originalFields); i++ {
+		// Rebuild the expression from the original field
+		// This preserves the original expression tree structure
+		field := originalFields[i]
+		if field.Auxiliary {
+			break
+		}
+
+		// Build the expression from the original field
+		expr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, nil, nil, true, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply masking substitution to the expression
+		// This will replace any masked columns with their masking expressions
+		maskedExpr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, np.Schema(), maskExprs)
+
+		proj.Exprs = append(proj.Exprs, maskedExpr)
+
+		// Create a new column for the masked result
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  maskedExpr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		// Preserve the original column ID for masking policy lookup
+		if i < p.Schema().Len() {
+			origCol := p.Schema().Columns[i]
+			newCol.ID = origCol.ID
+			newCol.SetCoercibility(origCol.Coercibility())
+			newCol.SetRepertoire(origCol.Repertoire())
+		}
+		schema.Append(newCol)
+		newNames = append(newNames, p.OutputNames()[i])
+	}
+
+	proj.SetSchema(schema)
+	proj.SetOutputNames(newNames)
+	proj.SetChildren(p)
+	return proj, nil
+}
+
+// buildFinalProjectionWithMaskingSimple is a fallback that applies masking based on column references
+// when originalFields are not available. This is used for cases like set operators where we don't
+// have the original field expressions.
+func (b *PlanBuilder) buildFinalProjectionWithMaskingSimple(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
 	// Build masking expressions
 	maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
 	if err != nil {
@@ -1902,7 +1972,8 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	// Apply masking at the final result stage (AT RESULT semantics).
 	// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
-	setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
+	// Pass nil for originalFields as we don't have access to the original field expressions here.
+	setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -4211,7 +4282,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	// Apply masking at the final result stage (AT RESULT semantics).
 	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
-	p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
+	// Pass originalFields so masking is applied to the original expression trees before they were materialized.
+	p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
 	if err != nil {
 		return nil, err
 	}

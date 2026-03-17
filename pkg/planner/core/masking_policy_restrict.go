@@ -205,51 +205,111 @@ func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
 		return false, nil
 	}
 
-	sentinel := maskingPolicySentinelDatum(colInfo)
-	row := chunk.MutRowFromDatums([]types.Datum{sentinel}).ToRow()
+	// Use multiple test values to reduce false positive risk
+	// If the expression returns different values for different inputs,
+	// it's actually doing transformation (not just returning the input)
+	sentinels := maskingPolicySentinelDatums(colInfo)
 	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
-	val, err := expr.Eval(evalCtx, row)
-	if err != nil {
-		return false, err
+	results := make([]types.Datum, 0, len(sentinels))
+
+	for _, sentinel := range sentinels {
+		row := chunk.MutRowFromDatums([]types.Datum{sentinel}).ToRow()
+		val, err := expr.Eval(evalCtx, row)
+		if err != nil {
+			return false, err
+		}
+		if val.IsNull() {
+			return false, nil
+		}
+		// Compare with sentinel to check if expression returned input unchanged
+		cmp, err := val.Compare(evalCtx.TypeCtx(), &sentinel, collate.GetBinaryCollator())
+		if err != nil {
+			return false, err
+		}
+		// If expression returns input unchanged for ANY test value,
+		// consider it as "not masked" for that value
+		if cmp == 0 {
+			return true, nil
+		}
+		results = append(results, val)
 	}
-	if val.IsNull() {
-		return false, nil
+
+	// Check if expression returns same value for different inputs
+	// (indicating constant output, which might be the sentinel value)
+	for i := 1; i < len(results); i++ {
+		cmpSame, err := results[i].Compare(evalCtx.TypeCtx(), &results[0], collate.GetBinaryCollator())
+		if err != nil {
+			return false, err
+		}
+		// Constant output across different inputs is suspicious
+		// It could mean the expression always outputs a fixed value
+		// In this case, we conservatively assume the user CAN read unmasked
+		if cmpSame == 0 {
+			return true, nil
+		}
 	}
-	cmp, err := val.Compare(evalCtx.TypeCtx(), &sentinel, collate.GetBinaryCollator())
-	if err != nil {
-		return false, err
-	}
-	return cmp == 0, nil
+
+	// Expression transforms all test values differently, so it's actually masking
+	return false, nil
 }
 
-func maskingPolicySentinelDatum(colInfo *model.ColumnInfo) types.Datum {
+// maskingPolicySentinelDatums returns multiple test values for checking if a masking
+// expression properly transforms values. Using multiple values reduces the risk of
+// false positives where an expression happens to return one of the test values.
+func maskingPolicySentinelDatums(colInfo *model.ColumnInfo) []types.Datum {
 	switch colInfo.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return types.NewIntDatum(2099)
+		return []types.Datum{
+			types.NewIntDatum(2099),
+			types.NewIntDatum(1999),
+			types.NewIntDatum(2000),
+		}
 	case mysql.TypeYear:
-		return types.NewIntDatum(2099)
+		return []types.Datum{
+			types.NewIntDatum(2099),
+			types.NewIntDatum(2000),
+			types.NewIntDatum(2024),
+		}
 	case mysql.TypeDuration:
 		fsp := colInfo.GetDecimal()
 		if fsp == types.UnspecifiedFsp {
 			fsp = types.DefaultFsp
 		}
-		return types.NewDatum(types.Duration{
-			Duration: 12*time.Hour + 34*time.Minute + 56*time.Second,
-			Fsp:      fsp,
-		})
+		return []types.Datum{
+			types.NewDatum(types.Duration{Duration: 12*time.Hour + 34*time.Minute + 56*time.Second, Fsp: fsp}),
+			types.NewDatum(types.Duration{Duration: 10*time.Hour + 20*time.Minute + 30*time.Second, Fsp: fsp}),
+			types.NewDatum(types.Duration{Duration: 5*time.Hour + 15*time.Minute + 45*time.Second, Fsp: fsp}),
+		}
 	case mysql.TypeDate:
-		return types.NewDatum(types.NewTime(types.FromDate(2099, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0))
+		return []types.Datum{
+			types.NewDatum(types.NewTime(types.FromDate(2099, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0)),
+			types.NewDatum(types.NewTime(types.FromDate(2000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0)),
+			types.NewDatum(types.NewTime(types.FromDate(2024, 6, 15, 0, 0, 0, 0), mysql.TypeDate, 0)),
+		}
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		fsp := colInfo.GetDecimal()
 		if fsp == types.UnspecifiedFsp {
 			fsp = 0
 		}
-		return types.NewDatum(types.NewTime(types.FromDate(2099, 12, 31, 23, 59, 58, 0), colInfo.GetType(), fsp))
+		return []types.Datum{
+			types.NewDatum(types.NewTime(types.FromDate(2099, 12, 31, 23, 59, 58, 0), colInfo.GetType(), fsp)),
+			types.NewDatum(types.NewTime(types.FromDate(2000, 1, 1, 0, 0, 0, 0), colInfo.GetType(), fsp)),
+			types.NewDatum(types.NewTime(types.FromDate(2024, 6, 15, 12, 30, 45, 0), colInfo.GetType(), fsp)),
+		}
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-		return types.NewStringDatum("TIDB_MASKING_SENTINEL")
+		return []types.Datum{
+			types.NewStringDatum("TIDB_MASKING_SENTINEL_1"),
+			types.NewStringDatum("TIDB_MASKING_SENTINEL_2"),
+			types.NewStringDatum("TIDB_MASKING_SENTINEL_3"),
+		}
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL"))
+		return []types.Datum{
+			types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL_1")),
+			types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL_2")),
+			types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL_3")),
+		}
 	default:
-		return table.GetZeroValue(colInfo)
+		zero := table.GetZeroValue(colInfo)
+		return []types.Datum{zero}
 	}
 }
