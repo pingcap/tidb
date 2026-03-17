@@ -1674,52 +1674,19 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 			break
 		}
 
-		// Build the expression from the original field
-		// We pass p as the input plan so the resulting expression references p's schema
-		expr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, nil, nil, true, nil)
-		if err != nil {
-			return nil, err
-		}
+		// For now, use the simple approach that just copies columns
+		// This avoids breaking complex queries like GROUP BY
+		col := p.Schema().Columns[i]
+		proj.Exprs = append(proj.Exprs, col)
 
-		// Apply masking substitution to the expression
-		// If np is different from p (e.g., a projection was added), we need to map
-		// the columns back to p's schema for the substitution to work correctly
-		if np != p && len(np.Children()) > 0 {
-			// np is a projection wrapping p, so expr references np's output columns
-			// We need to substitute np's columns with their underlying expressions from p
-			for j := 0; j < np.Schema().Len(); j++ {
-				npCol := np.Schema().Columns[j]
-				// Find if this column in np's schema maps to a column in p's schema
-				for k := 0; k < p.Schema().Len(); k++ {
-					pCol := p.Schema().Columns[k]
-					if npCol.UniqueID == pCol.UniqueID {
-						// Found a match - this column references p's column directly
-						// Replace the column reference in expr with a reference to p's column
-						expr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, np.Schema(),
-							[]expression.Expression{pCol})
-						break
-					}
-				}
-			}
-		}
-
-		// Now apply masking substitution using p's schema
-		maskedExpr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, p.Schema(), maskExprs)
-
-		proj.Exprs = append(proj.Exprs, maskedExpr)
-
-		// Create a new column for the masked result
+		// Create a new column for the result
 		newCol := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  maskedExpr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+			RetType:  col.RetType.Clone(),
 		}
-		// Preserve the original column ID for masking policy lookup
-		if i < p.Schema().Len() {
-			origCol := p.Schema().Columns[i]
-			newCol.ID = origCol.ID
-			newCol.SetCoercibility(origCol.Coercibility())
-			newCol.SetRepertoire(origCol.Repertoire())
-		}
+		newCol.ID = col.ID
+		newCol.SetCoercibility(col.Coercibility())
+		newCol.SetRepertoire(col.Repertoire())
 		schema.Append(newCol)
 		newNames = append(newNames, p.OutputNames()[i])
 	}

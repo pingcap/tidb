@@ -227,29 +227,18 @@ func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
 			return false, err
 		}
 		// If expression returns input unchanged for ANY test value,
-		// consider it as "not masked" for that value
+		// consider it as "not masked" for that value (this handles the
+		// CASE WHEN current_user() = 'root' THEN c ELSE ... END case)
 		if cmp == 0 {
 			return true, nil
 		}
 		results = append(results, val)
 	}
 
-	// Check if expression returns same value for different inputs
-	// (indicating constant output, which might be the sentinel value)
-	for i := 1; i < len(results); i++ {
-		cmpSame, err := results[i].Compare(evalCtx.TypeCtx(), &results[0], collate.GetBinaryCollator())
-		if err != nil {
-			return false, err
-		}
-		// Constant output across different inputs is suspicious
-		// It could mean the expression always outputs a fixed value
-		// In this case, we conservatively assume the user CAN read unmasked
-		if cmpSame == 0 {
-			return true, nil
-		}
-	}
-
-	// Expression transforms all test values differently, so it's actually masking
+	// Expression transforms all test values differently (or returns the same
+	// masked value for all inputs), so it's actually masking
+	// Note: We don't check for constant output here because constant output
+	// could mean "always masked" (e.g., MASK_FULL always returns **********)
 	return false, nil
 }
 
