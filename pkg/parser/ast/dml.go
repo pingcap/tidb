@@ -551,11 +551,16 @@ func (*TableSource) resultSet() {}
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 	// Validate AST invariants before emitting any SQL.
-	_, isTableName := n.Source.(*TableName)
-	if n.Lateral && isTableName {
+	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt).
+	isDerived := false
+	switch n.Source.(type) {
+	case *SelectStmt, *SetOprStmt:
+		isDerived = true
+	}
+	if n.Lateral && !isDerived {
 		return errors.New("LATERAL cannot be applied to a table name, only to derived tables")
 	}
-	if len(n.ColumnNames) > 0 && isTableName {
+	if len(n.ColumnNames) > 0 && !isDerived {
 		return errors.New("column alias list cannot be applied to a table name")
 	}
 	if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
