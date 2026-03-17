@@ -1090,8 +1090,9 @@ func (e *eqOrInConditionExtractor) extractGenericTemplateMode(infos []eqOrInCond
 	return filters, false
 }
 
-func (e *eqOrInConditionExtractor) finalize(filters []expression.Expression) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo) {
-	accesses := e.accesses
+func (e *eqOrInConditionExtractor) finalize(initialFilters []expression.Expression) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo) {
+	accesses = e.accesses
+	filters = initialFilters
 	for i, cond := range accesses {
 		if cond == nil {
 			accesses = accesses[:i]
@@ -1111,8 +1112,9 @@ func (e *eqOrInConditionExtractor) finalize(filters []expression.Expression) ([]
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
-	e.newConditions = removeConditions(e.sctx.ExprCtx.GetEvalCtx(), e.newConditions, accesses)
-	return accesses, filters, e.newConditions, e.columnValues
+	newConditions = removeConditions(e.sctx.ExprCtx.GetEvalCtx(), e.newConditions, accesses)
+	columnValues = e.columnValues
+	return accesses, filters, newConditions, columnValues
 }
 
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
@@ -1711,7 +1713,7 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 		columnValues[i] = extractValueInfo(cond)
 	}
 
-	if !addGcCond || !NeedAddGcColumn4ShardIndex(cols, accesses, columnValues) {
+	if !addGcCond || !NeedAddGcColumn4ShardIndex(sctx, cols, accesses, columnValues) {
 		return conditions, nil
 	}
 
@@ -1746,7 +1748,7 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 //	is empty.
 //
 // @retval -  return true if it needs to addr tidb_shard() prefix, ohterwise return false
-func NeedAddGcColumn4ShardIndex(cols []*expression.Column, accessCond []expression.Expression, columnValues []*valueInfo) bool {
+func NeedAddGcColumn4ShardIndex(sctx *rangerctx.RangerContext, cols []*expression.Column, accessCond []expression.Expression, columnValues []*valueInfo) bool {
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {
@@ -1765,7 +1767,7 @@ func NeedAddGcColumn4ShardIndex(cols []*expression.Column, accessCond []expressi
 			case ast.EQ:
 				return NeedAddColumn4EqCond(cols, accessCond, columnValues)
 			case ast.In:
-				return NeedAddColumn4InCond(cols, accessCond, f)
+				return NeedAddColumn4InCond(sctx, cols, accessCond, f)
 			}
 		}
 	}
@@ -1829,8 +1831,8 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
 //	is `b` that's not the column in `tidb_shard(a)`.
 //
 // @param  sf	"IN" function, e.g. `a IN (1, 2, 3)`
-func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
-	if len(cols) == 0 || len(accessCond) == 0 || sf == nil {
+func NeedAddColumn4InCond(sctx *rangerctx.RangerContext, cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
+	if sctx == nil || len(cols) == 0 || len(accessCond) == 0 || sf == nil {
 		return false
 	}
 
@@ -1846,7 +1848,11 @@ func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Exp
 	}
 
 	for _, arg := range sf.GetArgs()[1:] {
-		if _, ok := arg.(*expression.Constant); !ok {
+		con, ok := arg.(*expression.Constant)
+		if !ok {
+			return false
+		}
+		if expression.PlanCacheGenericEnabled(sctx.ExprCtx) && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, con) {
 			return false
 		}
 	}
