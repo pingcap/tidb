@@ -106,32 +106,7 @@ func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expres
 // when we find the ref col is with not null flag, it will output zero constant
 // which breaks the function check outside. That's why we abandon the nulleq range detecting,
 // treat it as non-eq-in condition for later range build.
-type eqOrInColOffsetMode uint8
-
-const (
-	// Concrete mode classifies a predicate with the current constant value.
-	eqOrInColOffsetConcrete eqOrInColOffsetMode = iota
-	// Generic-template mode classifies mutable predicates by column shape only,
-	// so the cached access template does not depend on the first bound value.
-	eqOrInColOffsetGenericTemplate
-)
-
-func findMatchingEqOrInColumnOffset(evalCtx expression.EvalContext, cols []*expression.Column, target *expression.Column) int {
-	for i, col := range cols {
-		// Compare by virtual expression as well so generated/expression index columns
-		// still map back to the correct slot.
-		if col.EqualByExprAndID(evalCtx, target) {
-			return i
-		}
-	}
-	return -1
-}
-
 func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.Expression, cols []*expression.Column) int {
-	return getPotentialEqOrInColOffsetByMode(sctx, expr, cols, eqOrInColOffsetConcrete)
-}
-
-func getPotentialEqOrInColOffsetByMode(sctx *rangerctx.RangerContext, expr expression.Expression, cols []*expression.Column, mode eqOrInColOffsetMode) int {
 	evalCtx := sctx.ExprCtx.GetEvalCtx()
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
@@ -143,7 +118,7 @@ func getPotentialEqOrInColOffsetByMode(sctx *rangerctx.RangerContext, expr expre
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
 		for _, dnfItem := range dnfItems {
-			curOffset := getPotentialEqOrInColOffsetByMode(sctx, dnfItem, cols, mode)
+			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
 			if curOffset == -1 {
 				return -1
 			}
@@ -154,51 +129,53 @@ func getPotentialEqOrInColOffsetByMode(sctx *rangerctx.RangerContext, expr expre
 		}
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
-		var constVal *expression.Constant
-		c, ok := f.GetArgs()[0].(*expression.Column)
-		idxConst := 1
-		if !ok {
-			idxConst = 0
-			if c, ok = f.GetArgs()[1].(*expression.Column); !ok {
+		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
-		}
-
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-			return -1
-		}
-		if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-			return -1
-		}
-
-		if constVal, ok = f.GetArgs()[idxConst].(*expression.Constant); !ok {
-			return -1
-		}
-		if mode == eqOrInColOffsetGenericTemplate && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, constVal) {
-			// In generic-template mode we only need the structural slot ownership of
-			// a mutable predicate. Do not let the first bound value (for example NULL)
-			// erase the prefix slot here. The concrete value is still validated later
-			// when we decide whether to keep the original predicate as access and when
-			// buildRangeOnColsByCNFCond()/builder.build materialize ranges from the real
-			// argument. If the real value cannot form a usable concrete range, that
-			// later step yields an empty / non-usable range result instead of widening
-			// the cached template here.
-			return findMatchingEqOrInColumnOffset(evalCtx, cols, c)
-		}
-
-		val, err := constVal.Eval(evalCtx, chunk.Row{})
-		intest.AssertFunc(func() bool {
-			if sctx.ExprCtx.ConnectionID() == 0 {
-				return sctx.RegardNULLAsPoint
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+				return -1
 			}
-			return true
-		})
-		if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
-			// treat col<=>null as range scan instead of point get to avoid incorrect results
-			// when nullable unique index has multiple matches for filter x is null
-			return -1
+			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				val, err := constVal.Eval(evalCtx, chunk.Row{})
+				intest.AssertFunc(func() bool {
+					if sctx.ExprCtx.ConnectionID() == 0 {
+						return sctx.RegardNULLAsPoint
+					}
+					return true
+				})
+				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return -1
+				}
+				for i, col := range cols {
+					// When cols are a generated expression col, compare them in terms of virtual expr.
+					if col.EqualByExprAndID(evalCtx, c) {
+						return i
+					}
+				}
+			}
 		}
-		return findMatchingEqOrInColumnOffset(evalCtx, cols, c)
+		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+				return -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+				return -1
+			}
+			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				val, err := constVal.Eval(evalCtx, chunk.Row{})
+				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) {
+					return -1
+				}
+				for i, col := range cols {
+					if col.EqualColumn(c) {
+						return i
+					}
+				}
+			}
+		}
 	case ast.In:
 		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
@@ -740,359 +717,107 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 	return nil
 }
 
-// Keep this aligned with finalizeAccessColumnValue(): only predicates that can
-// survive finalization as a standalone Eq/In access are safe to use as a
-// generic-plan replacement candidate.
-func canSurviveAsStandaloneEqOrInAccess(expr expression.Expression) bool {
-	if !allEqOrIn(expr) {
-		return false
-	}
-	if valueInfo := extractValueInfo(expr); valueInfo != nil && valueInfo.value != nil && valueInfo.value.IsNull() {
-		return false
-	}
-	return true
-}
-
-type eqOrInConditionInfo struct {
-	cond     expression.Expression
-	offset   int
-	mutable  bool
-	isEqOrIn bool
-}
-
-// collectEqOrInConditionInfos performs the shared "fact collection" pass for
-// both planning modes. It only answers:
-//   - which predicate we are looking at
-//   - which index column slot it can map to
-//   - in generic-template mode only, whether the predicate is mutable and
-//     whether it is already a standalone Eq/In predicate
+// ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
+// accesses: The condition will be used to build range.
+// filters: filters is the part that some access conditions need to be evaluated again since it's only the prefix part of char column.
+// newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
 //
-// The actual policy of how these facts are used remains mode-specific.
-func collectEqOrInConditionInfos(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column, genericTemplateMode bool) []eqOrInConditionInfo {
-	infos := make([]eqOrInConditionInfo, len(conditions))
-	for i, cond := range conditions {
-		infos[i].cond = cond
-		mode := eqOrInColOffsetConcrete
-		if genericTemplateMode {
-			infos[i].mutable = expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, cond)
-			infos[i].isEqOrIn = allEqOrIn(cond)
-			if infos[i].mutable {
-				mode = eqOrInColOffsetGenericTemplate
-			}
-		}
-		infos[i].offset = getPotentialEqOrInColOffsetByMode(sctx, cond, cols, mode)
-	}
-	return infos
-}
-
-// eqOrInConditionExtractor owns the working buffers shared by the two
-// extraction policies. The key design point is that storage/finalization is
-// shared, while the decision logic stays split so the generic-template path
-// cannot accidentally change the concrete-value behavior.
-type eqOrInConditionExtractor struct {
-	sctx    *rangerctx.RangerContext
-	cols    []*expression.Column
-	lengths []int
-
-	rb             builder
-	accesses       []expression.Expression
-	points         [][]*point
-	mergedAccesses []expression.Expression
-	newConditions  []expression.Expression
-	columnValues   []*valueInfo
-}
-
-func newEqOrInConditionExtractor(sctx *rangerctx.RangerContext, conditionCount int, cols []*expression.Column, lengths []int) *eqOrInConditionExtractor {
-	// mergedAccesses is scratch-only and never escapes this extractor, so it can
-	// reuse the pooled []Expression backing array. In general, a slice is a good
-	// pool candidate here only if it is:
-	//   1) temporary scratch state owned entirely by this extractor,
-	//   2) not returned to the caller or stored elsewhere after close(), and
-	//   3) of a type that already has a matching pool.
-	// The other slices are either returned to the caller or have different
-	// element types / allocation shapes.
+//	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+//
+// columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
+// bool: indicate whether there's nil range when merging eq and in conditions.
+func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo, _ bool) {
+	rb := builder{sctx: sctx}
+	accesses = make([]expression.Expression, len(cols))
+	points := make([][]*point, len(cols))
 	mergedAccesses := expression.GetExpressionSlices(len(cols))
 	for range cols {
 		mergedAccesses = append(mergedAccesses, nil)
 	}
-	return &eqOrInConditionExtractor{
-		sctx:           sctx,
-		cols:           cols,
-		lengths:        lengths,
-		rb:             builder{sctx: sctx},
-		accesses:       make([]expression.Expression, len(cols)),
-		points:         make([][]*point, len(cols)),
-		mergedAccesses: mergedAccesses,
-		newConditions:  make([]expression.Expression, 0, conditionCount),
-		columnValues:   make([]*valueInfo, len(cols)),
-	}
-}
-
-func (e *eqOrInConditionExtractor) close() {
-	expression.PutExpressionSlices(e.mergedAccesses)
-}
-
-// extractConcreteMode preserves the pre-existing concrete-value behavior:
-// classify predicates using the current constant value, then merge/intersect
-// Eq/In candidates on the same column as before.
-func (e *eqOrInConditionExtractor) extractConcreteMode(infos []eqOrInConditionInfo, maybeOverOptimized4PlanCache bool) (nilRange bool) {
-	for _, info := range infos {
-		offset := info.offset
+	defer func() {
+		expression.PutExpressionSlices(mergedAccesses)
+	}()
+	newConditions = make([]expression.Expression, 0, len(conditions))
+	columnValues = make([]*valueInfo, len(cols))
+	offsets := make([]int, len(conditions))
+	for i, cond := range conditions {
+		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
+		offsets[i] = offset
 		if offset == -1 {
 			continue
 		}
-		if e.accesses[offset] == nil {
-			e.accesses[offset] = info.cond
+		if accesses[offset] == nil {
+			accesses[offset] = cond
 			continue
 		}
-		// Multiple Eq/In conditions for one column in CNF, apply intersection on them.
-		// Lazily compute the points for the previously visited Eq/In.
-		newTp := newFieldType(e.cols[offset].GetType(e.sctx.ExprCtx.GetEvalCtx()))
-		collator := collate.GetCollator(e.cols[offset].GetType(e.sctx.ExprCtx.GetEvalCtx()).GetCollate())
-		if e.mergedAccesses[offset] == nil {
-			e.mergedAccesses[offset] = e.accesses[offset]
+		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
+		// Lazily compute the points for the previously visited Eq/In
+		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
+		collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
+		if mergedAccesses[offset] == nil {
+			mergedAccesses[offset] = accesses[offset]
 			// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
 			// later use and may build the Expression to points again.
 			// We need to keep the original value here, which means we neither cut prefix nor convert to sort key.
-			e.points[offset] = e.rb.build(e.accesses[offset], newTp, types.UnspecifiedLength, false)
+			points[offset] = rb.build(accesses[offset], newTp, types.UnspecifiedLength, false)
 		}
-		e.points[offset] = e.rb.intersection(e.points[offset], e.rb.build(info.cond, newTp, types.UnspecifiedLength, false), collator)
-		if len(e.points[offset]) == 0 {
-			if maybeOverOptimized4PlanCache {
+		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
+		if len(points[offset]) == 0 { // Early termination if false expression found
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				e.sctx.SetSkipPlanCache("some parameters may be overwritten")
+				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
-			return true
+			return nil, nil, nil, nil, true
 		}
 	}
-	for i, ma := range e.mergedAccesses {
+	for i, ma := range mergedAccesses {
 		if ma == nil {
-			if e.accesses[i] != nil {
-				if allEqOrIn(e.accesses[i]) {
-					e.columnValues[i] = extractValueInfo(e.accesses[i])
-					if e.columnValues[i] != nil && e.columnValues[i].value != nil && e.columnValues[i].value.IsNull() {
-						e.accesses[i] = nil
+			if accesses[i] != nil {
+				if allEqOrIn(accesses[i]) {
+					columnValues[i] = extractValueInfo(accesses[i])
+					if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
+						accesses[i] = nil
 					} else {
-						e.newConditions = append(e.newConditions, e.accesses[i])
+						newConditions = append(newConditions, accesses[i])
 					}
 				} else {
-					e.accesses[i] = nil
+					accesses[i] = nil
 				}
 			}
 			continue
 		}
-		e.points[i] = allSinglePoints(e.sctx.TypeCtx, e.points[i])
-		if e.points[i] == nil {
-			// There exists an interval whose length is larger than 0.
-			e.accesses[i] = nil
-		} else if len(e.points[i]) == 0 {
-			if maybeOverOptimized4PlanCache {
+		points[i] = allSinglePoints(sctx.TypeCtx, points[i])
+		if points[i] == nil {
+			// There exists an interval whose length is larger than 0
+			accesses[i] = nil
+		} else if len(points[i]) == 0 { // Early termination if false expression found
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				e.sctx.SetSkipPlanCache("some parameters may be overwritten")
+				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
-			return true
+			return nil, nil, nil, nil, true
 		} else {
-			// All intervals are single points.
-			e.accesses[i] = points2EqOrInCond(e.sctx.ExprCtx, e.points[i], e.cols[i])
-			e.newConditions = append(e.newConditions, e.accesses[i])
-			if f, ok := e.accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
+			// All Intervals are single points
+
+			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
+			newConditions = append(newConditions, accesses[i])
+			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
 				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
 				// Maybe we can improve it later.
-				e.columnValues[i] = &valueInfo{mutable: true}
+				columnValues[i] = &valueInfo{mutable: true}
 			}
-			if maybeOverOptimized4PlanCache {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
-				e.sctx.SetSkipPlanCache("some parameters may be overwritten")
+				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
 		}
 	}
-	for _, info := range infos {
-		offset := info.offset
-		if offset == -1 || e.accesses[offset] == nil {
-			e.newConditions = append(e.newConditions, info.cond)
+	for i, offset := range offsets {
+		if offset == -1 || accesses[offset] == nil {
+			newConditions = append(newConditions, conditions[i])
 		}
 	}
-	return false
-}
-
-// extractGenericTemplateMode builds a reusable access template. Stable
-// predicates can keep the legacy merge behavior, but mutable predicates must
-// not rewrite the template into a value-specialized shape.
-func (e *eqOrInConditionExtractor) extractGenericTemplateMode(infos []eqOrInConditionInfo) (filters []expression.Expression, nilRange bool) {
-	// Finalize a standalone access candidate. In generic-template mode this must
-	// stay as one original Eq/In predicate; otherwise the access slot is cleared.
-	finalizeGenericAccessColumnValue := func(offset int) bool {
-		if e.accesses[offset] == nil || !allEqOrIn(e.accesses[offset]) {
-			e.accesses[offset] = nil
-			e.columnValues[offset] = nil
-			return false
-		}
-		e.columnValues[offset] = extractValueInfo(e.accesses[offset])
-		if e.columnValues[offset] != nil && e.columnValues[offset].value != nil && e.columnValues[offset].value.IsNull() {
-			e.accesses[offset] = nil
-			e.columnValues[offset] = nil
-			return false
-		}
-		return true
-	}
-	// Stable predicates can still be intersected because that operation is
-	// value-independent for the cached template.
-	intersectStableAccessConditions := func(offset int, cond expression.Expression) bool {
-		newTp := newFieldType(e.cols[offset].GetType(e.sctx.ExprCtx.GetEvalCtx()))
-		collator := collate.GetCollator(e.cols[offset].GetType(e.sctx.ExprCtx.GetEvalCtx()).GetCollate())
-		if e.mergedAccesses[offset] == nil {
-			e.mergedAccesses[offset] = e.accesses[offset]
-			// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
-			// later use and may build the Expression to points again.
-			// We need to keep the original value here, which means we neither cut prefix nor convert to sort key.
-			e.points[offset] = e.rb.build(e.accesses[offset], newTp, types.UnspecifiedLength, false)
-		}
-		e.points[offset] = e.rb.intersection(e.points[offset], e.rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
-		return len(e.points[offset]) == 0
-	}
-	// Finalize a merged stable access back into a standalone Eq/In condition.
-	// If the merged result is no longer a point Eq/In access, the slot must be
-	// dropped so the template stays conservative.
-	finalizeGenericMergedPointAccess := func(offset int) (emptyRange bool, kept bool) {
-		e.points[offset] = allSinglePoints(e.sctx.TypeCtx, e.points[offset])
-		if e.points[offset] == nil {
-			e.accesses[offset] = nil
-			e.columnValues[offset] = nil
-			return false, false
-		}
-		if len(e.points[offset]) == 0 {
-			return true, false
-		}
-		e.accesses[offset] = points2EqOrInCond(e.sctx.ExprCtx, e.points[offset], e.cols[offset])
-		if e.accesses[offset] == nil {
-			e.columnValues[offset] = nil
-			return false, false
-		}
-		// Keep merged IS NULL access like the legacy path. It is a valid point access even
-		// though it should not populate columnValues for later prefix propagation.
-		if f, ok := e.accesses[offset].(*expression.ScalarFunction); ok && f.FuncName.L == ast.IsNull {
-			e.columnValues[offset] = nil
-			return false, true
-		}
-		return false, finalizeGenericAccessColumnValue(offset)
-	}
-
-	// In generic-plan mode, the template must not depend on the current parameter values.
-	// The safe rule here is:
-	// 1) Stable predicates can keep the original merge/intersection behavior because their values never change.
-	// 2) Mutable predicates must not be merged into a new predicate shape; at most one original mutable Eq/In can be
-	//    kept as access, while the rest are preserved as filters.
-	// 3) Mutable range predicates stay in newConditions unless the column already has a chosen access, in which case
-	//    they are demoted to filters. This lets later range building still use them without changing the access template.
-	demoteToFilter := make([]bool, len(infos))
-	isMutableAccess := make([]bool, len(e.cols))
-	accessOriginIdx := make([]int, len(e.cols))
-	accessIsMerged := make([]bool, len(e.cols))
-	for i := range accessOriginIdx {
-		accessOriginIdx[i] = -1
-	}
-
-	for i, info := range infos {
-		offset := info.offset
-		if offset == -1 {
-			continue
-		}
-
-		if info.mutable {
-			if !info.isEqOrIn {
-				continue
-			}
-			if e.accesses[offset] == nil {
-				e.accesses[offset] = info.cond
-				isMutableAccess[offset] = true
-				accessOriginIdx[offset] = i
-				continue
-			}
-			demoteToFilter[i] = true
-			continue
-		}
-
-		if e.accesses[offset] == nil {
-			e.accesses[offset] = info.cond
-			accessOriginIdx[offset] = i
-			continue
-		}
-		if isMutableAccess[offset] {
-			// In generic-plan mode, accesses[offset] is reserved for a standalone
-			// Eq/In access candidate. Do not demote the original mutable access
-			// unless the immutable replacement can survive finalization by itself.
-			if !canSurviveAsStandaloneEqOrInAccess(info.cond) {
-				continue
-			}
-			if accessOriginIdx[offset] >= 0 {
-				demoteToFilter[accessOriginIdx[offset]] = true
-			}
-			e.accesses[offset] = info.cond
-			isMutableAccess[offset] = false
-			accessOriginIdx[offset] = i
-			continue
-		}
-
-		if intersectStableAccessConditions(offset, info.cond) {
-			return nil, true
-		}
-		accessOriginIdx[offset] = -1
-	}
-
-	for i, ma := range e.mergedAccesses {
-		if ma == nil {
-			if e.accesses[i] == nil {
-				continue
-			}
-			if !finalizeGenericAccessColumnValue(i) {
-				accessOriginIdx[i] = -1
-			}
-			continue
-		}
-		emptyRange, kept := finalizeGenericMergedPointAccess(i)
-		if emptyRange {
-			return nil, true
-		}
-		if !kept {
-			accessOriginIdx[i] = -1
-			continue
-		}
-		accessIsMerged[i] = true
-	}
-
-	for _, acc := range e.accesses {
-		if acc != nil {
-			e.newConditions = append(e.newConditions, acc)
-		}
-	}
-	for i, info := range infos {
-		offset := info.offset
-		if offset == -1 {
-			e.newConditions = append(e.newConditions, info.cond)
-			continue
-		}
-		if demoteToFilter[i] {
-			filters = append(filters, info.cond)
-			continue
-		}
-		if info.mutable && !info.isEqOrIn && e.accesses[offset] != nil {
-			filters = append(filters, info.cond)
-			continue
-		}
-		if accessIsMerged[offset] && !info.mutable {
-			continue
-		}
-		if e.accesses[offset] != nil && accessOriginIdx[offset] == i {
-			continue
-		}
-		e.newConditions = append(e.newConditions, info.cond)
-	}
-	return filters, false
-}
-
-func (e *eqOrInConditionExtractor) finalize(initialFilters []expression.Expression) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo) {
-	accesses = e.accesses
-	filters = initialFilters
 	for i, cond := range accesses {
 		if cond == nil {
 			accesses = accesses[:i]
@@ -1106,47 +831,13 @@ func (e *eqOrInConditionExtractor) finalize(initialFilters []expression.Expressi
 		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
 		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
 		// flen of user variable, we cannot cache this plan.
-		isFullLength := e.lengths[i] == types.UnspecifiedLength || e.lengths[i] == e.cols[i].GetType(e.sctx.ExprCtx.GetEvalCtx()).GetFlen()
+		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType(sctx.ExprCtx.GetEvalCtx()).GetFlen()
 		if !isFullLength {
 			filters = append(filters, cond)
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
-	newConditions = removeConditions(e.sctx.ExprCtx.GetEvalCtx(), e.newConditions, accesses)
-	columnValues = e.columnValues
-	return accesses, filters, newConditions, columnValues
-}
-
-// ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
-// accesses: The condition will be used to build range.
-// filters: conditions that should be kept as filters (e.g. prefix index re-check). In generic plan-cache mode, some
-// parameter-sensitive predicates may also be demoted here to keep the cached plan template stable.
-// newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
-//
-//	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
-//
-// columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
-// bool: indicate whether there's nil range when merging eq and in conditions.
-func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo, _ bool) {
-	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...)
-	genericTemplateMode := expression.PlanCacheGenericEnabled(sctx.ExprCtx) && maybeOverOptimized4PlanCache
-	infos := collectEqOrInConditionInfos(sctx, conditions, cols, genericTemplateMode)
-	extractor := newEqOrInConditionExtractor(sctx, len(conditions), cols, lengths)
-	defer extractor.close()
-
-	if genericTemplateMode {
-		filters, nilRange := extractor.extractGenericTemplateMode(infos)
-		if nilRange {
-			return nil, nil, nil, nil, true
-		}
-		accesses, filters, newConditions, columnValues = extractor.finalize(filters)
-		return accesses, filters, newConditions, columnValues, false
-	}
-	if extractor.extractConcreteMode(infos, maybeOverOptimized4PlanCache) {
-		return nil, nil, nil, nil, true
-	}
-	accesses, filters, newConditions, columnValues = extractor.finalize(nil)
+	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
 	return accesses, filters, newConditions, columnValues, false
 }
 
@@ -1713,7 +1404,7 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 		columnValues[i] = extractValueInfo(cond)
 	}
 
-	if !addGcCond || !NeedAddGcColumn4ShardIndex(sctx, cols, accesses, columnValues) {
+	if !addGcCond || !NeedAddGcColumn4ShardIndex(cols, accesses, columnValues) {
 		return conditions, nil
 	}
 
@@ -1748,7 +1439,7 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 //	is empty.
 //
 // @retval -  return true if it needs to addr tidb_shard() prefix, ohterwise return false
-func NeedAddGcColumn4ShardIndex(sctx *rangerctx.RangerContext, cols []*expression.Column, accessCond []expression.Expression, columnValues []*valueInfo) bool {
+func NeedAddGcColumn4ShardIndex(cols []*expression.Column, accessCond []expression.Expression, columnValues []*valueInfo) bool {
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {
@@ -1767,7 +1458,7 @@ func NeedAddGcColumn4ShardIndex(sctx *rangerctx.RangerContext, cols []*expressio
 			case ast.EQ:
 				return NeedAddColumn4EqCond(cols, accessCond, columnValues)
 			case ast.In:
-				return NeedAddColumn4InCond(sctx, cols, accessCond, f)
+				return NeedAddColumn4InCond(cols, accessCond, f)
 			}
 		}
 	}
@@ -1831,8 +1522,8 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
 //	is `b` that's not the column in `tidb_shard(a)`.
 //
 // @param  sf	"IN" function, e.g. `a IN (1, 2, 3)`
-func NeedAddColumn4InCond(sctx *rangerctx.RangerContext, cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
-	if sctx == nil || len(cols) == 0 || len(accessCond) == 0 || sf == nil {
+func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
+	if len(cols) == 0 || len(accessCond) == 0 || sf == nil {
 		return false
 	}
 
@@ -1848,11 +1539,7 @@ func NeedAddColumn4InCond(sctx *rangerctx.RangerContext, cols []*expression.Colu
 	}
 
 	for _, arg := range sf.GetArgs()[1:] {
-		con, ok := arg.(*expression.Constant)
-		if !ok {
-			return false
-		}
-		if expression.PlanCacheGenericEnabled(sctx.ExprCtx) && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, con) {
+		if _, ok := arg.(*expression.Constant); !ok {
 			return false
 		}
 	}
