@@ -4656,7 +4656,6 @@ func (b *PlanBuilder) buildTableDual() *logicalop.LogicalTableDual {
 }
 
 // collectTableIDsFromLogicalPlan collects all table IDs from DataSource nodes in the plan tree.
-// Used to identify DML target tables so same-table-FROM correlation only applies to them.
 func collectTableIDsFromLogicalPlan(p base.LogicalPlan) map[int64]struct{} {
 	ids := make(map[int64]struct{})
 	var walk func(base.LogicalPlan)
@@ -4672,10 +4671,99 @@ func collectTableIDsFromLogicalPlan(p base.LogicalPlan) map[int64]struct{} {
 	return ids
 }
 
+// collectDeleteTargetTableIDs returns the set of table IDs that are the actual DELETE targets.
+// For multi-table DELETE (e.g. DELETE a, b FROM a, b, c), only tables in ds.Tables are targets.
+// For single-table DELETE (DELETE FROM t), the single table in the FROM is the target.
+func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
+	if ds.Tables == nil {
+		return collectTableIDsFromLogicalPlan(p), nil
+	}
+	updatableList := make(map[string]bool)
+	tbInfoList := make(map[string]*ast.TableName)
+	collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+	ids := make(map[int64]struct{})
+	for _, tn := range ds.Tables.Tables {
+		var foundMatch bool
+		name := tn.Name.L
+		if tn.Schema.L == "" {
+			_, foundMatch = updatableList[name]
+		}
+		if !foundMatch {
+			if tn.Schema.L == "" {
+				name = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
+			} else {
+				name = tn.Schema.L + "." + tn.Name.L
+			}
+			_, foundMatch = updatableList[name]
+		}
+		if !foundMatch {
+			return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
+		}
+		tb := tbInfoList[name]
+		if tb == nil {
+			continue
+		}
+		tnW := b.resolveCtx.GetTableName(tb)
+		if tnW != nil && tnW.TableInfo != nil {
+			ids[tnW.TableInfo.ID] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
+// collectUpdateTargetTableIDs returns the set of table IDs that are the actual UPDATE targets.
+// Only tables that appear in the SET clause (as qualified column targets) are considered.
+// If no assignment uses a qualified table name, all tables in the plan are treated as targets.
+func (b *PlanBuilder) collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
+	type tableKey struct {
+		schema, table string
+	}
+	modifiedTables := make(map[tableKey]struct{})
+	for _, assign := range update.List {
+		if assign.Column == nil || assign.Column.Table.L == "" {
+			// Unqualified column: we cannot restrict to a single table; use all tables in FROM.
+			return collectTableIDsFromLogicalPlan(p), nil
+		}
+		modifiedTables[tableKey{assign.Column.Schema.L, assign.Column.Table.L}] = struct{}{}
+	}
+	if len(modifiedTables) == 0 {
+		return collectTableIDsFromLogicalPlan(p), nil
+	}
+	updatableList := make(map[string]bool)
+	tbInfoList := make(map[string]*ast.TableName)
+	collectTableName(update.TableRefs.TableRefs, &updatableList, &tbInfoList)
+	ids := make(map[int64]struct{})
+	for k := range modifiedTables {
+		var name string
+		if k.schema == "" {
+			name = k.table
+		} else {
+			name = k.schema + "." + k.table
+		}
+		_, inList := updatableList[name]
+		if !inList && k.schema == "" {
+			name = b.ctx.GetSessionVars().CurrentDB + "." + k.table
+			_, inList = updatableList[name]
+		}
+		if !inList {
+			return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(k.table, "UPDATE")
+		}
+		tb := tbInfoList[name]
+		if tb == nil {
+			continue
+		}
+		tnW := b.resolveCtx.GetTableName(tb)
+		if tnW != nil && tnW.TableInfo != nil {
+			ids[tnW.TableInfo.ID] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
 // findOuterScopeTable returns the first (innermost) outer scope level that contains
-// a table matching (dbName, tblName). Used when resolving a table reference in a
-// subquery so that "FROM t" can bind to the outer row of the same table (e.g. in
-// DELETE FROM t WHERE EXISTS (SELECT ... FROM t ...)). Returns (nil, nil) if no match.
+// a table matching (dbName, tblName). Only called from buildDataSource when we are
+// in a DML (DELETE/UPDATE) and the resolved table ID is in dmlTargetTableIDs.
+// Returns (nil, nil) if no match.
 func findOuterScopeTable(b *PlanBuilder, dbName, tblName ast.CIStr) (*expression.Schema, []*types.FieldName) {
 	if len(b.outerSchemas) == 0 {
 		return nil, nil
@@ -4737,10 +4825,14 @@ func (b *PlanBuilder) buildCorrelatedTableFromOuterScope(
 		}
 		outCol := col.Clone().(*expression.Column)
 		outCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		outCol.CleanHashCode()
 		outSchema.Append(outCol)
 		nm := *name
+		// Use the inner reference name for output so qualified resolution (e.g. t.col) in the subquery works.
 		if asName != nil && asName.L != "" {
 			nm.TblName = *asName
+		} else {
+			nm.TblName = tblName
 		}
 		outNames = append(outNames, &nm)
 	}
@@ -6182,7 +6274,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
-	b.dmlTargetTableIDs = collectTableIDsFromLogicalPlan(p)
+	b.dmlTargetTableIDs, err = b.collectUpdateTargetTableIDs(update, p)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { b.dmlTargetTableIDs = nil }()
 
 	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
@@ -6630,7 +6725,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if err != nil {
 		return nil, err
 	}
-	b.dmlTargetTableIDs = collectTableIDsFromLogicalPlan(p)
+	b.dmlTargetTableIDs, err = b.collectDeleteTargetTableIDs(ds, p)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { b.dmlTargetTableIDs = nil }()
 
 	oldSchema := p.Schema()
