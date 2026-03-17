@@ -5,9 +5,9 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -17,9 +17,9 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and c2 is null",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" NULL,\"0xfff\" NULL], keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -29,9 +29,9 @@
       {
         "SQL": "select count(1) from t1 where c1 >= '0xfff' and c2 is not null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#7)->Column#6",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─Selection 3330.00 cop[tikv]  not(isnull(test.t1.c2))",
           "      └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
         ],
@@ -42,9 +42,9 @@
       {
         "SQL": "select count(1) from t1 where c1 >= '0xfff' and c2 is null",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─Selection 3.33 cop[tikv]  isnull(test.t1.c2)",
           "      └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
         ],
@@ -55,7 +55,7 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#6",
           "└─IndexLookUp 8.00 root  ",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 8.00 cop[tikv]  not(isnull(plus(cast(test.t1.c2, double BINARY), 1)))",
@@ -68,7 +68,7 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#6",
           "└─IndexLookUp 8.00 root  ",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 8.00 cop[tikv]  isnull(plus(cast(test.t1.c2, double BINARY), 1))",
@@ -135,9 +135,9 @@
       {
         "SQL": "select count(1) from t2 use index(idx) where b is not null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
           "    └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx(b) keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -147,9 +147,9 @@
       {
         "SQL": "select count(1) from t2 use index(idx) where b is null",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(b) range:[NULL,NULL], keep order:false, stats:pseudo"
         ],
         "Result": [

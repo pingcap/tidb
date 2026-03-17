@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -61,10 +62,11 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults 
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
-	var statsVer = statistics.Version1
+	statsVer := statistics.Version2
 	if idxExec.analyzePB.IdxReq.Version != nil {
 		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
 	}
+	intest.Assert(statsVer == statistics.Version2, "AnalyzeIndexExec should use stats version 2")
 	idxResult := &statistics.AnalyzeResult{
 		Hist:    []*statistics.Histogram{hist},
 		TopNs:   []*statistics.TopN{topN},
@@ -193,10 +195,11 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		topn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
 	}
 	fms := statistics.NewFMSketch(statistics.MaxSketchSize)
-	statsVer := statistics.Version1
+	statsVer := statistics.Version2
 	if e.analyzePB.IdxReq.Version != nil {
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
+	intest.Assert(statsVer == statistics.Version2, "AnalyzeIndexExec should use stats version 2")
 	for {
 		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
 			dom := domain.GetDomain(e.ctx)
@@ -277,18 +280,22 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResul
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
+	statsVer := statistics.Version2
+	if idxExec.analyzePB.IdxReq.Version != nil {
+		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
+	intest.Assert(statsVer == statistics.Version2, "AnalyzeIndexExec should use stats version 2")
 	result := &statistics.AnalyzeResult{
 		Fms: []*statistics.FMSketch{fms},
 		// We use histogram to get the Index's ID.
-		Hist:    []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, statistics.Version1, types.NewFieldType(mysql.TypeBlob), 0, 0)},
+		Hist:    []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, uint64(statsVer), types.NewFieldType(mysql.TypeBlob), 0, 0)},
 		IsIndex: 1,
 	}
 	r := &statistics.AnalyzeResults{
-		TableID: idxExec.tableID,
-		Ars:     []*statistics.AnalyzeResult{result},
-		Job:     idxExec.job,
-		// TODO: avoid reusing Version1.
-		StatsVer: statistics.Version1,
+		TableID:  idxExec.tableID,
+		Ars:      []*statistics.AnalyzeResult{result},
+		Job:      idxExec.job,
+		StatsVer: statsVer,
 	}
 	if nullHist != nil && nullHist.Len() > 0 {
 		r.Count = nullHist.Buckets[nullHist.Len()-1].Count

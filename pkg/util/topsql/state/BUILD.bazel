@@ -1,9 +1,24 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "state",
     srcs = ["state.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/topsql/state",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_atomic//:atomic"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "state_test",
+    timeout = "short",
+    srcs = ["state_test.go"],
+    embed = [":state"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
 )

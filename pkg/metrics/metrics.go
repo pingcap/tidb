@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -97,6 +98,7 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	dxfmetric.InitDistTaskMetrics()
+	ingestmetric.InitIngestMetrics()
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
@@ -206,6 +208,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
 	prometheus.MustRegister(StatementPessimisticRetryCount)
 	prometheus.MustRegister(StatementLockKeysCount)
+	prometheus.MustRegister(StatementSharedLockKeysCount)
 	prometheus.MustRegister(ValidateReadTSFromPDCount)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(WatchOwnerCounter)
@@ -286,8 +289,18 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
 	dxfmetric.Register(prometheus.DefaultRegisterer)
+	ingestmetric.Register(prometheus.DefaultRegisterer)
 
 	prometheus.MustRegister(RunawayCheckerCounter)
+	prometheus.MustRegister(RunawayFlusherCounter)
+	prometheus.MustRegister(RunawayFlusherAddCounter)
+	prometheus.MustRegister(RunawayFlusherBatchSizeHistogram)
+	prometheus.MustRegister(RunawayFlusherDurationHistogram)
+	prometheus.MustRegister(RunawayFlusherIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerDurationHistogram)
+	prometheus.MustRegister(RunawaySyncerIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerCheckpointGauge)
+	prometheus.MustRegister(RunawaySyncerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
 	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)

@@ -97,10 +97,10 @@
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
-          "    └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(Column#7, test.t2.k1)], runtime filter:0[IN] <- Column#7",
+          "    └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(Column#9, test.t2.k1)], runtime filter:0[IN] <- Column#9",
           "      ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Projection 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
+          "      │   └─Projection 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#9",
           "      │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
           "      └─TableFullScan(Probe) 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
@@ -115,7 +115,7 @@
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
           "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
+          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#9",
           "      └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
           "        └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false, runtime filter:0[IN] -> test.t1.k1"
         ]
@@ -125,12 +125,12 @@
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, Column#7)]",
+          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, Column#9)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
           "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
+          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#9",
           "      └─Selection 1.00 mpp[tiflash]  not(isnull(plus(test.t1.k1, 1)))",
           "        └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false"
         ]
@@ -141,11 +141,11 @@
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
-          "    └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, Column#7)]",
+          "    └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, Column#9)]",
           "      ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "      └─Projection(Probe) 1.00 mpp[tiflash]  test.t2.k1, test.t2.k2, test.t2.k3, plus(test.t2.k1, 1)->Column#7",
+          "      └─Projection(Probe) 1.00 mpp[tiflash]  test.t2.k1, test.t2.k2, test.t2.k3, plus(test.t2.k1, 1)->Column#9",
           "        └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },

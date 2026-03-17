@@ -17,13 +17,9 @@ package common_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
@@ -42,46 +38,6 @@ import (
 func TestDirNotExist(t *testing.T) {
 	require.True(t, common.IsDirExists("."))
 	require.False(t, common.IsDirExists("not-exists"))
-}
-
-func TestGetJSON(t *testing.T) {
-	type TestPayload struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	request := TestPayload{
-		Username: "lightning",
-		Password: "lightning-ctl",
-	}
-
-	ctx := context.Background()
-	// Mock success response
-	handle := func(res http.ResponseWriter, _ *http.Request) {
-		res.WriteHeader(http.StatusOK)
-		err := json.NewEncoder(res).Encode(request)
-		require.NoError(t, err)
-	}
-	testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		handle(res, req)
-	}))
-	defer testServer.Close()
-
-	client := &http.Client{Timeout: time.Second}
-
-	response := TestPayload{}
-	err := common.GetJSON(ctx, client, "http://localhost:1", &response)
-	require.Error(t, err)
-	err = common.GetJSON(ctx, client, testServer.URL, &response)
-	require.NoError(t, err)
-	require.Equal(t, request, response)
-
-	// Mock `StatusNoContent` response
-	handle = func(res http.ResponseWriter, _ *http.Request) {
-		res.WriteHeader(http.StatusNoContent)
-	}
-	err = common.GetJSON(ctx, client, testServer.URL, &response)
-	require.Error(t, err)
-	require.Regexp(t, ".*http status code != 200.*", err.Error())
 }
 
 func TestConnect(t *testing.T) {

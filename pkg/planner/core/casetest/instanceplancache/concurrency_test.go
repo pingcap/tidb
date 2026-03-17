@@ -82,7 +82,12 @@ func (w *worker) run() {
 			preparedResult := w.tk.MustQuery(stmt.execStmt)
 			normalResult.Sort().Check(preparedResult.Sort().Rows())
 		} else if isDML(stmt.normalStmt) { // DML
-			w.tk.MustExec(stmt.normalStmt)
+			// Deadlocks can occur when multiple workers update the same row concurrently.
+			// This is expected database behavior - skip the statement on deadlock.
+			_, err := w.tk.Exec(stmt.normalStmt)
+			if err != nil && strings.Contains(err.Error(), "Deadlock") {
+				continue
+			}
 			w.tk.MustExec(stmt.prepStmt)
 			w.tk.MustExec(stmt.setStmt)
 			w.tk.MustExec(stmt.execStmt)

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -59,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1151,6 +1153,17 @@ func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 	return false, errors.New(errMsg)
 }
 
+func isRestoreSysTablesPhysically(cfg *SnapshotRestoreConfig) (loadSysTablePhysical, loadStatsPhysical bool) {
+	if kerneltype.IsNextGen() {
+		// physical restore system tables requires rename table, while in
+		// next-gen kernel, wo forbid rename table on system tables.
+		return false, false
+	}
+	loadSysTablePhysical = cfg.FastLoadSysTables && cfg.WithSysTable
+	loadStatsPhysical = cfg.FastLoadSysTables && cfg.LoadStats
+	return
+}
+
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
@@ -1164,8 +1177,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	loadSysTablePhysical := cfg.FastLoadSysTables && cfg.WithSysTable
-	loadStatsPhysical := cfg.FastLoadSysTables && cfg.LoadStats
+	loadSysTablePhysical, loadStatsPhysical := isRestoreSysTablesPhysically(cfg)
 
 	// check if this is part of the PiTR operation
 	isPiTR, err := cfg.isPiTR()
@@ -1428,7 +1440,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("checking ongoing conflicting restore task using restore registry",
 			zap.Int("tables_count", len(tables)),
 			zap.Uint64("current_restore_id", cfg.RestoreID))
-		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, tables)
+		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, dbs, tables)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1553,10 +1565,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		TTL:      gc.DefaultBRGCSafePointTTL,
+		ID:       gc.MakeSafePointID(),
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
@@ -1565,10 +1577,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
-		// set the ttl to 0 to remove the gc-safe-point
-		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
-			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+		// remove the gc-safe-point
+		if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
+			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
@@ -1577,7 +1588,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
+	err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
 	if err != nil {
 		return errors.Trace(err)
 	}

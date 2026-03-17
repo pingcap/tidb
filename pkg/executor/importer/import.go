@@ -110,6 +110,7 @@ const (
 	maxWriteSpeedOption       = "max_write_speed"
 	checksumTableOption       = "checksum_table"
 	recordErrorsOption        = "record_errors"
+	onDupKeyOption            = "on_duplicate_key"
 	detachedOption            = "detached"
 	// if 'import mode' enabled, TiKV will:
 	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
@@ -148,6 +149,7 @@ var (
 		maxWriteSpeedOption:         true,
 		checksumTableOption:         true,
 		recordErrorsOption:          true,
+		onDupKeyOption:              true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
@@ -204,6 +206,17 @@ var (
 	defaultCharacterSet = "utf8mb4"
 	// default field null def
 	defaultFieldNullDef = []string{`\N`}
+)
+
+// OnDupKeyMode controls the behavior when IMPORT INTO finds conflicted rows.
+type OnDupKeyMode string
+
+const (
+	// OnDupKeyModeCapture keeps current behavior, i.e. remove conflicted
+	// rows and capture them for later inspection.
+	OnDupKeyModeCapture OnDupKeyMode = "capture"
+	// OnDupKeyModeError means fail on first conflict.
+	OnDupKeyModeError OnDupKeyMode = "error"
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -288,6 +301,7 @@ type Plan struct {
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
+	OnDupKey              OnDupKeyMode
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
@@ -318,6 +332,18 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+}
+
+// GetOnDupKeyMode returns the conflict handling mode.
+// For task metadata generated before this option was introduced, the value is
+// empty.
+// Note: currently it's not possible to have other unknown values, so we don't
+// handle that case here.
+func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
+	if p.OnDupKey == "" {
+		return OnDupKeyModeError
+	}
+	return p.OnDupKey
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -389,6 +415,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storeapi.Storage
 	dataFiles []*mydump.SourceFileMeta
+	// exported for testing.
+	TotalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
 	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
@@ -661,6 +689,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
+	p.OnDupKey = OnDupKeyModeError
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = getDefMaxEngineSize()
@@ -853,6 +882,19 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+	if opt, ok := specifiedOptions[onDupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		mode := OnDupKeyMode(strings.ToLower(v))
+		switch mode {
+		case OnDupKeyModeCapture, OnDupKeyModeError:
+			p.OnDupKey = mode
+		default:
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
 	if opt, ok := specifiedOptions[groupKeyOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
@@ -909,6 +951,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[manualRecoveryOption]; ok {
 		p.ManualRecovery = true
+	}
+
+	if _, ok := specifiedOptions[onDupKeyOption]; ok && p.IsLocalSort() {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(onDupKeyOption, "local sort")
 	}
 
 	if kerneltype.IsClassic() {
@@ -1377,7 +1423,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
 		sourceType mydump.SourceType
 		// sizeExpansionRatio is the estimated size expansion for parquet format.
 		// For non-parquet format, it's always 1.0.
@@ -1416,7 +1461,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize = size
 	} else {
 		var commonPrefix string
 		if !objstore.IsLocal(u) {
@@ -1480,7 +1524,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, f := range processedFiles {
 			if f != nil {
 				dataFiles = append(dataFiles, f)
-				totalSize += f.FileSize
 			}
 		}
 	}
@@ -1489,9 +1532,20 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err2
 		}
 	}
+	var totalSize, totalRealSize int64
+	for _, dfile := range dataFiles {
+		totalSize += dfile.FileSize
+		realSize := dfile.RealSize
+		failpoint.Inject("amplifyRealSize", func(val failpoint.Value) {
+			factor := int64(val.(int))
+			realSize *= factor
+		})
+		totalRealSize += realSize
+	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+	e.TotalRealSize = totalRealSize
 
 	return nil
 }
@@ -1508,8 +1562,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	if err != nil {
 		return err
 	}
-	totalSize := e.TotalFileSize
-	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	totalSize := e.TotalRealSize
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
@@ -1527,7 +1580,8 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
 		zap.Int("targetNodeCPU", targetNodeCPUCnt),
-		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.String("totalFileSize", units.BytesSize(float64(e.TotalFileSize))),
+		zap.String("totalRealSize", units.BytesSize(float64(totalSize))),
 		zap.Int("fileCount", len(e.dataFiles)),
 		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
 		zap.Float64("indexSizeRatio", indexSizeRatio),

@@ -16,10 +16,15 @@ package storeapi
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"path"
+	"strings"
+	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
@@ -65,11 +70,12 @@ type WalkOption struct {
 	// ListCount is the number of entries per page.
 	//
 	// In cloud storages such as S3 and GCS, the files listed and sent in pages.
-	// Typically a page contains 1000 files, and if a folder has 3000 descendant
+	// Typically, a page contains 1000 files, and if a folder has 3000 descendant
 	// files, one would need 3 requests to retrieve all of them. This parameter
-	// controls this size. Note that both S3 and GCS limits the maximum to 1000.
+	// controls this size. Note that both S3, GCS and OSS limits the maximum to
+	// 1000.
 	//
-	// Typically you want to leave this field unassigned (zero) to use the
+	// Typically, you want to leave this field unassigned (zero) to use the
 	// default value (1000) to minimize the number of requests, unless you want
 	// to reduce the possibility of timeout on an extremely slow connection, or
 	// perform testing.
@@ -82,6 +88,9 @@ type WalkOption struct {
 	//
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
+	// StartAfter is the key to start after. If not empty, the walk will start
+	// after the key. Currently only S3-like storage supports this option.
+	StartAfter string
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
@@ -107,9 +116,9 @@ type WriterOption struct {
 
 // ReaderOption reader option.
 type ReaderOption struct {
-	// StartOffset is inclusive. And it's incompatible with Seek.
+	// StartOffset is inclusive.
 	StartOffset *int64
-	// EndOffset is exclusive. And it's incompatible with Seek.
+	// EndOffset is exclusive.
 	EndOffset *int64
 	// PrefetchSize will switch to NewPrefetchReader if value is positive.
 	PrefetchSize int
@@ -159,6 +168,13 @@ type Storage interface {
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+
+	// PresignFile creates a presigned URL for sharing a file without writing any code.
+	// For S3, it returns a presigned URL. For local storage, it returns the file name only.
+	// Unsupported backends (Azure, HDFS, etc.) return an error.
+	// See https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+	PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error)
+
 	// Close release the resources of the storage.
 	Close()
 }
@@ -186,7 +202,7 @@ type Options struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer retry.Standard
+	S3Retryer aws.Retryer
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
@@ -196,4 +212,107 @@ type Options struct {
 	// we don't consider the traffic consumed by network protocol, and traffic
 	// caused by retry
 	AccessRecording *recording.AccessStats
+}
+
+// Prefix is like a folder if not empty, we still call it a prefix to match S3
+// terminology.
+// if not empty, it cannot start with '/' and must end with a '/', such as
+// 'a/b/'. the folder name must be valid, we don't check it here.
+type Prefix string
+
+// NewPrefix returns a new Prefix instance from the given string.
+func NewPrefix(prefix string) Prefix {
+	p := strings.Trim(prefix, "/")
+	if p != "" {
+		p += "/"
+	}
+	return Prefix(p)
+}
+
+func (p Prefix) join(other Prefix) Prefix {
+	// due to the definition of Prefix, we can add them directly.
+	return p + other
+}
+
+// JoinStr returns a new Prefix by joining the given string to the current Prefix.
+func (p Prefix) JoinStr(str string) Prefix {
+	strPrefix := NewPrefix(str)
+	return p.join(strPrefix)
+}
+
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (p Prefix) ObjectKey(name string) string {
+	// if p is not empty, it already ends with '/'.
+	// the name better not start with '/', else there will be double '/' in the
+	// key.
+	// this is existing behavior, we keep it.
+	return string(p) + name
+}
+
+// ToPath convert the object storage prefix into a URL path.
+// we expect `p` relative to the bucket, not to another prefix, so we add a
+// leading '/' directly. if p is empty, it will return '/', which is also a
+// valid path.
+func (p Prefix) ToPath() string {
+	return "/" + string(p)
+}
+
+// String implements fmt.Stringer interface.
+func (p Prefix) String() string {
+	return string(p)
+}
+
+// BucketPrefix represents a prefix in a bucket.
+type BucketPrefix struct {
+	Bucket string
+	Prefix Prefix
+}
+
+// NewBucketPrefix returns a new BucketPrefix instance.
+func NewBucketPrefix(bucket, prefix string) BucketPrefix {
+	return BucketPrefix{
+		Bucket: bucket,
+		Prefix: NewPrefix(prefix),
+	}
+}
+
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (bp *BucketPrefix) ObjectKey(name string) string {
+	return bp.Prefix.ObjectKey(name)
+}
+
+// PrefixStr returns the Prefix as a string.
+func (bp *BucketPrefix) PrefixStr() string {
+	return bp.Prefix.String()
+}
+
+// GetHTTPRange returns the HTTP Range header value for the given start and end
+// offsets.
+// If endOffset is not 0, startOffset must <= endOffset; we don't check the
+// validity here.
+// If startOffset == 0 and endOffset == 0, `full` is true and `rangeVal` is empty.
+// Otherwise, a partial object is requested, `full` is false and `rangeVal`
+// contains the Range header value.
+func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal string) {
+	// If we just open part of the object, we set `Range` in the request.
+	// If we meant to open the whole object, not just a part of it,
+	// we do not pass the range in the request,
+	// so that even if the object is empty, we can still get the response without errors.
+	// Then this behavior is similar to opening an empty file in local file system.
+	switch {
+	case endOffset > startOffset:
+		// both end of http Range header are inclusive
+		rangeVal = fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1)
+	case startOffset == 0:
+		// opening the whole object, no need to fill the `Range` field in the request
+		full = true
+	default:
+		rangeVal = fmt.Sprintf("bytes=%d-", startOffset)
+	}
+	return
+}
+
+// GenPermCheckObjectKey generates a unique object key for permission checking.
+func GenPermCheckObjectKey() string {
+	return path.Join("perm-check", uuid.New().String())
 }

@@ -1,0 +1,39 @@
+# Test cases for partial index.
+create table t(
+  a int, b int, c int,
+  index idx1(a) where a is not null,
+  index idx2(b) where b > 2,
+  unique index idx3(c) where b > 10
+);
+create table tt(
+  a int, b int, c int,
+  index idx1(a),
+  index idx2(b),
+  unique index idx3(c)
+);
+
+# basic tests.
+explain format='brief' select * from t where a = 1;
+explain format='brief' select * from t use index(idx2) where b > 1;
+explain format='brief' select * from t use index(idx2) where b > 2;
+explain format='brief' select * from t use index(idx2) where b > 5;
+explain format='brief' select * from t use index(idx2) where b > 4 and b < 100;
+explain format='brief' select * from t use index(idx2) where b < 100;
+explain format='brief' select * from t where c = 10 and b > 30;
+explain format='brief' select * from t where c = 10 and b > 40;
+explain format='brief' select * from t where c > 20;
+
+# test the TryFastPath short-circuit.
+explain format='brief' select * from t where c = 1;
+
+# test index join(reject)
+explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.a=t2.b;
+explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.a=t2.b;
+explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.b=t2.a;
+explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.b=t2.a;
+
+# test index merge(reject)
+explain format='brief' select /*+ use_index_merge(t, idx1, idx2) */ * from t where (a > 10) or (b > 10);
+explain format='brief' select /*+ use_index_merge(tt, idx1, idx2) */ * from tt where (a > 10) or (b > 10);
+
+drop table t, tt;
