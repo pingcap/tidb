@@ -148,7 +148,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	if !isSupportedCloudStorageBackend(b) {
+	if !isSupportedCloudStorageBackend(b.GetS3() != nil, b.GetGcs() != nil, b.GetAzureBlobStorage() != nil) {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 
