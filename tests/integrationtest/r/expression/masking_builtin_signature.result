@@ -10,23 +10,23 @@ INSERT INTO issue5_test_masking VALUES
 (1, 'sensitive_data_12345', '1990-05-15', '1990-05-15 14:30:00'),
 (2, 'another_secret_98765', '1985-03-20', '1985-03-20 09:15:00');
 ## enable_query_log
-## Verify signature: col (string), pad (single char), start (int), length (int)
-SELECT id, MASK_PARTIAL(str_col, '*', 9, 11) AS masked
+## Verify signature: col (string), preserve_left (int), preserve_right (int), mask_char (single char)
+SELECT id, MASK_PARTIAL(str_col, 9, 5, '*') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
 id	masked
-1	sensitive***********
-SELECT id, MASK_PARTIAL(str_col, 'X', 0, 8) AS masked
+1	sensitive******12345
+SELECT id, MASK_PARTIAL(str_col, 0, 12, 'X') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
 id	masked
 1	XXXXXXXXe_data_12345
-SELECT id, MASK_PARTIAL(str_col, '#', 5, 20) AS masked
+SELECT id, MASK_PARTIAL(str_col, 5, 0, '#') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
 id	masked
 1	sensi###############
-SELECT MASK_PARTIAL('中文测试数据', '*', 2, 2) AS masked;
+SELECT MASK_PARTIAL('中文测试数据', 2, 2, '*') AS masked;
 masked
 中文**数据
 ## Verify signature: col (string/datetime), mask_char (single char)
