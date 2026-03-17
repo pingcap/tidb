@@ -272,6 +272,17 @@ func (u *userRUCollecting) getReportRecordsWithLimit(topNSQLsPerUser int) []*ruR
 		return nil
 	}
 
+	// Fast path: no need to apply TopN when we are strictly under the limit
+	// and have no pre-aggregated "others SQL". In this case all records are
+	// already part of the final TopN set and we can avoid quickselect.
+	if len(u.records) <= topNSQLsPerUser && u.othersRec == nil {
+		top := make([]*ruRecord, 0, len(u.records))
+		for _, rec := range u.records {
+			top = append(top, rec)
+		}
+		return top
+	}
+
 	// Extract all records.
 	allRecords := make(ruRecords, 0, len(u.records))
 	for _, rec := range u.records {
@@ -459,10 +470,23 @@ func (c *ruCollecting) toTopRURecords(keyspaceName []byte) []tipb.TopRURecord {
 		return nil
 	}
 
-	var result []tipb.TopRURecord
+	// Pre-compute total record count to allocate result slice once.
+	totalRecords := 0
+	for _, userCollecting := range c.users {
+		totalRecords += len(userCollecting.records)
+		if userCollecting.othersRec != nil {
+			totalRecords++
+		}
+	}
+	if c.othersUser != nil && c.othersUser.othersRec != nil {
+		totalRecords++
+	}
+	result := make([]tipb.TopRURecord, 0, totalRecords)
 	for _, userCollecting := range c.users {
 		for _, rec := range userCollecting.records {
-			sort.Sort(rec.items)
+			if len(rec.items) > 1 {
+				sort.Sort(rec.items)
+			}
 			var sqlDigest []byte
 			var planDigest []byte
 			if len(rec.sqlDigest) > 0 {
@@ -480,7 +504,9 @@ func (c *ruCollecting) toTopRURecords(keyspaceName []byte) []tipb.TopRURecord {
 			})
 		}
 		if userCollecting.othersRec != nil {
-			sort.Sort(userCollecting.othersRec.items)
+			if len(userCollecting.othersRec.items) > 1 {
+				sort.Sort(userCollecting.othersRec.items)
+			}
 			result = append(result, tipb.TopRURecord{
 				KeyspaceName: keyspaceName,
 				User:         userCollecting.user,
@@ -491,7 +517,9 @@ func (c *ruCollecting) toTopRURecords(keyspaceName []byte) []tipb.TopRURecord {
 		}
 	}
 	if c.othersUser != nil && c.othersUser.othersRec != nil {
-		sort.Sort(c.othersUser.othersRec.items)
+		if len(c.othersUser.othersRec.items) > 1 {
+			sort.Sort(c.othersUser.othersRec.items)
+		}
 		result = append(result, tipb.TopRURecord{
 			KeyspaceName: keyspaceName,
 			User:         keyRUOthersUser,
@@ -521,6 +549,22 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 	maxUsers, maxSQLsPerUser = normalizeTopNLimits(maxUsers, maxSQLsPerUser)
 	if len(c.users) == 0 && c.othersUser == nil {
 		return nil
+	}
+
+	// Fast path: everything is already within the final TopN bounds and there is
+	// no pre-aggregated "others user" or "others SQL". In this case compacting
+	// would be a no-op, so we can safely return the original collecting.
+	if len(c.users) <= maxUsers && c.othersUser == nil {
+		underSQLCap := true
+		for _, u := range c.users {
+			if len(u.records) > maxSQLsPerUser || u.othersRec != nil {
+				underSQLCap = false
+				break
+			}
+		}
+		if underSQLCap {
+			return c
+		}
 	}
 
 	// Extract all users.
