@@ -4655,6 +4655,23 @@ func (b *PlanBuilder) buildTableDual() *logicalop.LogicalTableDual {
 	return logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 }
 
+// collectTableIDsFromLogicalPlan collects all table IDs from DataSource nodes in the plan tree.
+// Used to identify DML target tables so same-table-FROM correlation only applies to them.
+func collectTableIDsFromLogicalPlan(p base.LogicalPlan) map[int64]struct{} {
+	ids := make(map[int64]struct{})
+	var walk func(base.LogicalPlan)
+	walk = func(plan base.LogicalPlan) {
+		if ds, ok := plan.(*logicalop.DataSource); ok && ds.TableInfo != nil {
+			ids[ds.TableInfo.ID] = struct{}{}
+		}
+		for _, c := range plan.Children() {
+			walk(c)
+		}
+	}
+	walk(p)
+	return ids
+}
+
 // findOuterScopeTable returns the first (innermost) outer scope level that contains
 // a table matching (dbName, tblName). Used when resolving a table reference in a
 // subquery so that "FROM t" can bind to the outer row of the same table (e.g. in
@@ -5020,13 +5037,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// When inside a DELETE/UPDATE subquery, resolve same-table reference to outer scope so that
 	// e.g. DELETE FROM t3 WHERE EXISTS (SELECT ... FROM t3 ...) sees the current row.
-	// Only do this in DML context; in SELECT we leave same-name FROM to normal resolution
-	// (e.g. SELECT * FROM t WHERE a < (SELECT max(a) FROM t) must scan t, not current row).
-	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerSchemas) > 0 {
-		if outerSchema, outerNames := findOuterScopeTable(b, dbName, tn.Name); outerSchema != nil {
-			p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, dbName, tn.Name, asName)
-			if p != nil {
-				return p, nil
+	// Only do this in DML context and only when the resolved table is the actual DML target (by table ID),
+	// so we do not correlate on alias or non-target tables in multi-table DML.
+	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerSchemas) > 0 && b.dmlTargetTableIDs != nil {
+		tbl, resolveErr := b.is.TableByName(ctx, dbName, tn.Name)
+		if resolveErr == nil && tbl != nil {
+			if _, isTarget := b.dmlTargetTableIDs[tbl.Meta().ID]; isTarget {
+				if outerSchema, outerNames := findOuterScopeTable(b, dbName, tn.Name); outerSchema != nil {
+					p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, dbName, tn.Name, asName)
+					if p != nil {
+						return p, nil
+					}
+				}
 			}
 		}
 	}
@@ -6160,6 +6182,8 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
+	b.dmlTargetTableIDs = collectTableIDsFromLogicalPlan(p)
+	defer func() { b.dmlTargetTableIDs = nil }()
 
 	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
 	tableList := ExtractTableList(nodeW, false)
@@ -6606,6 +6630,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if err != nil {
 		return nil, err
 	}
+	b.dmlTargetTableIDs = collectTableIDsFromLogicalPlan(p)
+	defer func() { b.dmlTargetTableIDs = nil }()
+
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
 

@@ -235,6 +235,10 @@ type PlanBuilder struct {
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
 	inDeleteStmt bool
+	// dmlTargetTableIDs holds the set of table IDs that are the DELETE/UPDATE target tables.
+	// When non-nil, same-table-FROM correlation in buildDataSource is only applied when the
+	// resolved table ID is in this set (avoids correlating on alias or non-target tables).
+	dmlTargetTableIDs map[int64]struct{}
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
