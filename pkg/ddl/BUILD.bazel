@@ -54,6 +54,8 @@ go_library(
         "options.go",
         "owner_mgr.go",
         "partition.go",
+        "pkdb_trigger.go",
+        "pkdb_procedure.go",
         "placement_policy.go",
         "reorg.go",
         "resource_group.go",

@@ -202,6 +202,11 @@ func (*litTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.ExchangeP
 	return nil, false
 }
 
+func (*litTableMutateContext) GetTriggerSupport() (tblctx.TriggerSupport, bool) {
+	// lightning import does not support triggers.
+	return nil, false
+}
+
 // newLitTableMutateContext creates a new `*litTableMutateContext` for lightning import.
 func newLitTableMutateContext(exprCtx *litExprContext, sysVars map[string]string) (*litTableMutateContext, error) {
 	intest.AssertNotNil(exprCtx)

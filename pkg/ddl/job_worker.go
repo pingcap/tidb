@@ -1008,6 +1008,16 @@ func (w *worker) runOneJobStep(
 		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, job)
+	case model.ActionCreateTrigger:
+		ver, err = onCreateTrigger(jobCtx, job)
+	case model.ActionDropTrigger:
+		ver, err = onDropTrigger(jobCtx, job)
+	case model.ActionCreateProcedure:
+		ver, err = w.onCreateProcedure(jobCtx, job)
+	case model.ActionDropProcedure:
+		ver, err = w.onDropProcedure(jobCtx, job)
+	case model.ActionAlterProcedure:
+		ver, err = w.onAlterProcedure(jobCtx, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(jobCtx, job)
 	case model.ActionAlterSequence:

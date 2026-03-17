@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 )
@@ -103,6 +104,16 @@ type ExchangePartitionDMLSupport interface {
 	GetInfoSchemaToCheckExchangeConstraint() infoschema.MetaOnlyInfoSchema
 }
 
+// TriggerSupport is used to set trigger context.
+type TriggerSupport interface {
+	OnInsertBefore(tblInfo *model.TableInfo, r []types.Datum, updated []bool) error
+	OnInsertAfter(tblInfo *model.TableInfo, r []types.Datum) error
+	OnDeleteBefore(tblInfo *model.TableInfo, r []types.Datum) error
+	OnDeleteAfter(tblInfo *model.TableInfo, r []types.Datum) error
+	OnUpdateBefore(tblInfo *model.TableInfo, oldRow, newRow []types.Datum) error
+	OnUpdateAfter(tblInfo *model.TableInfo, oldRow, newRow []types.Datum) error
+}
+
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
 	AllocatorContext
@@ -139,6 +150,8 @@ type MutateContext interface {
 	// GetExchangePartitionDMLSupport returns a `ExchangePartitionDMLSupport` if the context supports it.
 	// ExchangePartitionDMLSupport is used by DMLs when the table is exchanging a partition.
 	GetExchangePartitionDMLSupport() (ExchangePartitionDMLSupport, bool)
+	// GetTriggerSupport returns a `TriggerSupport` if the context supports it.
+	GetTriggerSupport() (TriggerSupport, bool)
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

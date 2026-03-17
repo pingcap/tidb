@@ -168,6 +168,8 @@ type TableInfo struct {
 
 	Sequence *SequenceInfo `json:"sequence"`
 
+	Triggers []*TriggerInfo `json:"triggers,omitempty"`
+
 	// Lock represent the table lock info.
 	Lock *TableLockInfo `json:"Lock"`
 
@@ -250,6 +252,13 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
+	}
+
+	if len(t.Triggers) > 0 {
+		nt.Triggers = make([]*TriggerInfo, len(t.Triggers))
+		for i := range t.Triggers {
+			nt.Triggers[i] = t.Triggers[i].Clone()
+		}
 	}
 
 	if t.Affinity != nil {
@@ -776,6 +785,37 @@ type SequenceInfo struct {
 	Increment  int64  `json:"sequence_increment"`
 	CacheValue int64  `json:"sequence_cache_value"`
 	Comment    string `json:"sequence_comment"`
+}
+
+// TriggerInfo provides meta data describing a DB trigger.
+type TriggerInfo struct {
+	Name      model.CIStr        `json:"trigger_name"`
+	Timing    ast.TriggerTiming  `json:"timing"`
+	Event     ast.TriggerEvent   `json:"event"`
+	Table     model.CIStr        `json:"table"`
+	Order     ast.TriggerOrder   `json:"order"`
+	CreateSQL string             `json:"create_sql"`
+	Body      string             `json:"body"`
+	Definer   *auth.UserIdentity `json:"definer"`
+	State     SchemaState        `json:"state"`
+	SQLMode   mysql.SQLMode      `json:"sql_mode"`
+
+	CharacterSetClient  string `json:"charset_client"`
+	CollationConnection string `json:"collation_connection"`
+	DatabaseCollation   string `json:"database_collation"`
+	CreatedTimestamp    uint64 `json:"created_timestamp"`
+}
+
+// Clone clones TriggerInfo.
+func (t *TriggerInfo) Clone() *TriggerInfo {
+	nt := *t
+	if t.Definer != nil {
+		nt.Definer = &auth.UserIdentity{
+			Username: t.Definer.Username,
+			Hostname: t.Definer.Hostname,
+		}
+	}
+	return &nt
 }
 
 // ExchangePartitionInfo provides exchange partition info.

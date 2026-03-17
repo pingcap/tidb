@@ -802,6 +802,12 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	if err := checkTriggersMovedToWrongSchema(tblInfo, args, job); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	oldTableName := tblInfo.Name
 	ver, err = checkAndRenameTables(metaMut, job, tblInfo, args)
 	if err != nil {
@@ -842,6 +848,12 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		if err := checkTriggersMovedToWrongSchema(tblInfo, info, job); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
 		ver, err := checkAndRenameTables(metaMut, job, tblInfo, info)
 		if err != nil {
 			return ver, errors.Trace(err)

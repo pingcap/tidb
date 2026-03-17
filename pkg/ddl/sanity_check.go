@@ -261,6 +261,18 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
+		case model.ActionCreateProcedure:
+			if _, ok := st.(*ast.CreateProcedureInfo); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionDropProcedure:
+			if _, ok := st.(*ast.DropProcedureStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionAlterProcedure:
+			if _, ok := st.(*ast.AlterProcedureStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
 		case model.ActionCreateTables:
 			_, isCreateTable := st.(*ast.CreateTableStmt)
 			_, isCreateSeq := st.(*ast.CreateSequenceStmt)

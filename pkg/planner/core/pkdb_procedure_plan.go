@@ -472,11 +472,13 @@ func (b *PlanBuilder) fetchProcdureInfo(name, db string) (*ProcedurebodyInfo, er
 	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
 	definer := rows[0].GetString(7)
 	if len(definer) != 0 {
-		strs := strings.Split(definer, "@")
-		if len(strs) != 2 {
+		// Split on the last '@' to handle usernames containing '@'
+		lastAtIdx := strings.LastIndex(definer, "@")
+		if lastAtIdx == -1 {
 			return nil, errors.Errorf("get definer:%s error", definer)
 		}
-		procedurebodyInfo.DefinerUser, procedurebodyInfo.DefinerHost = strs[0], strs[1]
+		procedurebodyInfo.DefinerUser = definer[:lastAtIdx]
+		procedurebodyInfo.DefinerHost = definer[lastAtIdx+1:]
 	}
 	procedurebodyInfo.SecurityType = rows[0].GetEnum(8).String()
 	procedurebodyInfo.lastChangeTime = rows[0].GetTime(9)

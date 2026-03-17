@@ -153,11 +153,13 @@ func (e *ProcedureExec) Close() error {
 
 func (e *ProcedureExec) setDefiner(definer string) error {
 	if len(definer) != 0 {
-		strs := strings.Split(definer, "@")
-		if len(strs) != 2 {
+		// Split on the last '@' to handle usernames containing '@'
+		lastAtIdx := strings.LastIndex(definer, "@")
+		if lastAtIdx == -1 {
 			return errors.Errorf("get definer:%s error", definer)
 		}
-		e.definerUser, e.definerHost = strs[0], strs[1]
+		e.definerUser = definer[:lastAtIdx]
+		e.definerHost = definer[lastAtIdx+1:]
 	}
 	return nil
 }
