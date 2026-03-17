@@ -80,7 +80,6 @@ const (
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
 	flagPDAddr                   = "pd"
-	flagKeyspaceName             = "keyspace-name"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -199,9 +198,6 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
-	// KeyspaceName indicates which keyspace the dumpling job is running in.
-	// It's validated against information_schema.KEYSPACE_META on TiDB.
-	KeyspaceName string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -256,7 +252,6 @@ func DefaultConfig() *Config {
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
 		PDAddr:                   "",
-		KeyspaceName:             "",
 	}
 }
 
@@ -374,8 +369,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 
-	flags.String(flagPDAddr, "", "PD endpoints for controlling GC (comma-separated host:port list; http(s):// is also accepted and normalized). Use together with --keyspace-name for premium keyspace clusters")
-	flags.String(flagKeyspaceName, "", "Keyspace name for premium keyspace clusters. Use together with --pd and make sure it matches information_schema.KEYSPACE_META")
+	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -628,11 +622,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 
 	for k, v := range params {
 		conf.SessionParams[k] = v
-	}
-
-	conf.KeyspaceName, err = flags.GetString(flagKeyspaceName)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	err = conf.BackendOptions.ParseFromFlags(pflag.CommandLine)

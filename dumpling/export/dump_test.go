@@ -75,7 +75,6 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 		keyspaceMeta  []string // [name,id]
 		queryErr      error
 		confPD        string
-		confKeyspace  string
 		expectErr     string
 		expectKSPName string
 		expectKSPID   uint32
@@ -84,49 +83,36 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			name:          "premium_ok",
 			keyspaceMeta:  []string{"ks1", "123"},
 			confPD:        "pd1:2379,pd2:2379",
-			confKeyspace:  "ks1",
 			expectKSPName: "ks1",
 			expectKSPID:   123,
-		},
-		{
-			name:         "premium_mismatch_name",
-			keyspaceMeta: []string{"ks1", "123"},
-			confPD:       "pd1:2379",
-			confKeyspace: "ks2",
-			expectErr:    "keyspace-name mismatch",
 		},
 		{
 			name:         "premium_missing_pd",
 			keyspaceMeta: []string{"ks1", "123"},
 			confPD:       "",
-			confKeyspace: "ks1",
 			expectErr:    "requires --pd",
 		},
 		{
 			name:         "classical_ok",
 			keyspaceMeta: []string{"", ""},
 			confPD:       "",
-			confKeyspace: "",
 		},
 		{
 			name:         "classical_with_pd_is_error",
 			keyspaceMeta: []string{"", ""},
 			confPD:       "pd1:2379",
-			confKeyspace: "",
 			expectErr:    "classical cluster must not specify",
 		},
 		{
-			name:         "classical_no_keyspace_meta_table",
-			queryErr:     &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
-			confPD:       "",
-			confKeyspace: "",
+			name:     "classical_no_keyspace_meta_table",
+			queryErr: &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:   "",
 		},
 		{
-			name:         "premium_no_keyspace_meta_table_is_error",
-			queryErr:     &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
-			confPD:       "pd1:2379",
-			confKeyspace: "ks1",
-			expectErr:    "KEYSPACE_META",
+			name:      "premium_no_keyspace_meta_table_is_error",
+			queryErr:  &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:    "pd1:2379",
+			expectErr: "KEYSPACE_META",
 		},
 	}
 
@@ -157,8 +143,6 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 				ServerVersion: gcSafePointVersion,
 			}
 			d.conf.PDAddr = tc.confPD
-			d.conf.KeyspaceName = tc.confKeyspace
-
 			err = tidbResolveKeyspaceMetaForGC(d)
 			if tc.expectErr != "" {
 				require.Error(t, err)
@@ -185,7 +169,6 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 		name         string
 		keyspaceMeta []string // [name, id] from KEYSPACE_META
 		confPD       string
-		confKeyspace string
 		// After resolving we expect these on the Dumper.
 		expectKeyspace   string
 		expectID         uint32
@@ -196,7 +179,6 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			name:             "premium_uses_keyspace_barrier_api",
 			keyspaceMeta:     []string{"ks1", "42"},
 			confPD:           "pd1:2379",
-			confKeyspace:     "ks1",
 			expectKeyspace:   "ks1",
 			expectID:         42,
 			useKeyspaceGC:    true,
@@ -206,7 +188,6 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			name:             "resolved_keyspace_meta_without_keyspace_gc_mode_uses_global_safepoint_api",
 			keyspaceMeta:     []string{"ks1", "42"},
 			confPD:           "pd1:2379",
-			confKeyspace:     "ks1",
 			expectKeyspace:   "ks1",
 			expectID:         42,
 			useKeyspaceGC:    false,
@@ -216,7 +197,6 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			name:             "classical_uses_global_safepoint_api",
 			keyspaceMeta:     []string{"", ""},
 			confPD:           "",
-			confKeyspace:     "",
 			expectKeyspace:   "",
 			expectID:         0,
 			useKeyspaceGC:    false,
@@ -253,8 +233,6 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 				ServerVersion: gcSafePointVersion,
 			}
 			d.conf.PDAddr = tc.confPD
-			d.conf.KeyspaceName = tc.confKeyspace
-
 			err = tidbResolveKeyspaceMetaForGC(d)
 			require.NoError(t, err)
 			require.Equal(t, tc.expectKeyspace, d.tidbKeyspaceName)
