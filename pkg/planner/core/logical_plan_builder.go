@@ -1675,14 +1675,36 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 		}
 
 		// Build the expression from the original field
+		// We pass p as the input plan so the resulting expression references p's schema
 		expr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, nil, nil, true, nil)
 		if err != nil {
 			return nil, err
 		}
 
 		// Apply masking substitution to the expression
-		// This will replace any masked columns with their masking expressions
-		maskedExpr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, np.Schema(), maskExprs)
+		// If np is different from p (e.g., a projection was added), we need to map
+		// the columns back to p's schema for the substitution to work correctly
+		if np != p && len(np.Children()) > 0 {
+			// np is a projection wrapping p, so expr references np's output columns
+			// We need to substitute np's columns with their underlying expressions from p
+			for j := 0; j < np.Schema().Len(); j++ {
+				npCol := np.Schema().Columns[j]
+				// Find if this column in np's schema maps to a column in p's schema
+				for k := 0; k < p.Schema().Len(); k++ {
+					pCol := p.Schema().Columns[k]
+					if npCol.UniqueID == pCol.UniqueID {
+						// Found a match - this column references p's column directly
+						// Replace the column reference in expr with a reference to p's column
+						expr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, np.Schema(),
+							[]expression.Expression{pCol})
+						break
+					}
+				}
+			}
+		}
+
+		// Now apply masking substitution using p's schema
+		maskedExpr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, p.Schema(), maskExprs)
 
 		proj.Exprs = append(proj.Exprs, maskedExpr)
 
