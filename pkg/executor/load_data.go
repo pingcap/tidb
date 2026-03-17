@@ -579,18 +579,18 @@ func (w *encodeWorker) parserData2TableData(
 	// a new row buffer will be allocated in getRow
 	newRow, err := w.getRow(ctx, row)
 	if err != nil {
+		if w.controller.Restrictive {
+			return nil, err
+		}
 		// ErrInvalidAutoRandom should always be returned as a real error,
 		// not treated as a warning, because returning nil row causes panic
 		// when looking up index. See https://github.com/pingcap/tidb/issues/65585
 		if dbterror.ErrInvalidAutoRandom.Equal(err) {
 			return nil, err
 		}
-		if w.controller.Restrictive {
-			return nil, err
-		}
 		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
-		// TODO: should not return nil! caller will panic when lookup index
+		// TODO: shall we ignore this row? Returning nil will make the caller panic.
 		return nil, nil
 	}
 
