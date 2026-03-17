@@ -18,20 +18,23 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
-func TestWindowWithCorrelatedSubQuery(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("CREATE TABLE temperature_data (temperature double);")
-		testKit.MustExec("CREATE TABLE humidity_data (humidity double);")
-		testKit.MustExec("CREATE TABLE weather_report (report_id double, report_date varchar(100));")
+func TestWindowSubqueryRewrite(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists temperature_data, humidity_data, weather_report")
+		defer tk.MustExec("drop table if exists temperature_data, humidity_data, weather_report")
+		tk.MustExec("create table temperature_data (temperature double)")
+		tk.MustExec("create table humidity_data (humidity double)")
+		tk.MustExec("create table weather_report (report_id double, report_date varchar(100))")
 
-		testKit.MustExec("INSERT INTO temperature_data VALUES (1.0);")
-		testKit.MustExec("INSERT INTO humidity_data VALUES (0.5);")
-		testKit.MustExec("INSERT INTO weather_report VALUES (2.0, 'test');")
+		tk.MustExec("insert into temperature_data values (1.0)")
+		tk.MustExec("insert into humidity_data values (0.5)")
+		tk.MustExec("insert into weather_report values (2.0, 'test')")
 
-		result := testKit.MustQuery(`
+		result := tk.MustQuery(`
    SELECT
      EXISTS (
        SELECT
@@ -55,7 +58,7 @@ func TestWindowWithCorrelatedSubQuery(t *testing.T) {
 
 		result.Check(testkit.Rows("1"))
 
-		result = testKit.MustQuery(`
+		result = tk.MustQuery(`
    SELECT
      EXISTS (
        SELECT
@@ -72,5 +75,47 @@ func TestWindowWithCorrelatedSubQuery(t *testing.T) {
  `)
 
 		result.Check(testkit.Rows("1"))
+
+		tk.MustExec("drop table if exists t1, t2")
+		defer tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int)")
+		tk.MustExec("create table t2 (c1 int)")
+		tk.MustExec("insert into t1 values (1), (2)")
+		tk.MustExec("insert into t2 values (1), (1), (2)")
+
+		tk.MustQuery("select count(1 in (select t2.c1 from t2)) over () from t1").Check(testkit.Rows("2", "2"))
+		tk.MustQuery("select count(1 = any (select t2.c1 from t2)) over () from t1").Check(testkit.Rows("2", "2"))
+	})
+}
+
+func TestWindowSubqueryOuterRef(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, t3")
+		defer tk.MustExec("drop table if exists t1, t2, t3")
+		tk.MustExec("create table t1 (c1 int primary key)")
+		tk.MustExec("create table t2 (c1 int, c2 text)")
+		tk.MustExec("create table t3 (c1 int, c3 int)")
+		tk.MustExec("insert into t1 values (10)")
+		tk.MustExec("insert into t2 values (1, 'alpha'), (1, 'beta'), (2, 'gamma')")
+		tk.MustExec("insert into t3 values (1, 100), (2, 200)")
+
+		var input []string
+		var output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+		suiteData := getWindowPushDownSuiteData()
+		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Rows())
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			})
+			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		}
 	})
 }

@@ -21,20 +21,25 @@ This file provides guidance to agents working in this repository.
 
 | Task | Required action |
 | --- | --- |
-| Added/moved/renamed/removed Go files, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
-| Running package unit tests | SHOULD run targeted tests (`go test -run <TestName> -tags=intest,deadlock`) and avoid full-package runs unless needed. |
-| Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md`). |
-| Recording integration tests | MUST use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
-| RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
+| Added/moved/renamed/removed Go files, added a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
+| Running package unit tests | SHOULD run targeted tests and avoid full-package runs unless needed (see `docs/agents/testing-flow.md` -> `Unit tests`). |
+| Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`). |
+| Recording integration tests | MUST use the recording command in `docs/agents/testing-flow.md` -> `Integration tests` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
+| RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md` -> `RealTiKV tests`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
- Before finishing | MUST run `make lint` if there are code changes. SHOULD self-review diff quality before finishing. |
+| During local coding iterations (not claiming completion) | SHOULD use the `WIP` verification profile from `.agents/skills/tidb-verify-profile` to run only scoped checks. |
+| Claiming task completion / PR readiness | MUST use the `Ready` verification profile from `.agents/skills/tidb-verify-profile`; if there are code changes, this includes `make lint`. `Ready` is mandatory before making final-status claims such as "fixed", "done", "all tests pass", "ready for review", or "ready for PR". |
+| Before finishing | SHOULD self-review diff quality before finishing. |
+| Expensive optional sweeps (for example `make bazel_lint_changed`, broad package runs) | MUST run only when required by change scope, CI reproduction, or explicit user request. |
 
 ### Skills
 
-- Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
+- Repository-level skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
 - Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
 - `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
+- Policy belongs in `AGENTS.md`; detailed command playbooks SHOULD live in `docs/agents/*`, and skills SHOULD provide entrypoint workflows that reference those playbooks.
+- Operational testing/build skills are indexed in `.agents/skills/README.md` to avoid duplicated lists drifting in multiple docs.
 
 ## Pre-flight Checklist
 
@@ -75,14 +80,22 @@ Run `make bazel_prepare` before building when any of the following is true:
 - New workspace or fresh clone.
 - Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
 - Any Go source file is added/removed/renamed/moved in the PR.
+- A code change adds a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file.
 - Go module dependencies changed (for example `go.mod`, `go.sum`), including adding third-party dependencies.
-- UT or RealTiKV tests were added and Bazel test targets were updated (for example `_test.go` in `srcs`, `shard_count`, or `tests/realtikvtest/**/BUILD.bazel` updates).
+- Bazel test targets were updated (for example `shard_count` changed, test `srcs` list edited, or `tests/realtikvtest/**/BUILD.bazel` modified).
 - Local Bazel dependency/toolchain errors occurred.
+
+For an operational decision checklist, use `.agents/skills/tidb-bazel-prepare-gate`.
 
 Recommended local build flow:
 
 ```bash
+# Conditional step: run only when required by this section or `.agents/skills/tidb-bazel-prepare-gate`.
 make bazel_prepare
+```
+
+```bash
+# Then continue with normal local build steps.
 make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
@@ -94,31 +107,26 @@ git fetch origin --prune
 ## Task -> Validation Matrix
 
 Use the smallest set that still proves correctness.
-
-Typical package unit test command: `go test -run <TestName> -tags=intest,deadlock` (see `docs/agents/testing-flow.md`).
+Command details for package, integration-test, and RealTiKV surfaces live in `docs/agents/testing-flow.md`.
 
 | Change scope | Minimum validation |
 | --- | --- |
-| `pkg/planner/**` rules or logical/physical plans | Targeted planner unit tests (`go test -run <TestName> -tags=intest,deadlock`) and update rule testdata when needed |
+| `pkg/planner/**` rules or logical/physical plans | Targeted planner unit tests and update rule testdata when needed |
 | `pkg/executor/**` SQL behavior | Targeted unit test plus relevant integration test (`tests/integrationtest`) |
 | `pkg/expression/**` builtins or type inference | Targeted expression unit tests with edge-case coverage |
 | `pkg/session/**` / variables / protocol behavior | Targeted package tests plus SQL integration tests for user-visible behavior |
 | `pkg/ddl/**` schema changes | DDL-focused unit/integration tests and compatibility impact checks |
 | `pkg/store/**` / `pkg/kv/**` storage behavior | Targeted unit tests; use realtikv tests if behavior depends on real TiKV |
-| Parser files (`pkg/parser/**`) | Parser-specific Make targets and related unit tests |
-| `tests/integrationtest/t/**` changed | `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` and verify regenerated result correctness |
-| `tests/realtikvtest/**` changed | Start playground, run scoped `go test -tags=intest,deadlock`, then mandatory cleanup |
+| Parser files (`pkg/parser/**`) | Parser-specific Make targets (`make parser`, `make parser_yacc`, `make parser_fmt`, `make parser_unit_test`) and related unit tests |
+| `tests/integrationtest/t/**` changed | Record and verify regenerated result correctness (see `docs/agents/testing-flow.md` -> `Integration tests`) |
+| `tests/realtikvtest/**` changed | Start playground, run scoped tests, then mandatory cleanup (see `docs/agents/testing-flow.md` -> `RealTiKV tests`) |
 
 ## Testing Policy
 
 - Detailed command playbooks live in `docs/agents/testing-flow.md`.
-- Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands.
-- Prefer targeted runs (`-run <TestName>`). Avoid package-wide runs unless needed for broad refactors, CI reproduction, or shared golden/testdata updates.
-- If a package uses failpoints, MUST enable failpoints before tests and disable them afterward.
-- Failpoint decision MUST follow `docs/agents/testing-flow.md`: if failpoint search checks have no matches, run without failpoint enable/disable and state the evidence in the final report.
-- Bug fixes MUST add regression tests and verify fail-before-fix/pass-after-fix (or document why pre-fix reproduction is infeasible).
-- Integration test recording MUST use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd`.
-- RealTiKV tests MUST start playground in background and perform mandatory cleanup.
+- Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands from the playbook.
+- Use `.agents/skills/tidb-verify-profile` to pick a validation profile (`WIP` / `Ready` / `Heavy`). `Ready` is required before any final-status claim; trigger phrases are defined in `Quick Decision Matrix`.
+- All other testing rules (failpoints, integration recording, RealTiKV lifecycle, regression tests) are stated once in `Quick Decision Matrix` above; do not duplicate them here.
 
 ## Code Style Guide
 
@@ -137,9 +145,8 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 ### Tests and testdata
 
 - Prefer extending existing test suites and fixtures over creating new scaffolding.
-- Unit test suite size in one package SHOULD stay around 50 or fewer as a practical target; use `shard_count` in package `BUILD.bazel` as a reference when splitting.
 - Keep test changes minimal and deterministic; avoid broad golden/testdata churn unless required.
-- For planner predicate pushdown cases, keep SQL-only statements in `predicate_pushdown_suite_in.json` and put DDL in setup.
+- Follow `.agents/skills/tidb-test-guidelines` for placement, naming, `shard_count` guidance, planner-specific casetest rules, and related testdata conventions.
 - When recording outputs, verify changed result files before reporting completion.
 
 ### Docs and command snippets
@@ -180,6 +187,7 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 When finishing a task, report:
 
 1. Files changed.
-2. Risks: correctness, compatibility, performance.
-3. Exact commands run for validation.
-4. What was not verified locally.
+2. Validation profile used (`WIP`, `Ready`, or `Heavy`) and why.
+3. Risks: correctness, compatibility, performance.
+4. Exact commands run for validation.
+5. What was not verified locally.

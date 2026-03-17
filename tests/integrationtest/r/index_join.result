@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 drop table if exists t1, t2;
 create table t1(a bigint, b bigint, index idx(a));
 create table t2(a bigint, b bigint, index idx(a));
@@ -49,8 +48,9 @@ explain format = 'plan_tree' select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in
 id	task	access object	operator info
 IndexJoin	root		inner join, inner:IndexLookUp, outer key:index_join.t2.a, inner key:index_join.t1.a, equal cond:eq(index_join.t2.a, index_join.t1.a)
 ├─StreamAgg(Build)	root		group by:index_join.t2.a, funcs:firstrow(index_join.t2.a)->index_join.t2.a
-│ └─IndexReader	root		index:IndexFullScan
-│   └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
+│ └─IndexReader	root		index:StreamAgg
+│   └─StreamAgg	cop[tikv]		group by:index_join.t2.a, 
+│     └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 └─IndexLookUp(Probe)	root		
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(index_join.t1.a, index_join.t2.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo

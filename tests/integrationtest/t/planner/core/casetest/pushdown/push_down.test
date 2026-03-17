@@ -1,5 +1,4 @@
 # TestPushLimitDownIndexLookUpReader
-set tidb_cost_model_version=2;
 set @@session.tidb_executor_concurrency = 4;
 set @@session.tidb_hash_join_concurrency = 5;
 set @@session.tidb_distsql_scan_concurrency = 15;
@@ -13,7 +12,6 @@ explain format = 'plan_tree' select * from tbl use index(idx_b_c) where b > 1 an
 explain format = 'plan_tree' select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1;
 
 # TestPushDownProjectionForTiKV
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)));
 create table t2(a json);

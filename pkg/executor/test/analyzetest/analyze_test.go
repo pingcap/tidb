@@ -682,17 +682,13 @@ func testKillAutoAnalyze(t *testing.T) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			tk.MustExec("delete from mysql.analyze_jobs")
-			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status)
-			if status == "running" {
-				mockAnalyzeStatus += "V2"
-			}
-			mockAnalyzeStatus += "AnalyzeJob"
+			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status) + "AnalyzeJob"
 			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
 			}()
 			if status == "pending" || status == "running" {
-				const mockSlowAnalyze = "github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeV2"
+				const mockSlowAnalyze = "github.com/pingcap/tidb/pkg/executor/mockSlowAnalyze"
 				require.NoError(t, failpoint.Enable(mockSlowAnalyze, "return"))
 				defer func() {
 					require.NoError(t, failpoint.Disable(mockSlowAnalyze))
@@ -753,21 +749,15 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			tk.MustExec("delete from mysql.analyze_jobs")
-			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status)
-			if status == "running" {
-				// V2 analyze runs through the full analyze path.
-				mockAnalyzeStatus += "V2AnalyzeJob"
-			} else {
-				mockAnalyzeStatus += "AnalyzeJob"
-			}
+			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status) + "AnalyzeJob"
 			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
 			}()
 			if status == "pending" || status == "running" {
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeV2", "return"))
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyze", "return"))
 				defer func() {
-					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeV2"))
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyze"))
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)

@@ -1291,8 +1291,52 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
 		planCtx.builder.optFlag |= rule.FlagJoinReOrder
 		planCtx.builder.optFlag |= rule.FlagEmptySelectionEliminator
+		distinctChild := np
+		distinctLen := np.Schema().Len()
+		joinCondition := checkCondition
+		// IN-subquery rewrite turns:
+		//   outer_col IN (SELECT inner_col ...)
+		// into:
+		//   outer JOIN DISTINCT(inner_col) ON outer_col = inner_col
+		//
+		// DISTINCT must be applied on the same comparison domain as the join predicate.
+		// If "=" injects an implicit cast on the RHS (e.g. blob/string -> number), deduplicating
+		// raw inner values is insufficient: different raw values may become equal after cast and
+		// multiply outer rows in the rewritten inner join.
+		//
+		// To keep semantics equivalent to IN, we project the RHS comparison expression first,
+		// then distinct on that projected key.
+		if lLen == 1 {
+			if eqCond, ok := checkCondition.(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
+				rhs := eqCond.GetArgs()[1]
+				if expression.ExprFromSchema(rhs, np.Schema()) {
+					if _, isCol := rhs.(*expression.Column); !isCol {
+						// rhs is computed from inner columns (typically with an implicit cast generated
+						// by type coercion rules). Materialize it as an inner projection column so both
+						// DISTINCT and JOIN use exactly this coerced key.
+						proj := logicalop.LogicalProjection{Exprs: []expression.Expression{rhs}}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+						projCol := &expression.Column{
+							UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
+							RetType:  rhs.GetType(er.sctx.GetEvalCtx()).Clone(),
+						}
+						proj.SetChildren(np)
+						proj.SetSchema(expression.NewSchema(projCol))
+						proj.SetOutputNames([]*types.FieldName{types.EmptyName})
+						distinctChild = proj
+						distinctLen = 1
+						// Rebuild join condition against the projected key; this preserves
+						// the same coercion behavior while preventing duplicate matches.
+						joinCondition, err = er.constructBinaryOpFunction(lexpr, projCol, ast.EQ)
+						if err != nil {
+							er.err = err
+							return v, true
+						}
+					}
+				}
+			}
+		}
 		// Build distinct for the inner query.
-		agg, err := planCtx.builder.buildDistinct(np, np.Schema().Len())
+		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -1304,7 +1348,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
-		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		join.AttachOnConds(expression.SplitCNFItems(joinCondition))
 		// set FullSchema and FullNames for this join
 		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
 			join.FullSchema = left.FullSchema
@@ -2675,6 +2719,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
+	case *logicalop.LogicalApply:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {

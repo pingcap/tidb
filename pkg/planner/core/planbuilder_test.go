@@ -670,7 +670,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleAnalyzeOptionsV2(tt.opts)
+			_, err := handleAnalyzeOptions(tt.opts)
 			if tt.ExpectedErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.ExpectedErr)

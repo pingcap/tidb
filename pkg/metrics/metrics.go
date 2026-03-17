@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -97,6 +98,7 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	dxfmetric.InitDistTaskMetrics()
+	ingestmetric.InitIngestMetrics()
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
@@ -287,6 +289,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
 	dxfmetric.Register(prometheus.DefaultRegisterer)
+	ingestmetric.Register(prometheus.DefaultRegisterer)
 
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(RunawayFlusherCounter)

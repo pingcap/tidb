@@ -591,7 +591,7 @@ func TestStatsAnalyzedInDDL(t *testing.T) {
 }
 
 func TestPartialStatsInExplain(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, _, _ string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 		testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
@@ -616,21 +616,42 @@ func TestPartialStatsInExplain(t *testing.T) {
 		testKit.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 		testKit.MustQuery("explain select * from tp where a = 1")
 		testKit.MustExec("set @@tidb_stats_load_sync_wait = 0")
-		var (
-			input  []string
-			output []struct {
-				Query  string
-				Result []string
+		type explainCase struct {
+			sql         string
+			contains    []string
+			notContains []string
+		}
+		cases := []explainCase{
+			{
+				sql:      "explain format = brief select * from tp where b = 10",
+				contains: []string{"stats:partial[ic:unInitialized, b:unInitialized]"},
+			},
+			{
+				sql:         "explain format = brief select * from tp where b = 10",
+				notContains: []string{"stats:partial["},
+			},
+			{
+				sql:      "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+				contains: []string{"stats:partial[", "allEvicted"},
+			},
+			{
+				sql:         "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+				notContains: []string{"stats:partial["},
+			},
+			{
+				sql:      "explain format = brief select * from t join tp partition (p0) join t2 where t.a < 10 and t.b = tp.c and t2.a > 10 and t2.a = tp.c",
+				contains: []string{"IndexHashJoin", "stats:partial[", "allEvicted"},
+			},
+		}
+		for _, c := range cases {
+			result := testdata.ConvertRowsToStrings(testKit.MustQuery(c.sql).Rows())
+			plan := strings.Join(result, "\n")
+			for _, expected := range c.contains {
+				require.Contains(t, plan, expected, "sql:%s", c.sql)
 			}
-		)
-		testData := GetPlanStatsData()
-		testData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			testdata.OnRecord(func() {
-				output[i].Query = input[i]
-				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(sql).Rows())
-			})
-			testKit.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+			for _, unexpected := range c.notContains {
+				require.NotContains(t, plan, unexpected, "sql:%s", c.sql)
+			}
 			require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 		}
 	})

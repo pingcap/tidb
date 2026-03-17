@@ -30,6 +30,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/unionexec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -37,9 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -423,6 +428,167 @@ select a from t`
 	require.Equal(t, 2, tk.Session().GetSessionVars().UnionConcurrency())
 	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
 	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
+}
+
+type unionEmptyExec struct {
+	*exec.BaseExecutor
+}
+
+func (e *unionEmptyExec) Open(context.Context) error {
+	return nil
+}
+
+func (e *unionEmptyExec) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	return nil
+}
+
+func (e *unionEmptyExec) Close() error {
+	return nil
+}
+
+type unionPanicExec struct {
+	*exec.BaseExecutor
+	nextEntered chan struct{}
+	panicCh     <-chan struct{}
+}
+
+func (e *unionPanicExec) Open(context.Context) error {
+	return nil
+}
+
+func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
+	close(e.nextEntered)
+	<-e.panicCh
+	panic("union exec panic during close")
+}
+
+func (e *unionPanicExec) Close() error {
+	return nil
+}
+
+func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
+	fp := "github.com/pingcap/tidb/pkg/executor/unionexec/pauseUnionExecResultPuller"
+	require.NoError(t, failpoint.Enable(fp, "pause"))
+	fpEnabled := true
+	t.Cleanup(func() {
+		if fpEnabled {
+			require.NoError(t, failpoint.Disable(fp))
+		}
+	})
+
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionEmptyExec{BaseExecutor: &childBase}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &unionexec.UnionExec{
+		BaseExecutor: unionBase,
+		Concurrency:  1,
+	}
+
+	require.NoError(t, exec.Open(context.Background(), union))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextDone:
+		t.Fatalf("union Next returned before workers paused")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned while workers paused")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	require.NoError(t, failpoint.Disable(fp))
+	fpEnabled = false
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not return after workers resumed")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after Close")
+	}
+}
+
+func TestUnionExecCloseReturnsAfterWorkerPanicDuringShutdown(t *testing.T) {
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	panicCh := make(chan struct{})
+	nextEntered := make(chan struct{})
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionPanicExec{
+		BaseExecutor: &childBase,
+		nextEntered:  nextEntered,
+		panicCh:      panicCh,
+	}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &unionexec.UnionExec{
+		BaseExecutor: unionBase,
+		Concurrency:  1,
+	}
+
+	require.NoError(t, exec.Open(context.Background(), union))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union worker did not enter Next")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	// Close closes finished before waiting, so once it is blocked here the worker
+	// will hit the sendResult(false) path when it panics.
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned before worker panic")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(panicCh)
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not return after worker panic")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after worker panic")
+	}
 }
 
 func TestTxnWriteThroughputSLI(t *testing.T) {

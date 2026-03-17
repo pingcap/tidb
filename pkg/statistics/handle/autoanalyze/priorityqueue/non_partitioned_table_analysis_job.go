@@ -44,8 +44,9 @@ type NonPartitionedTableAnalysisJob struct {
 	IndexIDs map[int64]struct{}
 
 	Indicators
-	TableStatsVer int
-	Weight        float64
+	TableStatsVer          int
+	NeedVersionRewriteWarn bool
+	Weight                 float64
 
 	// Lazy initialized.
 	SchemaName string
@@ -58,14 +59,16 @@ func NewNonPartitionedTableAnalysisJob(
 	tableID int64,
 	indexIDs map[int64]struct{},
 	tableStatsVer int,
+	needVersionRewriteWarn bool,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *NonPartitionedTableAnalysisJob {
 	return &NonPartitionedTableAnalysisJob{
-		TableID:       tableID,
-		IndexIDs:      indexIDs,
-		TableStatsVer: tableStatsVer,
+		TableID:                tableID,
+		IndexIDs:               indexIDs,
+		TableStatsVer:          tableStatsVer,
+		NeedVersionRewriteWarn: needVersionRewriteWarn,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
 			TableSize:            tableSize,
@@ -224,7 +227,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
@@ -243,24 +246,11 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	if len(j.IndexNames) == 0 {
 		return true
 	}
-	// For version 2, analyze one index will analyze all other indexes and columns.
-	// For version 1, analyze one index will only analyze the specified index.
-	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
-	if analyzeVersion == 1 {
-		for _, index := range j.IndexNames {
-			sql, params := j.GenSQLForAnalyzeIndex(index)
-			if !exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...) {
-				return false
-			}
-		}
-		return true
-	}
-	// Only analyze the first index.
-	// This is because analyzing a single index also analyzes all other indexes and columns.
-	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
+	// Analyze version 2 refreshes the table columns and other indexes when analyzing one index.
+	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.

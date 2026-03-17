@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 drop database if exists cte1;
 create database cte1;
 drop table if exists tbl_0;
