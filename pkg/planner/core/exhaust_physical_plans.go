@@ -261,18 +261,6 @@ func constructIndexHashJoinStatic(
 	return indexHashJoins
 }
 
-// constructIndexJoinStatic is used to enumerate current a physical index join with undecided inner plan. Via index join prop
-// pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
-// operator. This function is quite similar with constructIndexJoin. While differing in following part:
-//
-// Since constructIndexJoin will fill the physicalIndexJoin some runtime detail even for adjusting the keys, hash-keys, move
-// eq condition into other conditions because the underlying ds couldn't use it or something. This is because previously the
-// index join enumeration can see the complete index chosen result after inner task is built. But for the refactored one, the
-// enumerated physical index here can only see the info it owns. That's why we call the function constructIndexJoinStatic.
-//
-// The indexJoinProp is passed down to the inner side, which contains the runtime constant inner key, which is used to build the
-// underlying index/pk range. When the inner side is built bottom up, it will return the indexJoinInfo, which contains the runtime
-// information that this physical index join wants. That's introduce second function called completePhysicalIndexJoin, which will
 // calcOuterExpectedCnt computes the expected row count for the outer child of
 // an ordered join (IndexJoin or Apply) given the parent's ExpectedCnt. It
 // accounts for the OptOrderingIdxSelRatio to model extra outer rows that may
@@ -295,7 +283,19 @@ func calcOuterExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty
 	return math.MaxFloat64
 }
 
-// fill physicalIndexJoin about all the runtime information it lacks in static enumeration phase.
+// constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
+// pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
+// operators. This function is quite similar with constructIndexJoin, differing in the following part:
+//
+// Since constructIndexJoin will fill the physicalIndexJoin with runtime details (adjusting keys, hash-keys, moving eq
+// conditions into other conditions because the underlying ds couldn't use them, etc.) — because previously the index join
+// enumeration could see the complete index chosen result after the inner task is built — the refactored version here can
+// only see the info it owns at static enumeration time. That's why we call the function constructIndexJoinStatic.
+//
+// The indexJoinProp is passed down to the inner side; it contains the runtime constant inner key used to build the
+// underlying index/pk range. When the inner side is built bottom-up, it returns the indexJoinInfo, which contains the
+// runtime information this physical index join needs. That's why we introduce the second function completePhysicalIndexJoin,
+// which fills physicalIndexJoin with all runtime information it lacks in the static enumeration phase.
 func constructIndexJoinStatic(
 	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
