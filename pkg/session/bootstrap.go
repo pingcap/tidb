@@ -1257,7 +1257,6 @@ const (
 	// Add index on user field for some mysql tables.
 	version225 = 225
 
-	// version 226
 	//   insert `cluster_id` into the `mysql.tidb` table.
 	version226 = 226
 
@@ -1273,7 +1272,7 @@ const (
 	version227 = 227
 
 	// ...
-	// [version227, version238] is the version range reserved for patches of 8.5.x
+	// [version228, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
 
