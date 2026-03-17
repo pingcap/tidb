@@ -1556,6 +1556,18 @@ func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.Logic
 	hasMask := false
 	for i, col := range cols {
 		policy, tblInfo, colInfo := b.findMaskingPolicy(ctx, names[i], col)
+		// If no policy found with the direct name lookup, try to find
+		// underlying columns by walking the expression tree (for wrapped expressions)
+		if policy == nil {
+			// Try to find underlying columns by extracting candidates
+			candidates := b.extractMaskingPolicyCandidateNamesFromOutputColumn(p, i)
+			for _, candidate := range candidates {
+				policy, tblInfo, colInfo = b.findMaskingPolicyByFieldName(ctx, candidate)
+				if policy != nil && policy.Status == model.MaskingPolicyStatusEnable {
+					break
+				}
+			}
+		}
 		if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
 			continue
 		}
@@ -1645,8 +1657,9 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	if len(b.is.AllMaskingPolicies()) == 0 {
 		return p, nil
 	}
-	if len(originalFields) == 0 {
-		// No original fields available, fall back to simple column-based masking
+	if len(originalFields) == 0 || len(originalFields) < oldLen {
+		// No original fields available, or not enough fields for the projection
+		// Fall back to simple column-based masking to avoid underfill
 		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
 	}
 
@@ -1666,12 +1679,14 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
 	newNames := make([]*types.FieldName, 0, oldLen)
 
-	for i := 0; i < oldLen && i < len(originalFields); i++ {
+	for i := 0; i < oldLen; i++ {
 		// Rebuild the expression from the original field
 		// This preserves the original expression tree structure
 		field := originalFields[i]
-		if field.Auxiliary {
-			break
+		// Check for problematic field types that would cause underfill
+		if field == nil || field.Auxiliary || field.WildCard != nil || field.Expr == nil {
+			// Fall back to simple column-based masking to avoid underfill or panic
+			return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
 		}
 
 		// For now, use the simple approach that just copies columns

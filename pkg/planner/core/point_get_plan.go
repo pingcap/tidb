@@ -1354,7 +1354,9 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	// If we cannot build masking expressions, fail-closed by returning nil
 	// This prevents the fast path from being chosen when masking would fail
 	is := ctx.GetInfoSchema()
-	if is != nil {
+	if is != nil && len(names) > 0 {
+		// If there are output names, this is likely a real SELECT for returning results
+		// Synthetic SELECTs for DML typically don't have output field names
 		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
 		if err != nil {
 			// Fail-closed: Do not use BatchPointGet fast path when masking cannot be applied

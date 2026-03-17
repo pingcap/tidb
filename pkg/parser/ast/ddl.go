@@ -763,6 +763,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
+		n.AddColumnarReplicaOnDemand > 0 ||
 		n.SplitOpt != nil ||
 		len(n.SecondaryEngineAttr) > 0 ||
 		n.Condition != nil {
@@ -926,6 +927,13 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 				n.SplitOpt.ValueLists[i][j] = node.(ExprNode)
 			}
 		}
+	}
+	if n.Condition != nil {
+		node, ok := n.Condition.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Condition = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -3075,6 +3083,10 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("NULL")
+	case TableOptionEngineAttribute:
+		ctx.WriteKeyWord("ENGINE_ATTRIBUTE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	case TableOptionSecondaryEngineAttribute:
 		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE ")
 		ctx.WritePlain("= ")

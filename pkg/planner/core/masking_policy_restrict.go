@@ -208,9 +208,12 @@ func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
 	// Use multiple test values to reduce false positive risk
 	// If the expression returns different values for different inputs,
 	// it's actually doing transformation (not just returning the input)
+	// Only return true (can read unmasked) when EVERY sampled input
+	// round-trips unchanged to avoid bypass on policies that preserve
+	// one probe value or emit a fixed constant.
 	sentinels := maskingPolicySentinelDatums(colInfo)
 	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
-	results := make([]types.Datum, 0, len(sentinels))
+	allRoundTrip := len(sentinels) > 0
 
 	for _, sentinel := range sentinels {
 		row := chunk.MutRowFromDatums([]types.Datum{sentinel}).ToRow()
@@ -226,20 +229,14 @@ func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
 		if err != nil {
 			return false, err
 		}
-		// If expression returns input unchanged for ANY test value,
-		// consider it as "not masked" for that value (this handles the
-		// CASE WHEN current_user() = 'root' THEN c ELSE ... END case)
-		if cmp == 0 {
-			return true, nil
+		// If any sentinel does NOT round-trip unchanged, the expression
+		// is actually masking (not just preserving specific values)
+		if cmp != 0 {
+			allRoundTrip = false
 		}
-		results = append(results, val)
 	}
 
-	// Expression transforms all test values differently (or returns the same
-	// masked value for all inputs), so it's actually masking
-	// Note: We don't check for constant output here because constant output
-	// could mean "always masked" (e.g., MASK_FULL always returns **********)
-	return false, nil
+	return allRoundTrip, nil
 }
 
 // maskingPolicySentinelDatums returns multiple test values for checking if a masking
