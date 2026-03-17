@@ -471,8 +471,13 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				// inside this LATERAL table can still resolve outer columns.
 				savedCount := b.lateralOuterCount
 				b.lateralOuterCount = 0
+				// Set flag to allow ORDER BY/LIMIT in this specific LATERAL subquery
+				// within recursive CTEs. Scoped to this TableSource only.
+				saveBuildingLateral := b.buildingLateralSubquery
+				b.buildingLateralSubquery = true
 				defer func() {
 					b.lateralOuterCount = savedCount
+					b.buildingLateralSubquery = saveBuildingLateral
 				}()
 			}
 		}
@@ -703,15 +708,14 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, outerNames)
 		b.lateralOuterCount++
-		// Set flag to allow ORDER BY/LIMIT in LATERAL subqueries within recursive CTEs
-		saveBuildingLateral := b.buildingLateralSubquery
-		b.buildingLateralSubquery = true
-		// Use a single defer to ensure consistent cleanup in all paths (success and error)
+		// Use a single defer to ensure consistent cleanup in all paths (success and error).
+		// Note: buildingLateralSubquery is NOT set here — it is set per-TableSource in
+		// buildResultSetNode when x.Lateral is true, so non-LATERAL siblings don't
+		// bypass recursive-CTE ORDER BY/LIMIT checks.
 		defer func() {
 			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[:len(b.outerNames)-1]
 			b.lateralOuterCount--
-			b.buildingLateralSubquery = saveBuildingLateral
 		}()
 	}
 
