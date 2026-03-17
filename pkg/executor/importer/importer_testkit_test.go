@@ -159,14 +159,13 @@ func TestVerifyChecksum(t *testing.T) {
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
-	_, tm, ctx := testutil.InitTableTest(t)
-	old := variable.EnableDistTask.Load()
+	store, tm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
 
-	variable.EnableDistTask.Store(false)
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		variable.EnableDistTask.Store(old)
 	})
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
@@ -187,7 +186,7 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 8, targetNodeCPUCnt)
 	// disttask enabled
-	variable.EnableDistTask.Store(true)
+	tk.MustExec("set @@global.tidb_enable_dist_task = on;")
 
 	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
