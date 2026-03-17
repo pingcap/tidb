@@ -194,7 +194,8 @@ type Config struct {
 	IOTotalBytes *atomic.Uint64
 	Net          string
 
-	// PDAddr is a comma-separated list of PD endpoints.
+	// PDAddr is a comma-separated list of PD endpoints in host:port form.
+	// http:// or https:// prefixes are also accepted and normalized by the PD client.
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
@@ -373,7 +374,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 
-	flags.String(flagPDAddr, "", "PD endpoints for controlling GC (comma-separated). Use together with --keyspace-name for premium keyspace clusters")
+	flags.String(flagPDAddr, "", "PD endpoints for controlling GC (comma-separated host:port list; http(s):// is also accepted and normalized). Use together with --keyspace-name for premium keyspace clusters")
 	flags.String(flagKeyspaceName, "", "Keyspace name for premium keyspace clusters. Use together with --pd and make sure it matches information_schema.KEYSPACE_META")
 }
 

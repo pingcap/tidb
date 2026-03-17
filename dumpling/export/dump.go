@@ -1475,7 +1475,7 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 		}
 
 		// Be compatible with older TiDB versions which may not have KEYSPACE_META.
-		if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == 1146 {
+		if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == ErrNoSuchTable {
 			tctx.L().Info("KEYSPACE_META is not available, treat as classical cluster", log.ShortError(err))
 			return nil
 		}
