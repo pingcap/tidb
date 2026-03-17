@@ -7,7 +7,7 @@
 ## Table of Contents
 
 * [Introduction](#introduction)
-* [Motivation or Background](#motivation-or-background)
+* [Background and Motivation](#background-and-motivation)
 * [Detailed Design](#detailed-design)
     * [Current Approach: Merge-Based Global Stats](#current-approach-merge-based-global-stats)
     * [Proposed Approach: Sample-Based Global Stats](#proposed-approach-sample-based-global-stats)
@@ -33,7 +33,7 @@ This proposal introduces a sample-based approach for building global-level stati
 
 For non-partitioned tables, TiDB already builds statistics this way: each TiKV region returns a sample collector, all region collectors are merged into a single collector (via A-Res weighted min-heap when using reservoir sampling, or by concatenation when using Bernoulli sampling), and histograms and TopN are built from the merged samples. The current partition-to-global path bypasses this proven infrastructure and instead attempts to merge pre-built histograms and TopN arrays — a fundamentally lossier operation. This proposal replaces that merge with the same sample-based approach already used for regions, applied at the partition-to-global level. Beyond reusing existing infrastructure, the only new step this proposal adds is persisting pruned samples per partition to storage, so that future single-partition re-analyzes can load them instead of re-scanning unchanged partitions from TiKV.
 
-## Motivation or Background
+## Background and Motivation
 
 TiDB uses dynamic partition pruning by default, which requires global-level statistics spanning all partitions. Today there are two performance problems with how these global stats are produced.
 
