@@ -319,6 +319,14 @@ func TestRUCollectingCompactAndReportConsistency(t *testing.T) {
 	require.NotEmpty(t, normalizeTopRURecords(fromCompact))
 }
 
+// compactWithLimits boundary cases:
+// - pre-existing others SQL plus evicted SQL are merged
+// - pre-existing others user plus evicted users are merged
+// - only others user is present
+// - single user single SQL remains unchanged
+// - legacy others records are folded into othersRec
+// Keep these cases explicit and focused; add new boundary cases in this block.
+
 func TestCompactWithLimitsPreExistingOthersRecAndEvictedSQL(t *testing.T) {
 	// Precondition: user already has othersRec, then one SQL is evicted by per-user top1.
 	// Contract: pre-existing othersRec and evicted SQL RU are merged into one others record.
@@ -408,6 +416,8 @@ func TestCompactWithLimitsOthersUserAndEvictedUsersBothPresent(t *testing.T) {
 }
 
 func TestCompactWithLimitsOnlyOthersUserNonEmpty(t *testing.T) {
+	// Precondition: only othersUser.othersRec has data.
+	// Contract: compacted shape keeps only othersUser with the same othersRec.
 	collecting := newRUCollectingWithCaps(10, 10)
 	collecting.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, 10)
 	collecting.othersUser.addOthers(3000, &stmtstats.RUIncrement{
@@ -425,6 +435,8 @@ func TestCompactWithLimitsOnlyOthersUserNonEmpty(t *testing.T) {
 }
 
 func TestCompactWithLimitsSingleUserSingleSQL(t *testing.T) {
+	// Precondition: single user with single SQL.
+	// Contract: compacted shape preserves the user record without creating othersUser.
 	collecting := newRUCollectingWithCaps(10, 10)
 	u1 := newUserRUCollectingWithCap("u1", 10)
 	u1.add(4000, stmtstats.BinaryDigest("sql-only"), stmtstats.BinaryDigest("plan-only"), &stmtstats.RUIncrement{
@@ -446,8 +458,8 @@ func TestCompactWithLimitsSingleUserSingleSQL(t *testing.T) {
 }
 
 func TestCompactWithLimitsOnlyOthersUserLegacyRecords(t *testing.T) {
-	// Compatibility case: legacy others data may sit in othersUser.records with nil digests.
-	// Contract: compaction folds it into othersUser.othersRec.
+	// Precondition: legacy others data sits in othersUser.records with nil digests.
+	// Contract: compaction folds legacy records into othersUser.othersRec.
 	collecting := newRUCollectingWithCaps(10, 10)
 	legacyOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
 	legacyRec := newOthersRURecord()

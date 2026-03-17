@@ -92,7 +92,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 
 	const sampleTs = uint64(1700000000)
 	switch cs.GoalID {
-	case "G7_key_aggregation_by_user_sql_plan":
+	case "key_aggregation_by_user_sql_plan":
 		// Same SQL/plan under different users must remain isolated by RUKey.User.
 		sqlDigest := []byte("S_G7")
 		planDigest := []byte("P_G7")
@@ -110,7 +110,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 				PlanDigest: stmtstats.BinaryDigest(planDigest),
 			}: {TotalRU: 9, ExecCount: 1, ExecDuration: 1000},
 		})
-	case "G8_same_timestamp_multiple_finish_accumulate":
+	case "same_timestamp_multiple_finish_accumulate":
 		// Same key and same bucket timestamp should accumulate RU/ExecCount/Duration.
 		sqlDigest := []byte("S_G8")
 		planDigest := []byte("P_G8")
@@ -127,7 +127,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 		tsr.ruAggregator.addBatchToBucket(sampleTs, stmtstats.RUIncrementMap{
 			key: {TotalRU: 4, ExecCount: 2, ExecDuration: 2000},
 		})
-	case "G10_internal_sql_empty_user_handling":
+	case "internal_sql_empty_user_handling":
 		// Empty user is valid and should not be rewritten to "<others>".
 		sqlDigest := []byte("S_G10")
 		planDigest := []byte("P_G10")
@@ -140,7 +140,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 				PlanDigest: stmtstats.BinaryDigest(planDigest),
 			}: {TotalRU: 10, ExecCount: 1, ExecDuration: 1000},
 		})
-	case "G11_short_exec_time_lt_1s_handling":
+	case "short_exec_time_lt_1s_handling":
 		// Sub-second duration is kept in nanos and reported as-is.
 		sqlDigest := []byte("S_G11")
 		planDigest := []byte("P_G11")
@@ -241,7 +241,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 func assertTopRUCasePayload(t *testing.T, goalID string, payload *ReportData) {
 	t.Helper()
 	switch goalID {
-	case "G7_key_aggregation_by_user_sql_plan":
+	case "key_aggregation_by_user_sql_plan":
 		users := map[string]struct{}{}
 		for _, rec := range payload.RURecords {
 			if string(rec.SqlDigest) == "S_G7" && string(rec.PlanDigest) == "P_G7" {
@@ -253,18 +253,18 @@ func assertTopRUCasePayload(t *testing.T, goalID string, payload *ReportData) {
 		require.True(t, ok)
 		_, ok = users["u2"]
 		require.True(t, ok)
-	case "G8_same_timestamp_multiple_finish_accumulate":
+	case "same_timestamp_multiple_finish_accumulate":
 		rec := findRURecordByDigest(payload.RURecords, "root", "S_G8", "P_G8")
 		require.NotNil(t, rec)
 		require.Len(t, rec.Items, 1)
 		require.InDelta(t, 7.0, rec.Items[0].TotalRu, 1e-9)
 		require.Equal(t, uint64(3), rec.Items[0].ExecCount)
 		require.Equal(t, uint64(3000), rec.Items[0].ExecDuration)
-	case "G10_internal_sql_empty_user_handling":
+	case "internal_sql_empty_user_handling":
 		rec := findRURecordByDigest(payload.RURecords, "", "S_G10", "P_G10")
 		require.NotNil(t, rec)
 		require.NotEmpty(t, rec.Items)
-	case "G11_short_exec_time_lt_1s_handling":
+	case "short_exec_time_lt_1s_handling":
 		rec := findRURecordByDigest(payload.RURecords, "root", "S_G11", "P_G11")
 		require.NotNil(t, rec)
 		require.NotEmpty(t, rec.Items)

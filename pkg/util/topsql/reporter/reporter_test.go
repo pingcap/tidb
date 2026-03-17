@@ -139,6 +139,40 @@ func findPlanMeta(metas []tipb.PlanMeta, planDigest []byte) (*tipb.PlanMeta, boo
 	return nil, false
 }
 
+func TestDoReportSendsMetaWhenRURecordsEmpty(t *testing.T) {
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+
+	ch := make(chan *ReportData, 1)
+	require.NoError(t, tsr.Register(newMockDataSink(ch)))
+
+	input := &ReportData{
+		SQLMetas: []tipb.SQLMeta{{
+			SqlDigest:     []byte("S_meta_only"),
+			NormalizedSql: "select /* meta only */ 1",
+		}},
+		PlanMetas: []tipb.PlanMeta{{
+			PlanDigest:     []byte("P_meta_only"),
+			NormalizedPlan: "Point_Get",
+		}},
+	}
+	tsr.doReport(input)
+
+	select {
+	case payload := <-ch:
+		require.Empty(t, payload.RURecords)
+		require.Empty(t, payload.DataRecords)
+		require.Len(t, payload.SQLMetas, 1)
+		require.Len(t, payload.PlanMetas, 1)
+		require.Equal(t, []byte("S_meta_only"), payload.SQLMetas[0].SqlDigest)
+		require.Equal(t, "select /* meta only */ 1", payload.SQLMetas[0].NormalizedSql)
+		require.Equal(t, []byte("P_meta_only"), payload.PlanMetas[0].PlanDigest)
+		require.Equal(t, "Point_Get", payload.PlanMetas[0].NormalizedPlan)
+	case <-time.After(time.Second):
+		t.Fatal("meta-only payload should still be reported")
+	}
+}
+
 func TestCollectAndSendBatch(t *testing.T) {
 	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1)
 	populateCache(tsr, 0, maxSQLNum, 1)
@@ -1198,7 +1232,8 @@ func BenchmarkTopSQLCollectAndIncrementFrequency(b *testing.B) {
 	})
 }
 
-func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
+// BenchmarkTopCollectAndEvict verifies top collect and evict and guards against regressions in begin-based RU accounting.
+func BenchmarkTopCollectAndEvict(b *testing.B) {
 	tsr, _ := initializeCache(maxSQLNum, 120)
 	begin := 0
 	end := maxSQLNum

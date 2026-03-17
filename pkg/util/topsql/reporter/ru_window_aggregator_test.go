@@ -614,7 +614,9 @@ func BenchmarkRUWindowAggregatorMatrix(b *testing.B) {
 // (take consumes buckets, so we must re-fill).
 // Use -bench=TakeReportRecords -benchmem to compare ns/op and B/op.
 
-func BenchmarkTakeReportRecords_Small_60s(b *testing.B) {
+// BenchmarkTakeReportRecordsSmall60s measures takeReportRecords(60, 60)
+// under small cardinality (10x10) as a baseline extraction cost.
+func BenchmarkTakeReportRecordsSmall60s(b *testing.B) {
 	keyspace := []byte("ks")
 	const numUsers, numSQLsPerUser = 10, 10
 	b.ResetTimer()
@@ -625,7 +627,9 @@ func BenchmarkTakeReportRecords_Small_60s(b *testing.B) {
 	}
 }
 
-func BenchmarkTakeReportRecords_Medium_60s(b *testing.B) {
+// BenchmarkTakeReportRecordsMedium60s measures takeReportRecords(60, 60)
+// under medium cardinality (100x100).
+func BenchmarkTakeReportRecordsMedium60s(b *testing.B) {
 	keyspace := []byte("ks")
 	const numUsers, numSQLsPerUser = 100, 100
 	b.ResetTimer()
@@ -636,7 +640,9 @@ func BenchmarkTakeReportRecords_Medium_60s(b *testing.B) {
 	}
 }
 
-func BenchmarkTakeReportRecords_Large_60s(b *testing.B) {
+// BenchmarkTakeReportRecordsLarge60s measures takeReportRecords(60, 60)
+// under large cardinality (200x200).
+func BenchmarkTakeReportRecordsLarge60s(b *testing.B) {
 	keyspace := []byte("ks")
 	const numUsers, numSQLsPerUser = 200, 200
 	b.ResetTimer()
@@ -647,10 +653,10 @@ func BenchmarkTakeReportRecords_Large_60s(b *testing.B) {
 	}
 }
 
-// BenchmarkTakeReportRecords_Large_60s_AtDesignLimit measures takeReportRecords(60, 60) when the
+// BenchmarkTakeReportRecordsLarge60SAtDesignLimit measures takeReportRecords(60, 60) when the
 // aggregator is in the 60s design-limit shape: 1 bucket collecting at 400×400 cap and 4 buckets
 // already compacted to 200×200. Run with -benchmem for B/op and allocs/op.
-func BenchmarkTakeReportRecords_Large_60s_AtDesignLimit(b *testing.B) {
+func BenchmarkTakeReportRecordsLarge60SAtDesignLimit(b *testing.B) {
 	keyspace := []byte("ks")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -660,10 +666,10 @@ func BenchmarkTakeReportRecords_Large_60s_AtDesignLimit(b *testing.B) {
 	}
 }
 
-// BenchmarkTakeReportRecords_Large_60s_At10kKeys measures takeReportRecords(60, 60) with 10k keys
+// BenchmarkTakeReportRecordsLarge60SAt10KKeys measures takeReportRecords(60, 60) with 10k keys
 // per bucket (4 compacted + 1 collecting), simulating maxRUKeysPerAggregate=10000. Compare with
-// BenchmarkTakeReportRecords_Large_60s_AtDesignLimit (160k keys) for 10k vs 160k reporter load.
-func BenchmarkTakeReportRecords_Large_60s_At10kKeys(b *testing.B) {
+// BenchmarkTakeReportRecordsLarge60SAtDesignLimit (160k keys) for 10k vs 160k reporter load.
+func BenchmarkTakeReportRecordsLarge60SAt10KKeys(b *testing.B) {
 	keyspace := []byte("ks")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -673,7 +679,9 @@ func BenchmarkTakeReportRecords_Large_60s_At10kKeys(b *testing.B) {
 	}
 }
 
-func BenchmarkTakeReportRecords_Medium_15s(b *testing.B) {
+// BenchmarkTakeReportRecordsMedium15s measures takeReportRecords(60, 15)
+// with 100x100 cardinality to capture 15s regrouping cost.
+func BenchmarkTakeReportRecordsMedium15s(b *testing.B) {
 	keyspace := []byte("ks")
 	const numUsers, numSQLsPerUser = 100, 100
 	b.ResetTimer()
@@ -684,9 +692,9 @@ func BenchmarkTakeReportRecords_Medium_15s(b *testing.B) {
 	}
 }
 
-// BenchmarkFillAggregatorOnly_Medium measures only the cost to fill the aggregator (no takeReportRecords).
-// takeReportRecords cost ≈ (BenchmarkTakeReportRecords_Medium_60s time) - (this benchmark time).
-func BenchmarkFillAggregatorOnly_Medium(b *testing.B) {
+// BenchmarkFillAggregatorOnlyMedium measures fill-only cost (no take)
+// for 100x100 cardinality to isolate addBatch/rotation overhead.
+func BenchmarkFillAggregatorOnlyMedium(b *testing.B) {
 	const numUsers, numSQLsPerUser = 100, 100
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -696,7 +704,7 @@ func BenchmarkFillAggregatorOnly_Medium(b *testing.B) {
 	}
 }
 
-// BenchmarkTakeReportRecordsOverCap60s keeps reporter around and above 100x100 final limits.
+// BenchmarkTakeReportRecordsOverCap60s keeps reporter around and above 100x100(250*120) final limits.
 // Risk covered: over-cap windows should have bounded extraction cost and no abnormal allocation growth.
 func BenchmarkTakeReportRecordsOverCap60s(b *testing.B) {
 	keyspace := []byte("ks")
@@ -768,7 +776,7 @@ func makeLongTailBatch(numTailUsers, numTailSQLsPerUser, numHotUsers int, hotRU 
 	return batch
 }
 
-// BenchmarkTakeReportRecordsLongTail60s benchmarks a few hotspots mixed with a large long tail.
+// BenchmarkTakeReportRecordsLongTail60s benchmarks a few hotspots mixed with a large long tail(180×80 tail + 6 hot).
 // Risk covered: long-tail distributions should not regress takeReportRecords throughput unexpectedly.
 func BenchmarkTakeReportRecordsLongTail60s(b *testing.B) {
 	keyspace := []byte("ks")
@@ -784,7 +792,9 @@ func BenchmarkTakeReportRecordsLongTail60s(b *testing.B) {
 	}
 }
 
-func BenchmarkTakeReportRecords_OverSQLCapPerUser_60s(b *testing.B) {
+// BenchmarkTakeReportRecordsOverSQLCapPerUser60S measures extraction cost
+// when per-user SQL cardinality exceeds pre-top cap (10x600).
+func BenchmarkTakeReportRecordsOverSQLCapPerUser60S(b *testing.B) {
 	keyspace := []byte("ks")
 	const numUsers, numSQLsPerUser = 10, 600 // exceed maxPreTopNSQLsPerUser (400)
 	b.ResetTimer()
@@ -795,7 +805,9 @@ func BenchmarkTakeReportRecords_OverSQLCapPerUser_60s(b *testing.B) {
 	}
 }
 
-func BenchmarkTakeReportRecords_LateTake_DropsOldWindows(b *testing.B) {
+// BenchmarkTakeReportRecordsLateTakeDropsOldWindows measures
+// takeReportRecords(180, 60) after filling three windows, where late take drops older windows.
+func BenchmarkTakeReportRecordsLateTakeDropsOldWindows(b *testing.B) {
 	keyspace := []byte("ks")
 	const numUsers, numSQLsPerUser = 100, 100
 	batch := makeRUBatch(numUsers, numSQLsPerUser)
