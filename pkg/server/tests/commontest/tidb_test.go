@@ -3517,6 +3517,24 @@ func TestAuditPluginRetrying(t *testing.T) {
 		retrying bool
 	}
 	testResults := make([]normalTest, 0)
+	var testResultsMu sync.Mutex
+	appendResult := func(audit normalTest) {
+		testResultsMu.Lock()
+		defer testResultsMu.Unlock()
+		testResults = append(testResults, audit)
+	}
+	resetResults := func() {
+		testResultsMu.Lock()
+		defer testResultsMu.Unlock()
+		testResults = testResults[:0]
+	}
+	getResults := func() []normalTest {
+		testResultsMu.Lock()
+		defer testResultsMu.Unlock()
+		results := make([]normalTest, len(testResults))
+		copy(results, testResults)
+		return results
+	}
 
 	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 		// Only consider the Completed event
@@ -3529,7 +3547,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			audit.retrying = retrying.(bool)
 		}
 		audit.sql = sctx.StmtCtx.OriginalSQL
-		testResults = append(testResults, audit)
+		appendResult(audit)
 	}
 	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
@@ -3546,7 +3564,9 @@ func TestAuditPluginRetrying(t *testing.T) {
 		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
 		require.NoError(t, err)
 
-		testResults = testResults[:0]
+		resetResults()
+		// Inject deterministic write conflicts to make statement retries observable in auto-commit mode.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", "10*return(true)")
 		// a big enough concurrency to trigger retries
 		concurrency := 500
 		var wg sync.WaitGroup
@@ -3554,17 +3574,19 @@ func TestAuditPluginRetrying(t *testing.T) {
 			wg.Add(1)
 			conn, err := db.Conn(context.Background())
 			require.NoError(t, err)
-			go func() {
+			go func(conn *sql.Conn) {
 				defer wg.Done()
-				_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
+				defer conn.Close()
+				_, err := conn.ExecContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
 				require.NoError(t, err)
-			}()
+			}(conn)
 		}
 		wg.Wait()
 
-		require.Greater(t, len(testResults), concurrency)
+		results := getResults()
+		require.Greater(t, len(results), concurrency)
 		nonRetryingCount := 0
-		for _, res := range testResults {
+		for _, res := range results {
 			if !res.retrying {
 				nonRetryingCount++
 			}
@@ -3597,7 +3619,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			return conn
 		}
 
-		testResults = testResults[:0]
+		resetResults()
 		var wg sync.WaitGroup
 		wg.Add(2)
 		// Transaction 1
@@ -3633,9 +3655,10 @@ func TestAuditPluginRetrying(t *testing.T) {
 		}()
 		wg.Wait()
 
+		results := getResults()
 		retryingCount := 0
 		nonRetryingCount := 0
-		for _, res := range testResults {
+		for _, res := range results {
 			if res.retrying {
 				retryingCount++
 			} else {
@@ -3665,7 +3688,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
 
-		testResults = testResults[:0]
+		resetResults()
 		runExplicitTransactionRetry(db, true)
 	})
 }

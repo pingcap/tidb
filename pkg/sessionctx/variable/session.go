@@ -765,7 +765,9 @@ type SessionVars struct {
 	BatchSize
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
+	DMLBatchSize int
+	// MLogPurgeBatchSize indicates the max rows deleted by one purge batch transaction.
+	MLogPurgeBatchSize  int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	*UserVars
@@ -1724,6 +1726,12 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2293,6 +2301,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
+	vars.MLogPurgeBatchSize = DefTiDBMLogPurgeBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation

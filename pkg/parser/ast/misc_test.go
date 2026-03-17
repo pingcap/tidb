@@ -83,6 +83,7 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
 		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
 		&ast.RefreshMaterializedViewImplementStmt{
 			RefreshStmt:                  &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
@@ -117,6 +118,11 @@ func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
 
 func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
 	_, ok := any(&ast.RefreshMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.PurgeMaterializedViewLogStmt{}).(ast.StmtNode)
 	require.True(t, ok)
 }
 

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -29,6 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
+
+func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
+	rs, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+	require.Nil(t, rs)
+}
 
 func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -71,10 +79,87 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 }
 
-func TestMaterializedViewRefreshFastNotSupported(t *testing.T) {
+func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_internal_next (a int not null, b int not null)")
+	tk.MustExec("insert into t_internal_next values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_internal_next (a, b) purge immediate")
+	tk.MustExec("create materialized view mv_internal_next (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_next group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_internal_next"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = null where MVIEW_ID = %d", mviewID))
+
+	// User SQL refresh should not update NEXT_TIME.
+	tk.MustExec("refresh materialized view mv_internal_next complete")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete manually"))
+
+	// Internal SQL refresh should update NEXT_TIME by evaluating RefreshNext.
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_next complete")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete automatically"))
+}
+
+func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_internal_start_only (a int not null, b int not null)")
+	tk.MustExec("insert into t_internal_start_only values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_internal_start_only (a, b) purge immediate")
+	tk.MustExec("create materialized view mv_internal_start_only (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_start_only group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_internal_start_only"))
+	require.NoError(t, err)
+	require.NotNil(t, mvTable.Meta().MaterializedView)
+	// Simulate scheduler metadata state: START WITH is set but NEXT is empty.
+	mvTable.Meta().MaterializedView.RefreshStartWith = "DATE_ADD(NOW(), INTERVAL 2 HOUR)"
+	mvTable.Meta().MaterializedView.RefreshNext = ""
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MVIEW_ID = %d", mviewID))
+
+	// User SQL refresh should keep NEXT_TIME unchanged.
+	tk.MustExec("refresh materialized view mv_internal_start_only complete")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete manually"))
+
+	// Internal SQL refresh should explicitly set NEXT_TIME = NULL when START WITH exists and NEXT is empty.
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_start_only complete")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("complete automatically"))
+}
+
+/*
+func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -83,10 +168,19 @@ func TestMaterializedViewRefreshFastNotSupported(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
-	err := tk.ExecToErr("refresh materialized view mv fast")
-	require.Error(t, err)
-	require.ErrorContains(t, err, "FAST refresh is not yet supported, please use COMPLETE refresh")
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+	tk.MustExec("refresh materialized view mv fast")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	tk.MustQuery("select REFRESH_METHOD from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
+		Check(testkit.Rows("fast manually"))
+
+	tk.MustExec("insert into t values (4, 8)")
+	mustExecInternal(t, tk, "refresh materialized view mv fast")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1", "4 8 1"))
+	tk.MustQuery("select REFRESH_METHOD from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
+		Check(testkit.Rows("fast automatically"))
 }
+*/
 
 func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -147,7 +241,7 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 	tk.MustExec("refresh materialized view mv complete")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
 		Check(testkit.Rows("0"))
 }
@@ -202,7 +296,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	}
 
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("running complete 1 1 1"))
+		Check(testkit.Rows("running complete manually 1 1 1"))
 
 	close(pauseCh)
 
@@ -214,7 +308,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	}
 
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 }
 
 func TestMaterializedViewRefreshCompleteReadTSOSnapshotMatchesMV(t *testing.T) {
@@ -390,7 +484,7 @@ func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUp
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", newTS, mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", newTS, mviewID)).
-		Check(testkit.Rows("success complete 1 1 1"))
+		Check(testkit.Rows("success complete manually 1 1 1"))
 }
 
 func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
@@ -501,7 +595,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("failed complete 1 1 1"))
+		Check(testkit.Rows("failed complete manually 1 1 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
 		Check(testkit.Rows("0"))
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()

@@ -63,6 +63,45 @@ func checkImportDirEmpty(t *testing.T) {
 	}
 }
 
+func TestStartDiskQuotaCheck(t *testing.T) {
+	ctx := context.Background()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tidbCfg := tidb.GetGlobalConfig()
+	tidbCfg.TempDir = t.TempDir()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	dbInfo, ok := do.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	table, err := do.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
+		Table: &resolve.TableNameW{
+			TableName: &ast.TableName{
+				Name: pmodel.NewCIStr("t"),
+			},
+			DBInfo: &model.DBInfo{
+				Name: pmodel.NewCIStr("test"),
+				ID:   dbInfo.ID,
+			},
+		},
+		SelectPlan: &plannercore.PhysicalSelection{},
+	}.Init(tk.Session().GetPlanCtx()), table)
+	require.NoError(t, err)
+	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
+	require.NoError(t, err)
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "test-disk-quota", &storeHelper{kvStore: store})
+	require.NoError(t, err)
+	defer ti.Backend().CloseEngineMgr()
+
+	stop := ti.StartDiskQuotaCheck(ctx)
+	// stop should cancel the goroutine and return without hanging.
+	stop()
+}
+
 func TestImportFromSelectCleanup(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)

@@ -2172,6 +2172,10 @@ var defaultSysVars = []*SysVar{
 		s.DMLBatchSize = int(TidbOptInt64(val, DefDMLBatchSize))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMLogPurgeBatchSize, Value: strconv.Itoa(DefTiDBMLogPurgeBatchSize), Type: TypeUnsigned, MinValue: DefTiDBMLogPurgeBatchMinSize, MaxValue: DefTiDBMLogPurgeBatchMaxSize, SetSession: func(s *SessionVars, val string) error {
+		s.MLogPurgeBatchSize = int(TidbOptInt64(val, DefTiDBMLogPurgeBatchSize))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxChunkSize, Value: strconv.Itoa(DefMaxChunkSize), Type: TypeUnsigned, MinValue: maxChunkSizeLowerBound, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 		return nil

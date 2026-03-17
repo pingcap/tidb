@@ -150,6 +150,14 @@ update `$mlog$t` set a=1;
 Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
 delete from `$mlog$t`;
 Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
+update `$mlog$t` set b=1 where _tidb_rowid=1;
+Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
+delete from `$mlog$t` where _tidb_rowid=1;
+Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
+update `$mlog$t` set b=1 where _tidb_rowid in (1, 2);
+Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
+delete from `$mlog$t` where _tidb_rowid in (1, 2);
+Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
 select * from `$mlog$t`;
 a	b	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
 drop table if exists t;
@@ -164,6 +172,14 @@ Error 1288 (HY000): The target table v of the REPLACE is not updatable
 update v set s=1;
 Error 1288 (HY000): The target table v of the UPDATE is not updatable
 delete from v;
+Error 1288 (HY000): The target table v of the DELETE is not updatable
+update v set s=1 where a=1;
+Error 1288 (HY000): The target table v of the UPDATE is not updatable
+delete from v where a=1;
+Error 1288 (HY000): The target table v of the DELETE is not updatable
+update v set s=1 where a in (1, 2);
+Error 1288 (HY000): The target table v of the UPDATE is not updatable
+delete from v where a in (1, 2);
 Error 1288 (HY000): The target table v of the DELETE is not updatable
 drop materialized view v;
 drop table if exists t;
