@@ -1530,11 +1530,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		}
 
 		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)
-		pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{
-			CAPath:   conf.Security.CAPath,
-			CertPath: conf.Security.CertPath,
-			KeyPath:  conf.Security.KeyPath,
-		})
+		pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pdSecurityOptionForGC(conf))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1563,17 +1559,25 @@ func tidbSetPDClientForGC(d *Dumper) error {
 	}
 
 	apiCtx := pd.NewAPIContextV1()
-	pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{
-		CAPath:   conf.Security.CAPath,
-		CertPath: conf.Security.CertPath,
-		KeyPath:  conf.Security.KeyPath,
-	})
+	pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pdSecurityOptionForGC(conf))
 	if err != nil {
 		tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 		return nil
 	}
 	d.tidbPDClientForGC = pdClient
 	return nil
+}
+
+func pdSecurityOptionForGC(conf *Config) pd.SecurityOption {
+	pdCAPath := conf.PDCAPath
+	if pdCAPath == "" {
+		pdCAPath = conf.Security.CAPath
+	}
+	return pd.SecurityOption{
+		CAPath:   pdCAPath,
+		CertPath: conf.Security.CertPath,
+		KeyPath:  conf.Security.KeyPath,
+	}
 }
 
 // tidbGetSnapshot is an initialization step of Dumper.
