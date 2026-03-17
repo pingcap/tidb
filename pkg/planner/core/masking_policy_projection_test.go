@@ -144,4 +144,3 @@ func TestMaskingPolicyBatchPointGet(t *testing.T) {
 	// Test single value in IN (might use PointGet or BatchPointGet)
 	tk.MustQuery("select c from t_batch_pointget where id in (1)").Check(testkit.Rows("******"))
 }
-

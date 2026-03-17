@@ -1632,7 +1632,7 @@ func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldNa
 //
 // The originalFields parameter contains the original SELECT field expressions before
 // they were materialized. This allows us to correctly apply masking to wrapper expressions
-// like CONCAT(c, '') or CAST(c AS CHAR) by processing the original expression tree.
+// like CONCAT(c, ”) or CAST(c AS CHAR) by processing the original expression tree.
 func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, originalFields []*ast.SelectField) (base.LogicalPlan, error) {
 	if b.is == nil || p == nil {
 		return p, nil
