@@ -25280,7 +25280,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 105
+            "y": 13
           },
           "id": 336,
           "options": {
@@ -25309,9 +25309,103 @@
           ],
           "title": "Active Parallel Upload Worker Count",
           "type": "timeseries"
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Duration of nextgen write_sst and ingest_s3 APIs",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 19
+          },
+          "hiddenSeries": false,
+          "id": 23763572004,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_ingestor_write_ingest_api_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, api))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{api}}-99",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(tidb_ingestor_write_ingest_api_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (api) / sum(rate(tidb_ingestor_write_ingest_api_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (api)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{api}}-avg",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Write/Ingest API Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
         }
       ],
-      "title": "Global Sort",
+      "title": "Global Sort & Ingest",
       "type": "row"
     },
     {
