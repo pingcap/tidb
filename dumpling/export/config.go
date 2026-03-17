@@ -80,6 +80,7 @@ const (
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
 	flagPDAddr                   = "pd"
+	flagPDCA                     = "pd-ca"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -198,6 +199,9 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
+	// PDCAPath overrides Security.CAPath when connecting to PD endpoints for GC control.
+	// The client certificate and private key still reuse Security.CertPath/KeyPath.
+	PDCAPath string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -252,6 +256,7 @@ func DefaultConfig() *Config {
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
 		PDAddr:                   "",
+		PDCAPath:                 "",
 	}
 }
 
@@ -370,6 +375,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 
 	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
+	flags.String(flagPDCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -616,6 +622,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	conf.PDAddr, err = flags.GetString(flagPDAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.PDCAPath, err = flags.GetString(flagPDCA)
 	if err != nil {
 		return errors.Trace(err)
 	}

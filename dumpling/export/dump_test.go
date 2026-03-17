@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -281,6 +282,76 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			cancel()
 		})
 	}
+}
+
+func TestPDSecurityOptionForGC(t *testing.T) {
+	cases := []struct {
+		name            string
+		sqlCAPath       string
+		pdCAPath        string
+		clientCertPath  string
+		clientKeyPath   string
+		expectedCAPath  string
+		expectedCert    string
+		expectedKeyPath string
+	}{
+		{
+			name:            "reuse_sql_tls_when_pd_ca_not_set",
+			sqlCAPath:       "/tmp/sql-ca.pem",
+			clientCertPath:  "/tmp/client-cert.pem",
+			clientKeyPath:   "/tmp/client-key.pem",
+			expectedCAPath:  "/tmp/sql-ca.pem",
+			expectedCert:    "/tmp/client-cert.pem",
+			expectedKeyPath: "/tmp/client-key.pem",
+		},
+		{
+			name:            "override_pd_ca_but_reuse_existing_client_cert_and_key",
+			sqlCAPath:       "/tmp/sql-ca.pem",
+			pdCAPath:        "/tmp/pd-ca.pem",
+			clientCertPath:  "/tmp/client-cert.pem",
+			clientKeyPath:   "/tmp/client-key.pem",
+			expectedCAPath:  "/tmp/pd-ca.pem",
+			expectedCert:    "/tmp/client-cert.pem",
+			expectedKeyPath: "/tmp/client-key.pem",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := DefaultConfig()
+			conf.Security.CAPath = tc.sqlCAPath
+			conf.PDCAPath = tc.pdCAPath
+			conf.Security.CertPath = tc.clientCertPath
+			conf.Security.KeyPath = tc.clientKeyPath
+
+			securityOpt := pdSecurityOptionForGC(conf)
+			require.Equal(t, tc.expectedCAPath, securityOpt.CAPath)
+			require.Equal(t, tc.expectedCert, securityOpt.CertPath)
+			require.Equal(t, tc.expectedKeyPath, securityOpt.KeyPath)
+		})
+	}
+}
+
+func TestParsePDCAFlag(t *testing.T) {
+	conf := DefaultConfig()
+	flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
+	conf.DefineFlags(flags)
+	oldCommandLine := pflag.CommandLine
+	pflag.CommandLine = flags
+	defer func() {
+		pflag.CommandLine = oldCommandLine
+	}()
+	require.NoError(t, flags.Parse([]string{
+		"--pd", "pd1:2379",
+		"--pd-ca", "/tmp/pd-ca.pem",
+		"--cert", "/tmp/client-cert.pem",
+		"--key", "/tmp/client-key.pem",
+	}))
+	require.NoError(t, conf.ParseFromFlags(flags))
+	require.Equal(t, "pd1:2379", conf.PDAddr)
+	require.Equal(t, "/tmp/pd-ca.pem", conf.PDCAPath)
+	require.Equal(t, "/tmp/client-cert.pem", conf.Security.CertPath)
+	require.Equal(t, "/tmp/client-key.pem", conf.Security.KeyPath)
 }
 
 // TestUpdateServiceSafePointRetryAndCancel verifies that the global-GC safe
