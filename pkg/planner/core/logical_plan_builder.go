@@ -4655,6 +4655,91 @@ func (b *PlanBuilder) buildTableDual() *logicalop.LogicalTableDual {
 	return logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 }
 
+// findOuterScopeTable returns the first (innermost) outer scope level that contains
+// a table matching (dbName, tblName). Used when resolving a table reference in a
+// subquery so that "FROM t" can bind to the outer row of the same table (e.g. in
+// DELETE FROM t WHERE EXISTS (SELECT ... FROM t ...)). Returns (nil, nil) if no match.
+func findOuterScopeTable(b *PlanBuilder, dbName, tblName ast.CIStr) (*expression.Schema, []*types.FieldName) {
+	if len(b.outerSchemas) == 0 {
+		return nil, nil
+	}
+	for i := len(b.outerSchemas) - 1; i >= 0; i-- {
+		outerSchema := b.outerSchemas[i]
+		outerNames := b.outerNames[i]
+		if outerSchema == nil || len(outerNames) == 0 {
+			continue
+		}
+		for _, name := range outerNames {
+			if name.Hidden {
+				continue
+			}
+			// Match DB: explicit match, or outer has no DB (treat as current DB).
+			dbMatch := dbName.L == "" || dbName.L == name.DBName.L ||
+				(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && dbName.L == b.ctx.GetSessionVars().CurrentDB)
+			tblMatch := tblName.L == name.TblName.L || tblName.L == name.OrigTblName.L
+			if dbMatch && tblMatch {
+				return outerSchema, outerNames
+			}
+		}
+	}
+	return nil, nil
+}
+
+// buildCorrelatedTableFromOuterScope builds a single-row plan that projects the
+// current outer row's columns for the given table. Used when a subquery's FROM
+// clause references the same table as an outer scope (e.g. DELETE FROM t3 WHERE
+// EXISTS (... FROM t3 ...)). The result is a Projection(TableDual) whose exprs
+// are CorrelatedColumns bound to the outer schema.
+func (b *PlanBuilder) buildCorrelatedTableFromOuterScope(
+	outerSchema *expression.Schema,
+	outerNames []*types.FieldName,
+	dbName, tblName ast.CIStr,
+	asName *ast.CIStr,
+) base.LogicalPlan {
+	var exprs []expression.Expression
+	var outSchema *expression.Schema
+	var outNames []*types.FieldName
+	for i, name := range outerNames {
+		if name.Hidden {
+			continue
+		}
+		// Same DB/table match as findOuterScopeTable (including empty outer DB = current DB).
+		dbMatch := dbName.L == "" || dbName.L == name.DBName.L ||
+			(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && dbName.L == b.ctx.GetSessionVars().CurrentDB)
+		tblMatch := tblName.L == name.TblName.L || tblName.L == name.OrigTblName.L
+		if !dbMatch || !tblMatch {
+			continue
+		}
+		col := outerSchema.Columns[i]
+		corCol := &expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)}
+		corCol.Index = i // position in outer schema; used by executor's outerRow.GetDatum(col.Index, ...)
+		exprs = append(exprs, corCol)
+		if outSchema == nil {
+			outSchema = expression.NewSchema()
+			outNames = make([]*types.FieldName, 0, outerSchema.Len())
+		}
+		outCol := col.Clone().(*expression.Column)
+		outCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		outSchema.Append(outCol)
+		nm := *name
+		if asName != nil && asName.L != "" {
+			nm.TblName = *asName
+		}
+		outNames = append(outNames, &nm)
+	}
+	if outSchema == nil || len(exprs) == 0 {
+		return nil
+	}
+	b.handleHelper.pushMap(nil)
+	dual := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+	dual.SetSchema(expression.NewSchema())
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
+	proj.SetChildren(dual)
+	proj.SetSchema(outSchema)
+	proj.SetOutputNames(outNames)
+	return proj
+}
+
 // addExtraPhysTblIDColumn4DS for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
@@ -4931,6 +5016,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			return p, err
 		}
 		dbName = ast.NewCIStr(sessionVars.CurrentDB)
+	}
+
+	// When inside a subquery, resolve same-table reference to outer scope so that
+	// e.g. DELETE FROM t3 WHERE EXISTS (SELECT ... FROM t3 ...) sees the current row.
+	if len(b.outerSchemas) > 0 {
+		if outerSchema, outerNames := findOuterScopeTable(b, dbName, tn.Name); outerSchema != nil {
+			p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, dbName, tn.Name, asName)
+			if p != nil {
+				return p, nil
+			}
+		}
 	}
 
 	is := b.is

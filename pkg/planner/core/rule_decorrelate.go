@@ -281,6 +281,15 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 				}
 			}
 
+			// Do not decorrelate a Projection(TableDual) that projects CorrelatedColumns (e.g. same-table
+			// reference in DELETE FROM t WHERE EXISTS (... FROM t ...)). Decorrelate would replace CorCol
+			// with Column, but TableDual has no columns, so the plan would be invalid.
+			if len(proj.Children()) == 1 {
+				if _, isDual := proj.Children()[0].(*logicalop.LogicalTableDual); isDual && expression.ContainCorrelatedColumn(proj.Exprs...) {
+					goto NoOptimize
+				}
+			}
+
 			// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
 			// eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
 			// projection can't supply column8 anymore.

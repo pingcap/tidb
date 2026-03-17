@@ -151,3 +151,98 @@ func TestDeleteIgnoreWithFK(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
 }
+
+// TestDeleteWithExistsSubquerySameTableIssue67019 reproduces issue #67019: when a
+// subquery in DELETE's WHERE EXISTS references the same table as the delete target,
+// that reference must be correlated (current row), not a full table scan. Otherwise
+// expanding the subquery (e.g. adding UNION SELECT t3.c5 FROM t3) wrongly changes
+// the number of rows deleted.
+func TestDeleteWithExistsSubquerySameTableIssue67019(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("DROP DATABASE IF EXISTS repro41_delete")
+	tk.MustExec("CREATE DATABASE repro41_delete")
+	tk.MustExec("USE repro41_delete")
+
+	tk.MustExec(`CREATE TABLE t1 (
+  c1 INT PRIMARY KEY,
+  c5 DATE NOT NULL
+);`)
+	tk.MustExec(`CREATE TABLE t3 (
+  c1 INT PRIMARY KEY,
+  c2 INT NOT NULL,
+  c5 DATETIME NULL
+);`)
+
+	tk.MustExec("INSERT INTO t1 VALUES (1, '2022-04-30')")
+	tk.MustExec("INSERT INTO t3 VALUES (3, 1, '2019-05-07 15:50:16')")
+
+	// Original: right side of EXCEPT is only t1, so EXCEPT is empty, EXISTS false, delete 0 rows.
+	tk.MustExec(`DELETE FROM t3
+WHERE c1 = 3
+  AND c2 = 1
+  AND EXISTS (
+    SELECT t1.c5, COALESCE(t1.c5, '2017-10-20 02:16:45'), COALESCE(t1.c5, '2020-08-28 22:54:55')
+    FROM t1
+    EXCEPT
+    SELECT d.k, COALESCE(d.k, '2011-11-27 14:17:47'), COALESCE(d.k, '2010-03-17 16:03:58')
+    FROM (
+      SELECT t1.c5 AS k FROM t1
+    ) AS d
+  );`)
+	tk.MustQuery("SELECT 'after original' AS tag, COUNT(*) AS t3_rows FROM t3").Check(testkit.Rows("after original 1"))
+
+	tk.MustExec("TRUNCATE TABLE t3")
+	tk.MustExec("INSERT INTO t3 VALUES (3, 1, '2019-05-07 15:50:16')")
+
+	// Mutated: same query but d now includes t3.c5. Inner t3 must be correlated (current row).
+	// So EXCEPT result is still empty, EXISTS false, delete 0 rows (same as original).
+	tk.MustExec(`DELETE FROM t3
+WHERE c1 = 3
+  AND c2 = 1
+  AND EXISTS (
+    SELECT t1.c5, COALESCE(t1.c5, '2017-10-20 02:16:45'), COALESCE(t1.c5, '2020-08-28 22:54:55')
+    FROM t1
+    EXCEPT
+    SELECT d.k, COALESCE(d.k, '2011-11-27 14:17:47'), COALESCE(d.k, '2010-03-17 16:03:58')
+    FROM (
+      SELECT t1.c5 AS k FROM t1
+      UNION
+      SELECT t3.c5 AS k FROM t3
+    ) AS d
+  );`)
+	tk.MustQuery("SELECT 'after mutated' AS tag, COUNT(*) AS t3_rows FROM t3").Check(testkit.Rows("after mutated 1"))
+
+	tk.MustExec("DROP DATABASE IF EXISTS repro41_delete")
+}
+
+// TestDeleteWithExistsSubquerySameTableSimple verifies that DELETE FROM t WHERE EXISTS (SELECT 1 FROM t)
+// treats the inner t as the current row, so each row satisfies EXISTS and all rows are deleted.
+func TestDeleteWithExistsSubquerySameTableSimple(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
+
+	tk.MustExec("DELETE FROM t WHERE EXISTS (SELECT 1 FROM t t2 WHERE t2.a = t.a)")
+	tk.MustQuery("SELECT COUNT(*) FROM t").Check(testkit.Rows("0"))
+}
+
+// TestDeleteWithExistsSubqueryDifferentTable ensures that when the subquery references
+// a different table, behavior is unchanged (no regression).
+func TestDeleteWithExistsSubqueryDifferentTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("create table t2(a int primary key)")
+	tk.MustExec("insert into t1 values (1), (2)")
+	tk.MustExec("insert into t2 values (1)")
+
+	tk.MustExec("DELETE FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a)")
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("2"))
+}
