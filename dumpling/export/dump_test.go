@@ -85,7 +85,7 @@ func TestDumpTableMeta(t *testing.T) {
 	conf.NoSchemas = true
 
 	for serverType := version.ServerTypeUnknown; serverType < version.ServerTypeAll; serverType++ {
-		conf.ServerInfo.ServerType = version.ServerType(serverType)
+		conf.ServerInfo.ServerType = serverType
 		hasImplicitRowID := false
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).

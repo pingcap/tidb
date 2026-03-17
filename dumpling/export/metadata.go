@@ -203,7 +203,8 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 					logFile = data[i].String
 				case "master_host", "source_host":
 					host = data[i].String
-				case "executed_gtid_set":
+				case "executed_gtid_set", // MySQL
+					"gtid_io_pos": // MariaDB
 					gtidSet = data[i].String
 				}
 			}

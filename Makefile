@@ -394,12 +394,30 @@ build_lightning_for_web:
 	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
+<<<<<<< HEAD
 build_lightning:
 	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl:
+=======
+build_lightning: ## Build TiDB Lightning data import tool
+ifeq ("$(GOOS)", "freebsd")
+	@echo "Building lightning for FreeBSD, assuming crossbuild, disabling CGO"
+	CGO_ENABLED=0 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+else
+	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+endif
+
+.PHONY: build_lightning-ctl
+build_lightning-ctl: ## Build TiDB Lightning control tool
+	@echo "Building lightning-ctl for FreeBSD, assuming crossbuild, disabling CGO"
+ifeq ("$(GOOS)", "freebsd")
+	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
+else
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
+endif
 
 .PHONY: build_for_lightning_integration_test
 build_for_lightning_integration_test:

@@ -41,7 +41,11 @@ func TestMysqlMetaData_80(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -77,7 +81,11 @@ func TestMysqlMetaData_84(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.4.8")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -111,7 +119,11 @@ func TestMetaDataAfterConn(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, true))
 
@@ -149,7 +161,11 @@ func TestMysqlWithFollowersMetaData_80(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -185,7 +201,11 @@ func TestMysqlWithFollowersMetaData_84(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.4.8")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -219,7 +239,11 @@ func TestMysqlWithNullFollowersMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.45")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -252,13 +276,21 @@ func TestMariaDBMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(rows)
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("10.11.15-MariaDB-ubu2204-log")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMariaDB), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMariaDB, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 // MariaDB 10.11 replica without GTID
+<<<<<<< HEAD
 func TestMariaDBWithFollowersMetaData(t *testing.T) {
+=======
+func TestMariaDBWithFollowersMetaData_File(t *testing.T) {
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -281,7 +313,11 @@ func TestMariaDBWithFollowersMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("10.11.15-MariaDB-ubu2204-log")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMariaDB), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMariaDB, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -304,6 +340,60 @@ func TestMariaDBWithFollowersMetaData(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+<<<<<<< HEAD
+=======
+// MariaDB 10.11 replica with GTID
+func TestMariaDBWithFollowersMetaData_GTID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).
+		AddRow(logFile, pos, "", "")
+	followerRows := sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "connection_name", "Seconds_Behind_Master", "Using_Gtid", "Gtid_IO_Pos"}).
+		AddRow("256529431", "mysql-bin.001821", "192.168.1.100", "connection_1", 0, "Slave_Pos", "0-1-2").
+		AddRow("256529451", "mysql-bin.001820", "192.168.1.102", "connection_2", 200, "Slave_Pos", "0-1-2")
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT @@global.gtid_binlog_pos").WillReturnRows(
+		sqlmock.NewRows([]string{"@@global.gtid_binlog_pos"}).
+			AddRow("0-1-3"),
+	)
+	mock.ExpectQuery("SELECT @@default_master_connection").
+		WillReturnRows(sqlmock.NewRows([]string{"@@default_master_connection"}).
+			AddRow("connection_1"))
+	mock.ExpectQuery("SHOW ALL SLAVES STATUS").WillReturnRows(followerRows)
+
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	si := version.ParseServerInfo("10.11.15-MariaDB-ubu2204-log")
+	require.Equal(t, version.ServerTypeMariaDB, si.ServerType)
+	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
+
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:0-1-3\n\n" +
+		"SHOW SLAVE STATUS:\n" +
+		"\tConnection name: connection_1\n" +
+		"\tHost: 192.168.1.100\n" +
+		"\tLog: mysql-bin.001821\n" +
+		"\tPos: 256529431\n" +
+		"\tGTID:0-1-2\n\n" +
+		"SHOW SLAVE STATUS:\n" +
+		"\tConnection name: connection_2\n" +
+		"\tHost: 192.168.1.102\n" +
+		"\tLog: mysql-bin.001820\n" +
+		"\tPos: 256529451\n" +
+		"\tGTID:0-1-2\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 // MySQL 5.5 and earlier don't have `Executed_Gtid_Set` in the output of SHOW MASTER STATUS
 func TestEarlierMysqlMetaData(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -322,11 +412,15 @@ func TestEarlierMysqlMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
 	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(
-		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
+		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Seconds_Behind_Master"}))
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("5.5.65")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeMySQL), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeMySQL, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -355,7 +449,11 @@ func TestTiDBSnapshotMetaData(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	si := version.ParseServerInfo("8.0.11-TiDB-v8.5.5")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeTiDB), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeTiDB, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.NoError(t, m.recordGlobalMetaData(conn, si, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
@@ -394,7 +492,11 @@ func TestNoPrivilege(t *testing.T) {
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	// some consistencyType will ignore this error, this test make sure no extra message is written
 	si := version.ParseServerInfo("8.0.11-TiDB-v8.5.5")
+<<<<<<< HEAD
 	require.Equal(t, version.ServerType(version.ServerTypeTiDB), si.ServerType)
+=======
+	require.Equal(t, version.ServerTypeTiDB, si.ServerType)
+>>>>>>> 21abb0b2ea5 (dumpling: Fix and improve MySQL 8.4 support (#66704))
 	require.Error(t, m.recordGlobalMetaData(conn, si, false))
 	require.Equal(t, "", m.buffer.String())
 }
