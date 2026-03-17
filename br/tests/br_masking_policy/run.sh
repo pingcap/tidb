@@ -31,7 +31,7 @@ run_sql "INSERT INTO t VALUES (2, 'def');"
 # Create a masking policy
 # Note: This test verifies that masking policy DDL is included in backup
 # and can be restored properly
-run_sql "CREATE MASKING POLICY test_policy ON t(c) AS CASE WHEN 1=1 THEN 'masked' END;"
+run_sql "CREATE MASKING POLICY test_policy ON ${DB}.t(c) AS CASE WHEN 1=1 THEN 'masked' END;"
 
 # Verify masking policy exists before backup
 policy_count_before=$(run_sql "SHOW MASKING POLICIES;" | grep -c "test_policy" || echo "0")
