@@ -360,8 +360,7 @@ def go_deps():
         name = "%s",
 `, repoName)
 		if strings.HasPrefix(repoName, "com_github_tikv") {
-			fmt.Printf(`        build_tags = ["intest"],
-`)
+			fmt.Printf("        build_tags = [\"intest\"],\n")
 		}
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
