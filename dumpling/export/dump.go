@@ -1560,12 +1560,12 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		return nil
 	}
 
-	doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
+	doPDGC, err := checkSameCluster(tctx, pool, pdAddrs)
 	if err != nil {
 		tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 		return nil
 	}
-	if !doPdGC {
+	if !doPDGC {
 		return nil
 	}
 
