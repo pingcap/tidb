@@ -1451,17 +1451,16 @@ func validateResolveAutoConsistency(d *Dumper) error {
 
 // tidbResolveKeyspaceMetaForGC is an initialization step of Dumper.
 //
-// For a premium (keyspace) cluster, cloud control will pass `--pd` and `--keyspace-name`.
-// Dumpling validates `--keyspace-name` against information_schema.KEYSPACE_META and uses
-// the keyspace ID for keyspace-level GC barrier.
+// For a premium (keyspace) cluster, cloud control will pass `--pd`.
+// Dumpling resolves the keyspace from information_schema.KEYSPACE_META and uses
+// the keyspace ID for the keyspace-level GC barrier.
 //
-// If both keyspace names are empty, it is treated as a classical cluster and `--pd`/`--keyspace-name`
-// must not be specified.
+// If KEYSPACE_META reports a classical cluster, `--pd` must not be specified.
 func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 	tctx, conf, db := d.tctx, d.conf, d.dbHandle
 	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
-		if conf.PDAddr != "" || conf.KeyspaceName != "" {
-			return errors.New("--pd/--keyspace-name only support TiDB keyspace clusters")
+		if conf.PDAddr != "" {
+			return errors.New("--pd only supports TiDB keyspace clusters")
 		}
 		return nil
 	}
@@ -1469,7 +1468,7 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 	keyspaceName, keyspaceID, err := queryKeyspaceNameAndID(tctx, db)
 	if err != nil {
 		// If the user explicitly passes premium GC parameters, do not ignore this error.
-		if conf.PDAddr != "" || conf.KeyspaceName != "" {
+		if conf.PDAddr != "" {
 			return err
 		}
 
@@ -1485,15 +1484,10 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 		zap.String("keyspace-name", keyspaceName),
 		zap.String("keyspace-id", keyspaceID))
 
-	// Compare keyspace name between CLI and KEYSPACE_META.
-	if conf.KeyspaceName != keyspaceName {
-		return errors.Errorf("keyspace-name mismatch: --keyspace-name=%q, KEYSPACE_META=%q", conf.KeyspaceName, keyspaceName)
-	}
-
-	// Classical cluster: both keyspace names are empty.
+	// Classical cluster.
 	if keyspaceName == "" {
 		if conf.PDAddr != "" {
-			return errors.New("classical cluster must not specify --pd/--keyspace-name")
+			return errors.New("classical cluster must not specify --pd")
 		}
 		return nil
 	}
