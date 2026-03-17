@@ -1557,6 +1557,7 @@ func gracefulCheckPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *mo
 //   - column type, flen, decimal,
 //   - signed/unsigned flag,
 //   - nullability (NOT NULL flag),
+//   - charset/collation changes,
 //   - enum element definition changes.
 func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
 	oldCol := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
