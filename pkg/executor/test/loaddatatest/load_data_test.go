@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -522,12 +523,6 @@ func TestLoadDataAutoRandomError(t *testing.T) {
 	}
 	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 
-	// This should return error 8216, not a runtime panic
-	err := tk.ExecToErr("load data local infile '/tmp/test.csv' into table t_auto_random fields terminated by ','")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "auto_random")
-	require.Contains(t, err.Error(), "allow_auto_random_explicit_insert")
-
-	// Clean up
-	tk.MustExec("drop table if exists t_auto_random")
+	err := tk.ExecToErr("load data local infile '/tmp/test.csv' into table t_auto_random")
+	require.ErrorIs(t, err, dbterror.ErrInvalidAutoRandom)
 }
