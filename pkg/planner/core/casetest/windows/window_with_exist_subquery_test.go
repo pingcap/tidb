@@ -124,6 +124,7 @@ func TestWindowWithOuterJoinAndCTE(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t0, t1")
+		defer tk.MustExec("drop table if exists t0, t1")
 		tk.MustExec(`CREATE TABLE t0 (
   id bigint NOT NULL,
   k0 int NOT NULL,

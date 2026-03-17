@@ -155,6 +155,37 @@ func TestReplaceColumnOfExprCopyOnWrite(t *testing.T) {
 	require.Same(t, dstCol, replaced.GetArgs()[1])
 }
 
+func TestResolveExprAndReplaceCopyOnWrite(t *testing.T) {
+	ctx := mock.NewContext()
+	srcCol := &expression.Column{
+		UniqueID: 1,
+		Index:    0,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	dstCol := &expression.Column{
+		UniqueID: 2,
+		Index:    0,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	expr, err := expression.NewFunction(ctx.GetExprCtx(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), srcCol, srcCol)
+	require.NoError(t, err)
+	original := expr.(*expression.ScalarFunction)
+
+	replaced := ruleutil.ResolveExprAndReplace(expr, map[string]*expression.Column{
+		string(srcCol.HashCode()): dstCol,
+	}).(*expression.ScalarFunction)
+	require.NotSame(t, original, replaced)
+	require.Same(t, srcCol, original.GetArgs()[0])
+	require.Same(t, srcCol, original.GetArgs()[1])
+	require.NotSame(t, dstCol, replaced.GetArgs()[0])
+	require.NotSame(t, dstCol, replaced.GetArgs()[1])
+
+	replacedLeft := replaced.GetArgs()[0].(*expression.Column)
+	replacedRight := replaced.GetArgs()[1].(*expression.Column)
+	require.Equal(t, dstCol.UniqueID, replacedLeft.UniqueID)
+	require.Equal(t, dstCol.UniqueID, replacedRight.UniqueID)
+}
+
 func TestLogicalProjectionPushDownTopN(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

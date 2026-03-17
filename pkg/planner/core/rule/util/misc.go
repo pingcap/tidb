@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
 
-// ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
+// ResolveExprAndReplace replaces column fields in an expression by child logical-plan columns.
+// Callers must use the returned expression because shared scalar-function trees are rewritten
+// with copy-on-write instead of being mutated in place.
 func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) expression.Expression {
 	switch expr := origin.(type) {
 	case *expression.Column:
@@ -80,7 +82,9 @@ func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 	return origin, false
 }
 
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
+// ReplaceColumnOfExpr replaces columns in an expression by another LogicalProjection.
+// Callers must use the returned expression because shared scalar-function trees are rewritten
+// with copy-on-write instead of being mutated in place.
 func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expression, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
