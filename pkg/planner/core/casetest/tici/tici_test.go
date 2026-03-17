@@ -392,7 +392,7 @@ func TestTiCIWithWrongColumn(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-	tk.MustContainErrMsg("explain select * from t where match(a) against('text1' IN BOOLEAN MODE)", "matching a non-string column")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "matching a non-string column")
-	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "matching a non-string column")
+	tk.MustContainErrMsg("explain select * from t where match(a) against('text1' IN BOOLEAN MODE)", "Doesn't support match search on a non-string column without fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
 }
