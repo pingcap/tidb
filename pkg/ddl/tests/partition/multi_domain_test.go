@@ -3108,17 +3108,10 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		tk2.MustExec("update t set b = b + 10 where a = 1")
 		// Would delete newFrom 1, which would then be backfilled again!
 		tk2.MustExec("update t set b = b + 10 where a = 2")
-<<<<<<< HEAD
 		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().CheckWithFunc([][]any{{"1", "11", 1}, {"2", "12", 3}}, f)
 	})
 	tk.MustExec("alter table t remove partitioning")
 	tk.MustQuery(`select a,b,_tidb_rowid from t`).Sort().CheckWithFunc([][]any{{"1", "11", 1}, {"2", "12", 3}}, f)
-=======
-		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 30001"))
-	})
-	tk.MustExec("alter table t remove partitioning")
-	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 30001"))
->>>>>>> 0d6c969d0b8 (infoschema: Exchange partition did not update the potential new AutoID (#64248))
 }
 
 func TestNonClusteredReorgUpdate(t *testing.T) {
