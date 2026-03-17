@@ -260,6 +260,7 @@ func newBackendContext(
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
+		orderedEngines: make([]*engineInfo, 0, 10),
 		memRoot:        memRoot,
 		jobID:          jobID,
 		backend:        be,

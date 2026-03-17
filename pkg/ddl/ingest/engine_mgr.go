@@ -88,6 +88,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		ei := openedEngines[indexID]
 		ret = append(ret, ei)
 		bc.engines[indexID] = ei
+		bc.orderedEngines = append(bc.orderedEngines, ei)
 	}
 	bc.tbl = tbl
 
@@ -137,6 +138,7 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	}
 
 	bc.engines = make(map[int64]*engineInfo, 10)
+	bc.orderedEngines = bc.orderedEngines[:0]
 
 	return nil
 }

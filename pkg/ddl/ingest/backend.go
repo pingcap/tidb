@@ -95,10 +95,11 @@ type CheckpointOperator interface {
 
 // litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
-	engines map[int64]*engineInfo
-	memRoot MemRoot
-	jobID   int64
-	tbl     table.Table
+	engines        map[int64]*engineInfo
+	orderedEngines []*engineInfo
+	memRoot        MemRoot
+	jobID          int64
+	tbl            table.Table
 	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
 	backend *local.Backend
 	ctx     context.Context
@@ -228,7 +229,7 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 }
 
 func (bc *litBackendCtx) flushEngines(ctx context.Context) error {
-	for _, ei := range bc.engines {
+	for _, ei := range bc.orderedEngines {
 		ei.flushLock.Lock()
 		if err := ei.Flush(); err != nil {
 			logutil.Logger(ctx).Error("flush error", zap.Error(err))
