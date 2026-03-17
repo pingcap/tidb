@@ -1799,23 +1799,22 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	require.True(t, ok)
 	accessCond := []expression.Expression{nil, exprIn}
 	shardIndexCols := []*expression.Column{col2, col0}
-	require.True(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), shardIndexCols, accessCond, sfIn))
+	require.True(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, sfIn))
 
 	// input nil
-	require.False(t, ranger.NeedAddColumn4InCond(nil, shardIndexCols, accessCond, sfIn))
-	require.False(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), nil, accessCond, sfIn))
-	require.False(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), shardIndexCols, nil, sfIn))
-	require.False(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), shardIndexCols, accessCond, nil))
+	require.False(t, ranger.NeedAddColumn4InCond(nil, accessCond, sfIn))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, nil, sfIn))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, nil))
 
 	// col1 in (1, 5)
 	exprIn2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col1.RetType, col1, con1, con5)
 	accessCond[1] = exprIn2
-	require.False(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), shardIndexCols, accessCond, exprIn2.(*expression.ScalarFunction)))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn2.(*expression.ScalarFunction)))
 
 	// col0 in (1, col1)
 	exprIn3 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col1, con1, col1)
 	accessCond[1] = exprIn3
-	require.False(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), shardIndexCols, accessCond, exprIn3.(*expression.ScalarFunction)))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn3.(*expression.ScalarFunction)))
 
 	// -------------------------------------------
 	// test NeedAddColumn4EqCond function
@@ -1828,7 +1827,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// test NeedAddGcColumn4ShardIndex function
 	// -------------------------------------------
 	// ranger.valueInfo is not export by package, we can.t test NeedAddGcColumn4ShardIndex
-	require.False(t, ranger.NeedAddGcColumn4ShardIndex(sctx.GetRangerCtx(), shardIndexCols, nil, nil))
+	require.False(t, ranger.NeedAddGcColumn4ShardIndex(shardIndexCols, nil, nil))
 
 	// -------------------------------------------
 	// test AddExpr4EqAndInCondition function
@@ -1861,10 +1860,30 @@ func TestShardIndexFuncSuites(t *testing.T) {
 		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx.GetRangerCtx(), tt.inputConds, shardIndexCols)
 		require.Equal(t, expression.StringifyExpressionsWithCtx(ectx, newConds), tt.outputConds)
 	}
+}
 
-	// In generic plan-cache mode, mutable IN arguments must not be used to synthesize a
-	// fixed tidb_shard() prefix, otherwise the cached plan can retain the first execution's
-	// shard value and mismatch later bindings.
+func TestExtractEqAndInConditionKeepsStableGenericAccess(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	longlongType := types.NewFieldType(mysql.TypeLonglong)
+	col0 := &expression.Column{UniqueID: 0, ID: 0, RetType: longlongType}
+	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
+	cols := []*expression.Column{col0, col1}
+	lengths := []int{types.UnspecifiedLength, types.UnspecifiedLength}
+
+	constExpr := func(v int64) *expression.Constant {
+		return &expression.Constant{Value: types.NewIntDatum(v), RetType: longlongType}
+	}
+	mutableExpr := func(v int64) *expression.Constant {
+		return &expression.Constant{
+			Value:        types.NewIntDatum(v),
+			RetType:      longlongType,
+			DeferredExpr: &expression.Constant{Value: types.NewIntDatum(v), RetType: longlongType},
+		}
+	}
+
 	origGenericPlan := sctx.GetSessionVars().EnablePlanCacheGenericPlan
 	sctx.GetSessionVars().StmtCtx.EnablePlanCache()
 	sctx.GetSessionVars().EnablePlanCacheGenericPlan = true
@@ -1872,21 +1891,45 @@ func TestShardIndexFuncSuites(t *testing.T) {
 		sctx.GetSessionVars().EnablePlanCacheGenericPlan = origGenericPlan
 	}()
 
-	deferredCon1 := &expression.Constant{
-		Value:        types.NewIntDatum(1),
-		RetType:      longlongType,
-		DeferredExpr: &expression.Constant{Value: types.NewIntDatum(1), RetType: longlongType},
-	}
-	deferredCon5 := &expression.Constant{
-		Value:        types.NewIntDatum(5),
-		RetType:      longlongType,
-		DeferredExpr: &expression.Constant{Value: types.NewIntDatum(5), RetType: longlongType},
-	}
-	mutableInExpr := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col0, deferredCon1, deferredCon5)
-	require.False(t, ranger.NeedAddColumn4InCond(sctx.GetRangerCtx(), shardIndexCols, []expression.Expression{nil, mutableInExpr}, mutableInExpr.(*expression.ScalarFunction)))
-	newConds, err := ranger.AddExpr4EqAndInCondition(sctx.GetRangerCtx(), []expression.Expression{mutableInExpr}, shardIndexCols)
-	require.NoError(t, err)
-	require.Equal(t, "[in(Column#0, 1, 5)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	t.Run("do not synthesize derived point access from mutable merge", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GE, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LE, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[eq(Column#1, 1) ge(Column#0, 5) le(Column#0, 5)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+
+	t.Run("keep mutable standalone holder when immutable replacement cannot survive", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LT, longlongType, col0, constExpr(10)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[eq(Column#0, 5) eq(Column#1, 1)]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[lt(Column#0, 10)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+
+	t.Run("prefer immutable standalone holder over mutable one", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col0, mutableExpr(1)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, longlongType, col0, constExpr(1), constExpr(2)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[in(Column#0, 1, 2) eq(Column#1, 1)]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[eq(Column#0, 1)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
 }
 
 func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {

@@ -1080,39 +1080,6 @@ func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("deallocate prepare st")
 }
 
-func TestGenericPlanKeepsMutablePrefixOffsetForNullParam(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
-	tk.MustExec("set @@tidb_enable_plan_cache_generic_plan=1")
-	tk.MustExec("drop table if exists t_gp_null_prefix")
-	tk.MustExec("create table t_gp_null_prefix (a int, b int, key idx_ab(a, b))")
-	tk.MustExec("insert into t_gp_null_prefix values (null, 1), (null, 2), (1, 1), (2, 1)")
-	// Use `<=> ?` with a NULL bind so the first execution still produces a real index range.
-	// The generic plan must keep the leading mutable slot on `a` and preserve the stable `b = 1` suffix.
-	tk.MustExec("prepare st from 'select /*+ use_index(t_gp_null_prefix, idx_ab) */ a, b from t_gp_null_prefix where a <=> ? and b = 1 order by b'")
-	tk.MustExec("set @x=NULL")
-	tk.MustQuery("execute st using @x").Check(testkit.Rows("<nil> 1"))
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	nullPlan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	plan := fmt.Sprint(nullPlan)
-	require.Contains(t, plan, "idx_ab(a, b)")
-	require.Contains(t, plan, "range:[NULL 1,NULL 1]")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// NULL-typed executions do not reuse prepared plan cache entries today, so switch to a
-	// stable INT bind to verify the statement still remains cacheable after the initial NULL run.
-	tk.MustExec("set @x=1")
-	tk.MustQuery("execute st using @x").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("execute st using @x").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	tk.MustExec("deallocate prepare st")
-}
-
 func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

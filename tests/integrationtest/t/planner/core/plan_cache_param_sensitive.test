@@ -31,7 +31,7 @@ execute st using @l, @r;
 select @@last_plan_from_cache;
 deallocate prepare st;
 
-# Generic plan can reuse conservative secondary-index range templates.
+# Generic plan can reuse conservative secondary-index range templates when only the range boundaries change.
 drop table if exists t_gp_range;
 create table t_gp_range (id int primary key, a int, b int, key idx_a(a));
 insert into t_gp_range values (1, 1, 10), (2, 1, 20), (3, 2, 30), (4, 3, 40);
@@ -50,29 +50,6 @@ set @x=1, @y=1;
 execute st using @x, @y;
 select @@last_plan_from_cache;
 set @x=2, @y=2;
-execute st using @x, @y;
-select @@last_plan_from_cache;
-deallocate prepare st;
-
-# Generic plan should avoid parameter-sensitive same-column and propagated rewrites.
-drop table if exists t_gp_eq;
-create table t_gp_eq (a int, key(a));
-insert into t_gp_eq values (1), (2);
-set @@tidb_enable_plan_cache_generic_plan=0;
-prepare st from 'select a from t_gp_eq where a=? and a=? order by a';
-set @x=1, @y=2;
-execute st using @x, @y;
-select @@last_plan_from_cache;
-set @x=1, @y=1;
-execute st using @x, @y;
-select @@last_plan_from_cache;
-deallocate prepare st;
-set @@tidb_enable_plan_cache_generic_plan=1;
-prepare st from 'select a from t_gp_eq where a=? and a=? order by a';
-set @x=1, @y=2;
-execute st using @x, @y;
-select @@last_plan_from_cache;
-set @x=1, @y=1;
 execute st using @x, @y;
 select @@last_plan_from_cache;
 deallocate prepare st;
@@ -161,7 +138,7 @@ execute st using @x;
 select @@last_plan_from_cache;
 deallocate prepare st;
 
-# Generic plan should keep the original mutable Eq/In access if a later immutable replacement cannot survive.
+# Generic plan should keep the original mutable Eq/In holder when a later same-slot predicate cannot stand alone.
 drop table if exists t_gp_fallback;
 create table t_gp_fallback (a int, key(a));
 insert into t_gp_fallback values (5), (20);

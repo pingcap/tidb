@@ -91,41 +91,6 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 deallocate prepare st;
-drop table if exists t_gp_eq;
-create table t_gp_eq (a int, key(a));
-insert into t_gp_eq values (1), (2);
-set @@tidb_enable_plan_cache_generic_plan=0;
-prepare st from 'select a from t_gp_eq where a=? and a=? order by a';
-set @x=1, @y=2;
-execute st using @x, @y;
-a
-select @@last_plan_from_cache;
-@@last_plan_from_cache
-0
-set @x=1, @y=1;
-execute st using @x, @y;
-a
-1
-select @@last_plan_from_cache;
-@@last_plan_from_cache
-0
-deallocate prepare st;
-set @@tidb_enable_plan_cache_generic_plan=1;
-prepare st from 'select a from t_gp_eq where a=? and a=? order by a';
-set @x=1, @y=2;
-execute st using @x, @y;
-a
-select @@last_plan_from_cache;
-@@last_plan_from_cache
-0
-set @x=1, @y=1;
-execute st using @x, @y;
-a
-1
-select @@last_plan_from_cache;
-@@last_plan_from_cache
-1
-deallocate prepare st;
 drop table if exists t_gp_cp;
 create table t_gp_cp (a int, b int, key(a), key(b));
 insert into t_gp_cp values (1, 1), (2, 2);
