@@ -234,6 +234,7 @@ func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
 	if pdCli == nil {
 		cli = NewMockResourceManagerClient(constants.NullKeyspaceID)
 	}
+	ensureDefaultHighPriorityResourceGroup(cli)
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
 			_, err := cli.AddResourceGroup(context.TODO(),
@@ -265,6 +266,13 @@ func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
 		}
 	})
 	is.resourceManagerClient = cli
+}
+
+func ensureDefaultHighPriorityResourceGroup(cli pd.ResourceManagerClient) {
+	_, err := cli.AddResourceGroup(context.TODO(), newDefaultHighPriorityResourceGroupProto())
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		log.Warn("fail to create default high priority group", zap.Error(err))
+	}
 }
 
 func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {

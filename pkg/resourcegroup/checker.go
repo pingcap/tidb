@@ -23,6 +23,9 @@ import (
 // DefaultResourceGroupName is the default resource group name.
 const DefaultResourceGroupName = "default"
 
+// DefaultHighPriorityResourceGroupName is the internal high-priority resource group used by stats sync load.
+const DefaultHighPriorityResourceGroupName = "default_high_priority"
+
 // RunawayChecker is used to check runaway queries.
 type RunawayChecker interface {
 	// BeforeExecutor checks whether query is in watch list before executing and after compiling.

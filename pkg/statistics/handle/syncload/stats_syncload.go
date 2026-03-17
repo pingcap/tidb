@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -330,9 +331,18 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 
 	return s.statsHandle.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
+			sessVars := sctx.GetSessionVars()
+			prevPriority := sessVars.StmtCtx.Priority
+			prevStmtResourceGroupName := sessVars.StmtCtx.ResourceGroupName
+			prevSessionResourceGroupName := sessVars.ResourceGroupName
+			sessVars.StmtCtx.Priority = mysql.HighPriority
+			sessVars.StmtCtx.ResourceGroupName = resourcegroup.DefaultHighPriorityResourceGroupName
+			// Keep StmtCtx and session resource group aligned to avoid fallback to the session default group.
+			sessVars.ResourceGroupName = resourcegroup.DefaultHighPriorityResourceGroupName
 			defer func() {
-				sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+				sessVars.StmtCtx.Priority = prevPriority
+				sessVars.StmtCtx.ResourceGroupName = prevStmtResourceGroupName
+				sessVars.ResourceGroupName = prevSessionResourceGroupName
 			}()
 			return s.handleOneItemTaskWithSCtx(sctx, task)
 		})

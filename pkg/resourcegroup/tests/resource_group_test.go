@@ -236,7 +236,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create resource group x ru_per_sec=1000 EXEC_ELAPSED='15s' action kill", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15d' action kill)", "unknown unit \"d\"")
 	groups, err := infosync.ListResourceGroups(context.TODO())
-	re.Equal(1, len(groups))
+	re.Equal(2, len(groups))
 	re.NoError(err)
 
 	// Check information schema table information_schema.resource_groups
@@ -291,7 +291,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
-	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("6"))
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("7"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")
@@ -606,7 +606,7 @@ func TestAlreadyExistsDefaultResourceGroup(t *testing.T) {
 	}()
 	testkit.CreateMockStoreAndDomain(t)
 	groups, _ := infosync.ListResourceGroups(context.TODO())
-	require.Equal(t, 2, len(groups))
+	require.Equal(t, 3, len(groups))
 }
 
 func TestNewResourceGroupFromOptions(t *testing.T) {

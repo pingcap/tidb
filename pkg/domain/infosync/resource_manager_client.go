@@ -24,6 +24,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -56,7 +57,24 @@ func NewMockResourceManagerClient(keyspaceID uint32) pd.ResourceManagerClient {
 		},
 		Priority: 8,
 	}
+	mockMgr.groups[resourcegroup.DefaultHighPriorityResourceGroupName] = newDefaultHighPriorityResourceGroupProto()
 	return mockMgr
+}
+
+func newDefaultHighPriorityResourceGroupProto() *rmpb.ResourceGroup {
+	return &rmpb.ResourceGroup{
+		Name: resourcegroup.DefaultHighPriorityResourceGroupName,
+		Mode: rmpb.GroupMode_RUMode,
+		RUSettings: &rmpb.GroupRequestUnitSettings{
+			RU: &rmpb.TokenBucket{
+				Settings: &rmpb.TokenLimitSettings{
+					FillRate:   math.MaxInt32,
+					BurstLimit: -1,
+				},
+			},
+		},
+		Priority: ast.HighPriorityValue,
+	}
 }
 
 var _ pd.ResourceManagerClient = (*mockResourceManagerClient)(nil)
