@@ -2278,5 +2278,34 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestEnforceMPPNewest",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select /*+ set_var(tidb_enforce_mpp=on) */ * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);",
+        "Plan": [
+          "TableReader 2.50 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 2.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 2.50 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableRangeScan 2.00 mpp[tiflash] table:t1 range:[1,1], [2,2], keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 20.00 mpp[tiflash] table:t2 pushed down filter:in(test.t2.b, 1, 2), not(isnull(test.t2.b)), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);",
+        "Plan": [
+          "HashJoin 2.50 root  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "├─Batch_Point_Get(Build) 2.00 root table:t1 handle:[1 2], keep order:false, desc:false",
+          "└─TableReader(Probe) 20.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan 20.00 mpp[tiflash] table:t2 pushed down filter:in(test.t2.b, 1, 2), not(isnull(test.t2.b)), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]
