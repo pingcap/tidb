@@ -437,7 +437,7 @@ func (tsr *RemoteTopSQLReporter) onReporterClosing() {
 // collectedData is used for transmission in the channel.
 type collectedData struct {
 	collected         *collecting
-	ruRecords         []tipb.TopRURecord
 	normalizedSQLMap  *normalizedSQLMap
 	normalizedPlanMap *normalizedPlanMap
+	ruRecords         []tipb.TopRURecord
 }

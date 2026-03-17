@@ -190,10 +190,10 @@ func (rs ruRecords) topN(n int) (top, evicted ruRecords) {
 
 // userRUCollecting tracks RU data for one user with per-user SQL TopN.
 type userRUCollecting struct {
-	user               string
 	records            map[sqlPlanKey]*ruRecord // sqlPlanKey => ruRecord
 	othersRec          *ruRecord                // Pre-aggregated "others SQL" record
-	totalRU            float64                  // cumulative RU for user-level TopN sorting
+	user               string
+	totalRU            float64 // cumulative RU for user-level TopN sorting
 	preTopNSQLsPerUser int
 }
 
@@ -381,11 +381,11 @@ func (us userRUCollectings) topN(n int) (top, evicted userRUCollectings) {
 // ruCollecting is the top-level RU collector.
 // It keeps global TopN users with per-user SQL TopN.
 type ruCollecting struct {
-	mu                 sync.Mutex
 	users              map[string]*userRUCollecting // user => userRUCollecting
 	othersUser         *userRUCollecting            // Pre-aggregated "others user"
 	preTopNUsers       int
 	preTopNSQLsPerUser int
+	mu                 sync.Mutex
 }
 
 func newRUCollecting() *ruCollecting {
@@ -453,14 +453,16 @@ func (c *ruCollecting) take() *ruCollecting {
 	return result
 }
 
-func normalizeTopNLimits(maxUsers, maxSQLsPerUser int) (int, int) {
-	if maxUsers <= 0 {
-		maxUsers = maxTopUsers
+func normalizeTopNLimits(maxUsers, maxSQLsPerUser int) (normalizedMaxUsers, normalizedMaxSQLsPerUser int) {
+	normalizedMaxUsers = maxUsers
+	normalizedMaxSQLsPerUser = maxSQLsPerUser
+	if normalizedMaxUsers <= 0 {
+		normalizedMaxUsers = maxTopUsers
 	}
-	if maxSQLsPerUser <= 0 {
-		maxSQLsPerUser = maxTopSQLsPerUser
+	if normalizedMaxSQLsPerUser <= 0 {
+		normalizedMaxSQLsPerUser = maxTopSQLsPerUser
 	}
-	return maxUsers, maxSQLsPerUser
+	return normalizedMaxUsers, normalizedMaxSQLsPerUser
 }
 
 // toTopRURecords converts current collecting data to proto records.

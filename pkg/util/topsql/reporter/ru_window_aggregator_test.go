@@ -595,7 +595,6 @@ func BenchmarkRUWindowAggregatorMatrix(b *testing.B) {
 		{name: "1000x500_60s", numUsers: 1000, numSQLsPerUser: 500, itemInterval: 60},
 	}
 	for _, c := range cases {
-		c := c
 		b.Run(c.name, func(b *testing.B) {
 			b.Run("fill-only", func(b *testing.B) {
 				benchmarkRUFillOnly(b, c)

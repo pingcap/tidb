@@ -31,16 +31,16 @@ const (
 )
 
 type ruPointBucket struct {
-	startTs             uint64
 	collecting          *ruCollecting // non-nil = actively collecting; nil = compacted
 	compactedCollecting *ruCollecting // read-only snapshot, valid only when collecting == nil
+	startTs             uint64
 }
 
 // ruWindowAggregator keeps online 15s buckets for TopRU reporting.
 type ruWindowAggregator struct {
-	mu                sync.Mutex
 	buckets           map[uint64]*ruPointBucket // 15s startTs -> bucket
 	lastReportedEndTs uint64
+	mu                sync.Mutex
 }
 
 func newRUWindowAggregator() *ruWindowAggregator {
