@@ -17,6 +17,14 @@ This file provides guidance to agents working in this repository.
 4. Leave verifiable evidence. Run targeted checks and report exact commands.
 5. Respect generated code artifacts. Do not hand-edit generated code outputs; regenerate from source inputs.
 
+## ExecPlans
+
+When writing complex features or significant refactors, use an ExecPlan from design to implementation.
+
+- Definition and format: `PLANS.md` at repository root.
+- Requirement: keep the ExecPlan updated as a living document while implementation progresses.
+- Scope: use this for multi-step work where losing context would risk correctness or incomplete validation.
+
 ## Quick Decision Matrix
 
 | Task | Required action |
