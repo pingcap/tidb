@@ -288,7 +288,7 @@ type joinTypeWithExtMsg struct {
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder && p.SCtx().GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
 		p, err := joinorder.Optimize(p)
 		return p, false, err
 	}
