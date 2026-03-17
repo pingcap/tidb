@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -79,6 +80,23 @@ type ProcedureExec struct {
 	securityType        string
 	cache               []plannercore.NeedCloseCur
 	parentContext       *variable.ProcedureContext
+}
+
+func restoreRoutineParameterStr(params []*ast.StoreParameter) (string, error) {
+	if len(params) == 0 {
+		return "", nil
+	}
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	for i, p := range params {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := p.Restore(ctx); err != nil {
+			return "", err
+		}
+	}
+	return sb.String(), nil
 }
 
 // buildCreateProcedure Create stored procedure create executor.
@@ -295,6 +313,9 @@ func (e *ShowExec) getRowsProcedure(ctx context.Context, sqlExecutor sqlexec.SQL
 
 // createProcedure Save stored procedure content.
 func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.CreateProcedureInfo) error {
+	if s.FunctionInfo.IsLoadable || s.FunctionInfo.RetType != nil {
+		return errors.New("CREATE FUNCTION is unimplemented")
+	}
 	e.Ctx().GetSessionVars().SetInCallProcedure()
 	defer func() {
 		e.Ctx().GetSessionVars().OutCallProcedure(false)
@@ -322,7 +343,10 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.CreateProced
 			errors.Errorf("Unsupported procedure characteristic type %T", characteristic)
 		}
 	}
-	parameterStr := s.ProcedureParamStr
+	parameterStr, err := restoreRoutineParameterStr(s.ProcedureParam)
+	if err != nil {
+		return err
+	}
 	bodyStr := s.ProcedureBody.Text()
 
 	sqlMod, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.SQLModeVar)
@@ -442,8 +466,11 @@ func (e *ShowExec) fetchShowProcedureStatus(ctx context.Context, showType string
 
 // dropProcedure delete stored procedure.
 func (e *ProcedureExec) dropProcedure(ctx context.Context, s *ast.DropProcedureStmt) error {
-	procedurceName := s.ProcedureName.Name.String()
-	procedurceSchema := s.ProcedureName.Schema
+	if s.IsFunction {
+		return errors.New("DROP FUNCTION is unimplemented")
+	}
+	procedurceName := s.Name.Name.String()
+	procedurceSchema := s.Name.Schema
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnProcedure)
 	sysSession, err := e.GetSysSession()
 	if err != nil {

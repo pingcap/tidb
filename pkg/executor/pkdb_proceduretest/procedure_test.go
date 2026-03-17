@@ -723,10 +723,10 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	tk.MustExec("create table t1(id1 int key,id2 int)")
 	checkAllTracker(tk.Session().GetSessionVars(), t)
 	tk.MustExec("create procedure p1(start int,num int ) begin declare id int default 0; while id < num do insert into t1 value (start+id,start+id); set id = id+1; end while;   end;")
-	tk.MustExec(`create procedure select123() begin declare id,id3,done int default 0; 
+	tk.MustExec(`create procedure select123() begin declare id,id3,done int default 0;
 	declare s1  CURSOR for select * from t1;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	open s1;
 	while done do
 	fetch s1 into id,id3;
@@ -750,11 +750,11 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	checkAllTracker(tk.Session().GetSessionVars(), t)
 	tk.MustExec("create table t2(id1 int key,id2 char(30))")
 	tk.MustExec("create procedure p2(start int,num int ) begin declare id int default 0; while id < num do insert into t2 value (start+id,CONCAT(\"ssssssd\",start + id)); set id = id+1; end while;   end;")
-	tk.MustExec(`create procedure select124() begin declare id,done int default 0; 
-	declare id3 char(30) default ""; 
+	tk.MustExec(`create procedure select124() begin declare id,done int default 0;
+	declare id3 char(30) default "";
 	declare s1  CURSOR for select * from t2;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	open s1;
 	while done do
 	fetch s1 into id,id3;
@@ -775,12 +775,12 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	tk.ClearProcedureRes()
 	checkAllTracker(tk.Session().GetSessionVars(), t)
 	tk.MustExec("set tidb_mem_quota_query= default")
-	tk.MustExec(`create procedure select125() begin declare id,done,id4,id5 int default 0; 
-	declare id3 char(30) default ""; 
+	tk.MustExec(`create procedure select125() begin declare id,done,id4,id5 int default 0;
+	declare id3 char(30) default "";
 	declare s1  CURSOR for select * from t2;
 	declare s2  CURSOR for select * from t1;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	open s1;
 	open s2;
 	while done do
@@ -801,12 +801,12 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	}
 	tk.ClearProcedureRes()
 	checkAllTracker(tk.Session().GetSessionVars(), t)
-	tk.MustExec(`create procedure select126() begin declare id,done,id4,id5 int default 0; 
-	declare id3 char(30) default ""; 
+	tk.MustExec(`create procedure select126() begin declare id,done,id4,id5 int default 0;
+	declare id3 char(30) default "";
 	declare s1  CURSOR for select * from t2;
 	declare s2  CURSOR for select * from t1;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	open s1;
 	open s2;
 	while done do
@@ -826,14 +826,14 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	tk.ClearProcedureRes()
 	checkAllTracker(tk.Session().GetSessionVars(), t)
 
-	tk.MustExec(`create procedure select127() 
-	begin 
-	declare id,done,id4,id5 int default 0; 
-	declare id3 char(30) default ""; 
+	tk.MustExec(`create procedure select127()
+	begin
+	declare id,done,id4,id5 int default 0;
+	declare id3 char(30) default "";
 	declare s1  CURSOR for select * from t2;
 	declare s2  CURSOR for select * from t1;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	begin
 	open s1;
 	open s2;
@@ -856,14 +856,14 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	checkAllTracker(tk.Session().GetSessionVars(), t)
 
 	// Cursor with the same name
-	tk.MustExec(`create procedure select128() 
-	begin 
-	declare id,done,id4,id5 int default 0; 
-	declare id3 char(30) default ""; 
+	tk.MustExec(`create procedure select128()
+	begin
+	declare id,done,id4,id5 int default 0;
+	declare id3 char(30) default "";
 	declare s1  CURSOR for select * from t2;
 	declare s2  CURSOR for select * from t1;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	begin
 	open s1;
 	open s2;
@@ -889,13 +889,13 @@ func TestProcedureFetchIntoShouldSpill(t *testing.T) {
 	tk.ClearProcedureRes()
 	checkAllTracker(tk.Session().GetSessionVars(), t)
 
-	tk.MustExec(`create procedure select129() 
-	begin 
-	declare id,done,id4,id5 int default 0; 
-	declare id3 char(30) default ""; 
-	declare s1  CURSOR for select * from t2 join t1 on t1.id1 = t2.id1; 
+	tk.MustExec(`create procedure select129()
+	begin
+	declare id,done,id4,id5 int default 0;
+	declare id3 char(30) default "";
+	declare s1  CURSOR for select * from t2 join t1 on t1.id1 = t2.id1;
 	declare continue handler for SQLSTATE '02000' set done = 0;
-	set done = 1; 
+	set done = 1;
 	begin
 	open s1;
 	end;
@@ -924,15 +924,15 @@ func TestProcedureAgg(t *testing.T) {
 	tk.MustExec("call p1(0,100)")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("100"))
 	// block
-	tk.MustExec(`create procedure baseblock() 
-	begin 
+	tk.MustExec(`create procedure baseblock()
+	begin
 	select count(*) from t1;
 	end;`)
 	tk.MustExec("call baseblock")
 	tk.ClearProcedureRes()
 	// if block
-	tk.MustExec(`create procedure ifblock() 
-	begin 
+	tk.MustExec(`create procedure ifblock()
+	begin
 	if (select count(*) from t1) then
 	select "now";
 	select count(*) from t1;
@@ -941,8 +941,8 @@ func TestProcedureAgg(t *testing.T) {
 	tk.MustExec("call ifblock")
 	require.Equal(t, 2, len(tk.Res))
 	tk.ClearProcedureRes()
-	tk.MustExec(`create procedure ifblock1() 
-	begin 
+	tk.MustExec(`create procedure ifblock1()
+	begin
 	if 0 then
 	select count(*) from t1;
 	elseif (select count(*) from t1) then
@@ -953,11 +953,11 @@ func TestProcedureAgg(t *testing.T) {
 	tk.MustExec("call ifblock1")
 	require.Equal(t, 2, len(tk.Res))
 	tk.ClearProcedureRes()
-	tk.MustExec(`create procedure ifblock2() 
-	begin 
+	tk.MustExec(`create procedure ifblock2()
+	begin
 	if 0 then
 	select count(*) from t1;
-	else 
+	else
 	select "now";
 	select count(*) from t1;
 	end if;
@@ -967,8 +967,8 @@ func TestProcedureAgg(t *testing.T) {
 	tk.ClearProcedureRes()
 
 	// case
-	tk.MustExec(`create procedure caseblock1() 
-	begin 
+	tk.MustExec(`create procedure caseblock1()
+	begin
 	case (select count(*) from t1)
 	when 100 then select count(*) from t1;
 	select "now";
@@ -977,11 +977,11 @@ func TestProcedureAgg(t *testing.T) {
 	tk.MustExec("call caseblock1")
 	require.Equal(t, 2, len(tk.Res))
 	tk.ClearProcedureRes()
-	tk.MustExec(`create procedure caseblock2() 
-	begin 
+	tk.MustExec(`create procedure caseblock2()
+	begin
 	case (select count(*) from t1)
 	when 101 then select count(*) from t1;
-	else 
+	else
 	select "now";
 	select count(*) from t1;
 	end case;
@@ -989,10 +989,10 @@ func TestProcedureAgg(t *testing.T) {
 	tk.MustExec("call caseblock2")
 	require.Equal(t, 2, len(tk.Res))
 	tk.ClearProcedureRes()
-	tk.MustExec(`create procedure caseblock3() 
-	begin 
-	case 
-	when (select count(*) from t1) then 
+	tk.MustExec(`create procedure caseblock3()
+	begin
+	case
+	when (select count(*) from t1) then
 	select "now";
 	select count(*) from t1;
 	end case;
@@ -1000,11 +1000,11 @@ func TestProcedureAgg(t *testing.T) {
 	tk.MustExec("call caseblock3")
 	require.Equal(t, 2, len(tk.Res))
 	tk.ClearProcedureRes()
-	tk.MustExec(`create procedure caseblock4() 
-	begin 
-	case 
+	tk.MustExec(`create procedure caseblock4()
+	begin
+	case
 	when (select count(*) from t1) = 102 then select count(*) from t1;
-	else 
+	else
 	select "now";
 	select count(*) from t1;
 	end case;
@@ -1014,9 +1014,9 @@ func TestProcedureAgg(t *testing.T) {
 	tk.ClearProcedureRes()
 
 	//Loop
-	tk.MustExec(`create procedure loopblock1() 
-	begin 
-	t1:loop 
+	tk.MustExec(`create procedure loopblock1()
+	begin
+	t1:loop
     select count(*) from t1;
 	leave t1;
 	end loop;
@@ -1026,9 +1026,9 @@ func TestProcedureAgg(t *testing.T) {
 	tk.ClearProcedureRes()
 
 	// REPEAT
-	tk.MustExec(`create procedure repeatblock1() 
-	begin 
-	t1:repeat 
+	tk.MustExec(`create procedure repeatblock1()
+	begin
+	t1:repeat
     select count(*) from t1;
 	until (select count(*) from t1) end repeat;
 	end;`)
@@ -1037,8 +1037,8 @@ func TestProcedureAgg(t *testing.T) {
 	tk.ClearProcedureRes()
 
 	// while
-	tk.MustExec(`create procedure whilelock1() 
-	begin 
+	tk.MustExec(`create procedure whilelock1()
+	begin
 	t1:while  (select count(*) from t1) do
     select count(*) from t1;
 	leave t1;
@@ -1049,8 +1049,8 @@ func TestProcedureAgg(t *testing.T) {
 	tk.ClearProcedureRes()
 
 	//cursor
-	tk.MustExec(`create procedure cursorlock1() 
-	begin 
+	tk.MustExec(`create procedure cursorlock1()
+	begin
 	declare t1 cursor for select count(*) from t1;
 	open t1;
 	close t1;
@@ -1059,8 +1059,8 @@ func TestProcedureAgg(t *testing.T) {
 	tk.ClearProcedureRes()
 
 	//handler
-	tk.MustExec(`create procedure handlerblock1() 
-	begin 
+	tk.MustExec(`create procedure handlerblock1()
+	begin
 	declare continue handler for SQLEXCEPTION begin select 'error';select count(*) from t1; end;
 	select count(*) from t2;
 	select count(*) from t1;
@@ -1093,23 +1093,23 @@ func TestProcedureAddCollate(t *testing.T) {
 	tk.MustContainErrMsg("create Procedure t1() begin declare id varchar(30) character set utf8 collate utf8mb4_bin; end", "COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'utf8'")
 	// vaild collate
 	tk.MustExec("create procedure t1(id varchar(30) character set utf8mb4 collate utf8mb4_bin) begin declare id varchar(30) character set utf8mb4 collate utf8mb4_bin; end;")
-	tk.MustQuery("show create procedure t1").Check(testkit.Rows("t1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t1`(id varchar(30) character set utf8mb4 collate utf8mb4_bin)\nbegin declare id varchar(30) character set utf8mb4 collate utf8mb4_bin; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure t1").Check(testkit.Rows("t1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t1`(`id` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)\nbegin declare id varchar(30) character set utf8mb4 collate utf8mb4_bin; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure t2(id char(30) character set utf8mb4 collate utf8mb4_bin) begin declare id char(30) character set utf8mb4 collate utf8mb4_bin; end;")
-	tk.MustQuery("show create procedure t2").Check(testkit.Rows("t2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t2`(id char(30) character set utf8mb4 collate utf8mb4_bin)\nbegin declare id char(30) character set utf8mb4 collate utf8mb4_bin; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure t2").Check(testkit.Rows("t2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t2`(`id` char(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)\nbegin declare id char(30) character set utf8mb4 collate utf8mb4_bin; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure t3(id nchar(30) character set utf8mb4 collate utf8mb4_bin) begin declare id nchar(30) character set utf8mb4 collate utf8mb4_bin; end;")
-	tk.MustQuery("show create procedure t3").Check(testkit.Rows("t3 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t3`(id nchar(30) character set utf8mb4 collate utf8mb4_bin)\nbegin declare id nchar(30) character set utf8mb4 collate utf8mb4_bin; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure t3").Check(testkit.Rows("t3 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t3`(`id` char(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)\nbegin declare id nchar(30) character set utf8mb4 collate utf8mb4_bin; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure t4(id nchar(30) character set utf8mb4 collate utf8mb4_general_ci) begin declare id nchar(30) character set utf8mb4 collate utf8mb4_general_ci; end;")
-	tk.MustQuery("show create procedure t4").Check(testkit.Rows("t4 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t4`(id nchar(30) character set utf8mb4 collate utf8mb4_general_ci)\nbegin declare id nchar(30) character set utf8mb4 collate utf8mb4_general_ci; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure t4").Check(testkit.Rows("t4 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `t4`(`id` char(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)\nbegin declare id nchar(30) character set utf8mb4 collate utf8mb4_general_ci; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec(`create procedure t5(id1 char(10) character set utf8mb4 collate utf8mb4_general_ci,id2 char(10) character set utf8mb4 collate utf8mb4_general_ci)
 	begin
-	select id1=id2; 
+	select id1=id2;
 	end`)
 	tk.MustExec("call t5('a','A')")
 	tk.Res[0].Check(testkit.Rows("1"))
 	tk.ClearProcedureRes()
 	tk.MustExec(`create procedure t6(id1 char(10) character set utf8mb4 collate utf8mb4_bin,id2 char(10) character set utf8mb4 collate utf8mb4_bin)
 	begin
-	select id1=id2; 
+	select id1=id2;
 	end`)
 	tk.MustExec("call t6('a','A')")
 	tk.Res[0].Check(testkit.Rows("0"))
@@ -1119,7 +1119,7 @@ func TestProcedureAddCollate(t *testing.T) {
 	begin
 	declare id1,id2 char(10) character set utf8mb4 collate utf8mb4_general_ci;
 	set id1 = 'A',id2 = 'a';
-	select id1=id2; 
+	select id1=id2;
 	end`)
 	tk.MustExec("call t7()")
 	tk.Res[0].Check(testkit.Rows("1"))
@@ -1128,7 +1128,7 @@ func TestProcedureAddCollate(t *testing.T) {
 	begin
 	declare id1,id2 char(10) character set utf8mb4 collate utf8mb4_bin;
 	set id1 = 'A',id2 = 'a';
-	select id1=id2; 
+	select id1=id2;
 	end`)
 	tk.MustExec("call t8()")
 	tk.Res[0].Check(testkit.Rows("0"))
@@ -1138,7 +1138,7 @@ func TestProcedureAddCollate(t *testing.T) {
 	begin
 	declare id1 char(10) character set utf8mb4 collate utf8mb4_general_ci;
 	set id1 = 'A';
-	select id1=id2; 
+	select id1=id2;
 	end`)
 	tk.MustExec("call t9('a')")
 	tk.Res[0].Check(testkit.Rows("1"))
@@ -1147,7 +1147,7 @@ func TestProcedureAddCollate(t *testing.T) {
 	begin
 	declare id1 char(10) character set utf8mb4 collate utf8mb4_bin;
 	set id1 = 'A';
-	select id1=id2; 
+	select id1=id2;
 	end`)
 	tk.MustExec("call t10('a')")
 	tk.Res[0].Check(testkit.Rows("0"))
@@ -1273,7 +1273,7 @@ func procedureRecusrsiveCall(tk *testkit.TestKit, t *testing.T) {
 	tk.ClearProcedureRes()
 
 	// handler test
-	tk.MustExec(`create procedure t6(id int) begin declare continue handler for SQLEXCEPTION select 'error1'; 
+	tk.MustExec(`create procedure t6(id int) begin declare continue handler for SQLEXCEPTION select 'error1';
 	call t7(id);select id; end; `)
 	tk.MustExec(`create procedure t7(inout id datetime) begin declare continue handler for SQLEXCEPTION select 'error2'; set id = 12 ;select id;end;`)
 	tk.MustExec(`call t6(1112)`)
@@ -1297,8 +1297,8 @@ func procedureRecusrsiveCall(tk *testkit.TestKit, t *testing.T) {
 	tk.ClearProcedureRes()
 
 	tk.MustExec(`drop procedure t6`)
-	tk.MustExec(`create procedure t6(id varchar(10)) 
-	begin declare continue handler for SQLEXCEPTION select 'error1'; 
+	tk.MustExec(`create procedure t6(id varchar(10))
+	begin declare continue handler for SQLEXCEPTION select 'error1';
 	call t7(id);select id; end; `)
 	tk.MustExec(`call t6("111x2")`)
 	require.Equal(t, 2, len(tk.Res))
@@ -1319,7 +1319,7 @@ func procedureRecusrsiveCall(tk *testkit.TestKit, t *testing.T) {
 	tk.ClearProcedureRes()
 
 	// cursor
-	tk.MustExec(`create procedure t8() 
+	tk.MustExec(`create procedure t8()
 	begin
 	declare id1,id2 int;
 	declare s1 CURSOR FOR  select * from t1;
@@ -1329,7 +1329,7 @@ func procedureRecusrsiveCall(tk *testkit.TestKit, t *testing.T) {
 	select id1,id2;
 	close s1;
 	end`)
-	tk.MustExec(`create procedure t9() 
+	tk.MustExec(`create procedure t9()
 	begin
 	declare id1,id2 int;
 	declare s1 CURSOR FOR  select * from t1;
@@ -1503,7 +1503,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	//error in handler
 	tk.MustExec(`create procedure t7(id char(10)) begin
-	declare continue HANDLER for SQLWARNING begin 
+	declare continue HANDLER for SQLWARNING begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
 	select @@sp_last_error_sql;
     select * from t2 where id = a;
@@ -1527,9 +1527,9 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 	end`)
 	tk.MustExec(`create procedure t9(id char(10))  begin begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	select * from t2 where id = a; 
+	select * from t2 where id = a;
 	end;
-	select * from t2 where id = a; 
+	select * from t2 where id = a;
 	end`)
 	tk.MustExec("call t8('顿顿')")
 	require.Equal(t, 2, len(tk.Res))
@@ -1561,7 +1561,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure if2(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	if 1 then 
+	if 1 then
 	select count(*),id from t2;
 	end if;
 	end`)
@@ -1572,9 +1572,9 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure if3(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	if 0 then 
+	if 0 then
 	select 1;
-	else 
+	else
 	select count(*),id from t2;
 	end if;
 	end`)
@@ -1586,7 +1586,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 	// test case
 	tk.MustExec(`create procedure case1(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case (select count(*) from t2) when 1 then 
+	case (select count(*) from t2) when 1 then
 	select 1;
 	end case;
 	end`)
@@ -1597,7 +1597,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure case2(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case 1 when (select count(*) from t2 where a = id) then 
+	case 1 when (select count(*) from t2 where a = id) then
 	select 1;
 	end case;
 	end`)
@@ -1608,7 +1608,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure case3(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case 1 when 1 then 
+	case 1 when 1 then
 	select count(*) from t2 where a = id;
 	end case;
 	end`)
@@ -1619,7 +1619,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure case4(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case 1 when 2 then 
+	case 1 when 2 then
 	select count(*) from t2 where a = id;
 	end case;
 	end`)
@@ -1630,7 +1630,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure case5(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case when (select count(*) from t2 where a = id) then 
+	case when (select count(*) from t2 where a = id) then
 		select 2;
 	end case;
 	end`)
@@ -1641,7 +1641,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure case6(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case when 1 then 
+	case when 1 then
 	select count(*) from t2 where a = id;
 	end case;
 	end`)
@@ -1652,7 +1652,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 
 	tk.MustExec(`create procedure case7(id char(10)) begin
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
-	case when 0 then 
+	case when 0 then
 	select count(*) from t2 where a = id;
 	end case;
 	end`)
@@ -1704,7 +1704,7 @@ func TestProcedureHanderErrorSQL(t *testing.T) {
 	declare continue HANDLER for SQLEXCEPTION select @@sp_last_error_sql;
 	begin
 	declare id CURSOR FOR select 1;
-	fetch id into id; 
+	fetch id into id;
 	end;
 	end`)
 	tk.MustExec("call curs3('xx')")

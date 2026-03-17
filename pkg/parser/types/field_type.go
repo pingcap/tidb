@@ -563,7 +563,9 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d)", displayFlen)
 		}
 	case mysql.TypeYear:
-		suffix = fmt.Sprintf("(%d)", ft.flen)
+		if ft.flen != UnspecifiedLength {
+			suffix = fmt.Sprintf("(%d)", ft.flen)
+		}
 	case mysql.TypeTiDBVectorFloat32:
 		if ft.flen != UnspecifiedLength {
 			suffix = fmt.Sprintf("(%d)", ft.flen)

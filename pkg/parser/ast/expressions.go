@@ -571,6 +571,11 @@ func (n *ColumnName) Match(b *ColumnName) bool {
 	return false
 }
 
+// IsTriggerPseudoRecord checks if the column name is a trigger pseudo record (NEW or OLD).
+func (n *ColumnName) IsTriggerPseudoRecord() bool {
+	return n.Table.L == "new" || n.Table.L == "old"
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode

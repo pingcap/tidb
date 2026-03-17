@@ -154,11 +154,15 @@ func (b *PlanBuilder) prepareCallParam(ctx context.Context, stmtNodes *ast.Creat
 
 // buildDropProcedure Generate drop stored procedure plan.
 func (b *PlanBuilder) buildDropProcedure(ctx context.Context, node *ast.DropProcedureStmt) (base.Plan, error) {
+	// Stored function is parsed into DropProcedureStmt too. Execution is handled in follow-up PRs.
+	if node.IsFunction {
+		return nil, plannererrors.ErrUnsupportedType.GenWithStack("DROP FUNCTION is unimplemented")
+	}
 	p := &DropProcedure{Procedure: node}
-	procedurceSchema := node.ProcedureName.Schema.O
+	procedurceSchema := node.Name.Schema.O
 	if procedurceSchema == "" {
 		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
-		node.ProcedureName.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		node.Name.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	if procedurceSchema == "" {
 		return nil, plannererrors.ErrNoDB
@@ -171,8 +175,8 @@ func (b *PlanBuilder) buildDropProcedure(ctx context.Context, node *ast.DropProc
 	activeRoles := b.ctx.GetSessionVars().ActiveRoles
 	// User with SuperPriv can see all rows.
 	if currentUser != nil {
-		if checker != nil && !checker.RequestProcedureVerification(activeRoles, procedurceSchema, node.ProcedureName.Name.O, mysql.AlterRoutinePriv) {
-			return nil, plannererrors.ErrProcaccessDenied.FastGenByArgs("alter routine", currentUser.AuthUsername, currentUser.AuthHostname, procedurceSchema+"."+node.ProcedureName.Name.O)
+		if checker != nil && !checker.RequestProcedureVerification(activeRoles, procedurceSchema, node.Name.Name.O, mysql.AlterRoutinePriv) {
+			return nil, plannererrors.ErrProcaccessDenied.FastGenByArgs("alter routine", currentUser.AuthUsername, currentUser.AuthHostname, procedurceSchema+"."+node.Name.Name.O)
 		}
 	}
 	return p, nil
@@ -493,37 +497,12 @@ func (b *PlanBuilder) setDefaultLengthAndCharset(tp *types.FieldType, collate st
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CharsetBin)
 	}
-	// If neither is UnspecifiedLength, it means that the user has specified the precision,
-	// and the precision can be inherited
 	if tp.GetFlen() != types.UnspecifiedLength || tp.GetDecimal() != types.UnspecifiedLength {
-		switch tp.GetType() {
-		case mysql.TypeFloat:
-			tp1 := types.NewFieldType(mysql.TypeDouble)
-			tp1.SetFlen(tp.GetFlen())
-			tp1.SetDecimal(tp.GetDecimal())
-			tp1.SetFlag(tp.GetFlag())
-			tp = tp1
-		}
-
 		return tp, nil
 	}
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.GetType())
-	switch tp.GetType() {
-	// For uninitialized data types, the precision is initialized according to the data type
-	// TypeDouble ==> (22,-1); TypeFloat ==> (12,-1)
-	case mysql.TypeDouble, mysql.TypeFloat:
-		tp1 := types.NewFieldType(mysql.TypeDouble)
-		tp1.SetFlen(defaultFlen)
-		tp1.SetDecimal(defaultDecimal)
-		tp1.SetFlag(tp.GetFlag())
-		tp = tp1
-
-	default:
-		tp.SetFlen(defaultFlen)
-		tp.SetDecimal(defaultDecimal)
-
-	}
-
+	tp.SetFlen(defaultFlen)
+	tp.SetDecimal(defaultDecimal)
 	return tp, nil
 }
 

@@ -15,6 +15,7 @@ package mysql
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -444,6 +445,21 @@ func (m SQLMode) HasNoAutoCreateUserMode() bool {
 // HasAllowInvalidDatesMode detects if 'ALLOW_INVALID_DATES' mode is set in SQLMode
 func (m SQLMode) HasAllowInvalidDatesMode() bool {
 	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
+}
+
+// String returns the string representation of SQLMode
+func (m SQLMode) String() string {
+	if m == 0 {
+		return ""
+	}
+	var modes []string
+	for name, mode := range Str2SQLMode {
+		if m&mode != 0 {
+			modes = append(modes, name)
+		}
+	}
+	slices.Sort(modes)
+	return strings.Join(modes, ",")
 }
 
 // DelSQLMode delete sql mode from ori

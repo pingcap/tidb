@@ -3974,6 +3974,17 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN", "RESOURCE_GROUP_USER"}, false, err)
 		}
+	case *ast.DropProcedureStmt:
+		schema := raw.Name.Schema.O
+		if schema == "" {
+			schema = b.ctx.GetSessionVars().CurrentDB
+		}
+		procName := fmt.Sprintf("%s.%s", schema, raw.Name.Name.O)
+		err := plannererrors.ErrSpDoesNotExist.GenWithStackByArgs(raw.Type(), procName)
+		if !raw.IfExists {
+			return nil, err
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 	}
 	return p, nil
 }

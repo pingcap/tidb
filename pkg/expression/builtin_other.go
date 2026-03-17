@@ -2075,7 +2075,7 @@ func BuildGetProcedureVarFunction(ctx BuildContext, expr Expression, retType *ty
 		fc = &getProcedureDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
 	case types.ETReal:
 		fc = &getProcedureRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
 		fc = &getProcedureTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
 	default:
 		fc = &getProcedureStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
@@ -2083,9 +2083,6 @@ func BuildGetProcedureVarFunction(ctx BuildContext, expr Expression, retType *ty
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
 		return nil, err
-	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
-		retType = builtinRetTp
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.GetProcedureVar),

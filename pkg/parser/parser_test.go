@@ -7806,3 +7806,35 @@ func TestTableAffinityOption(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+func TestStoredRoutines(t *testing.T) {
+	cases := []testCase{
+		{
+			`CREATE FUNCTION func_1(f1 DECIMAL(65, 30)) RETURNS DECIMAL(65,30)
+			SQL SECURITY INVOKER COMMENT 'this is simple'
+			BEGIN
+			RETURN f1;
+			END`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `func_1`(`f1` decimal(65,30)) RETURNS decimal(65,30) SQL SECURITY INVOKER COMMENT 'this is simple' BEGIN RETURN `f1`; END",
+		},
+		{
+			`CREATE FUNCTION fn1(a char) returns int deterministic return 1;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn1`(`a` char) RETURNS int RETURN 1",
+		},
+		{
+			`CREATE PROCEDURE sp6( )
+			BEGIN
+				declare e char default 'b';
+				declare next cursor for SELECT f1 from db_storedproc.t2;
+				declare continue handler for sqlstate '02000' set @x2 = 1;
+				open next;
+				fetch next into e;
+				close next;
+			END`,
+			true,
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `sp6`() BEGIN DECLARE `e` CHAR DEFAULT _UTF8MB4'b';DECLARE NEXT CURSOR FOR SELECT `f1` FROM `db_storedproc`.`t2`;DECLARE CONTINUE HANDLER FOR SQLSTATE '02000' SET @`x2`=1;OPEN NEXT;FETCH NEXT INTO E;CLOSE NEXT; END",
+		},
+	}
+	RunTest(t, cases, false)
+}
