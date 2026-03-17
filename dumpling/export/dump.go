@@ -1688,7 +1688,7 @@ func updateKeyspaceGCBarrier(tctx *tcontext.Context, pdClient pd.Client, keyspac
 			return err
 		},
 		func(err error, retryCnt int) {
-			tctx.L().Debug("set keyspace GC barrier failed", log.ShortError(err),
+			tctx.L().Warn("set keyspace GC barrier failed", log.ShortError(err),
 				zap.Int("retryTime", retryCnt),
 				zap.Uint32("keyspaceID", keyspaceID))
 		},
