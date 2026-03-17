@@ -328,14 +328,26 @@ func (t *ManagerCtx) addPartition(ctx context.Context, req *AddPartitionRequest)
 	}
 	resp, err := t.metaClient.client.AddPartition(ctx, req)
 	if err != nil {
-		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf("tici AddPartition rpc error: %v", err))
 	}
 	if resp.Status != ErrorCode_SUCCESS {
+		code := ErrorCode(resp.Status)
+		errMsg := fmt.Sprintf(
+			"tici AddPartition failed: status=%s(%d) keyspaceID=%d indexIDs=%v error=%s",
+			code.String(),
+			resp.Status,
+			req.KeyspaceId,
+			req.IndexIds,
+			resp.ErrorMessage,
+		)
 		logutil.BgLogger().Error("add partition failed",
 			zap.Int64s("indexIDs", req.IndexIds),
+			zap.Uint32("keyspaceID", req.KeyspaceId),
+			zap.Int32("statusCode", int32(resp.Status)),
+			zap.String("status", code.String()),
 			zap.String("errorMessage", resp.ErrorMessage),
 		)
-		return dbterror.ErrInvalidDDLJob.FastGenByArgs(resp.ErrorMessage)
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(errMsg)
 	}
 	logutil.BgLogger().Info("add partition success", zap.Int64s("indexIDs", resp.IndexIds))
 	return nil
@@ -406,10 +418,19 @@ func (t *ManagerCtx) dropPartition(ctx context.Context, req *DropPartitionReques
 	}
 	resp, err := t.metaClient.client.DropPartition(ctx, req)
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf("tici DropPartition rpc error: %v", err))
 	}
 	if resp.Status != ErrorCode_SUCCESS {
-		return errors.New(resp.ErrorMessage)
+		code := ErrorCode(resp.Status)
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf(
+			"tici DropPartition failed: status=%s(%d) keyspaceID=%d tableID=%d indexIDs=%v error=%s",
+			code.String(),
+			resp.Status,
+			req.KeyspaceId,
+			req.TableId,
+			req.IndexIds,
+			resp.ErrorMessage,
+		))
 	}
 	logutil.BgLogger().Info("drop partition success", zap.Int64("tableID", req.TableId), zap.Int64s("indexIDs", req.IndexIds))
 	return nil
