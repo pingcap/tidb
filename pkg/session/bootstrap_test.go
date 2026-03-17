@@ -2680,7 +2680,7 @@ func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
 	unsetStoreBootstrapped(store.UUID())
 	seV220.Close()
 
-	// upgrade to ver226
+	// upgrade to current version
 	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
@@ -2696,7 +2696,7 @@ func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
 	requirePITRIDMapSchemaFixed(t, seCurVer)
 }
 
-func TestUpgradeToVer226FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
+func TestUpgradeToVer227FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 

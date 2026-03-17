@@ -1259,15 +1259,18 @@ const (
 
 	// version 226
 	//   insert `cluster_id` into the `mysql.tidb` table.
+	version226 = 226
+
+	// version 227
 	// Ensure `mysql.tidb_pitr_id_map` has `restore_id` and correct primary key.
 	// This fixes upgrades from customer branch `release-8.5-20250606-v8.5.2`, where
 	// version221 was used for adding `i_user` indexes on mysql privilege tables.
 	// In upstream `release-8.5`, version221 is the PITR schema change for
 	// `mysql.tidb_pitr_id_map` (`restore_id` + new primary key definition). When that
 	// customer branch later upgrades back to upstream `release-8.5`, bootstrap sees
-	// version221 as already applied and skips the upstream PITR DDL, so version226
+	// version221 as already applied and skips the upstream PITR DDL, so version227
 	// repairs the table schema.
-	version226 = 226
+	version227 = 227
 
 	// ...
 	// [version227, version238] is the version range reserved for patches of 8.5.x
@@ -1278,7 +1281,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version226
+var currentBootstrapVersion int64 = version227
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1460,6 +1463,7 @@ var (
 		upgradeToVer224,
 		upgradeToVer225,
 		upgradeToVer226,
+		upgradeToVer227,
 	}
 )
 
@@ -3380,12 +3384,17 @@ func upgradeToVer226(s sessiontypes.Session, ver int64) {
 	}
 
 	writeClusterID(s)
+}
+
+func upgradeToVer227(s sessiontypes.Session, ver int64) {
+	if ver >= version227 {
+		return
+	}
 
 	// Make sure the table exists.
 	doReentrantDDL(s, CreatePITRIDMap)
 
-	// If the primary key columns are already as expected, the schema is already fixed
-	// In this case, no further action is needed.
+	// If the primary key columns are already as expected, the schema is already fixed.
 	expectedPKCols := []string{"restore_id", "restored_ts", "upstream_cluster_id", "segment_id"}
 	pkCols := getPrimaryKeyColsOrEmpty(s, mysql.SystemDB, "tidb_pitr_id_map")
 	if slices.Equal(pkCols, expectedPKCols) {
