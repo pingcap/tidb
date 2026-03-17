@@ -117,13 +117,13 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 		},
 		{
 			name:         "classical_no_keyspace_meta_table",
-			queryErr:     &mysql.MySQLError{Number: 1146, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			queryErr:     &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
 			confPD:       "",
 			confKeyspace: "",
 		},
 		{
 			name:         "premium_no_keyspace_meta_table_is_error",
-			queryErr:     &mysql.MySQLError{Number: 1146, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			queryErr:     &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
 			confPD:       "pd1:2379",
 			confKeyspace: "ks1",
 			expectErr:    "KEYSPACE_META",
