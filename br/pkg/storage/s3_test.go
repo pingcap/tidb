@@ -1131,74 +1131,77 @@ func TestWalkDir(t *testing.T) {
 
 	// first call serve item #0, #1; second call #2, #3; third call #4.
 	firstCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
-				IsTruncated: aws.Bool(true),
-				Contents:    contents[:2],
+			return &s3.ListObjectsV2Output{
+				IsTruncated:           aws.Bool(true),
+				NextContinuationToken: aws.String("token-1"),
+				Contents:              contents[:2],
 			}, nil
 		})
 	secondCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[1].Key), aws.StringValue(input.Marker))
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, "token-1", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			return &s3.ListObjectsOutput{
-				IsTruncated: aws.Bool(true),
-				Contents:    contents[2:4],
+			return &s3.ListObjectsV2Output{
+				IsTruncated:           aws.Bool(true),
+				NextContinuationToken: aws.String("token-2"),
+				Contents:              contents[2:4],
 			}, nil
 		}).
 		After(firstCall)
 	thirdCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, "token-2", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[4:],
 			}, nil
 		}).
 		After(secondCall)
 	fourthCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(4), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
-				IsTruncated: aws.Bool(true),
-				Contents:    contents[:4],
+			return &s3.ListObjectsV2Output{
+				IsTruncated:           aws.Bool(true),
+				NextContinuationToken: aws.String("token-4"),
+				Contents:              contents[:4],
 			}, nil
 		}).
 		After(thirdCall)
 	fifthCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, "token-4", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(4), aws.Int64Value(input.MaxKeys))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[4:],
 			}, nil
 		}).
 		After(fourthCall)
 	s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/sp/1", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(3), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[2:],
 			}, nil
@@ -1251,6 +1254,200 @@ func TestWalkDir(t *testing.T) {
 	require.Len(t, contents, i)
 }
 
+func TestWalkDirStartAfter(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
+			require.Equal(t, "prefix/sp/01.jpg", aws.StringValue(input.StartAfter))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
+			return &s3.ListObjectsV2Output{
+				IsTruncated: aws.Bool(false),
+				Contents:    nil,
+			}, nil
+		})
+
+	err := s.storage.WalkDir(
+		ctx,
+		&WalkOption{SubDir: "sp", StartAfter: "/sp/01.jpg"},
+		func(path string, size int64) error {
+			return nil
+		},
+	)
+	require.NoError(t, err)
+}
+
+func TestWalkDirPaginationNoProgress(t *testing.T) {
+	ctx := aws.BackgroundContext()
+
+	t.Run("empty continuation token on truncated response", func(t *testing.T) {
+		s := createS3Suite(t)
+		s.s3.EXPECT().
+			ListObjectsV2WithContext(ctx, gomock.Any()).
+			DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...request.Option) (*s3.ListObjectsV2Output, error) {
+				require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+				require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
+				require.Equal(t, "", aws.StringValue(input.ContinuationToken))
+				return &s3.ListObjectsV2Output{
+					IsTruncated:           aws.Bool(true),
+					NextContinuationToken: aws.String(""),
+					Contents:              nil,
+				}, nil
+			})
+
+		err := s.storage.WalkDir(
+			ctx,
+			&WalkOption{SubDir: "sp"},
+			func(path string, size int64) error { return nil },
+		)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "continuation token does not advance")
+	})
+
+	t.Run("unchanged continuation token on truncated response", func(t *testing.T) {
+		s := createS3Suite(t)
+		firstCall := s.s3.EXPECT().
+			ListObjectsV2WithContext(ctx, gomock.Any()).
+			DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...request.Option) (*s3.ListObjectsV2Output, error) {
+				require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+				require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
+				require.Equal(t, "", aws.StringValue(input.ContinuationToken))
+				return &s3.ListObjectsV2Output{
+					IsTruncated:           aws.Bool(true),
+					NextContinuationToken: aws.String("token-1"),
+					Contents:              nil,
+				}, nil
+			})
+		s.s3.EXPECT().
+			ListObjectsV2WithContext(ctx, gomock.Any()).
+			DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...request.Option) (*s3.ListObjectsV2Output, error) {
+				require.Equal(t, "token-1", aws.StringValue(input.ContinuationToken))
+				return &s3.ListObjectsV2Output{
+					IsTruncated:           aws.Bool(true),
+					NextContinuationToken: aws.String("token-1"),
+					Contents:              nil,
+				}, nil
+			}).
+			After(firstCall)
+
+		err := s.storage.WalkDir(
+			ctx,
+			&WalkOption{SubDir: "sp"},
+			func(path string, size int64) error { return nil },
+		)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "continuation token does not advance")
+	})
+}
+
+func TestWalkDirWithStartAfter(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	contents := []*s3.Object{
+		{
+			Key:  aws.String("prefix/sp/test_0"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_1"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_10"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_100"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_11"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_110"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_111"),
+			Size: aws.Int64(437),
+		},
+		{
+			Key:  aws.String("prefix/sp/test_112"),
+			Size: aws.Int64(437),
+		},
+	}
+
+	firstCall := s.s3.EXPECT().
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
+			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
+			require.Equal(t, "", aws.StringValue(input.Delimiter))
+			require.Equal(t, "prefix/sp/test_10", aws.StringValue(input.StartAfter))
+			return &s3.ListObjectsV2Output{
+				IsTruncated: aws.Bool(true),
+				Contents: []*s3.Object{
+					contents[3],
+					contents[4],
+				},
+				NextContinuationToken: contents[4].Key,
+			}, nil
+		})
+	secondCall := s.s3.EXPECT().
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, aws.StringValue(contents[4].Key), aws.StringValue(input.ContinuationToken))
+			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
+			require.Equal(t, "", aws.StringValue(input.Delimiter))
+			require.Equal(t, "", aws.StringValue(input.StartAfter))
+			return &s3.ListObjectsV2Output{
+				IsTruncated: aws.Bool(true),
+				Contents: []*s3.Object{
+					contents[5],
+					contents[6],
+				},
+				NextContinuationToken: contents[6].Key,
+			}, nil
+		}).After(firstCall)
+
+	s.s3.EXPECT().
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, aws.StringValue(contents[6].Key), aws.StringValue(input.ContinuationToken))
+			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
+			require.Equal(t, "", aws.StringValue(input.Delimiter))
+			require.Equal(t, "", aws.StringValue(input.StartAfter))
+			return &s3.ListObjectsV2Output{
+				IsTruncated: aws.Bool(false),
+				Contents: []*s3.Object{
+					contents[7],
+				},
+			}, nil
+		}).After(secondCall)
+
+	i := 3
+	err := s.storage.WalkDir(
+		ctx,
+		&WalkOption{SubDir: "sp", ListCount: 2, StartAfter: "sp/test_10"},
+		func(path string, size int64) error {
+			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
+			require.Equal(t, *contents[i].Size, size, "index = %d", i)
+			i++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, contents, i)
+}
+
 // TestWalkDirBucket checks WalkDir retrieves all directory content under a bucket.
 func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	controller := gomock.NewController(t)
@@ -1281,27 +1478,27 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 		},
 	}
 	firstCall := s3API.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents,
 			}, nil
 		})
 	s3API.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "sp/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.ContinuationToken))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[:1],
 			}, nil
