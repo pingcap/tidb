@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -381,11 +382,11 @@ func restoreMaskingExpression(expr ast.ExprNode) (string, error) {
 	return sb.String(), nil
 }
 
-func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, exprStr string) error {
+func validateMaskingPolicyExpression(_ sessionctx.Context, _ *model.TableInfo, _ *model.ColumnInfo, exprStr string) error {
 	// Validate that the expression can be parsed correctly.
 	// This prevents invalid expressions (e.g., unknown functions) from being stored.
 	// We use a simpler approach: try to parse as SELECT which catches most errors.
-	_, err := parser.New().ParseOneStmt("SELECT "+exprStr, "", "")
+	_, err := parser.New().ParseOneStmt(fmt.Sprintf("SELECT %s", exprStr), "", "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -531,8 +532,8 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 func (w *worker) updateMaskingPolicyNamesAfterRename(
 	ctx context.Context,
 	tableID int64,
-	oldDBName, newDBName pmodel.CIStr,
-	oldTableName, newTableName pmodel.CIStr,
+	_ /* oldDBName */, newDBName pmodel.CIStr,
+	_ /* oldTableName */, newTableName pmodel.CIStr,
 ) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
 	if err != nil {
