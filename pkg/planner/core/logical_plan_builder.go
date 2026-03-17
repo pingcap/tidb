@@ -4792,12 +4792,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)
@@ -5912,20 +5912,23 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if err != nil {
 				return nil, nil, false, err
 			}
-			// check if the column is modified
+			// check if the column may be modified.
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
-			var isModified bool
+			var mayModified bool
 			for _, col := range dependentColumns {
-				if dependentColumnsModified[col.UniqueID] {
-					isModified = true
+				colTp := col.GetType(b.ctx.GetExprCtx().GetEvalCtx()).GetFlag()
+				// If any of the dependent column has on-update-now flag,
+				// this virtual generated column may be modified too.
+				if mysql.HasOnUpdateNowFlag(colTp) || dependentColumnsModified[col.UniqueID] {
+					mayModified = true
 					break
 				}
 			}
-			if isModified {
+			if mayModified {
 				dependentColumnsModified[col.UniqueID] = true
 			}
 			// skip unmodified generated columns
-			if !isModified {
+			if !mayModified {
 				continue
 			}
 		}
