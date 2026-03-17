@@ -542,7 +542,7 @@ func (rc *LogClient) InitClients(
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, stores, sstWorkerPool, rc.rateLimit)
+		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, rc.pdClient, sstWorkerPool, rc.rateLimit)
 		createCallBacks = append(createCallBacks, createCallBack)
 		closeCallBacks = append(closeCallBacks, closeCallBack)
 	}

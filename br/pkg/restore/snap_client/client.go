@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -669,14 +668,43 @@ func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 
 func SetSpeedLimitCallbacks(
 	ctx context.Context,
-	stores []*metapb.Store,
+	pdClient pd.Client,
 	pool *tidbutil.WorkerPool,
 	rateLimit uint64,
 ) (func(*SnapFileImporter) error, func(*SnapFileImporter) error) {
-	setFn := SetSpeedLimitFn(ctx, stores, pool)
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	setFn := SetSpeedLimitFn(ctx, pdClient, pool)
 	return func(importer *SnapFileImporter) error {
-			return setFn(importer, rateLimit)
+			if err := setFn(importer, rateLimit); err != nil {
+				return errors.Annotate(err, "failed to set download speed limit")
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				updateTicker := time.NewTicker(time.Minute * 3)
+				defer updateTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-updateTicker.C:
+						if err := setFn(importer, rateLimit); err != nil {
+							log.Warn("failed to set download speed limit, retry it", zap.Error(err))
+						}
+					case <-stopCh:
+						return
+					}
+				}
+			}()
+			return nil
 		}, func(importer *SnapFileImporter) error {
+			stopOnce.Do(func() {
+				close(stopCh)
+			})
+			wg.Wait()
+
 			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
 			var resetErr error
 			for retry := range resetSpeedLimitRetryTimes {
@@ -696,8 +724,17 @@ func SetSpeedLimitCallbacks(
 		}
 }
 
-func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+func SetSpeedLimitFn(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+) func(*SnapFileImporter, uint64) error {
 	return func(importer *SnapFileImporter, limit uint64) error {
+		stores, err := conn.GetAllTiKVStoresWithRetry(ctx, pdClient, util.SkipTiFlash)
+		if err != nil {
+			return errors.Annotate(err, "failed to get stores")
+		}
+
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
 			if err := ectx.Err(); err != nil {
@@ -740,7 +777,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, stores, rc.workerPool, rc.rateLimit)
+		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
 		createCallBacks = append(createCallBacks, createCallBack)
 		closeCallBacks = append(closeCallBacks, closeCallBack)
 	}

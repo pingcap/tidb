@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -59,10 +58,10 @@ func (rc *SnapClient) SetDomain(dom *domain.Domain) {
 }
 
 // Mock the call of setSpeedLimit function
-func MockCallSetSpeedLimit(ctx context.Context, stores []*metapb.Store, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
+func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
 	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
-	setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
+	setFn := SetSpeedLimitFn(ctx, rc.pdClient, rc.workerPool)
 	var createCallBacks []func(*SnapFileImporter) error
 	var closeCallBacks []func(*SnapFileImporter) error
 

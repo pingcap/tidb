@@ -161,7 +161,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers)
 
 	start := time.Now()
 	err = client.GetRestorer(nil).GoRestore(onProgress, restore.CreateUniqueFileSets(files))
