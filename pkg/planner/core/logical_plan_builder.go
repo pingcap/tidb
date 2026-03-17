@@ -1657,59 +1657,58 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	if len(b.is.AllMaskingPolicies()) == 0 {
 		return p, nil
 	}
+	// If we don't have original fields, fall back to the simple column-based
+	// masking path (used by set operators).
 	if len(originalFields) == 0 || len(originalFields) < oldLen {
-		// No original fields available, or not enough fields for the projection
-		// Fall back to simple column-based masking to avoid underfill
 		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
 	}
 
-	// Build masking expressions from the current plan (which has the source columns)
-	maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
+	// Validate field metadata; otherwise, use fallback to avoid malformed plans.
+	for i := 0; i < oldLen; i++ {
+		field := originalFields[i]
+		if field == nil || field.Auxiliary || field.WildCard != nil || field.Expr == nil {
+			return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
+		}
+	}
+
+	// Prefer rebuilding from the current projection expressions.
+	// This keeps wrapper semantics correct, e.g. CONCAT(c, '-') should become
+	// CONCAT(mask_expr(c), '-') instead of mask_expr(CONCAT(c, '-')).
+	proj, ok := p.(*logicalop.LogicalProjection)
+	if !ok || len(proj.Children()) == 0 || len(proj.Exprs) < oldLen {
+		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
+	}
+	child := proj.Children()[0]
+	childMaskExprs, err := b.buildMaskingReplaceExprs(ctx, child)
 	if err != nil {
 		return nil, err
 	}
-	if maskExprs == nil {
-		// No masking needed, return original plan
+	if childMaskExprs == nil {
 		return p, nil
 	}
 
-	// Build a projection that applies masking using the original expression trees
-	// This ensures that wrapper expressions like CONCAT(c, '') get properly masked
-	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
+	finalProj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
 	newNames := make([]*types.FieldName, 0, oldLen)
-
 	for i := 0; i < oldLen; i++ {
-		// Rebuild the expression from the original field
-		// This preserves the original expression tree structure
-		field := originalFields[i]
-		// Check for problematic field types that would cause underfill
-		if field == nil || field.Auxiliary || field.WildCard != nil || field.Expr == nil {
-			// Fall back to simple column-based masking to avoid underfill or panic
-			return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
-		}
+		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), proj.Exprs[i], child.Schema(), childMaskExprs)
+		finalProj.Exprs = append(finalProj.Exprs, expr)
 
-		// For now, use the simple approach that just copies columns
-		// This avoids breaking complex queries like GROUP BY
-		col := p.Schema().Columns[i]
-		proj.Exprs = append(proj.Exprs, col)
-
-		// Create a new column for the result
+		baseCol := p.Schema().Columns[i]
 		newCol := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  col.RetType.Clone(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
 		}
-		newCol.ID = col.ID
-		newCol.SetCoercibility(col.Coercibility())
-		newCol.SetRepertoire(col.Repertoire())
+		newCol.ID = baseCol.ID
+		newCol.SetCoercibility(baseCol.Coercibility())
+		newCol.SetRepertoire(baseCol.Repertoire())
 		schema.Append(newCol)
 		newNames = append(newNames, p.OutputNames()[i])
 	}
-
-	proj.SetSchema(schema)
-	proj.SetOutputNames(newNames)
-	proj.SetChildren(p)
-	return proj, nil
+	finalProj.SetSchema(schema)
+	finalProj.SetOutputNames(newNames)
+	finalProj.SetChildren(child)
+	return finalProj, nil
 }
 
 // buildFinalProjectionWithMaskingSimple is a fallback that applies masking based on column references
@@ -1915,38 +1914,48 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	selectPlans := make([]base.LogicalPlan, 0, len(setOpr.SelectList.Selects))
 	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
 	selects := setOpr.SelectList.Selects
-	for i := 0; i < len(selects); i++ {
-		intersects := []ast.Node{selects[i]}
-		for i+1 < len(selects) {
-			breakIteration := false
-			switch x := selects[i+1].(type) {
-			case *ast.SelectStmt:
-				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
-					breakIteration = true
+	buildErr := func() error {
+		b.buildingSetOprOperands++
+		defer func() {
+			b.buildingSetOprOperands--
+		}()
+		for i := 0; i < len(selects); i++ {
+			intersects := []ast.Node{selects[i]}
+			for i+1 < len(selects) {
+				breakIteration := false
+				switch x := selects[i+1].(type) {
+				case *ast.SelectStmt:
+					if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+						breakIteration = true
+					}
+				case *ast.SetOprSelectList:
+					if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+						breakIteration = true
+					}
+					if x.Limit != nil || x.OrderBy != nil {
+						// when SetOprSelectList's limit and order-by is not nil, it means itself is converted from
+						// an independent ast.SetOprStmt in parser, its data should be evaluated first, and ordered
+						// by given items and conduct a limit on it, then it can only be integrated with other brothers.
+						breakIteration = true
+					}
 				}
-			case *ast.SetOprSelectList:
-				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
-					breakIteration = true
+				if breakIteration {
+					break
 				}
-				if x.Limit != nil || x.OrderBy != nil {
-					// when SetOprSelectList's limit and order-by is not nil, it means itself is converted from
-					// an independent ast.SetOprStmt in parser, its data should be evaluated first, and ordered
-					// by given items and conduct a limit on it, then it can only be integrated with other brothers.
-					breakIteration = true
-				}
+				intersects = append(intersects, selects[i+1])
+				i++
 			}
-			if breakIteration {
-				break
+			selectPlan, afterSetOpr, err := b.buildIntersect(ctx, intersects)
+			if err != nil {
+				return err
 			}
-			intersects = append(intersects, selects[i+1])
-			i++
+			selectPlans = append(selectPlans, selectPlan)
+			afterSetOprs = append(afterSetOprs, afterSetOpr)
 		}
-		selectPlan, afterSetOpr, err := b.buildIntersect(ctx, intersects)
-		if err != nil {
-			return nil, err
-		}
-		selectPlans = append(selectPlans, selectPlan)
-		afterSetOprs = append(afterSetOprs, afterSetOpr)
+		return nil
+	}()
+	if buildErr != nil {
+		return nil, buildErr
 	}
 	setOprPlan, err := b.buildExcept(ctx, selectPlans, afterSetOprs)
 	if err != nil {
@@ -1974,12 +1983,14 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 	}
 
-	// Apply masking at the final result stage (AT RESULT semantics).
-	// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
-	// Pass nil for originalFields as we don't have access to the original field expressions here.
-	setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
-	if err != nil {
-		return nil, err
+	if b.buildingSetOprOperands == 0 {
+		// Apply masking at the final result stage (AT RESULT semantics).
+		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+		// Pass nil for originalFields as we don't have access to the original field expressions here.
+		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
@@ -4284,12 +4295,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 	}
 
-	// Apply masking at the final result stage (AT RESULT semantics).
-	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
-	// Pass originalFields so masking is applied to the original expression trees before they were materialized.
-	p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
-	if err != nil {
-		return nil, err
+	if b.buildingSetOprOperands == 0 {
+		// Apply masking at the final result stage (AT RESULT semantics).
+		// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+		// Pass originalFields so masking is applied to the original expression trees before they were materialized.
+		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sel.Fields.Fields = originalFields

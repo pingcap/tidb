@@ -133,7 +133,7 @@ func TestMaskingPolicyAtResultWithPartialMasking(t *testing.T) {
 	// ORDER BY should sort by original email, not masked
 	result := tk.MustQuery("select id, email from t_partial order by email")
 	// alice@example.com < bob@example.com < charlie@example.com
-	result.Check(testkit.Rows("1 a**************", "2 b***********", "3 c*************"))
+	result.Check(testkit.Rows("1 a****************", "2 b**************", "3 c******************"))
 }
 
 // TestMaskingPolicyAtResultWithConcat tests AT RESULT semantics with concat expressions

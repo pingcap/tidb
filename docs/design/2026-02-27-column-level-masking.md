@@ -163,12 +163,13 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
 
 ### Built-in masking functions
 
-- `MASK_PARTIAL(col, pad, start, length)` - Masks a portion of the string with the specified pad character, starting from the `start` position for `length` characters
-  - `col`: The column to mask (string type)
-  - `pad`: Single character used for masking (e.g., '*', 'X')
-  - `start`: Starting position (0-indexed) where masking begins
-  - `length`: Number of characters to mask
-  - Example: `MASK_PARTIAL(credit_card, '*', 0, 12)` masks first 12 chars of credit card number
+- `MASK_PARTIAL(col, preserve_left, preserve_right, mask_char)` - Partially masks string values while preserving both ends
+  - Logic: Provides granular control for partial redaction of string data
+  - Types: `VARCHAR`, `CHAR`, `TEXT`
+  - `preserve_left`: Number of leading characters to keep
+  - `preserve_right`: Number of trailing characters to keep
+  - `mask_char`: Single character used for masking (e.g., '*', 'X')
+  - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
 - `MASK_FULL(col, mask_char)` - Masks the entire column value by repeating the specified character
   - `col`: The column to mask (string, datetime, or numeric types)
@@ -280,9 +281,9 @@ This design prioritizes predictable SQL behavior and lower rollout risk:
 ### Example Usage
 
 ```sql
--- Example 1: MASK_PARTIAL - mask middle characters of a phone number
+-- Example 1: MASK_PARTIAL - keep first 3 and last 3 characters of a phone number
 CREATE MASKING POLICY p_mask_phone AS
-  MASK_PARTIAL(phone, '*', 3, 4) ENABLE;
+  MASK_PARTIAL(phone, 3, 3, '*') ENABLE;
 
 CREATE TABLE contacts (
   id INT PRIMARY KEY,
