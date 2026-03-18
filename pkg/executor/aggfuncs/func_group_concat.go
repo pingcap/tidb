@@ -326,7 +326,7 @@ type groupPartialConcatDistinct struct {
 	baseGroupConcatDistinct4String
 }
 
-func (e *groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
 
 	for key, val := range s.valSet.M {
