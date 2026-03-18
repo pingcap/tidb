@@ -164,16 +164,7 @@ CREATE TABLE mysql.stats_table_data (
 
 Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and per-sample weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
-The per-partition blob size depends on the number of pruned samples (determined by the ~110K total budget and partition count) and the number and types of analyzed columns. Examples for 50 mixed-type columns (integers, strings, timestamps):
-
-| Partitions | Samples per partition | Blob size per partition | Total storage |
-|------------|----------------------|------------------------|---------------|
-| 10 | ~11,000 | ~1–2 MB | ~10–20 MB |
-| 100 | ~1,100 | ~100–200 KB | ~10–20 MB |
-| 1,000 | ~110 | ~10–20 KB | ~10–20 MB |
-| 8,000 | ~14 | ~1–3 KB | ~10–20 MB |
-
-Total storage stays roughly constant because the budget is fixed. Narrower tables (fewer/smaller columns) or `PREDICATE COLUMNS` analysis produce proportionally smaller blobs.
+The per-partition blob size depends on the number of pruned samples (determined by the ~110K total budget distributed proportionally across partitions) and the number and types of analyzed columns. Since the total budget is fixed, total storage is roughly constant regardless of partition count — approximately 10–20 MB for 50 mixed-type columns, distributed across all partitions. Narrower tables or `PREDICATE COLUMNS` analysis produce proportionally less.
 
 ### Progressive Pruning
 
