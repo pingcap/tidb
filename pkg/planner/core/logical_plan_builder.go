@@ -3138,6 +3138,7 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 			outerSchema := r.outerPlan.Schema()
 			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
 			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
+			r.b.outerSchemaTableIDs = append(r.b.outerSchemaTableIDs, getSchemaTableIDs(r.outerPlan))
 			r.b.outerBlockExpand = append(r.b.outerBlockExpand, r.b.currentBlockExpand)
 		}
 		r.err = r.resolveSelect(v)
@@ -3292,6 +3293,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 		if r.outerPlan != nil {
 			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
+			r.b.outerSchemaTableIDs = r.b.outerSchemaTableIDs[0 : len(r.b.outerSchemaTableIDs)-1]
 			r.b.currentBlockExpand = r.b.outerBlockExpand[len(r.b.outerBlockExpand)-1]
 			r.b.outerBlockExpand = r.b.outerBlockExpand[0 : len(r.b.outerBlockExpand)-1]
 		}
@@ -4760,13 +4762,65 @@ func (b *PlanBuilder) collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base
 	return ids, nil
 }
 
-// findOuterScopeTable returns the first (innermost) outer scope level that contains
-// a table matching (dbName, tblName). Only called from buildDataSource when we are
-// in a DML (DELETE/UPDATE) and the resolved table ID is in dmlTargetTableIDs.
-// Returns (nil, nil) if no match.
-func findOuterScopeTable(b *PlanBuilder, dbName, tblName ast.CIStr) (*expression.Schema, []*types.FieldName) {
+// getSchemaTableIDs returns the table ID for each column in p.Schema() (0 for non-table or unknown).
+// Used to match outer-scope columns by resolved table ID instead of name/alias for DML correlation.
+func getSchemaTableIDs(p base.LogicalPlan) []int64 {
+	if p == nil || p.Schema() == nil {
+		return nil
+	}
+	n := p.Schema().Len()
+	ids := make([]int64, n)
+	switch x := p.(type) {
+	case *logicalop.DataSource:
+		if x.TableInfo != nil {
+			tid := x.TableInfo.ID
+			for i := 0; i < n; i++ {
+				ids[i] = tid
+			}
+		}
+		return ids
+	case *logicalop.LogicalJoin:
+		left, right := x.Children()[0], x.Children()[1]
+		leftIDs := getSchemaTableIDs(left)
+		rightIDs := getSchemaTableIDs(right)
+		return append(slices.Clip(leftIDs), rightIDs...)
+	case *logicalop.LogicalProjection:
+		ch := x.Children()[0]
+		childIDs := getSchemaTableIDs(ch)
+		if childIDs == nil {
+			return nil
+		}
+		chSchema := ch.Schema()
+		for i, expr := range x.Exprs {
+			if col, ok := expr.(*expression.Column); ok {
+				for j, c := range chSchema.Columns {
+					if c.UniqueID == col.UniqueID {
+						ids[i] = childIDs[j]
+						break
+					}
+				}
+			}
+		}
+		return ids
+	default:
+		// Pass-through for Selection, etc.: same schema as single child.
+		if len(p.Children()) == 1 && p.Children()[0].Schema().Len() == n {
+			return getSchemaTableIDs(p.Children()[0])
+		}
+		return nil
+	}
+}
+
+// findOuterScopeTable finds one outer table instance for same-table DML correlation.
+// refDbName/refTblName are the inner FROM reference (e.g. user wrote FROM t or FROM a).
+// targetTableID is the resolved physical table ID. We pick the first outer column (innermost
+// scope, then schema order) with that table ID whose name matches refTblName against outer
+// TblName or OrigTblName, then return outerInstanceTbl = that column's TblName so only that
+// alias's columns are projected (avoids merging t AS a JOIN t AS b into one pseudo-table).
+// Returns (nil, nil, -1, empty) if no match.
+func findOuterScopeTable(b *PlanBuilder, refDbName, refTblName ast.CIStr, targetTableID int64) (*expression.Schema, []*types.FieldName, int, ast.CIStr) {
 	if len(b.outerSchemas) == 0 {
-		return nil, nil
+		return nil, nil, -1, ast.CIStr{}
 	}
 	for i := len(b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema := b.outerSchemas[i]
@@ -4774,33 +4828,47 @@ func findOuterScopeTable(b *PlanBuilder, dbName, tblName ast.CIStr) (*expression
 		if outerSchema == nil || len(outerNames) == 0 {
 			continue
 		}
-		for _, name := range outerNames {
-			if name.Hidden {
+		levelIDs := b.outerSchemaTableIDs
+		if i >= len(levelIDs) || levelIDs[i] == nil {
+			continue
+		}
+		ids := levelIDs[i]
+		for j, name := range outerNames {
+			if name.Hidden || j >= len(ids) || ids[j] != targetTableID {
 				continue
 			}
-			// Match DB: explicit match, or outer has no DB (treat as current DB).
-			dbMatch := dbName.L == "" || dbName.L == name.DBName.L ||
-				(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && dbName.L == b.ctx.GetSessionVars().CurrentDB)
-			tblMatch := tblName.L == name.TblName.L || tblName.L == name.OrigTblName.L
+			dbMatch := refDbName.L == "" || refDbName.L == name.DBName.L ||
+				(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && refDbName.L == b.ctx.GetSessionVars().CurrentDB)
+			tblMatch := refTblName.L == name.TblName.L || refTblName.L == name.OrigTblName.L
 			if dbMatch && tblMatch {
-				return outerSchema, outerNames
+				return outerSchema, outerNames, i, name.TblName
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, -1, ast.CIStr{}
 }
 
 // buildCorrelatedTableFromOuterScope builds a single-row plan that projects the
 // current outer row's columns for the given table. Used when a subquery's FROM
 // clause references the same table as an outer scope (e.g. DELETE FROM t3 WHERE
 // EXISTS (... FROM t3 ...)). The result is a Projection(TableDual) whose exprs
-// are CorrelatedColumns bound to the outer schema.
+// are CorrelatedColumns bound to the outer schema. outerInstanceTbl is the outer
+// alias (TblName) for exactly one table occurrence; only columns from that instance
+// are projected (same physical table ID may appear twice as a JOIN).
 func (b *PlanBuilder) buildCorrelatedTableFromOuterScope(
 	outerSchema *expression.Schema,
 	outerNames []*types.FieldName,
-	dbName, tblName ast.CIStr,
+	targetTableID int64,
+	levelIndex int,
+	outerInstanceTbl ast.CIStr,
+	innerRefTbl ast.CIStr,
 	asName *ast.CIStr,
 ) base.LogicalPlan {
+	levelIDs := b.outerSchemaTableIDs
+	if levelIndex >= len(levelIDs) || levelIDs[levelIndex] == nil || outerInstanceTbl.L == "" {
+		return nil
+	}
+	ids := levelIDs[levelIndex]
 	var exprs []expression.Expression
 	var outSchema *expression.Schema
 	var outNames []*types.FieldName
@@ -4808,11 +4876,7 @@ func (b *PlanBuilder) buildCorrelatedTableFromOuterScope(
 		if name.Hidden {
 			continue
 		}
-		// Same DB/table match as findOuterScopeTable (including empty outer DB = current DB).
-		dbMatch := dbName.L == "" || dbName.L == name.DBName.L ||
-			(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && dbName.L == b.ctx.GetSessionVars().CurrentDB)
-		tblMatch := tblName.L == name.TblName.L || tblName.L == name.OrigTblName.L
-		if !dbMatch || !tblMatch {
+		if i >= len(ids) || ids[i] != targetTableID || name.TblName.L != outerInstanceTbl.L {
 			continue
 		}
 		col := outerSchema.Columns[i]
@@ -4828,11 +4892,11 @@ func (b *PlanBuilder) buildCorrelatedTableFromOuterScope(
 		outCol.CleanHashCode()
 		outSchema.Append(outCol)
 		nm := *name
-		// Use the inner reference name for output so qualified resolution (e.g. t.col) in the subquery works.
+		// Inner FROM name (or inner alias) for qualified resolution in the subquery.
 		if asName != nil && asName.L != "" {
 			nm.TblName = *asName
-		} else {
-			nm.TblName = tblName
+		} else if innerRefTbl.L != "" {
+			nm.TblName = innerRefTbl
 		}
 		outNames = append(outNames, &nm)
 	}
@@ -5129,14 +5193,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// When inside a DELETE/UPDATE subquery, resolve same-table reference to outer scope so that
 	// e.g. DELETE FROM t3 WHERE EXISTS (SELECT ... FROM t3 ...) sees the current row.
-	// Only do this in DML context and only when the resolved table is the actual DML target (by table ID),
-	// so we do not correlate on alias or non-target tables in multi-table DML.
+	// Gated: inDeleteStmt/inUpdateStmt and dmlTargetTableIDs (non-nil only in buildDelete/buildUpdate).
+	// Plain SELECT subqueries never hit this (dmlTargetTableIDs is nil), so e.g. scalar
+	// (SELECT MAX(a) FROM t) is not rewritten to a correlated single-row FROM t.
+	// Only do this when the resolved table is the actual DML target (by table ID).
 	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerSchemas) > 0 && b.dmlTargetTableIDs != nil {
 		tbl, resolveErr := b.is.TableByName(ctx, dbName, tn.Name)
 		if resolveErr == nil && tbl != nil {
-			if _, isTarget := b.dmlTargetTableIDs[tbl.Meta().ID]; isTarget {
-				if outerSchema, outerNames := findOuterScopeTable(b, dbName, tn.Name); outerSchema != nil {
-					p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, dbName, tn.Name, asName)
+			targetID := tbl.Meta().ID
+			if _, isTarget := b.dmlTargetTableIDs[targetID]; isTarget {
+				if outerSchema, outerNames, levelIdx, instTbl := findOuterScopeTable(b, dbName, tn.Name, targetID); outerSchema != nil {
+					p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, targetID, levelIdx, instTbl, tn.Name, asName)
 					if p != nil {
 						return p, nil
 					}
