@@ -55,6 +55,7 @@ type collectConflictsStepExecutor struct {
 	currSubtaskID               int64
 	sizeOfHandlesFromIndex      atomic.Int64
 	sizeLimitOfHandlesFromIndex int64
+	sizeOfConflictRowFiles      atomic.Int64
 	result                      *conflictedkv.CollectResult
 	// one conflicted row might generate multiple conflicted UK KV, this set is
 	// used to avoid collecting checksum for this row multiple times.
@@ -187,7 +188,19 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		uid := uuid.New().String()
 		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
 		localSet := conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
-		collector := conflictedkv.NewCollector(e.tableImporter.Table, e.logger, objStore, e.store, filenamePrefix, kvGroup, encoder, e.sharedHandleSet, localSet, e.GetMeterRecorder())
+		collector := conflictedkv.NewCollector(
+			e.tableImporter.Table,
+			e.logger,
+			objStore,
+			e.store,
+			filenamePrefix,
+			kvGroup,
+			encoder,
+			e.sharedHandleSet,
+			localSet,
+			&e.sizeOfConflictRowFiles,
+			e.GetMeterRecorder(),
+		)
 		eg.Go(func() (err error) {
 			defer func() {
 				err2 := collector.Close(egCtx)
@@ -216,6 +229,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64) {
 	e.currSubtaskID = subtaskID
 	e.sizeOfHandlesFromIndex.Store(0)
+	e.sizeOfConflictRowFiles.Store(0)
 	// we use half of the subtask memory to cache the conflict row handle from index.
 	e.sizeLimitOfHandlesFromIndex = e.GetResource().Mem.Capacity() / 2
 	e.result = conflictedkv.NewCollectResult(e.store.GetCodec().GetKeyspace())

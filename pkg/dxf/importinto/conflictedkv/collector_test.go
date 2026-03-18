@@ -114,9 +114,10 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		})
 		store := &mockKVStore{}
 		var sharedSize atomic.Int64
+		var sharedTotalFileSize atomic.Int64
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), nil,
+			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
 		)
 		rowCount := 48
 		for i := range rowCount {
@@ -168,4 +169,111 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 			doTestFn(t, external.IndexID2KVGroup(1), int64(maxSize), outFileCnt)
 		})
 	}
+}
+
+func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
+	logger := zap.Must(zap.NewDevelopment())
+	ctx := context.Background()
+
+	objStore := objstore.NewMemStorage()
+	t.Cleanup(func() {
+		objStore.Close()
+	})
+	bakFileSize := MaxConflictRowFileSize
+	MaxConflictRowFileSize = units.MiB
+	t.Cleanup(func() {
+		MaxConflictRowFileSize = bakFileSize
+	})
+	bakTotalFileSize := maxTotalConflictRowFileSize
+	maxTotalConflictRowFileSize = 32
+	t.Cleanup(func() {
+		maxTotalConflictRowFileSize = bakTotalFileSize
+	})
+
+	store := &mockKVStore{}
+	var sharedSize atomic.Int64
+	var sharedTotalFileSize atomic.Int64
+	coll := NewCollector(
+		nil, logger, objStore, store, "test",
+		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+	)
+
+	rowCount := 5
+	expectedSum := verification.NewKVChecksumWithKeyspace(store.GetCodec().GetKeyspace())
+	for i := range rowCount {
+		row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
+		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
+		require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		expectedSum.Update(pairs.Pairs)
+	}
+	require.NoError(t, coll.Close(ctx))
+
+	require.EqualValues(t, rowCount, coll.result.RowCount)
+	require.EqualValues(t, 32, coll.result.TotalFileSize)
+	require.EqualValues(t, expectedSum.Sum(), coll.result.Checksum.Sum())
+	require.EqualValues(t, expectedSum.SumKVS(), coll.result.Checksum.SumKVS())
+	require.EqualValues(t, expectedSum.SumSize(), coll.result.Checksum.SumSize())
+	require.Equal(t, []string{path.Join("test", "data-0001.txt")}, coll.result.Filenames)
+
+	content, err := objStore.ReadFile(ctx, coll.result.Filenames[0])
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	require.Len(t, lines, 2)
+}
+
+func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.T) {
+	logger := zap.Must(zap.NewDevelopment())
+	ctx := context.Background()
+
+	objStore := objstore.NewMemStorage()
+	t.Cleanup(func() {
+		objStore.Close()
+	})
+	bakFileSize := MaxConflictRowFileSize
+	MaxConflictRowFileSize = units.MiB
+	t.Cleanup(func() {
+		MaxConflictRowFileSize = bakFileSize
+	})
+	bakTotalFileSize := maxTotalConflictRowFileSize
+	maxTotalConflictRowFileSize = 48
+	t.Cleanup(func() {
+		maxTotalConflictRowFileSize = bakTotalFileSize
+	})
+
+	store := &mockKVStore{}
+	var sharedSize atomic.Int64
+	var sharedTotalFileSize atomic.Int64
+	coll1 := NewCollector(
+		nil, logger, objStore, store, "test1",
+		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+	)
+	coll2 := NewCollector(
+		nil, logger, objStore, store, "test2",
+		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+	)
+
+	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
+	for i := range 3 {
+		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("a-%d", i))}}}
+		require.NoError(t, coll1.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+	}
+	for i := range 3 {
+		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("b-%d", i))}}}
+		require.NoError(t, coll2.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+	}
+	require.NoError(t, coll1.Close(ctx))
+	require.NoError(t, coll2.Close(ctx))
+
+	require.EqualValues(t, 48, sharedTotalFileSize.Load())
+	require.EqualValues(t, 3, coll1.result.RowCount)
+	require.EqualValues(t, 48, coll1.result.TotalFileSize)
+	require.EqualValues(t, 3, coll2.result.RowCount)
+	require.EqualValues(t, 0, coll2.result.TotalFileSize)
+	require.Equal(t, []string{path.Join("test1", "data-0001.txt")}, coll1.result.Filenames)
+	require.Empty(t, coll2.result.Filenames)
+
+	content, err := objStore.ReadFile(ctx, coll1.result.Filenames[0])
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	require.Len(t, lines, 3)
 }
