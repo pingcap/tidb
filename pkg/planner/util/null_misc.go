@@ -15,7 +15,9 @@
 package util
 
 import (
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -361,10 +363,11 @@ func tryFoldNullifiedConstant(
 }
 
 func tryFoldStaticConstant(ctx base.PlanContext, expr expression.Expression) (*expression.Constant, bool) {
-	if !allConstants(ctx.GetNullRejectCheckExprCtx(), expr) {
+	nullRejectCtx := nullRejectFoldCtx(ctx)
+	if !allConstants(nullRejectCtx, expr) {
 		return nil, false
 	}
-	cons, ok := expression.FoldConstant(ctx.GetNullRejectCheckExprCtx(), expr).(*expression.Constant)
+	cons, ok := expression.FoldConstant(nullRejectCtx, expr).(*expression.Constant)
 	if !ok || cons.ParamMarker != nil || cons.DeferredExpr != nil {
 		return nil, false
 	}
@@ -431,7 +434,7 @@ func tryFoldNullifiedIf(
 	if !ok {
 		return nil, false
 	}
-	condVal, isNull, err := cond.EvalInt(ctx.GetNullRejectCheckExprCtx().GetEvalCtx(), chunk.Row{})
+	condVal, isNull, err := cond.EvalInt(nullRejectFoldCtx(ctx).GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, false
 	}
@@ -446,11 +449,12 @@ func foldNullifiedFunction(
 	expr *expression.ScalarFunction,
 	args []expression.Expression,
 ) (*expression.Constant, bool) {
-	folded, err := expression.NewFunction(ctx.GetNullRejectCheckExprCtx(), expr.FuncName.L, expr.RetType.Clone(), args...)
+	nullRejectCtx := nullRejectFoldCtx(ctx)
+	folded, err := expression.NewFunction(nullRejectCtx, expr.FuncName.L, expr.RetType.Clone(), args...)
 	if err != nil {
 		return nil, false
 	}
-	cons, ok := expression.FoldConstant(ctx.GetNullRejectCheckExprCtx(), folded).(*expression.Constant)
+	cons, ok := expression.FoldConstant(nullRejectCtx, folded).(*expression.Constant)
 	if !ok || cons.ParamMarker != nil || cons.DeferredExpr != nil {
 		return nil, false
 	}
@@ -464,11 +468,15 @@ func proofFromConstant(ctx base.PlanContext, cons *expression.Constant) nullReje
 	if cons.Value.IsNull() {
 		return nullRejectProof{nonTrue: true, mustNull: true}
 	}
-	isTrue, err := cons.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtxOrDefault())
+	isTrue, err := cons.Value.ToBool(nullRejectFoldCtx(ctx).GetEvalCtx().TypeCtx())
 	if err == nil && isTrue == 0 {
 		return nullRejectProof{nonTrue: true}
 	}
 	return nullRejectProof{}
+}
+
+func nullRejectFoldCtx(ctx base.PlanContext) expression.BuildContext {
+	return exprctx.CtxWithHandleTruncateErrLevel(ctx.GetNullRejectCheckExprCtx(), errctx.LevelIgnore)
 }
 
 // ResetNotNullFlag resets the not null flag of [start, end] columns in the schema.
