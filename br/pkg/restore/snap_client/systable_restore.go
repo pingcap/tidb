@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -416,17 +416,17 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	if rc.txnTotalSizeLimit > 0 {
 		sessionVars := rc.db.Session().GetSessionCtx().GetSessionVars()
 		originMemQuota := sessionVars.MemQuotaQuery
-		if err := sessionVars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.FormatUint(rc.txnTotalSizeLimit, 10)); err != nil {
-			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", vardef.TiDBMemQuotaQuery)
+		if err := sessionVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatUint(rc.txnTotalSizeLimit, 10)); err != nil {
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", variable.TiDBMemQuotaQuery)
 		}
 		defer func() {
-			if err := sessionVars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
+			if err := sessionVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
 				log.Warn("failed to restore session variable",
-					zap.String("var", vardef.TiDBMemQuotaQuery),
+					zap.String("var", variable.TiDBMemQuotaQuery),
 					zap.Int64("restore-to", originMemQuota),
 					zap.Error(err),
 				)
-				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", vardef.TiDBMemQuotaQuery))
+				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", variable.TiDBMemQuotaQuery))
 			}
 		}()
 	}
