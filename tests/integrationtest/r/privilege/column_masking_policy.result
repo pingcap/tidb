@@ -33,10 +33,10 @@ SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
 p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`, _UTF8MB4'*') END	ENABLED	CUSTOM	NONE
 CREATE OR REPLACE MASKING POLICY p_lifecycle ON privilege__column_masking_policy.t_lifecycle(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, '*', 1, 2) END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, 1, 2, '*') END ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_lifecycle	c	CASE WHEN CURRENT_USER()=_UTF8MB4'root@%' THEN `c` ELSE MASK_PARTIAL(`c`, _UTF8MB4'*', 1, 2) END	ENABLED	CUSTOM	NONE
+p_lifecycle	c	CASE WHEN CURRENT_USER()=_UTF8MB4'root@%' THEN `c` ELSE MASK_PARTIAL(`c`, 1, 2, _UTF8MB4'*') END	ENABLED	CUSTOM	NONE
 DROP USER IF EXISTS cmp_allowed, cmp_denied;
 CREATE USER cmp_allowed, cmp_denied;
 GRANT SELECT ON privilege__column_masking_policy.t_lifecycle TO cmp_allowed;
@@ -145,7 +145,7 @@ INSERT INTO privilege__column_masking_policy.t_query VALUES (1, 'alpha'), (2, 'a
 CREATE USER cmp_query;
 GRANT SELECT ON privilege__column_masking_policy.t_query TO cmp_query;
 CREATE MASKING POLICY p_query ON privilege__column_masking_policy.t_query(c)
-AS CASE WHEN current_user() != 'root@%' THEN MASK_PARTIAL(c, '*', 1, 1) ELSE c END ENABLE;
+AS CASE WHEN current_user() != 'root@%' THEN MASK_PARTIAL(c, 1, 1, '*') ELSE c END ENABLE;
 SELECT COUNT(*) FROM privilege__column_masking_policy.t_query WHERE c = 'alpha';
 COUNT(*)
 2
@@ -154,13 +154,13 @@ COUNT(*)
 2
 SELECT c, COUNT(*) FROM privilege__column_masking_policy.t_query GROUP BY c ORDER BY c;
 c	COUNT(*)
-a*pha	2
-b*avo	1
+a***a	2
+b***o	1
 SELECT c FROM privilege__column_masking_policy.t_query ORDER BY c;
 c
-a*pha
-a*pha
-b*avo
+a***a
+a***a
+b***o
 ALTER TABLE privilege__column_masking_policy.t_query MODIFY MASKING POLICY p_query
 SET EXPRESSION = CASE WHEN current_user() NOT IN ('cmp_query@%') THEN c ELSE MASK_FULL(c, '*') END;
 SELECT c FROM privilege__column_masking_policy.t_query ORDER BY id;
@@ -342,16 +342,16 @@ INSERT INTO privilege__column_masking_policy.t_part_mask VALUES
 CREATE USER cmp_part;
 GRANT SELECT ON privilege__column_masking_policy.t_part_mask TO cmp_part;
 CREATE MASKING POLICY p_part_mask ON privilege__column_masking_policy.t_part_mask(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, '*', 1, 1) END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, 1, 1, '*') END ENABLE;
 SELECT COUNT(*) FROM privilege__column_masking_policy.t_part_mask WHERE c = 'alpha';
 COUNT(*)
 2
 SELECT c FROM privilege__column_masking_policy.t_part_mask ORDER BY id;
 c
-a*pha
-a*pha
-b*avo
-c*arlie
+a***a
+a***a
+b***o
+c*****e
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_txn_mask;
 DROP USER IF EXISTS cmp_txn;
 CREATE TABLE privilege__column_masking_policy.t_txn_mask(id INT PRIMARY KEY, c VARCHAR(20));
@@ -436,10 +436,10 @@ EXECUTE stmt_prepare_recreate;
 c
 yankee
 CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_prepare_recreate(c)
-AS MASK_PARTIAL(c, '*', 1, 1) ENABLE;
+AS MASK_PARTIAL(c, 1, 1, '*') ENABLE;
 EXECUTE stmt_prepare_recreate;
 c
-y*nkee
+y****e
 DEALLOCATE PREPARE stmt_prepare_recreate;
 DROP VIEW IF EXISTS privilege__column_masking_policy.v_view_mask;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_view_mask;

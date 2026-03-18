@@ -741,7 +741,7 @@ func BuildBackupRangeAndInitSchema(
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
-		policies = make([]*backuppb.PlacementPolicy, 0, len(policyList))
+		policies = make([]*backuppb.PlacementPolicy, 0, len(policies))
 		for _, policyInfo := range policyList {
 			p, err := json.Marshal(policyInfo)
 			if err != nil {

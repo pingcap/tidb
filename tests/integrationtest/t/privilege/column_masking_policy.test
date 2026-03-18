@@ -20,7 +20,7 @@ ALTER TABLE privilege__column_masking_policy.t_lifecycle ENABLE MASKING POLICY p
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 
 CREATE OR REPLACE MASKING POLICY p_lifecycle ON privilege__column_masking_policy.t_lifecycle(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, '*', 1, 2) END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, 1, 2, '*') END ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 
 # IT-MASK-P0-002 TestColumnMaskPolicyCurrentUserAndAtResult
@@ -143,7 +143,7 @@ CREATE USER cmp_query;
 GRANT SELECT ON privilege__column_masking_policy.t_query TO cmp_query;
 
 CREATE MASKING POLICY p_query ON privilege__column_masking_policy.t_query(c)
-  AS CASE WHEN current_user() != 'root@%' THEN MASK_PARTIAL(c, '*', 1, 1) ELSE c END ENABLE;
+  AS CASE WHEN current_user() != 'root@%' THEN MASK_PARTIAL(c, 1, 1, '*') ELSE c END ENABLE;
 
 connect (cmp_query_conn, localhost, cmp_query,, privilege__column_masking_policy);
 connection cmp_query_conn;
@@ -346,7 +346,7 @@ INSERT INTO privilege__column_masking_policy.t_part_mask VALUES
 CREATE USER cmp_part;
 GRANT SELECT ON privilege__column_masking_policy.t_part_mask TO cmp_part;
 CREATE MASKING POLICY p_part_mask ON privilege__column_masking_policy.t_part_mask(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, '*', 1, 1) END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, 1, 1, '*') END ENABLE;
 
 connect (cmp_part_conn, localhost, cmp_part,, privilege__column_masking_policy);
 connection cmp_part_conn;
@@ -465,7 +465,7 @@ EXECUTE stmt_prepare_recreate;
 
 connection default;
 CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_prepare_recreate(c)
-  AS MASK_PARTIAL(c, '*', 1, 1) ENABLE;
+AS MASK_PARTIAL(c, 1, 1, '*') ENABLE;
 connection cmp_prepare_recreate_conn;
 EXECUTE stmt_prepare_recreate;
 DEALLOCATE PREPARE stmt_prepare_recreate;

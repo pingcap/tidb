@@ -475,7 +475,13 @@ type BatchPointGetPlan struct {
 	Lock          bool
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	cost          float64
+
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
+	cost float64
 
 	// required by cost model
 	planCostInit bool
@@ -1344,6 +1350,22 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	}
 	p.dbName = dbName
 
+	// Build masking expressions for columns with masking policies
+	// If we cannot build masking expressions, fail-closed by returning nil
+	// This prevents the fast path from being chosen when masking would fail
+	is := ctx.GetInfoSchema()
+	if is != nil && len(names) > 0 {
+		// If there are output names, this is likely a real SELECT for returning results
+		// Synthetic SELECTs for DML typically don't have output field names
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			// Fail-closed: Do not use BatchPointGet fast path when masking cannot be applied
+			// The query will fall back to the normal planner which will handle the error properly
+			return nil
+		}
+		p.MaskingExprs = maskExprs
+	}
+
 	return p
 }
 
@@ -1612,15 +1634,23 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 
 	// Build masking expressions for columns with masking policies
+	// IMPORTANT: Only apply masking for top-level result-producing SELECT statements.
+	// Do NOT apply masking for synthetic SELECTs created for DML operations (UPDATE/DELETE)
+	// as those should work with original values for correct data manipulation.
+	//
+	// We detect synthetic SELECTs by checking if output names are empty - this is a strong
+	// indicator that the plan is being built for DML operations rather than result return.
 	is := ctx.GetInfoSchema()
-	if is != nil {
+	if is != nil && len(names) > 0 {
+		// If there are output names, this is likely a real SELECT for returning results
+		// Synthetic SELECTs for DML typically don't have output field names
 		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
 		if err != nil {
-			// Log error but don't fail the plan building
-			logutil.BgLogger().Warn("failed to build masking expressions for PointGet", zap.Error(err))
-		} else {
-			p.MaskingExprs = maskExprs
+			// Fail-closed: If masking expression cannot be built, fail the query
+			// instead of returning raw values which would leak sensitive data
+			return nil
 		}
+		p.MaskingExprs = maskExprs
 	}
 
 	return p

@@ -678,7 +678,7 @@ func TestIndexUsageTable(t *testing.T) {
 	tk.MustExec("create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));")
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test';`).Check(
+				where TABLE_SCHEMA = 'test';`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
@@ -686,7 +686,7 @@ func TestIndexUsageTable(t *testing.T) {
 			"test|idt2|idx_1",
 			"test|idt2|idx_2",
 			"test|idt2|idx_4"))
-	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Check(
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
@@ -695,7 +695,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Check(
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",

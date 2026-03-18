@@ -3479,15 +3479,15 @@ select mask_full(c, '#'), hex(mask_full(b, '*')), mask_null(b2) is null from t_m
 mask_full(c, '#')	hex(mask_full(b, '*'))	mask_null(b2) is null
 ######	2A2A2A2A	1
 drop table if exists t_mask_blob_clob;
-select mask_partial('abcdef','*',1,3), mask_partial('abcdef','*',10,3), mask_partial('abcdef','*',1,0);
-mask_partial('abcdef','*',1,3)	mask_partial('abcdef','*',10,3)	mask_partial('abcdef','*',1,0)
+select mask_partial('abcdef',1,2,'*'), mask_partial('abcdef',10,0,'*'), mask_partial('abcdef',1,5,'*');
+mask_partial('abcdef',1,2,'*')	mask_partial('abcdef',10,0,'*')	mask_partial('abcdef',1,5,'*')
 a***ef	abcdef	abcdef
-select mask_partial('中文abcd','*',1,3);
-mask_partial('中文abcd','*',1,3)
-中***cd
-select mask_partial('abc','**',1,2);
+select mask_partial('中文abcd',1,1,'*');
+mask_partial('中文abcd',1,1,'*')
+中****d
+select mask_partial('abc',1,2,'**');
 Error 1210 (HY000): Incorrect arguments to mask_partial
-select mask_partial('abc','*',-1,2);
+select mask_partial('abc',-1,2,'*');
 Error 1210 (HY000): Incorrect arguments to mask_partial
 select mask_date(cast('2012-01-02' as date), '2020-12-31'), mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31');
 mask_date(cast('2012-01-02' as date), '2020-12-31')	mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31')
