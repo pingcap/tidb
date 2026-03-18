@@ -663,8 +663,10 @@ func TestMVServiceCollectOverdueRefreshTasksByAlertLevel(t *testing.T) {
 	svc.mvRefreshMu.pending[disabledTask.ID] = svc.mvRefreshMu.prio.Push(disabledTask)
 	svc.mvRefreshMu.Unlock()
 
-	got := svc.collectOverdueRefreshTasks(now)
+	got, warningCount, criticalCount := svc.collectOverdueRefreshTasks(now)
 	require.Len(t, got, 2)
+	require.Equal(t, int64(1), warningCount)
+	require.Equal(t, int64(1), criticalCount)
 
 	byID := make(map[int64]overdueRefreshTask, len(got))
 	for _, task := range got {
@@ -720,6 +722,8 @@ func TestMVServiceCollectOverdueRefreshTasksDedupByLastSuccessReadTSO(t *testing
 		expectedCount    int
 		expectedID       int64
 		expectedCritical bool
+		warningCount     int64
+		criticalCount    int64
 	}
 	type testCase struct {
 		name  string
@@ -739,15 +743,15 @@ func TestMVServiceCollectOverdueRefreshTasksDedupByLastSuccessReadTSO(t *testing
 				alertWarningSec:    30,
 			},
 			steps: []step{
-				{atOffset: 0, expectedCount: 1, expectedID: 201, expectedCritical: false},
-				{atOffset: 10 * time.Second, expectedCount: 0},
+				{atOffset: 0, expectedCount: 1, expectedID: 201, expectedCritical: false, warningCount: 1, criticalCount: 0},
+				{atOffset: 10 * time.Second, expectedCount: 0, warningCount: 1, criticalCount: 0},
 				{
 					atOffset: 20 * time.Second,
 					beforeCollect: func(task *mv, now time.Time) {
 						task.lastSuccessReadTSO = 223456
 						task.lastSuccessTime = now.Add(-2 * time.Minute)
 					},
-					expectedCount: 1, expectedID: 201, expectedCritical: false,
+					expectedCount: 1, expectedID: 201, expectedCritical: false, warningCount: 1, criticalCount: 0,
 				},
 			},
 		},
@@ -762,10 +766,10 @@ func TestMVServiceCollectOverdueRefreshTasksDedupByLastSuccessReadTSO(t *testing
 				alertCriticalSec:   60,
 			},
 			steps: []step{
-				{atOffset: 0, expectedCount: 1, expectedID: 202, expectedCritical: false},
-				{atOffset: 10 * time.Second, expectedCount: 0},
-				{atOffset: 30 * time.Second, expectedCount: 1, expectedID: 202, expectedCritical: true},
-				{atOffset: 40 * time.Second, expectedCount: 0},
+				{atOffset: 0, expectedCount: 1, expectedID: 202, expectedCritical: false, warningCount: 1, criticalCount: 0},
+				{atOffset: 10 * time.Second, expectedCount: 0, warningCount: 1, criticalCount: 0},
+				{atOffset: 30 * time.Second, expectedCount: 1, expectedID: 202, expectedCritical: true, warningCount: 0, criticalCount: 1},
+				{atOffset: 40 * time.Second, expectedCount: 0, warningCount: 0, criticalCount: 1},
 			},
 		},
 	}
@@ -791,8 +795,10 @@ func TestMVServiceCollectOverdueRefreshTasksDedupByLastSuccessReadTSO(t *testing
 					s.beforeCollect(task, at)
 					svc.mvRefreshMu.Unlock()
 				}
-				got := svc.collectOverdueRefreshTasks(at)
+				got, warningCount, criticalCount := svc.collectOverdueRefreshTasks(at)
 				require.Len(t, got, s.expectedCount)
+				require.Equal(t, s.warningCount, warningCount)
+				require.Equal(t, s.criticalCount, criticalCount)
 				if s.expectedCount > 0 {
 					require.Equal(t, s.expectedID, got[0].mviewID)
 					require.Equal(t, s.expectedCritical, got[0].critical)

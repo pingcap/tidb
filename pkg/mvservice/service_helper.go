@@ -203,11 +203,11 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 		return time.Time{}, nil
 	}
 
-	if _, err = execRCRestrictedSQL(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
+	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
 		return time.Time{}, err
 	}
 
-	rows, err := execRCRestrictedSQL(ctx, sctx, findNextTimeSQL, []any{mvID})
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mvID})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -293,11 +293,11 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	if baseSchema == "" {
 		return time.Time{}, errors.New("materialized view base table schema name is empty")
 	}
-	if _, err = execRCRestrictedSQL(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
+	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
 		return time.Time{}, err
 	}
 
-	rows, err := execRCRestrictedSQL(ctx, sctx, findNextTimeSQL, []any{mvLogID})
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mvLogID})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -476,12 +476,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 	}
 	defer sysSessionPool.Put(se)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
-	return execRCRestrictedSQL(ctx, se.(sessionctx.Context), sql, params)
-}
-
-// execRCRestrictedSQL is a small wrapper over execRCRestrictedSQLWithSession.
-func execRCRestrictedSQL(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
-	return execRCRestrictedSQLWithSession(ctx, sctx, sql, params)
+	return execRCRestrictedSQLWithSession(ctx, se.(sessionctx.Context), sql, params)
 }
 
 // execRCRestrictedSQLWithSession executes SQL through the restricted SQL executor.

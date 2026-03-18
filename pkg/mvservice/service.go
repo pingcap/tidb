@@ -79,6 +79,8 @@ type MVService struct {
 		mvLogCount             atomic.Int64
 		runningMVRefreshCount  atomic.Int64
 		runningMVLogPurgeCount atomic.Int64
+		overdueWarningCount    atomic.Int64
+		overdueCriticalCount   atomic.Int64
 	}
 
 	mvRefreshMu struct {
@@ -151,9 +153,8 @@ type mv struct {
 
 // mvLog tracks scheduling state for one MV log purge task.
 type mvLog struct {
-	ID            int64
-	purgeInterval time.Duration
-	nextPurge     time.Time
+	ID        int64
+	nextPurge time.Time
 
 	orderTs    int64 // unix timestamp in milliseconds
 	retryCount atomic.Int64
@@ -250,18 +251,22 @@ func (t *MVService) maybeLogOverdueRefreshTasks(now time.Time) {
 	}
 	t.nextTimeoutScanMillis.Store(now.Add(mvRefreshAlertScanInterval).UnixMilli())
 
-	overdueTasks := t.collectOverdueRefreshTasks(now)
+	overdueTasks, warningCount, criticalCount := t.collectOverdueRefreshTasks(now)
+	t.metrics.overdueWarningCount.Store(warningCount)
+	t.metrics.overdueCriticalCount.Store(criticalCount)
 	if len(overdueTasks) == 0 {
 		return
 	}
 	t.logMVRefreshTimeout(overdueTasks)
 }
 
-func (t *MVService) collectOverdueRefreshTasks(now time.Time) []overdueRefreshTask {
+func (t *MVService) collectOverdueRefreshTasks(now time.Time) ([]overdueRefreshTask, int64, int64) {
 	t.mvRefreshMu.Lock()
 	defer t.mvRefreshMu.Unlock()
 
 	overdueTasks := make([]overdueRefreshTask, 0)
+	var warningCount int64
+	var criticalCount int64
 	for mviewID, item := range t.mvRefreshMu.pending {
 		if item.Value == nil || item.Value.nextRefresh.IsZero() {
 			continue
@@ -281,6 +286,11 @@ func (t *MVService) collectOverdueRefreshTasks(now time.Time) []overdueRefreshTa
 			critical = false
 		} else {
 			continue
+		}
+		if critical {
+			criticalCount++
+		} else {
+			warningCount++
 		}
 		if tso := item.Value.lastSuccessReadTSO; tso > 0 {
 			if critical {
@@ -313,7 +323,7 @@ func (t *MVService) collectOverdueRefreshTasks(now time.Time) []overdueRefreshTa
 			critical:         critical,
 		})
 	}
-	return overdueTasks
+	return overdueTasks, warningCount, criticalCount
 }
 
 // logMVRefreshTimeout logs overdue refresh task details with warning/critical levels.
@@ -541,7 +551,7 @@ func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 // buildMVLogPurgeTasks rebuilds purge task states from fetched metadata.
 //
 // For each item in newPending:
-// 1. Update mutable metadata fields (purgeInterval, nextPurge).
+// 1. Update mutable metadata fields (nextPurge).
 // 2. If nextPurge changed and the task is not currently running, update orderTs and heap position.
 // 3. If the task is currently running (orderTs == maxNextScheduleTs), defer heap adjustment until task completion.
 func (t *MVService) buildMVLogPurgeTasks(newPending map[int64]*mvLog) {
@@ -553,7 +563,6 @@ func (t *MVService) buildMVLogPurgeTasks(newPending map[int64]*mvLog) {
 	}
 	for id, nl := range newPending {
 		if ol, ok := t.mvLogPurgeMu.pending[id]; ok {
-			ol.Value.purgeInterval = nl.purgeInterval
 			changed := ol.Value.nextPurge != nl.nextPurge
 			ol.Value.nextPurge = nl.nextPurge
 			if ol.Value.orderTs != maxNextScheduleTs { // not running

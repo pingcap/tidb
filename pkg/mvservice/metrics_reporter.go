@@ -48,6 +48,8 @@ func (h *serviceHelper) reportMetrics(s *MVService) {
 	tidbmetrics.MVServiceMVLogPurgeTotalGauge.Set(float64(s.metrics.mvLogCount.Load()))
 	tidbmetrics.MVServiceMVRefreshRunningGauge.Set(float64(s.metrics.runningMVRefreshCount.Load()))
 	tidbmetrics.MVServiceMVLogPurgeRunningGauge.Set(float64(s.metrics.runningMVLogPurgeCount.Load()))
+	tidbmetrics.MVServiceMVRefreshOverdueWarningGauge.Set(float64(s.metrics.overdueWarningCount.Load()))
+	tidbmetrics.MVServiceMVRefreshOverdueCriticalGauge.Set(float64(s.metrics.overdueCriticalCount.Load()))
 }
 
 // observeTaskDuration reports one task execution duration sample.

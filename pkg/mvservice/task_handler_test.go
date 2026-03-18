@@ -1020,14 +1020,12 @@ func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {
 	expect201 := time.Unix(nextPurgeSec1, 0)
 	require.Equal(t, expect201, l201.nextPurge)
 	require.Equal(t, expect201.UnixMilli(), l201.orderTs)
-	require.Equal(t, int64(0), int64(l201.purgeInterval))
 
 	l202 := got[int64(202)]
 	require.NotNil(t, l202)
 	expect202 := time.Unix(nextPurgeSec2, 0)
 	require.Equal(t, expect202, l202.nextPurge)
 	require.Equal(t, expect202.UnixMilli(), l202.orderTs)
-	require.Equal(t, int64(0), int64(l202.purgeInterval))
 }
 
 func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {

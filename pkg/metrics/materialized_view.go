@@ -31,10 +31,12 @@ const (
 	mvMetricTaskStatusTaskExecTimedOutRunning = "exec_timed_out_running"
 	mvMetricTaskStatusTaskExecBackpressureBlk = "exec_backpressure_blocked"
 
-	mvMetricTaskStatusMVTotal       = "mv_total"
-	mvMetricTaskStatusMVLogTotal    = "mvlog_total"
-	mvMetricTaskStatusMVRefreshRun  = "mv_refresh_running"
-	mvMetricTaskStatusMVLogPurgeRun = "mvlog_purge_running"
+	mvMetricTaskStatusMVTotal                  = "mv_total"
+	mvMetricTaskStatusMVLogTotal               = "mvlog_total"
+	mvMetricTaskStatusMVRefreshRun             = "mv_refresh_running"
+	mvMetricTaskStatusMVLogPurgeRun            = "mvlog_purge_running"
+	mvMetricTaskStatusMVRefreshOverdueWarning  = "mv_refresh_overdue_warning"
+	mvMetricTaskStatusMVRefreshOverdueCritical = "mv_refresh_overdue_critical"
 )
 
 // Metrics for materialized view service.
@@ -57,10 +59,12 @@ var (
 	MVTaskExecutorTimedOutRunningTaskGauge prometheus.Gauge
 	MVTaskExecutorBackpressureBlockedGauge prometheus.Gauge
 
-	MVServiceMVRefreshTotalGauge    prometheus.Gauge
-	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
-	MVServiceMVRefreshRunningGauge  prometheus.Gauge
-	MVServiceMVLogPurgeRunningGauge prometheus.Gauge
+	MVServiceMVRefreshTotalGauge           prometheus.Gauge
+	MVServiceMVLogPurgeTotalGauge          prometheus.Gauge
+	MVServiceMVRefreshRunningGauge         prometheus.Gauge
+	MVServiceMVLogPurgeRunningGauge        prometheus.Gauge
+	MVServiceMVRefreshOverdueWarningGauge  prometheus.Gauge
+	MVServiceMVRefreshOverdueCriticalGauge prometheus.Gauge
 )
 
 // InitMVMetrics initializes metrics for materialized view service.
@@ -104,4 +108,6 @@ func InitMVMetrics() {
 	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogTotal)
 	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshRun)
 	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogPurgeRun)
+	MVServiceMVRefreshOverdueWarningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshOverdueWarning)
+	MVServiceMVRefreshOverdueCriticalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshOverdueCritical)
 }

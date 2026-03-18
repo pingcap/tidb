@@ -128,14 +128,14 @@ func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) erro
 }
 
 func (do *Domain) setMVServiceTaskMaxConcurrency(maxConcurrency int) {
-	if do.mvService == nil {
+	if do.GetMVService() == nil {
 		return
 	}
 	do.mvService.SetTaskMaxConcurrency(maxConcurrency)
 }
 
 func (do *Domain) setMVServiceTaskThresholdCPU(threshold float64) {
-	if do.mvService == nil {
+	if do.GetMVService() == nil {
 		return
 	}
 	cfg := do.mvService.GetTaskBackpressureConfig()
@@ -144,7 +144,7 @@ func (do *Domain) setMVServiceTaskThresholdCPU(threshold float64) {
 }
 
 func (do *Domain) setMVServiceTaskThresholdMemory(threshold float64) {
-	if do.mvService == nil {
+	if do.GetMVService() == nil {
 		return
 	}
 	cfg := do.mvService.GetTaskBackpressureConfig()
@@ -153,14 +153,14 @@ func (do *Domain) setMVServiceTaskThresholdMemory(threshold float64) {
 }
 
 func (do *Domain) setMVServiceMViewRefreshHistRetention(retention time.Duration) {
-	if do.mvService == nil {
+	if do.GetMVService() == nil {
 		return
 	}
 	_ = do.mvService.SetMViewRefreshHistRetention(retention)
 }
 
 func (do *Domain) setMVServiceMLogPurgeHistRetention(retention time.Duration) {
-	if do.mvService == nil {
+	if do.GetMVService() == nil {
 		return
 	}
 	_ = do.mvService.SetMLogPurgeHistRetention(retention)
