@@ -55,5 +55,12 @@
       "select case when (exists(select /* issue:57594 */ 1 where ref_0.c2)) then 1 else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2",
       "select case when (exists(select /* issue:57594 */ 1 where ref_0.c2)) then count(*) over (partition by 1) else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2"
     ]
+  },
+  {
+    "name": "TestWindowWithOuterJoinAndCTE",
+    "cases": [
+      "WITH cte_0 AS (SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2 FROM t0 WHERE (((t0.p0 < t0.k1) AND (t0.k0 = t0.k3)) AND NOT (t0.k3 IN (83))) ORDER BY t0.id LIMIT 3) SELECT /* issue:66904 */ t0.id AS c0, ROW_NUMBER() OVER w2 AS c1, AVG(t1.d0) OVER (ORDER BY t0.k0 DESC, cte_0.c2 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS c2 FROM (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0) AS cte_0 LEFT JOIN (SELECT t1.id AS id, t1.k0 AS k0, t1.d0 AS d0, t1.d1 AS d1 FROM t1) AS t1 ON (1 = 0) RIGHT JOIN (SELECT t0.id AS id, t0.k0 AS k0, t0.k1 AS k1, t0.k2 AS k2, t0.k3 AS k3, t0.p0 AS p0, t0.p1 AS p1 FROM t0) AS t0 ON ((t1.k0 = t0.k0) AND (t0.k3 <= t1.d1)) WHERE NOT (t1.k0 IN (73, 35, 61)) WINDOW w2 AS (PARTITION BY cte_0.c1, t1.d1 ORDER BY t0.k0, t0.k1 DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC",
+      "WITH cte_0 AS (SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2 FROM t0 WHERE (((t0.p0 < t0.k1) AND (t0.k0 = t0.k3)) AND NOT (t0.k3 IN (83))) ORDER BY t0.id LIMIT 3) SELECT /* issue:66904 start-bound */ t0.id AS c0, ROW_NUMBER() OVER w2 AS c1, AVG(t1.d0) OVER (ORDER BY t0.k0 DESC, cte_0.c2 RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS c2 FROM (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0) AS cte_0 LEFT JOIN (SELECT t1.id AS id, t1.k0 AS k0, t1.d0 AS d0, t1.d1 AS d1 FROM t1) AS t1 ON (1 = 0) RIGHT JOIN (SELECT t0.id AS id, t0.k0 AS k0, t0.k1 AS k1, t0.k2 AS k2, t0.k3 AS k3, t0.p0 AS p0, t0.p1 AS p1 FROM t0) AS t0 ON ((t1.k0 = t0.k0) AND (t0.k3 <= t1.d1)) WHERE NOT (t1.k0 IN (73, 35, 61)) WINDOW w2 AS (PARTITION BY cte_0.c1, t1.d1 ORDER BY t0.k0, t0.k1 DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC"
+    ]
   }
 ]

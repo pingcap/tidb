@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -130,8 +131,15 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		return la.StatsInfo(), false, nil
 	}
 	leftProfile := childStats[0]
+	// For SemiJoin and AntiSemiJoin Apply operators (EXISTS / NOT EXISTS
+	// subqueries that cannot be decorrelated), apply SelectionFactor to
+	// the row count estimate, consistent with LogicalJoin.DeriveStats.
+	rowCount := leftProfile.RowCount
+	if la.JoinType == base.SemiJoin || la.JoinType == base.AntiSemiJoin {
+		rowCount *= cost.SelectionFactor
+	}
 	la.SetStats(&property.StatsInfo{
-		RowCount: leftProfile.RowCount,
+		RowCount: rowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
 	// TODO: investigate why this cannot be replaced with maps.Copy()
@@ -142,7 +150,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		la.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
-			la.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
+			la.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = rowCount
 		}
 	}
 	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
