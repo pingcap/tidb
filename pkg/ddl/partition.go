@@ -223,65 +223,45 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 
 		// NOTE: TiCI AddPartition depends on the `AddingDefinitions` field, so it must run
-		// before `updatePartitionInfo`.
+		// before `updatePartitionInfo`. Persist each successful parser-info group so
+		// StateReplicaOnly retries and rollback can resume without replaying prior side effects.
 		if job.ReorgMeta == nil || !job.ReorgMeta.TiCIPartitionAdded {
-			type ticiIndexGroup struct {
-				parserInfo *tici.ParserInfo
-				indexIDs   []int64
+			groups, err := w.buildTiCIAddPartitionGroups(jobCtx, job, tblInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
-			groups := make(map[string]*ticiIndexGroup)
-			groupKeys := make([]string, 0, len(tblInfo.Indices))
-			for _, idxInfo := range tblInfo.Indices {
-				if !idxInfo.IsTiCIIndex() {
-					continue
-				}
-				var parserInfo *tici.ParserInfo
-				if idxInfo.FullTextInfo != nil {
-					var err error
-					parserInfo, err = w.buildTiCIFulltextParserInfo(jobCtx, job, idxInfo)
-					if err != nil {
-						return ver, errors.Trace(err)
-					}
-				}
-				key := "nil"
-				if parserInfo != nil {
-					b, err := json.Marshal(parserInfo)
-					if err != nil {
-						return ver, errors.Trace(err)
-					}
-					key = string(b)
-				}
-				g, ok := groups[key]
-				if !ok {
-					g = &ticiIndexGroup{parserInfo: parserInfo}
-					groups[key] = g
-					groupKeys = append(groupKeys, key)
-				}
-				g.indexIDs = append(g.indexIDs, idxInfo.ID)
-			}
-
-			if len(groupKeys) > 0 {
-				slices.Sort(groupKeys)
-
+			if len(groups) > 0 {
 				if job.ReorgMeta == nil {
 					job.ReorgMeta = &model.DDLReorgMeta{}
+				}
+				addedGroups := make(map[string]struct{}, len(job.ReorgMeta.TiCIPartitionAddedGroups))
+				for _, key := range job.ReorgMeta.TiCIPartitionAddedGroups {
+					addedGroups[key] = struct{}{}
 				}
 				ctx := jobCtx.stepCtx
 				if ctx == nil {
 					ctx = jobCtx.ctx
 				}
-				for _, key := range groupKeys {
-					g := groups[key]
-					if g == nil || len(g.indexIDs) == 0 {
+				for _, group := range groups {
+					if len(group.indexIDs) == 0 {
 						continue
 					}
-					if err := tici.AddPartition(ctx, jobCtx.store, tblInfo, job.SchemaName, g.indexIDs, g.parserInfo); err != nil {
+					if _, ok := addedGroups[group.key]; ok {
+						continue
+					}
+					if err := tici.AddPartition(ctx, jobCtx.store, tblInfo, job.SchemaName, group.indexIDs, group.parserInfo); err != nil {
+						return ver, errors.Trace(err)
+					}
+					job.ReorgMeta.TiCIPartitionAddedGroups = append(job.ReorgMeta.TiCIPartitionAddedGroups, group.key)
+					addedGroups[group.key] = struct{}{}
+					if err := w.updateDDLJob(jobCtx, job, true); err != nil {
 						return ver, errors.Trace(err)
 					}
 				}
 
 				job.ReorgMeta.TiCIPartitionAdded = true
-				// Persist the flag to avoid calling TiCI AddPartition repeatedly when this stage is retried.
+				job.ReorgMeta.TiCIPartitionAddedGroups = nil
+				// Persist the completion marker to avoid calling TiCI AddPartition repeatedly when this stage is retried.
 				if err := w.updateDDLJob(jobCtx, job, true); err != nil {
 					return ver, errors.Trace(err)
 				}
@@ -2182,6 +2162,104 @@ func getTiCIIndexIDs(tblInfo *model.TableInfo) []int64 {
 	return ids
 }
 
+type ticiAddPartitionGroup struct {
+	key        string
+	parserInfo *tici.ParserInfo
+	indexIDs   []int64
+}
+
+func marshalTiCIParserInfoKey(parserInfo *tici.ParserInfo) (string, error) {
+	if parserInfo == nil {
+		return "nil", nil
+	}
+	data, err := json.Marshal(parserInfo)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(data), nil
+}
+
+func (w *worker) buildTiCIAddPartitionGroups(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) ([]ticiAddPartitionGroup, error) {
+	if tblInfo == nil {
+		return nil, nil
+	}
+
+	groupMap := make(map[string]*ticiAddPartitionGroup)
+	groupKeys := make([]string, 0, len(tblInfo.Indices))
+	for _, idxInfo := range tblInfo.Indices {
+		if !idxInfo.IsTiCIIndex() {
+			continue
+		}
+
+		var parserInfo *tici.ParserInfo
+		if idxInfo.FullTextInfo != nil {
+			info, err := w.buildTiCIFulltextParserInfo(jobCtx, job, idxInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			parserInfo = info
+		}
+
+		key, err := marshalTiCIParserInfoKey(parserInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		group, ok := groupMap[key]
+		if !ok {
+			group = &ticiAddPartitionGroup{
+				key:        key,
+				parserInfo: parserInfo,
+			}
+			groupMap[key] = group
+			groupKeys = append(groupKeys, key)
+		}
+		group.indexIDs = append(group.indexIDs, idxInfo.ID)
+	}
+
+	slices.Sort(groupKeys)
+	result := make([]ticiAddPartitionGroup, 0, len(groupKeys))
+	for _, key := range groupKeys {
+		group := groupMap[key]
+		if group == nil || len(group.indexIDs) == 0 {
+			continue
+		}
+		result = append(result, *group)
+	}
+	return result, nil
+}
+
+func getTiCIAddedPartitionIndexIDs(reorgMeta *model.DDLReorgMeta, groups []ticiAddPartitionGroup) []int64 {
+	if reorgMeta == nil {
+		return nil
+	}
+
+	if reorgMeta.TiCIPartitionAdded {
+		indexIDs := make([]int64, 0, len(groups))
+		for _, group := range groups {
+			indexIDs = append(indexIDs, group.indexIDs...)
+		}
+		return indexIDs
+	}
+
+	if len(reorgMeta.TiCIPartitionAddedGroups) == 0 {
+		return nil
+	}
+
+	addedGroups := make(map[string]struct{}, len(reorgMeta.TiCIPartitionAddedGroups))
+	for _, key := range reorgMeta.TiCIPartitionAddedGroups {
+		addedGroups[key] = struct{}{}
+	}
+
+	indexIDs := make([]int64, 0, len(groups))
+	for _, group := range groups {
+		if _, ok := addedGroups[group.key]; !ok {
+			continue
+		}
+		indexIDs = append(indexIDs, group.indexIDs...)
+	}
+	return indexIDs
+}
+
 // getTableInfoWithDroppingPartitions builds oldTableInfo including dropping partitions, only used by onDropTablePartition.
 func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	p := t.Partition
@@ -2225,12 +2303,17 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	// GC will later also drop matching Placement bundles.
 	// If we delete them now, it could lead to non-compliant placement or failure during flashback
 	physicalTableIDs, pNames := removePartitionAddingDefinitionsFromTableInfo(tblInfo)
-	if job.ReorgMeta != nil && job.ReorgMeta.TiCIPartitionAdded {
-		if indexIDs := getTiCIIndexIDs(tblInfo); len(indexIDs) > 0 && len(physicalTableIDs) > 0 {
+	if job.ReorgMeta != nil && (job.ReorgMeta.TiCIPartitionAdded || len(job.ReorgMeta.TiCIPartitionAddedGroups) > 0) {
+		groups, err := w.buildTiCIAddPartitionGroups(jobCtx, job, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if indexIDs := getTiCIAddedPartitionIndexIDs(job.ReorgMeta, groups); len(indexIDs) > 0 && len(physicalTableIDs) > 0 {
 			ctx := jobCtx.stepCtx
 			if ctx == nil {
 				ctx = jobCtx.ctx
 			}
+			var dropErr error
 			for _, pid := range physicalTableIDs {
 				if err := tici.DropPartition(ctx, jobCtx.store, pid, indexIDs); err != nil {
 					logutil.DDLLogger().Warn("rollback add partition: drop TiCI partition failed",
@@ -2240,12 +2323,17 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 						zap.Int64("partition_id", pid),
 						zap.Int64s("index_ids", indexIDs),
 					)
+					if dropErr == nil {
+						dropErr = err
+					}
 				}
 			}
+			if dropErr != nil {
+				return ver, errors.Trace(dropErr)
+			}
 		}
-		// TiCI partition cleanup is best-effort; clear the marker once it has been issued so
-		// retries of later rollback steps do not repeat the RPC.
 		job.ReorgMeta.TiCIPartitionAdded = false
+		job.ReorgMeta.TiCIPartitionAddedGroups = nil
 		if err := w.updateDDLJob(jobCtx, job, true); err != nil {
 			return ver, errors.Trace(err)
 		}

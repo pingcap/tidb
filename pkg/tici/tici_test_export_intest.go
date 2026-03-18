@@ -125,7 +125,7 @@ func InstallMockTiCIManagerForTest(t testing.TB) {
 	originalNewManagerCtx := newManagerCtxFunc
 
 	getEtcdClientFunc = func() (*clientv3.Client, error) {
-		return &clientv3.Client{}, nil
+		return nil, nil
 	}
 	newManagerCtxFunc = func(ctx context.Context, _ *clientv3.Client) (*ManagerCtx, error) {
 		mockCtx, cancel := context.WithCancel(ctx)

@@ -299,6 +299,7 @@ go_test(
         "table_modify_test.go",
         "table_split_test.go",
         "table_test.go",
+        "tici_test_helper_test.go",
         "tiflash_replica_test.go",
         "ttl_test.go",
     ],

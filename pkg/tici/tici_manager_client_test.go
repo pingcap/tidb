@@ -357,7 +357,7 @@ func TestFinishIndexUploadHelper(t *testing.T) {
 	originalGetEtcdClient := getEtcdClientFunc
 	originalNewManagerCtx := newManagerCtxFunc
 	getEtcdClientFunc = func() (*clientv3.Client, error) {
-		return &clientv3.Client{}, nil
+		return nil, nil
 	}
 	newManagerCtxFunc = func(_ context.Context, _ *clientv3.Client) (*ManagerCtx, error) {
 		return managerCtx, nil
@@ -383,6 +383,7 @@ func TestFinishIndexUploadHelper(t *testing.T) {
 func TestScanRanges(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
 		ctx := newTestTiCIManagerCtx(mockClient)
 		tableID, indexID := int64(1), int64(2)
 
@@ -417,6 +418,7 @@ func TestScanRanges(t *testing.T) {
 
 	t.Run("retry_on_worker_not_found", func(t *testing.T) {
 		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
 		ctx := newTestTiCIManagerCtx(mockClient)
 		tableID, indexID := int64(1), int64(2)
 

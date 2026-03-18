@@ -331,7 +331,7 @@ func (t *ManagerCtx) addPartition(ctx context.Context, req *AddPartitionRequest)
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf("tici AddPartition rpc error: %v", err))
 	}
 	if resp.Status != ErrorCode_SUCCESS {
-		code := ErrorCode(resp.Status)
+		code := resp.Status
 		errMsg := fmt.Sprintf(
 			"tici AddPartition failed: status=%s(%d) keyspaceID=%d indexIDs=%v error=%s",
 			code.String(),
@@ -421,7 +421,7 @@ func (t *ManagerCtx) dropPartition(ctx context.Context, req *DropPartitionReques
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf("tici DropPartition rpc error: %v", err))
 	}
 	if resp.Status != ErrorCode_SUCCESS {
-		code := ErrorCode(resp.Status)
+		code := resp.Status
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf(
 			"tici DropPartition failed: status=%s(%d) keyspaceID=%d tableID=%d indexIDs=%v error=%s",
 			code.String(),
@@ -914,7 +914,7 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 		code := ErrorCode(resp.Status)
 		if !isRetryableGetShardLocalCacheStatus(resp.Status) || time.Since(start) >= maxWait {
 			return nil, fmt.Errorf(
-				"GetShardLocalCacheInfo failed after %s (attempts=%d, keyspaceID=%d, tableID=%d, indexID=%d, ranges=%d, limit=%d): %s(%d)",
+				"GetShardLocalCacheInfo failed after %s (attempts=%d, keyspaceID=%d, tableID=%d, indexID=%d, ranges=%d, limit=%d, returnedShards=%d): %s(%d)",
 				time.Since(start).Round(time.Millisecond),
 				attempt+1,
 				request.KeyspaceId,
@@ -922,6 +922,7 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 				indexID,
 				len(keyRanges),
 				limit,
+				len(resp.ShardLocalCacheInfos),
 				code.String(),
 				resp.Status,
 			)

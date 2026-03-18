@@ -723,6 +723,7 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 		BackendConfig: config,
 		logger:        logger,
 		engineMgr:     engineMgr,
+		tikvCodec:     storeHelper.GetTiKVCodec(),
 	}
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
@@ -882,7 +883,11 @@ func (local *Backend) PostProcess(ctx context.Context) error {
 }
 
 func (local *Backend) markTiCIWriteEngine(engineUUID uuid.UUID, enabled bool) {
-	local.logger.Info(
+	logger := local.logger
+	if logger.Logger == nil {
+		logger = log.L()
+	}
+	logger.Info(
 		"mark tici write engine",
 		zap.String("engine-uuid", engineUUID.String()),
 		zap.Bool("tici-write-enabled", enabled),

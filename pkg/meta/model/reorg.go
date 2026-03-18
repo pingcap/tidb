@@ -97,6 +97,9 @@ type DDLReorgMeta struct {
 	Stage              ReorgStage                       `json:"stage"`
 	TiCIIndexCreated   bool                             `json:"tici_index_created"`
 	TiCIPartitionAdded bool                             `json:"tici_partition_added"`
+	// TiCIPartitionAddedGroups tracks parser-info groups that have already finished
+	// TiCI AddPartition so retries and rollback can resume safely after partial success.
+	TiCIPartitionAddedGroups []string `json:"tici_partition_added_groups,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
