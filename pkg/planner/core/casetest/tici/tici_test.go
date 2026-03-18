@@ -63,9 +63,14 @@ func TestTiCISearchExplain(t *testing.T) {
 		id INT UNSIGNED PRIMARY KEY, title TEXT,
 		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
 	)`)
+	tk.MustExec(`create table t7(
+		id INT PRIMARY KEY, title TEXT, body TEXT,
+		FULLTEXT INDEX idx_title_body (title, body)
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t6")
+	testkit.SetTiFlashReplica(t, dom, "test", "t7")
 	tk.MustExec("create table t2(a int, col text)")
 
 	tk.MustExec(`create table t3(
@@ -223,9 +228,17 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		id INT PRIMARY KEY, title TEXT,
 		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
 	)`)
+	tk.MustExec(`create table t7(
+		id INT PRIMARY KEY, title TEXT, body TEXT
+	)`)
+	tk.MustExec(`create hybrid index idx_title_body on t7(id, title, body) parameter '{
+		"fulltext": [{"columns": ["title", "body"]}],
+		"sharding_key": {"columns": ["id"]}
+	}'`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t6")
+	testkit.SetTiFlashReplica(t, dom, "test", "t7")
 
 	// Non-BOOLEAN MODE is rejected.
 	tk.MustContainErrMsg(
@@ -256,6 +269,24 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		"explain format='brief' select * from t6 where match(title) against ('>hello' IN BOOLEAN MODE)",
 		"unsupported operator '>' in BOOLEAN MODE query",
 	)
+
+	// Hybrid fulltext components keep the original helper-function behavior:
+	// multi-column helper functions and MATCH ... AGAINST are both rejected, and
+	// multi-column search should use multiple single-column fts_match_xxx calls.
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where match(title, body) against ('hello' IN BOOLEAN MODE)",
+		"Multi-column MATCH AGAINST is not supported on hybrid fulltext indexes",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title, body)",
+		"Multi-column fts_match_xxx is not supported on hybrid fulltext indexes",
+	)
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title)",
+	).CheckContain("idx_title_body")
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title) and fts_match_word('hello', body)",
+	).CheckContain("idx_title_body")
 }
 
 func TestTiCISearchWithPrepare(t *testing.T) {

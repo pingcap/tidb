@@ -673,6 +673,15 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 
 	// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
 	if hasUnmatchedFTSOverAllIdx {
+		regularFulltextCols, hybridFulltextCols := ds.collectTiCIFTSDefinitionsForDiagnosis()
+		for i, cond := range ds.PushedDownConds {
+			if !condHasFTSFunc.Has(i) {
+				continue
+			}
+			if reason := expression.DiagnoseUnmatchedFTSIndexReason(cond, regularFulltextCols, hybridFulltextCols); reason != "" {
+				return errors.New(reason)
+			}
+		}
 		return errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")
 	}
 
@@ -733,8 +742,8 @@ func (ds *DataSource) chooseTiCIIndex(
 			continue
 		}
 
-		ftsCols, invertedIndexedCols := ds.collectTiCIIndexCoveredColumns(path.Index)
-		if !ds.collectMatchedExprSetForTiCIIndex(condHasFTSFunc, ftsCols, invertedIndexedCols, &tmpMatchedExprSet) {
+		ftsCols, colsInFulltextIdx, invertedCols := ds.collectTiCIIndexCoveredColumns(path.Index)
+		if !ds.collectMatchedExprSetForTiCIIndex(condHasFTSFunc, colsInFulltextIdx, ftsCols, invertedCols, &tmpMatchedExprSet) {
 			continue
 		}
 
@@ -758,7 +767,8 @@ func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFunc
 		return false
 	}
 	// Has FTS function, but the index doesn't support FTS search.
-	if hasFTSFuncLocal && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
+	supportsFTS := path.Index.FullTextInfo != nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) > 0)
+	if hasFTSFuncLocal && !supportsFTS {
 		return false
 	}
 	if !hasFTSFuncLocal {
@@ -780,14 +790,21 @@ func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFunc
 	return true
 }
 
-func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ftsCols intset.FastIntSet, invertedIndexedCols intset.FastIntSet) {
+func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ftsCols intset.FastIntSet, colsInFulltextIdx []intset.FastIntSet, invertedCols intset.FastIntSet) {
+	// ftsCols is used by single-column helper functions.
+	// colsInFulltextIdx records regular FULLTEXT column sets, which are used by
+	// MATCH ... AGAINST and multi-column helper functions. Hybrid indexes intentionally
+	// do not contribute to colsInFulltextIdx so their helper functions stay single-column.
 	ftsCols = intset.NewFastIntSet()
-	invertedIndexedCols = intset.NewFastIntSet()
+	invertedCols = intset.NewFastIntSet()
 	if index.FullTextInfo != nil {
+		fulltextColSet := intset.NewFastIntSet()
 		for _, indexCol := range index.Columns {
 			col := ds.TableInfo.Columns[indexCol.Offset]
 			ftsCols.Insert(int(col.ID))
+			fulltextColSet.Insert(int(col.ID))
 		}
+		colsInFulltextIdx = append(colsInFulltextIdx, fulltextColSet)
 	}
 	if index.HybridInfo != nil {
 		for _, ftsInfo := range index.HybridInfo.FullText {
@@ -799,11 +816,36 @@ func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ft
 		for _, invertedInfo := range index.HybridInfo.Inverted {
 			for _, indexCol := range invertedInfo.Columns {
 				col := ds.TableInfo.Columns[indexCol.Offset]
-				invertedIndexedCols.Insert(int(col.ID))
+				invertedCols.Insert(int(col.ID))
 			}
 		}
 	}
-	return ftsCols, invertedIndexedCols
+	return ftsCols, colsInFulltextIdx, invertedCols
+}
+
+func (ds *DataSource) collectTiCIFTSDefinitionsForDiagnosis() (regularFulltextColSets []intset.FastIntSet, hybridFulltextColSets []intset.FastIntSet) {
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.Index == nil || !path.Index.IsTiCIIndex() {
+			continue
+		}
+		if path.Index.FullTextInfo != nil {
+			regularFulltextColSets = append(regularFulltextColSets, ds.collectIndexColumnSet(path.Index.Columns))
+		}
+		if path.Index.HybridInfo != nil {
+			for _, ftsInfo := range path.Index.HybridInfo.FullText {
+				hybridFulltextColSets = append(hybridFulltextColSets, ds.collectIndexColumnSet(ftsInfo.Columns))
+			}
+		}
+	}
+	return regularFulltextColSets, hybridFulltextColSets
+}
+
+func (ds *DataSource) collectIndexColumnSet(indexCols []*model.IndexColumn) intset.FastIntSet {
+	colSet := intset.NewFastIntSet()
+	for _, indexCol := range indexCols {
+		colSet.Insert(int(ds.TableInfo.Columns[indexCol.Offset].ID))
+	}
+	return colSet
 }
 
 // collectMatchedExprSetForTiCIIndex collects the pushed-down conditions that can
@@ -811,12 +853,13 @@ func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ft
 // pushed-down condition containing an FTS function cannot be covered by this index.
 func (ds *DataSource) collectMatchedExprSetForTiCIIndex(
 	condHasFTSFunc intset.FastIntSet,
-	ftsCols, invertedIndexedCols intset.FastIntSet,
+	colsInFulltextIdx []intset.FastIntSet,
+	ftsCols, invertedCols intset.FastIntSet,
 	matchedExprSet *intset.FastIntSet,
 ) bool {
 	matchedExprSet.Clear()
 	for i, cond := range ds.PushedDownConds {
-		fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, &invertedIndexedCols)
+		fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, colsInFulltextIdx, &invertedCols)
 		if !fullyCovered {
 			// If this expression can not be calculated at TiCI side, check whether it has FTS function.
 			// If yes, we should skip this index path.
