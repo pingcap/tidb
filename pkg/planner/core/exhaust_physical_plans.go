@@ -509,19 +509,11 @@ func constructIndexJoin(
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
-	// Record the variable usage for explain explore.
-	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
-	estimatedRowCount := p.StatsInfo().RowCount
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
-		// Apply the orderRatio to recognize that a large outer table scan may
-		// read additional rows before the inner table reaches the limit values
-		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
-		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
-		chReqProps[outerIdx].ExpectedCnt = expectedCnt
+	chReqProps[outerIdx] = &property.PhysicalProperty{
+		TaskTp:            property.RootTaskType,
+		ExpectedCnt:       calcChildExpectedCnt(p.SCtx(), prop, p.Children()[outerIdx].StatsInfo().RowCount, p.StatsInfo().RowCount),
+		SortItems:         prop.SortItems,
+		CTEProducerStatus: prop.CTEProducerStatus,
 	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
@@ -2562,25 +2554,11 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
-	// Compute the expected row count for the outer child.  For a semi/anti-semi
-	// join, each outer row produces at most one output row, so if the parent
-	// expects N rows we need N / selectivity outer rows.  For other join types
-	// the ratio may differ, but using the Apply's own selectivity is still a
-	// reasonable approximation.
+	// Account for extra outer rows needed to satisfy an ordered Apply's LIMIT,
+	// using the same ordering selectivity model as IndexJoin and MergeJoin.
 	outerExpectedCnt := math.MaxFloat64
-	if prop.ExpectedCnt < math.MaxFloat64 {
-		outerRowCount := la.Children()[0].StatsInfo().RowCount
-		applyRowCount := la.StatsInfo().RowCount
-		if applyRowCount > 0 && outerRowCount > 0 {
-			selectivity := applyRowCount / outerRowCount
-			if selectivity > 0 {
-				outerExpectedCnt = prop.ExpectedCnt / selectivity
-			}
-		}
-		// The outer side can never need fewer rows than the parent expects.
-		if outerExpectedCnt < prop.ExpectedCnt {
-			outerExpectedCnt = prop.ExpectedCnt
-		}
+	if !prop.IsSortItemEmpty() {
+		outerExpectedCnt = calcChildExpectedCnt(la.SCtx(), prop, la.Children()[0].StatsInfo().RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := PhysicalApply{
