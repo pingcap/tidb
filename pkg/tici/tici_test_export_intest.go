@@ -1,5 +1,3 @@
-//go:build intest
-
 // Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -117,7 +115,7 @@ func (mockMetaServiceClient) FinishImportIndexUpload(context.Context, *FinishImp
 }
 
 // InstallMockTiCIManagerForTest replaces TiCI etcd/meta-service initialization with a
-// lightweight in-process stub for `intest` callers from other packages.
+// lightweight in-process stub for callers from other packages.
 func InstallMockTiCIManagerForTest(t testing.TB) {
 	t.Helper()
 

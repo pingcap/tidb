@@ -6,6 +6,7 @@ go_library(
         "tici.pb.go",
         "tici_file_writer.go",
         "tici_manager_client.go",
+        "tici_test_export_intest.go",
         "tici_write.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/tici",
