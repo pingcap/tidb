@@ -4714,19 +4714,30 @@ func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.Log
 }
 
 // collectUpdateTargetTableIDs returns the set of table IDs that are the actual UPDATE targets.
-// Only tables that appear in the SET clause (as qualified column targets) are considered.
-// If no assignment uses a qualified table name, all tables in the plan are treated as targets.
+// Qualified SET targets use (schema, table) from the AST; unqualified columns are resolved against
+// the FROM plan output names so only the touched table(s) are included (multi-table UPDATE).
 func (b *PlanBuilder) collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
 	type tableKey struct {
 		schema, table string
 	}
 	modifiedTables := make(map[tableKey]struct{})
 	for _, assign := range update.List {
-		if assign.Column == nil || assign.Column.Table.L == "" {
-			// Unqualified column: we cannot restrict to a single table; use all tables in FROM.
-			return collectTableIDsFromLogicalPlan(p), nil
+		if assign.Column == nil {
+			continue
 		}
-		modifiedTables[tableKey{assign.Column.Schema.L, assign.Column.Table.L}] = struct{}{}
+		if assign.Column.Table.L != "" {
+			modifiedTables[tableKey{assign.Column.Schema.L, assign.Column.Table.L}] = struct{}{}
+			continue
+		}
+		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
+		if err != nil {
+			return nil, err
+		}
+		if idx < 0 {
+			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name.O, "field list")
+		}
+		name := p.OutputNames()[idx]
+		modifiedTables[tableKey{schema: name.DBName.L, table: name.TblName.L}] = struct{}{}
 	}
 	if len(modifiedTables) == 0 {
 		return collectTableIDsFromLogicalPlan(p), nil
