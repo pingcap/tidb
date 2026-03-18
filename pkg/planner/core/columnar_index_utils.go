@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
@@ -59,6 +60,62 @@ func DistanceMetricToTipb(dm model.DistanceMetric) tipb.VectorDistanceMetric {
 		return tipb.VectorDistanceMetric_INNER_PRODUCT
 	default:
 		return tipb.VectorDistanceMetric_INVALID_DISTANCE_METRIC
+	}
+}
+
+// buildTiCIVectorQueryInfo creates a TiCIVectorQueryInfo from index info and vector search properties.
+func buildTiCIVectorQueryInfo(
+	indexInfo *model.IndexInfo,
+	vsInfo *expression.VSInfo,
+	topK uint32,
+	tableInfo *model.TableInfo,
+) *tipb.TiCIVectorQueryInfo {
+	if indexInfo.HybridInfo == nil {
+		return nil
+	}
+
+	// Find the matching HybridVectorSpec by column ID.
+	var matchedSpec *model.HybridVectorSpec
+	var vecColInfo *model.ColumnInfo
+	for _, vecSpec := range indexInfo.HybridInfo.Vector {
+		if len(vecSpec.Columns) != 1 {
+			continue
+		}
+		colInfo := tableInfo.Columns[vecSpec.Columns[0].Offset]
+		if colInfo.ID == vsInfo.Column.ID {
+			matchedSpec = vecSpec
+			vecColInfo = colInfo
+			break
+		}
+	}
+	if matchedSpec == nil {
+		return nil
+	}
+
+	// Map distance function name to tipb enum.
+	dm, ok := model.IndexableFnNameToDistanceMetric[vsInfo.DistanceFnName.L]
+	if !ok {
+		return nil
+	}
+	distMetric := DistanceMetricToTipb(dm)
+
+	// Serialize the query vector.
+	queryVector := vsInfo.Vec.SerializeTo(nil)
+
+	// Determine dimension.
+	dim := uint32(vsInfo.Vec.Len())
+	if matchedSpec.IndexInfo != nil && matchedSpec.IndexInfo.Dimension != nil {
+		dim = uint32(*matchedSpec.IndexInfo.Dimension)
+	}
+
+	return &tipb.TiCIVectorQueryInfo{
+		IndexId:        indexInfo.ID,
+		ColumnId:       vecColInfo.ID,
+		DistanceMetric: distMetric,
+		TopK:           topK,
+		QueryVector:    queryVector,
+		Dimension:      dim,
+		ColumnName:     vecColInfo.Name.L,
 	}
 }
 

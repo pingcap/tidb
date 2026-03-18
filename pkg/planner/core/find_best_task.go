@@ -833,7 +833,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		return 0, false
 	}
 	// TiCI index can not be compared currently.
-	if lhs.path.FtsQueryInfo != nil || rhs.path.FtsQueryInfo != nil {
+	if lhs.path.FtsQueryInfo != nil || rhs.path.FtsQueryInfo != nil ||
+		lhs.path.TiCIVectorQueryInfo != nil || rhs.path.TiCIVectorQueryInfo != nil {
 		return 0, false
 	}
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
@@ -1035,9 +1036,32 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 		return property.PropMatched
 	}
+	// Hybrid vector index matching via TiCI.
+	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
+		for _, vecSpec := range path.Index.HybridInfo.Vector {
+			if len(vecSpec.Columns) != 1 {
+				continue
+			}
+			// Get column ID from table info.
+			vecColID := ds.TableInfo.Columns[vecSpec.Columns[0].Offset].ID
+			if vecColID != prop.VectorProp.Column.ID {
+				continue
+			}
+			// Match distance metric.
+			propMetric, ok := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
+			if !ok {
+				continue
+			}
+			specMetric := model.DistanceMetric(vecSpec.IndexInfo.DistanceMetric)
+			if propMetric != specMetric {
+				continue
+			}
+			return property.PropMatched
+		}
+	}
 	// Though TiCI index can keep order, we haven't implemented the multi-way merging TiCI index scan result to
 	// satisfy the required order. So we just return PropNotMatched here.
-	if path.Index != nil && path.Index.IsTiCIIndex() {
+	if path.Index != nil && path.Index.IsTiCIIndex() && prop.VectorProp.VSInfo == nil {
 		return property.PropNotMatched
 	}
 	if path.IsIntHandlePath {
@@ -1580,7 +1604,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil ||
+				(prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0)
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
 				continue
@@ -2272,8 +2297,11 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TODO: make IndexReader support accessing MVIndex directly.
 		return base.InvalidTask, nil
 	}
-	// TiCI currently can not set the order property.
+	// TiCI currently can not set the order property (except for vector search which uses VectorProp).
 	if candidate.path.FtsQueryInfo != nil && !prop.IsSortItemEmpty() {
+		return base.InvalidTask, nil
+	}
+	if candidate.path.Index != nil && candidate.path.Index.IsTiCIIndex() && !prop.IsSortItemEmpty() && prop.VectorProp.VSInfo == nil {
 		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
@@ -2310,6 +2338,10 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
+	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil {
+		is.TiCIVectorQueryInfo = buildTiCIVectorQueryInfo(path.Index, prop.VectorProp.VSInfo, prop.VectorProp.TopK, ds.TableInfo)
+		is.SetStats(property.DeriveLimitStats(is.StatsInfo(), float64(prop.VectorProp.TopK)))
+	}
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,

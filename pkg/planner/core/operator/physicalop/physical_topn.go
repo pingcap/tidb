@@ -340,6 +340,42 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
+
+	// If there's a vector distance function in the order by column,
+	// try to generate a property for TiCI hybrid vector indexes (CopSingleReadTaskType).
+	if len(lt.ByItems) == 1 {
+		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
+		if vs != nil && !lt.ByItems[0].Desc {
+			// Check if the child is a DataSource with a TiCI hybrid vector index.
+			if ds, ok := lt.Children()[0].(*logicalop.DataSource); ok {
+				hasTiCIHybridVector := false
+				for _, path := range ds.PossibleAccessPaths {
+					if path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
+						hasTiCIHybridVector = true
+						break
+					}
+				}
+				if hasTiCIHybridVector {
+					resultProp := &property.PhysicalProperty{
+						TaskTp:            property.CopSingleReadTaskType,
+						ExpectedCnt:       math.MaxFloat64,
+						CTEProducerStatus: prop.CTEProducerStatus,
+					}
+					resultProp.VectorProp.VSInfo = vs
+					resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
+					topN := PhysicalTopN{
+						ByItems:     lt.ByItems,
+						PartitionBy: lt.PartitionBy,
+						Count:       lt.Count,
+						Offset:      lt.Offset,
+					}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+					topN.SetSchema(lt.Schema())
+					ret = append(ret, topN)
+				}
+			}
+		}
+	}
+
 	return ret
 }
 
