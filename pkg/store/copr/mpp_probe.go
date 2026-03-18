@@ -82,6 +82,7 @@ type MPPFailedStoreProber struct {
 type MPPInfo struct {
 	Address         string
 	LogicalCPUCount uint64
+	StartTimestamp  int64
 }
 
 // MppInfoManager manages info for all tiflash nodes

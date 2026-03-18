@@ -626,6 +626,21 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 	h.plans = append(h.plans, p)
 }
 
+func splitTiFlashLogicalCoreCache(serversInfo []infoschema.ServerInfo) (serversNeedingRefresh []infoschema.ServerInfo, minLogicalCores uint64) {
+	minLogicalCores = initialMaxCores
+	for _, info := range serversInfo {
+		mppInfo := copr.GlobalMPPInfoManager.Get(info.Address)
+		// TiFlash may restart with a different CPU configuration while keeping the same
+		// address, so refresh the cached logical core count when StartTimestamp changes.
+		if mppInfo == nil || mppInfo.StartTimestamp != info.StartTimestamp {
+			serversNeedingRefresh = append(serversNeedingRefresh, info)
+			continue
+		}
+		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCPUCount)
+	}
+	return
+}
+
 func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
@@ -640,27 +655,19 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
 	}(time.Now())
 
-	var uncachedServersInfo []infoschema.ServerInfo
-	var minLogicalCores = initialMaxCores
-	for _, info := range serversInfo {
-		mppInfo := copr.GlobalMPPInfoManager.Get(info.Address)
-		if mppInfo == nil {
-			uncachedServersInfo = append(uncachedServersInfo, info)
-			continue
-		}
-		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCPUCount)
-	}
+	serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache(serversInfo)
 
-	if len(uncachedServersInfo) > 0 {
-		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
+	if len(serversNeedingRefresh) > 0 {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversNeedingRefresh, diagnosticspb.ServerInfoType_HardwareInfo, false)
 		for _, info := range infos {
 			for _, row := range info.Rows {
 				if row[4].GetString() == "cpu-logical-cores" {
 					logicalCpus, err := strconv.Atoi(row[5].GetString())
 					if err == nil && logicalCpus > 0 {
 						copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
-							Address:         uncachedServersInfo[info.Idx].Address,
+							Address:         serversNeedingRefresh[info.Idx].Address,
 							LogicalCPUCount: uint64(logicalCpus),
+							StartTimestamp:  serversNeedingRefresh[info.Idx].StartTimestamp,
 						})
 						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
 					}

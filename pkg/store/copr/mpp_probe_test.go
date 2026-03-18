@@ -197,12 +197,14 @@ func TestMppInfoManager(t *testing.T) {
 	manager.Add(&MPPInfo{
 		Address:         "123",
 		LogicalCPUCount: 123,
+		StartTimestamp:  456,
 	})
 	require.Equal(t, len(manager.cachedStores), 1)
 	info := manager.Get("123")
 	require.True(t, info != nil)
 	require.Equal(t, info.Address, "123")
 	require.Equal(t, info.LogicalCPUCount, uint64(123))
+	require.Equal(t, info.StartTimestamp, int64(456))
 	manager.Delete("123")
 	require.Equal(t, len(manager.cachedStores), 0)
 	info = manager.Get("123")
