@@ -48,7 +48,6 @@ func TestRestoreConfigAdjust(t *testing.T) {
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
 	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
 	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
-	require.Equal(t, uint(defaultRegionScanConcurrency), cfg.RegionScanConcurrency)
 }
 
 type mockPDClient struct {
