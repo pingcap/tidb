@@ -146,7 +146,7 @@ This produces weights uniformly distributed in `[0, SampleRate × MaxInt64]` at 
 
 Key property of the merge: it is **associative** — `merge(merge(A, B), C) == merge(A, merge(B, C))`. This allows streaming: each partition's collector is merged into a running accumulator and then discarded, so memory usage is constant regardless of partition count.
 
-**TiKV version compatibility**: If a new TiDB (expecting weights) talks to an old TiKV (pre-weight-fix, `Weight = 0` for Bernoulli), the sample-based path should detect the zero weights and fall back to merge-based. This ensures rolling upgrades work correctly.
+**TiKV version compatibility**: If a new TiDB receives Bernoulli samples with `Weight = 0` from an old TiKV (pre-weight-fix), TiDB can assign weights on the TiDB side using `int64(rng.Float64() * sampleRate * float64(math.MaxInt64))`. The weight range must match what new TiKV would produce — `[0, SampleRate × MaxInt64]` — because the samples already passed the Bernoulli test (their original random draw was in `[0, SampleRate]`). Using the full `rng.Int63()` range would cause these samples to dominate unfairly during incremental rebuilds where some partitions have TiKV-assigned weights.
 
 ### Persisting Samples for Incremental Rebuild
 
@@ -164,7 +164,16 @@ CREATE TABLE mysql.stats_table_data (
 
 Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and per-sample weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
-The per-partition blob size depends primarily on the number of samples and the number and types of analyzed columns. For a table with 20 integer columns and 500 pruned samples, the blob is roughly 50–100 KB. For 50 mixed-type columns (integers, strings, timestamps) with 3,000–4,000 samples, it grows to 400–700 KB. Tables analyzed with `PREDICATE COLUMNS` will have smaller blobs since fewer columns are sampled.
+The per-partition blob size depends on the number of pruned samples (determined by the ~110K total budget and partition count) and the number and types of analyzed columns. Examples for 50 mixed-type columns (integers, strings, timestamps):
+
+| Partitions | Samples per partition | Blob size per partition | Total storage |
+|------------|----------------------|------------------------|---------------|
+| 10 | ~11,000 | ~1–2 MB | ~10–20 MB |
+| 100 | ~1,100 | ~100–200 KB | ~10–20 MB |
+| 1,000 | ~110 | ~10–20 KB | ~10–20 MB |
+| 8,000 | ~14 | ~1–3 KB | ~10–20 MB |
+
+Total storage stays roughly constant because the budget is fixed. Narrower tables (fewer/smaller columns) or `PREDICATE COLUMNS` analysis produce proportionally smaller blobs.
 
 ### Progressive Pruning
 
@@ -273,7 +282,7 @@ When some but not all partitions lack saved samples (e.g., newly created partiti
 3. **Schema change between analyzes**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path.
 4. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
 5. **Empty partitions**: Partitions with zero rows are handled gracefully during merge.
-6. **Old TiKV (Bernoulli Weight=0)**: When TiKV does not populate Bernoulli weights, the sample-based path detects zero weights and falls back to merge-based.
+6. **Old TiKV (Bernoulli Weight=0)**: When TiKV does not populate Bernoulli weights, TiDB assigns weights in the correct `[0, SampleRate × MaxInt64]` range and the sample-based path proceeds normally.
 
 ### Compatibility Tests
 
@@ -303,7 +312,7 @@ Measurements: wall-clock duration, CPU time, memory usage, and accuracy (row cou
 - **Faster global stats for many partitions**: Building histograms from merged samples avoids the expensive O(P) histogram re-bucketing merge. For tables with thousands of partitions, this should significantly reduce ANALYZE time.
 - **Faster single-partition re-analyze**: Rebuilding global stats after a single-partition ANALYZE requires only I/O (loading saved samples) + in-memory merge, not re-merging all partitions' histograms.
 - **Improved global stats quality**: Histograms built from actual sampled data avoid the information loss inherent in histogram merging, potentially improving cardinality estimation.
-- **Additional storage**: Persisted samples add ~50–700 KB per partition depending on pruned sample count, number of analyzed columns, and column types (see blob size estimates in the Persisting Samples section). For a table with 1,000 partitions and 50 mixed-type columns, this is ~400–700 MB in TiKV; for narrower tables or predicate-column analysis, storage is proportionally less.
+- **Additional storage**: Since the total pruning budget is fixed (~110K samples), total storage is roughly constant regardless of partition count — approximately 10–20 MB for 50 mixed-type columns (see blob size table in the Persisting Samples section). Narrower tables or predicate-column analysis produce proportionally less.
 
 ### Risks
 
