@@ -46,6 +46,14 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 	coalesceInnerATwo := newNullRejectFunc(t, exprCtx, ast.Coalesce, types.NewFieldType(mysql.TypeLonglong), innerA, newNullRejectIntConst(2))
 	nullSafeEqInnerA := newNullRejectFunc(t, exprCtx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewOne())
 	fieldInnerA := newNullRejectFunc(t, exprCtx, ast.Field, types.NewFieldType(mysql.TypeLonglong), innerA, expression.NewOne())
+	formatNullLocaleEq := newNullRejectFunc(t, exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny),
+		newNullRejectFunc(t, exprCtx, ast.Format, types.NewFieldType(mysql.TypeVarString),
+			newNullRejectIntConst(12345),
+			newNullRejectIntConst(0),
+			innerS,
+		),
+		newNullRejectStringConst("12,345"),
+	)
 	quoteInnerSLikeA := newNullRejectFunc(t, exprCtx, ast.Like, types.NewFieldType(mysql.TypeTiny),
 		newNullRejectFunc(t, exprCtx, ast.Quote, types.NewFieldType(mysql.TypeVarString), innerS),
 		newNullRejectStringConst("A%"),
@@ -126,6 +134,11 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			name:     "null_safe_eq_with_non_null_constant_rejects_null",
 			expr:     nullSafeEqInnerA,
 			expected: true,
+		},
+		{
+			name:     "format_with_null_locale_is_not_null_rejected",
+			expr:     formatNullLocaleEq,
+			expected: false,
 		},
 		{
 			name: "field_with_null_input_can_make_not_predicate_true",
