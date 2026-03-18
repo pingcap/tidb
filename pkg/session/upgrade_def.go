@@ -167,7 +167,8 @@ const (
 	// version79 adds the mysql.table_cache_meta table
 	version79 = 79
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
-	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
+	// It initializes a missing tidb_analyze_version during upgrade. Earlier bootstrap logic used 1
+	// for compatibility, but the only supported version is 2.
 	version80 = 80
 	// version81 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
 	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
@@ -1352,9 +1353,10 @@ func upgradeToVer79(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer80(s sessionapi.Session, _ int64) {
-	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
-	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 1)
+	// Check whether tidb_analyze_version exists in mysql.global_variables.
+	// If it is missing, initialize it to 2. Earlier bootstrap logic used 1 for compatibility,
+	// but the supported write version is now 2 after the legacy analyze version 1 write path was removed.
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 2)
 }
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.

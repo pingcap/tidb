@@ -98,7 +98,9 @@ func TestEncode(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 	pairs, err := strictMode.Encode(rows, 1, []int{0, 1}, 1234)
-	require.Regexp(t, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint", err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason:")
+	require.Contains(t, err.Error(), "overflows tinyint")
 	require.Nil(t, pairs)
 
 	rowsWithPk := []types.Datum{
@@ -106,7 +108,9 @@ func TestEncode(t *testing.T) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	_, err = strictMode.Encode(rowsWithPk, 2, []int{0, 1}, 1234)
-	require.Regexp(t, "failed to cast value as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*", err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column '_tidb_rowid'. Expected type: bigint(20), received value: \"invalid-pk\". Reason:")
+	require.Contains(t, err.Error(), "Truncated incorrect")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),

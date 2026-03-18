@@ -616,5 +616,48 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestWindowWithOuterJoinAndCTE",
+    "Cases": [
+      {
+        "SQL": "WITH cte_0 AS (SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2 FROM t0 WHERE (((t0.p0 < t0.k1) AND (t0.k0 = t0.k3)) AND NOT (t0.k3 IN (83))) ORDER BY t0.id LIMIT 3) SELECT /* issue:66904 */ t0.id AS c0, ROW_NUMBER() OVER w2 AS c1, AVG(t1.d0) OVER (ORDER BY t0.k0 DESC, cte_0.c2 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS c2 FROM (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0) AS cte_0 LEFT JOIN (SELECT t1.id AS id, t1.k0 AS k0, t1.d0 AS d0, t1.d1 AS d1 FROM t1) AS t1 ON (1 = 0) RIGHT JOIN (SELECT t0.id AS id, t0.k0 AS k0, t0.k1 AS k1, t0.k2 AS k2, t0.k3 AS k3, t0.p0 AS p0, t0.p1 AS p1 FROM t0) AS t0 ON ((t1.k0 = t0.k0) AND (t0.k3 <= t1.d1)) WHERE NOT (t1.k0 IN (73, 35, 61)) WINDOW w2 AS (PARTITION BY cte_0.c1, t1.d1 ORDER BY t0.k0, t0.k1 DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC",
+        "Plan": [
+          "Projection root  test.t0.id, Column, Column",
+          "└─Projection root  test.t0.p0, test.t0.p1, test.t1.k0, test.t1.d0, test.t1.d1, test.t0.id, test.t0.k0, test.t0.k1, test.t0.k3, Column, Column",
+          "  └─Sort root  Column:desc, Column:desc",
+          "    └─Projection root  test.t0.p0, test.t0.p1, test.t1.k0, test.t1.d0, test.t1.d1, test.t0.id, test.t0.k0, test.t0.k1, test.t0.k3, Column, Column, plus(test.t0.p1, test.t0.id)->Column, minus(cast(test.t0.k3, double BINARY), test.t1.d1)->Column",
+          "      └─Window root  row_number()->Column#42 over(partition by test.t0.p0, test.t1.d1 order by test.t0.k0, test.t0.k1 desc rows between current row and current row)",
+          "        └─Sort root  test.t0.p0, test.t1.d1, test.t0.k0, test.t0.k1:desc",
+          "          └─Window root  avg(test.t1.d0)->Column#41 over(order by test.t0.k0 desc, test.t0.p1 range between unbounded preceding and current row)",
+          "            └─Sort root  test.t0.k0:desc, test.t0.p1",
+          "              └─Selection root  not(in(test.t1.k0, 73, 35, 61))",
+          "                └─HashJoin root  right outer join, left side:TableDual, equal:[eq(test.t1.k0, test.t0.k0)], other cond:le(cast(test.t0.k3, double BINARY), test.t1.d1)",
+          "                  ├─TableDual(Build) root  rows:0",
+          "                  └─TableReader(Probe) root  data:TableFullScan",
+          "                    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "WITH cte_0 AS (SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2 FROM t0 WHERE (((t0.p0 < t0.k1) AND (t0.k0 = t0.k3)) AND NOT (t0.k3 IN (83))) ORDER BY t0.id LIMIT 3) SELECT /* issue:66904 start-bound */ t0.id AS c0, ROW_NUMBER() OVER w2 AS c1, AVG(t1.d0) OVER (ORDER BY t0.k0 DESC, cte_0.c2 RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS c2 FROM (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0) AS cte_0 LEFT JOIN (SELECT t1.id AS id, t1.k0 AS k0, t1.d0 AS d0, t1.d1 AS d1 FROM t1) AS t1 ON (1 = 0) RIGHT JOIN (SELECT t0.id AS id, t0.k0 AS k0, t0.k1 AS k1, t0.k2 AS k2, t0.k3 AS k3, t0.p0 AS p0, t0.p1 AS p1 FROM t0) AS t0 ON ((t1.k0 = t0.k0) AND (t0.k3 <= t1.d1)) WHERE NOT (t1.k0 IN (73, 35, 61)) WINDOW w2 AS (PARTITION BY cte_0.c1, t1.d1 ORDER BY t0.k0, t0.k1 DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC",
+        "Plan": [
+          "Projection root  test.t0.id, Column, Column",
+          "└─Projection root  test.t0.p0, test.t0.p1, test.t1.k0, test.t1.d0, test.t1.d1, test.t0.id, test.t0.k0, test.t0.k1, test.t0.k3, Column, Column",
+          "  └─Sort root  Column:desc, Column:desc",
+          "    └─Projection root  test.t0.p0, test.t0.p1, test.t1.k0, test.t1.d0, test.t1.d1, test.t0.id, test.t0.k0, test.t0.k1, test.t0.k3, Column, Column, plus(test.t0.p1, test.t0.id)->Column, minus(cast(test.t0.k3, double BINARY), test.t1.d1)->Column",
+          "      └─Window root  row_number()->Column#42 over(partition by test.t0.p0, test.t1.d1 order by test.t0.k0, test.t0.k1 desc rows between current row and current row)",
+          "        └─Sort root  test.t0.p0, test.t1.d1, test.t0.k0, test.t0.k1:desc",
+          "          └─Window root  avg(test.t1.d0)->Column#41 over(order by test.t0.k0 desc, test.t0.p1 range between current row and unbounded following)",
+          "            └─Sort root  test.t0.k0:desc, test.t0.p1",
+          "              └─Selection root  not(in(test.t1.k0, 73, 35, 61))",
+          "                └─HashJoin root  right outer join, left side:TableDual, equal:[eq(test.t1.k0, test.t0.k0)], other cond:le(cast(test.t0.k3, double BINARY), test.t1.d1)",
+          "                  ├─TableDual(Build) root  rows:0",
+          "                  └─TableReader(Probe) root  data:TableFullScan",
+          "                    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
   }
 ]

@@ -945,6 +945,28 @@ func TestFrameBoundHash64Equals(t *testing.T) {
 	require.False(t, fb1.Equals(fb2))
 }
 
+func TestFrameBoundClonePreservesNilSlicesForHashEquals(t *testing.T) {
+	original := &logicalop.FrameBound{
+		Type:            ast.Preceding,
+		UnBounded:       true,
+		Num:             1,
+		CmpFuncs:        []expression.CompareFunc{MockFunc},
+		CmpDataType:     1,
+		IsExplicitRange: false,
+	}
+	cloned := original.Clone()
+
+	require.Nil(t, cloned.CalcFuncs)
+	require.Nil(t, cloned.CompareCols)
+
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	original.Hash64(hasher1)
+	cloned.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, original.Equals(cloned))
+}
+
 func TestWindowFrameHash64Equals(t *testing.T) {
 	col := &expression.Column{
 		Index:   0,

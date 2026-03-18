@@ -5,8 +5,8 @@
       {
         "SQL": "select /* issue:60602 */ 0 from t t1 where exists (select a2.a from t a1 natural join t a2 where t1.a = (select min(t1.a)))",
         "Plan": [
-          "Projection 9990.00 root  0->Column#11",
-          "└─Apply 9990.00 root  semi join, left side:TableReader, equal:[eq(test.t.a, Column#10)]",
+          "Projection 7992.00 root  0->Column#11",
+          "└─Apply 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t.a, Column#10)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -32,8 +32,8 @@
       {
         "SQL": "select /* issue:60602 */ 0 from t t1 where exists (select a1.a from t a1 natural join t a2 where t1.a = (select min(t1.a)))",
         "Plan": [
-          "Projection 9990.00 root  0->Column#11",
-          "└─Apply 9990.00 root  semi join, left side:TableReader, equal:[eq(test.t.a, Column#10)]",
+          "Projection 7992.00 root  0->Column#11",
+          "└─Apply 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t.a, Column#10)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -59,8 +59,8 @@
       {
         "SQL": "select /* issue:60602 */ 0 from t t1 where exists (select a2.a from t a1 natural left join t a2 where t1.a = (select min(t1.a)))",
         "Plan": [
-          "Projection 9990.00 root  0->Column#11",
-          "└─Apply 9990.00 root  semi join, left side:TableReader, equal:[eq(test.t.a, Column#10)]",
+          "Projection 7992.00 root  0->Column#11",
+          "└─Apply 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t.a, Column#10)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",

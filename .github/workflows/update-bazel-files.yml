@@ -52,4 +52,4 @@ jobs:
         with:
           branch: ${{ github.event.pull_request.head.ref }}
           commit_message: "chore: update bazel file"
-          file_pattern: "DEPS.bzl **/*.bazel **/*.bzl"
+          file_pattern: "DEPS.bzl *.bazel *.bzl"
