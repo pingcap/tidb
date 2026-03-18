@@ -1144,6 +1144,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyNotExists:        mysql.Message("Unknown placement policy '%-.192s'", nil),
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
+	ErrMaskingPolicyExists:             mysql.Message("Masking policy '%-.192s' already exists", nil),
+	ErrMaskingPolicyNotExists:          mysql.Message("Unknown masking policy '%-.192s'", nil),
+	ErrAccessDeniedToMaskedColumn:      mysql.Message("Access denied to masked column '%-.192s'. Obtain the required privileges and retry.", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
@@ -1183,4 +1186,15 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
+	ErrForbiddenDDL:                       mysql.Message("%s is forbidden", nil),
+	ErrEngineAttributeInvalidFormat:       mysql.Message("Invalid engine attribute format: %s", nil),
+	ErrStorageClassInvalidSpec:            mysql.Message("Invalid storage class: %s", nil),
+	ErrModifyColumnReferencedByPartialCondition: mysql.Message(
+		"Cannot drop, change or modify column '%s': it is referenced in partial index '%s'",
+		nil,
+	),
+	ErrCheckPartialIndexWithoutFastCheck: mysql.Message(
+		"Validation of partial indexes requires tidb_enable_fast_table_check=ON",
+		nil,
+	),
 }

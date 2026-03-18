@@ -104,6 +104,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return []int64{-1}, nil
 	case model.ActionRefreshMeta:
 		return applyRefreshMeta(b, m, diff)
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		return applyMaskingPolicyChange(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -401,6 +403,18 @@ func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
+func applyMaskingPolicyChange(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	// Reset the loaded flag to trigger a full reload on next access.
+	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	// We need to hold the lock to ensure consistency when resetting these fields.
+	b.infoSchema.maskingPolicyMutex.Lock()
+	b.infoSchema.maskingPoliciesLoaded = false
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+	b.infoSchema.maskingPoliciesLoadCh = nil
+	b.infoSchema.maskingPolicyMutex.Unlock()
+	return nil, nil
+}
+
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -601,7 +615,36 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			return nil, errors.Trace(err)
 		}
 	}
+	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return tblIDs, nil
+}
+
+func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy,
+		model.ActionDropTable,
+		model.ActionDropColumn,
+		model.ActionModifyColumn,
+		model.ActionRenameTable,
+		model.ActionRenameTables:
+		return true
+	default:
+		return false
+	}
+}
+
+func refreshMaskingPoliciesForTableIDs(b *Builder, tableIDs ...int64) error {
+	// Reset the loaded flag and clear the map to trigger a full reload on next access.
+	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	b.infoSchema.maskingPoliciesLoaded = false
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+	return nil
 }
 
 // getKeptAllocators get allocators that is not changed by the DDL.
@@ -976,6 +1019,19 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	oldIS.maskingPolicyMutex.RLock()
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
+	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
+		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
+	}
+	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
+	// Do not inherit an in-progress loader channel from old infoschema instance.
+	// If loading is in progress during clone, force lazy reload in new infoschema.
+	if oldIS.maskingPoliciesLoadCh != nil {
+		b.infoSchema.maskingPoliciesLoaded = false
+	}
+	b.infoSchema.maskingPoliciesLoadCh = nil
+	oldIS.maskingPolicyMutex.RUnlock()
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil

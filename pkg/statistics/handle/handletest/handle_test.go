@@ -848,19 +848,36 @@ func TestIndexFMSketch(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tableIDCondition := func() string {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		ids := []string{strconv.FormatInt(tbl.Meta().ID, 10)}
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				ids = append(ids, strconv.FormatInt(def.ID, 10))
+			}
+		}
+		return strings.Join(ids, ",")
+	}
+	statsFMSketchCountSQL := func() string {
+		return fmt.Sprintf("select count(*) from mysql.stats_fm_sketch where table_id in (%s)", tableIDCondition())
+	}
+	statsFMSketchValuesSQL := func() string {
+		return fmt.Sprintf("select value from mysql.stats_fm_sketch where table_id in (%s)", tableIDCondition())
+	}
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("analyze table t index ia")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustQuery(statsFMSketchCountSQL()).Check(testkit.Rows("3"))
 	tk.MustExec("analyze table t index ibc")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
+	tk.MustQuery(statsFMSketchCountSQL()).Check(testkit.Rows("6"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
+	tk.MustQuery(statsFMSketchCountSQL()).Check(testkit.Rows("15"))
 	tk.MustExec("drop table if exists t")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
 	// clustered index
 	tk.MustExec("drop table if exists t")
@@ -868,14 +885,13 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
+	tk.MustQuery(statsFMSketchCountSQL()).Check(testkit.Rows("6"))
 	tk.MustExec("drop table if exists t")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
 	// test NDV
 	checkNDV := func(rows, ndv int) {
 		tk.MustExec("analyze table t")
-		rs := tk.MustQuery("select value from mysql.stats_fm_sketch").Rows()
+		rs := tk.MustQuery(statsFMSketchValuesSQL()).Rows()
 		require.Len(t, rs, rows)
 		for i := range rs {
 			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
@@ -893,7 +909,6 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("insert into t values (2), (5)")
 	checkNDV(6, 2)
 	tk.MustExec("drop table if exists t")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
 	// clustered index
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")

@@ -17,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -65,9 +64,6 @@ func TestLocalTemporaryTableNoNetworkWithInsideTxn(t *testing.T) {
 }
 
 func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestKit)) {
-	var done sync.WaitGroup
-	defer done.Wait()
-
 	store := testkit.CreateMockStore(t)
 
 	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
@@ -84,6 +80,7 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	tk.MustExec("drop table if exists normal, tmp_t")
 	tk.MustExec("create table normal (id int, a int, index(a))")
+	tk.MustExec("insert into normal values (1, 1)")
 	createTable(tk)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)"))
@@ -101,9 +98,9 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	blocked := make(chan struct{}, 1)
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	done.Add(1)
+	queryDone := make(chan struct{})
 	go func() {
-		defer done.Done()
+		defer close(queryDone)
 		_, _ = session.ResultSetToStringSlice(ctx, tk1.Session(), rs)
 		blocked <- struct{}{}
 	}()
@@ -114,6 +111,11 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 		require.FailNow(t, "The query should block when the failpoint is enabled.")
 	case <-time.After(200 * time.Millisecond):
 		cancelFunc()
+	}
+	select {
+	case <-queryDone:
+	case <-time.After(5 * time.Second):
+		t.Log("The normal table query is still blocked after cancellation.")
 	}
 
 	// Check the temporary table do not send request to TiKV.

@@ -756,6 +756,10 @@ ltrim
 make_set
 makedate
 maketime
+mask_date
+mask_full
+mask_null
+mask_partial
 master_pos_wait
 md5
 microsecond

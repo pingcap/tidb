@@ -499,7 +499,7 @@ var indexMergePanicRunSQL = func(t *testing.T, tk *testkit.TestKit, fp string) {
 	res := tk.MustQuery("explain " + sql).Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 	err := tk.QueryToErr(sql)
-	require.Contains(t, err.Error(), fp)
+	require.ErrorContains(t, err, fp)
 }
 
 func TestIndexMergePanic(t *testing.T) {

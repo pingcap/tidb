@@ -273,6 +273,10 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+	// buildingSetOprOperands is the nesting depth while building set-operator operands.
+	// When > 0, final masking projection should be skipped for inner SELECT/SET plans and
+	// applied only once on the completed set-operator result.
+	buildingSetOprOperands int
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil
@@ -4520,6 +4524,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	if err != nil {
 		return err
 	}
+	if lp, ok := selectPlan.(base.LogicalPlan); ok {
+		if err = b.checkMaskingPolicyRestrictOnSelectPlan(ctx, lp, ast.MaskingPolicyRestrictOpInsertIntoSelect); err != nil {
+			return err
+		}
+	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
@@ -5307,6 +5316,18 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, spec.Constraint.Refer.Table.Schema.L,
 						spec.Constraint.Refer.Table.Name.L, "", authErr)
 				}
+			} else if spec.Tp == ast.AlterTableAddMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
+			} else if spec.Tp == ast.AlterTableEnableMaskingPolicy ||
+				spec.Tp == ast.AlterTableDisableMaskingPolicy ||
+				spec.Tp == ast.AlterTableModifyMaskingPolicyExpression ||
+				spec.Tp == ast.AlterTableModifyMaskingPolicyRestrictOn {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ALTER MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ALTER MASKING POLICY"}, false, err)
+			} else if spec.Tp == ast.AlterTableDropMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or DROP MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"DROP MASKING POLICY"}, false, err)
 			}
 		}
 	case *ast.AlterSequenceStmt:
@@ -5546,6 +5567,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"PLACEMENT_ADMIN"}, false, err)
+	case *ast.CreateMaskingPolicyStmt:
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
@@ -5872,6 +5896,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:
 		names = []string{"Resource_Group", "Create Resource Group"}
+	case ast.ShowMaskingPolicies:
+		names = []string{"Policy_name", "Column_name", "Expression", "Status", "Masking_type", "Restrict_on"}
 	case ast.ShowCreateUser:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}

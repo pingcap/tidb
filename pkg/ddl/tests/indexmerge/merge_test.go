@@ -86,7 +86,7 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
-	var runDML, backfillDone bool
+	var runDML bool
 	// only trigger reload when schema version changed
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *model.Job, _ int64) {
@@ -95,19 +95,14 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
 				return
 			}
-			if !backfillDone {
-				// Wait another round so that the backfill process is finished, but
-				// the info schema is not updated.
-				backfillDone = true
-				return
-			}
 			runDML = true
 			// Add delete record 4 to the temporary index.
 			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
 		}
 	})
 	tk.MustExec("alter table t add primary key idx(c1);")
-	require.True(t, backfillDone)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged")
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t;")

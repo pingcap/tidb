@@ -397,10 +397,12 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
 			return
 		}
+		// Keep this failpoint out of the keepOuterOrder branch so the test
+		// does not depend on optimizer plan details.
+		failpoint.Inject("testIssue20779", func() {
+			panic("testIssue20779")
+		})
 		if ow.keepOuterOrder {
-			failpoint.Inject("testIssue20779", func() {
-				panic("testIssue20779")
-			})
 			if finished := ow.pushToChan(ctx, task, ow.taskCh); finished {
 				return
 			}

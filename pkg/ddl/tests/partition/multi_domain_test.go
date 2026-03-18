@@ -2510,7 +2510,7 @@ func TestBackfillConcurrentDML(t *testing.T) {
 	})
 	tk.MustExec("alter table t coalesce partition 1")
 	tk.MustExec("admin check table t")
-	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(
+	expectedRows := testkit.Rows(
 		"1 301 129",
 		"10 10 30035",
 		"100 100 30065",
@@ -2638,7 +2638,60 @@ func TestBackfillConcurrentDML(t *testing.T) {
 		"96 96 32",
 		"97 97 30064",
 		"98 98 33",
-		"99 99 33"))
+		"99 99 33")
+
+	actualRows := tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Rows()
+	require.Len(t, actualRows, len(expectedRows))
+
+	// The test may retry backfill with a different number of rounds.
+	// For rows that require newly generated _tidb_rowid, each extra retry round
+	// shifts them by +30000 while preserving the relative mapping.
+	retryRound := -1
+	var row1ActualID int
+	for i := range expectedRows {
+		require.Len(t, expectedRows[i], 3)
+		require.Len(t, actualRows[i], 3)
+
+		expA := expectedRows[i][0].(string)
+		expB := expectedRows[i][1].(string)
+		expRowIDStr := expectedRows[i][2].(string)
+		actA := actualRows[i][0].(string)
+		actB := actualRows[i][1].(string)
+		actRowIDStr := actualRows[i][2].(string)
+
+		require.Equal(t, expA, actA)
+		require.Equal(t, expB, actB)
+
+		expRowID, err := strconv.Atoi(expRowIDStr)
+		require.NoError(t, err)
+		actRowID, err := strconv.Atoi(actRowIDStr)
+		require.NoError(t, err)
+
+		if expA == "1" && expB == "301" {
+			row1ActualID = actRowID
+			continue
+		}
+		if expRowID >= 30000 {
+			diff := actRowID - expRowID
+			require.GreaterOrEqual(t, diff, 0)
+			require.Equal(t, 0, diff%30000)
+			round := diff / 30000
+			if retryRound == -1 {
+				retryRound = round
+			} else {
+				require.Equal(t, retryRound, round)
+			}
+			continue
+		}
+		require.Equal(t, expRowID, actRowID)
+	}
+
+	require.GreaterOrEqual(t, retryRound, 0)
+	if retryRound == 0 {
+		require.Equal(t, 129, row1ActualID)
+	} else {
+		require.Equal(t, retryRound*30000+1, row1ActualID)
+	}
 }
 
 func TestBackfillConcurrentDMLRange(t *testing.T) {

@@ -504,7 +504,7 @@ func getModifyColumnInfo(
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
 }
 
-func finishModifyColumnWithoutReorg(
+func (w *worker) finishModifyColumnWithoutReorg(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
@@ -512,6 +512,10 @@ func finishModifyColumnWithoutReorg(
 	pos *ast.ColumnPosition,
 ) (ver int64, _ error) {
 	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(err)
+	}
+	if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, newCol); err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
@@ -534,7 +538,7 @@ func finishModifyColumnWithoutReorg(
 }
 
 // doModifyColumnNoCheck updates the column information and reorders all columns. It does not support modifying column data.
-func (*worker) doModifyColumnNoCheck(
+func (w *worker) doModifyColumnNoCheck(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
@@ -552,7 +556,7 @@ func (*worker) doModifyColumnNoCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
 // precheckForVarcharToChar updates the column information and reorders all columns with data check.
@@ -672,7 +676,7 @@ func (w *worker) doModifyColumnWithCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
 func adjustTableInfoAfterModifyColumn(
@@ -1080,6 +1084,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxs)...)
+			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {
+				return ver, errors.Trace(err)
+			}
 			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
@@ -1532,6 +1539,11 @@ func GetModifiableColumnJob(
 	if err = processModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if is != nil {
+		if _, ok := is.MaskingPolicyByTableColumn(t.Meta().ID, col.ID); ok && isMaskedColumnTypeLengthOrPrecisionChanged(col.ColumnInfo, newCol.ColumnInfo) {
+			return nil, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("masked column type/length/precision change is forbidden"))
+		}
+	}
 
 	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		return nil, errors.Trace(err)
@@ -1979,6 +1991,19 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 	return errors.Trace(err)
 }
 
+func isMaskedColumnTypeLengthOrPrecisionChanged(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol == nil || newCol == nil {
+		return false
+	}
+	if oldCol.GetType() != newCol.GetType() {
+		return true
+	}
+	if oldCol.GetFlen() != newCol.GetFlen() {
+		return true
+	}
+	return oldCol.GetDecimal() != newCol.GetDecimal()
+}
+
 // processModifyColumnOptions process column options.
 func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
@@ -2056,6 +2081,12 @@ func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 	}
 
 	return nil
+}
+
+// ProcessModifyColumnOptions processes column options.
+// Exported for tiflow.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+	return processModifyColumnOptions(ctx, col, options)
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
