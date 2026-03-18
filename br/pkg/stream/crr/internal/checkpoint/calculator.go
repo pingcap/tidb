@@ -89,12 +89,27 @@ type UpstreamStorageReader interface {
 	URI() string
 }
 
-// DownstreamObjectChecker defines downstream checks allowed by checkpoint calculation.
-//
-// It intentionally only allows existence checks. The calculator must not read
-// object contents from downstream storage.
-type DownstreamObjectChecker interface {
+// ObjectSyncChecker reports whether an object required by CRR is already safe to
+// consume on the restore side.
+type ObjectSyncChecker interface {
+	FileSynced(ctx context.Context, name string) (bool, error)
+}
+
+type fileExistenceChecker interface {
 	FileExists(ctx context.Context, name string) (bool, error)
+}
+
+type existenceSyncChecker struct {
+	checker fileExistenceChecker
+}
+
+// NewExistenceSyncChecker adapts a plain existence checker to ObjectSyncChecker.
+func NewExistenceSyncChecker(checker fileExistenceChecker) ObjectSyncChecker {
+	return existenceSyncChecker{checker: checker}
+}
+
+func (c existenceSyncChecker) FileSynced(ctx context.Context, name string) (bool, error) {
+	return c.checker.FileExists(ctx, name)
 }
 
 // CheckpointCalculatorConfig controls checkpoint calculation behavior.
@@ -117,9 +132,9 @@ type Calculator struct {
 
 // CalculatorDeps groups the external dependencies used by checkpoint calculation.
 type CalculatorDeps struct {
-	PD         PDMetaReader
-	Upstream   UpstreamStorageReader
-	Downstream DownstreamObjectChecker
+	PD       PDMetaReader
+	Upstream UpstreamStorageReader
+	Sync     ObjectSyncChecker
 }
 
 type calculatorState struct {
@@ -159,7 +174,7 @@ func NewCalculator(
 }
 
 // ComputeNextCheckpoint waits for upstream checkpoint progress, confirms the
-// required files are synced to downstream, and returns the safe checkpoint.
+// required files are synced, and returns the safe checkpoint.
 func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint64, err error) {
 	failpoint.InjectCall("begin-calculate-checkpoint")
 	var statistic *FileStatistic
@@ -187,7 +202,7 @@ func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint
 		return 0, err
 	}
 	statistic = c.observeRoundPlanned(upstreamCheckpoint, aliveStores, round)
-	if err := c.waitDownstreamSync(ctx, round.pendingPaths, &round.statistic); err != nil {
+	if err := c.waitObjectSync(ctx, round.pendingPaths, &round.statistic); err != nil {
 		statistic = round.statistic.snapshot()
 		return 0, err
 	}
@@ -216,8 +231,8 @@ func (d CalculatorDeps) validate() error {
 	if d.Upstream == nil {
 		return fmt.Errorf("upstream storage must not be nil")
 	}
-	if d.Downstream == nil {
-		return fmt.Errorf("downstream checker must not be nil")
+	if d.Sync == nil {
+		return fmt.Errorf("object sync checker must not be nil")
 	}
 	return validateIncrementalMetaScanStorage(d.Upstream.URI())
 }

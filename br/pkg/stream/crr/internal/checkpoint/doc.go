@@ -17,7 +17,7 @@ Package checkpoint computes a downstream-safe checkpoint for CRR.
 
 The calculator advances in rounds. In each round it reads the current upstream
 global checkpoint `c`, scans new meta files with `flushTS > syncedTS`, waits
-until every file referenced by those meta files exists downstream, then
+until every file referenced by those meta files is confirmed replicated, then
 returns `c`.
 
 CRR restore safety cannot be decided from `flushTS <= c` alone. A flush batch
@@ -27,8 +27,8 @@ than the meta file's `flushTS`.
 
 `syncedTS` is the replication-complete checkpoint. It advances only after the
 calculator has verified that all files discovered in the round are already
-present downstream. `lastCheckpoint` is the last upstream global checkpoint
-returned by the calculator.
+replicated. `lastCheckpoint` is the last upstream global checkpoint returned by
+the calculator.
 
 The calculator tracks synced progress per store and publishes the global
 `syncedTS` as the minimum synced `flushTS` across all alive stores. This is
@@ -63,7 +63,9 @@ This algorithm relies on these invariants:
   - for each individual store, its own meta files have monotonically
     increasing `flushTS`
 
-Downstream access is intentionally limited to existence checks of known object
-paths. The calculator must not read downstream object contents.
+The calculator itself only depends on an `ObjectSyncChecker`. Wiring outside the
+core may implement that checker by verifying downstream object existence, or by
+consulting source-side replication metadata when the storage backend can prove
+equivalent safety. The calculator must not read downstream object contents.
 */
 package checkpoint

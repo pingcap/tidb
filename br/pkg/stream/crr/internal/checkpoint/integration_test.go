@@ -603,9 +603,9 @@ func (h *integrationHarness) newCalculator(
 ) *checkpoint.Calculator {
 	params := calculatorParams{
 		deps: checkpoint.CalculatorDeps{
-			PD:         h.PDSim,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
+			PD:       h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
 		},
 	}
 	for _, opt := range opts {

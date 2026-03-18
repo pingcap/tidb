@@ -105,9 +105,7 @@ func (s *statusStore) beginRound() uint64 {
 	s.snapshot.CurrentRound++
 	s.snapshot.LastLoopIteration = 0
 	s.snapshot.PendingFileCount = 0
-	s.snapshot.AliveStoreCount = 0
 	s.snapshot.Phase = phaseIdle
-	s.snapshot.Statistic = StatusStatistic{}
 	return s.snapshot.CurrentRound
 }
 

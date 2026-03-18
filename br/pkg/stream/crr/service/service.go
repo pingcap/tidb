@@ -35,12 +35,24 @@ type upstreamCheckpointWaiter interface {
 	WaitGlobalCheckpointAdvance(ctx context.Context, taskName string, current uint64) error
 }
 
+type fileExistenceChecker interface {
+	FileExists(ctx context.Context, name string) (bool, error)
+}
+
+// ObjectSyncChecker reports whether an object is already safe for CRR restore-side use.
+type ObjectSyncChecker = checkpoint.ObjectSyncChecker
+
+// NewExistenceSyncChecker adapts a plain existence checker to ObjectSyncChecker.
+func NewExistenceSyncChecker(checker fileExistenceChecker) ObjectSyncChecker {
+	return checkpoint.NewExistenceSyncChecker(checker)
+}
+
 // Deps are the external dependencies needed to build the CRR checkpoint calculator.
 type Deps struct {
-	PD         checkpoint.PDMetaReader
-	Watcher    upstreamCheckpointWaiter
-	Upstream   checkpoint.UpstreamStorageReader
-	Downstream checkpoint.DownstreamObjectChecker
+	PD       checkpoint.PDMetaReader
+	Watcher  upstreamCheckpointWaiter
+	Upstream checkpoint.UpstreamStorageReader
+	Sync     ObjectSyncChecker
 }
 
 // CalculatorConfig controls the inner checkpoint calculator behavior.
@@ -72,9 +84,9 @@ func New(
 	observer := newStatusObserver(status)
 	calc, err := checkpoint.NewCalculator(
 		checkpoint.CalculatorDeps{
-			PD:         deps.PD,
-			Upstream:   deps.Upstream,
-			Downstream: deps.Downstream,
+			PD:       deps.PD,
+			Upstream: deps.Upstream,
+			Sync:     deps.Sync,
 		},
 		cfg.CalculatorConfig,
 		observer,

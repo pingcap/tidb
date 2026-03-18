@@ -17,6 +17,7 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -67,21 +69,34 @@ func NewCRRCheckpointService(
 		return nil, nil, err
 	}
 
-	_, downstreamStorage, err := task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
+	var downstreamStorage storeapi.Storage
+	if cfg.DownstreamStorage != "" {
+		_, downstreamStorage, err = task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
+		if err != nil {
+			upstreamStorage.Close()
+			closeEtcdClient(etcdCli)
+			mgr.Close()
+			return nil, nil, err
+		}
+	}
+
+	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCli)
+	syncChecker, err := buildObjectSyncChecker(upstreamStorage, downstreamStorage)
 	if err != nil {
+		if downstreamStorage != nil {
+			downstreamStorage.Close()
+		}
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
 		return nil, nil, err
 	}
-
-	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCli)
 	svc, err := service.New(
 		service.Deps{
-			PD:         env,
-			Watcher:    streamhelper.NewMetaDataClient(etcdCli),
-			Upstream:   upstreamStorage,
-			Downstream: downstreamStorage,
+			PD:       env,
+			Watcher:  streamhelper.NewMetaDataClient(etcdCli),
+			Upstream: upstreamStorage,
+			Sync:     syncChecker,
 		},
 		service.Config{
 			CalculatorConfig: service.CalculatorConfig{
@@ -94,7 +109,9 @@ func NewCRRCheckpointService(
 		},
 	)
 	if err != nil {
-		downstreamStorage.Close()
+		if downstreamStorage != nil {
+			downstreamStorage.Close()
+		}
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
@@ -102,12 +119,29 @@ func NewCRRCheckpointService(
 	}
 
 	cleanup := func() {
-		downstreamStorage.Close()
+		if downstreamStorage != nil {
+			downstreamStorage.Close()
+		}
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
 	}
 	return svc, cleanup, nil
+}
+
+func buildObjectSyncChecker(
+	upstreamStorage storeapi.Storage,
+	downstreamStorage storeapi.Storage,
+) (service.ObjectSyncChecker, error) {
+	if downstreamStorage != nil {
+		return service.NewExistenceSyncChecker(downstreamStorage), nil
+	}
+	if upstreamChecker, ok := upstreamStorage.(service.ObjectSyncChecker); ok {
+		return upstreamChecker, nil
+	}
+	return nil, fmt.Errorf(
+		"downstream storage must not be nil when upstream storage cannot check object sync",
+	)
 }
 
 func closeEtcdClient(etcdCli *clientv3.Client) {

@@ -155,7 +155,7 @@ func (c *Calculator) planRound(
 	return plan, nil
 }
 
-func (c *Calculator) waitDownstreamSync(
+func (c *Calculator) waitObjectSync(
 	ctx context.Context,
 	pendingPaths map[string]struct{},
 	statistic *FileStatistic,
@@ -164,9 +164,9 @@ func (c *Calculator) waitDownstreamSync(
 	for len(pendingPaths) > 0 {
 		for filePath := range pendingPaths {
 			statistic.recordDownstreamCheck(filePath)
-			exists, err := c.deps.Downstream.FileExists(ctx, filePath)
+			exists, err := c.deps.Sync.FileSynced(ctx, filePath)
 			if err != nil {
-				return fmt.Errorf("check downstream file %s: %w", filePath, err)
+				return fmt.Errorf("check sync status for %s: %w", filePath, err)
 			}
 			if exists {
 				delete(pendingPaths, filePath)

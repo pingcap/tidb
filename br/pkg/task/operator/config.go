@@ -235,7 +235,7 @@ type CRRCheckpointConfig struct {
 func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
 	crrconfig.DefineFlags(flags)
 	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
-	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
 }
 
 func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
@@ -261,9 +261,6 @@ func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	if cfg.UpstreamStorage == "" {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
-	}
-	if cfg.DownstreamStorage == "" {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagDownstreamStorage)
 	}
 	return nil
 }

@@ -389,6 +389,27 @@ func (rs *Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	return rs.s3Cli.IsObjectExists(ctx, file)
 }
 
+// FileSynced reports whether the object has completed source-side replication.
+func (rs *Storage) FileSynced(ctx context.Context, file string) (bool, error) {
+	head, err := rs.s3Cli.HeadObject(ctx, file)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	status := head.ReplicationStatus
+	switch status {
+	case "COMPLETE", "COMPLETED", "REPLICA":
+		return true, nil
+	case "PENDING":
+		return false, nil
+	case "FAILED":
+		return false, errors.Errorf("upstream replication status for %s is FAILED", file)
+	case "":
+		return false, errors.Errorf("upstream replication status for %s is empty", file)
+	default:
+		return false, errors.Errorf("upstream replication status for %s is %q", file, status)
+	}
+}
+
 // WalkDir traverse all the files in a dir.
 //
 // fn is the function called for each regular file visited by WalkDir.

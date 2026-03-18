@@ -43,6 +43,11 @@ type GetResp struct {
 	ContentRange  *string
 }
 
+// HeadObjectResp is the response of HeadObject.
+type HeadObjectResp struct {
+	ReplicationStatus string
+}
+
 // Object is the object info.
 type Object struct {
 	Key  string
@@ -91,6 +96,8 @@ type PrefixClient interface {
 	DeleteObject(ctx context.Context, name string) error
 	// DeleteObjects deletes multiple objects with the given names.
 	DeleteObjects(ctx context.Context, names []string) error
+	// HeadObject fetches object metadata for the given name.
+	HeadObject(ctx context.Context, name string) (*HeadObjectResp, error)
 	// IsObjectExists checks whether the object with the given name exists.
 	IsObjectExists(ctx context.Context, name string) (bool, error)
 	// ListObjects lists objects with the given extra prefix, marker and maxKeys.

@@ -49,13 +49,36 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 				inner: h.Upstream,
 				uri:   "azure://bucket/prefix/",
 			},
-			Downstream: h.Downstream,
+			Sync: checkpoint.NewExistenceSyncChecker(h.Downstream),
 		},
 		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
 		nil,
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "StartAfter-capable upstream storage")
+}
+
+func TestCheckpointCalculatorRequiresObjectSyncChecker(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	_, err = checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       h.PDSim,
+			Upstream: h.Upstream,
+		},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		nil,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "object sync checker must not be nil")
 }
 
 func TestCheckpointCalculatorDoesNotAdvanceSyncedTSWhenNewAliveStoreHasNoFlush(t *testing.T) {
@@ -72,9 +95,9 @@ func TestCheckpointCalculatorDoesNotAdvanceSyncedTSWhenNewAliveStoreHasNoFlush(t
 	pd := &fakePDMetaReader{}
 	calculator, err := checkpoint.NewCalculator(
 		checkpoint.CalculatorDeps{
-			PD:         pd,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
+			PD:       pd,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
 		},
 		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
 		nil,
@@ -128,9 +151,9 @@ func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
 	observer := &recordingObserver{}
 	calculator, err := checkpoint.NewCalculator(
 		checkpoint.CalculatorDeps{
-			PD:         pd,
-			Upstream:   h.Upstream,
-			Downstream: failingDownstreamChecker{},
+			PD:       pd,
+			Upstream: h.Upstream,
+			Sync:     failingObjectSyncChecker{},
 		},
 		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
 		observer,
@@ -139,7 +162,7 @@ func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
 
 	_, err = calculator.ComputeNextCheckpoint(ctx)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "check downstream file")
+	require.Contains(t, err.Error(), "check sync status")
 
 	events := observer.Events()
 	require.Len(t, events, 3)
@@ -148,6 +171,87 @@ func TestCheckpointCalculatorObserverSeesFailure(t *testing.T) {
 	require.Equal(t, checkpoint.EventCalculationFailed, events[2].Type)
 	require.Error(t, events[2].Err)
 	require.Contains(t, events[2].Err.Error(), "boom")
+}
+
+func TestCheckpointCalculatorUsesProvidedObjectSyncChecker(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	record, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+
+	pd := &fakePDMetaReader{}
+	pd.Set(record.CheckpointTS, 1)
+
+	syncStates := fileSyncMap{
+		record.MetadataPath: true,
+	}
+	for _, logPath := range record.LogPaths {
+		syncStates[logPath] = true
+	}
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: h.Upstream,
+			Sync:     syncStates,
+		},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		nil,
+	)
+	require.NoError(t, err)
+
+	checkpointTS, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, record.CheckpointTS, checkpointTS)
+	require.Equal(t, record.FlushTS, calculator.SyncedTS())
+}
+
+func TestCheckpointCalculatorFailsOnObjectSyncError(t *testing.T) {
+	ctx := context.Background()
+	boundaries, err := testutil.BuildRegionLayout(
+		testutil.AddRoundRobinRegions(1, 1),
+	)
+	require.NoError(t, err)
+
+	tc := testutil.NewTestContext(t)
+	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
+	require.NoError(t, err)
+
+	record, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+
+	pd := &fakePDMetaReader{}
+	pd.Set(record.CheckpointTS, 1)
+
+	syncStates := fileSyncResultMap{
+		record.MetadataPath: {synced: true},
+	}
+	for _, logPath := range record.LogPaths {
+		syncStates[logPath] = fileSyncResult{err: fmt.Errorf("boom")}
+	}
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: h.Upstream,
+			Sync:     syncStates,
+		},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		nil,
+	)
+	require.NoError(t, err)
+
+	_, err = calculator.ComputeNextCheckpoint(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "boom")
 }
 
 func TestCheckpointCalculatorWaitsForRemovedStoreFiles(t *testing.T) {
@@ -165,11 +269,11 @@ func TestCheckpointCalculatorWaitsForRemovedStoreFiles(t *testing.T) {
 		checkpoint.CalculatorDeps{
 			PD:       pd,
 			Upstream: upstream,
-			Downstream: fileExistenceMap{
+			Sync: checkpoint.NewExistenceSyncChecker(fileExistenceMap{
 				meta1Path: true,
 				meta2Path: true,
 				log2Path:  true,
-			},
+			}),
 		},
 		checkpoint.CheckpointCalculatorConfig{
 			TaskName:     "drr_test_task",
@@ -271,9 +375,9 @@ func (o *recordingObserver) Events() []checkpoint.CheckpointEvent {
 	return events
 }
 
-type failingDownstreamChecker struct{}
+type failingObjectSyncChecker struct{}
 
-func (failingDownstreamChecker) FileExists(ctx context.Context, name string) (bool, error) {
+func (failingObjectSyncChecker) FileSynced(ctx context.Context, name string) (bool, error) {
 	return false, fmt.Errorf("boom for %s", name)
 }
 
@@ -281,6 +385,24 @@ type fileExistenceMap map[string]bool
 
 func (m fileExistenceMap) FileExists(ctx context.Context, name string) (bool, error) {
 	return m[name], nil
+}
+
+type fileSyncMap map[string]bool
+
+func (m fileSyncMap) FileSynced(ctx context.Context, name string) (bool, error) {
+	return m[name], nil
+}
+
+type fileSyncResult struct {
+	synced bool
+	err    error
+}
+
+type fileSyncResultMap map[string]fileSyncResult
+
+func (m fileSyncResultMap) FileSynced(ctx context.Context, name string) (bool, error) {
+	result := m[name]
+	return result.synced, result.err
 }
 
 func writeCheckpointTestMeta(

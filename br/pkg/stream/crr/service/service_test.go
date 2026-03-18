@@ -37,10 +37,10 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 
 	svc, err := New(
 		Deps{
-			PD:         h.PDSim,
-			Watcher:    h.PDSim,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -69,7 +69,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 			snapshot.SyncedTS > 0 &&
 			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
 			snapshot.Statistic.EstimatedSyncLogFileCount == 1 &&
-			snapshot.Statistic.DownstreamCheckFileCount == 2 &&
+			snapshot.Statistic.DownstreamCheckFileCount >= 2 &&
 			snapshot.ConsecutiveFailures == 0 &&
 			!snapshot.LastSuccessTime.IsZero()
 	}, 5*time.Second, 20*time.Millisecond)
@@ -90,10 +90,10 @@ func TestServiceTracksFailures(t *testing.T) {
 
 	svc, err := New(
 		Deps{
-			PD:         h.PDSim,
-			Watcher:    h.PDSim,
-			Upstream:   h.Upstream,
-			Downstream: failingDownstreamChecker{},
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(failingDownstreamChecker{}),
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -133,10 +133,10 @@ func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 
 	svc, err := New(
 		Deps{
-			PD:         h.PDSim,
-			Watcher:    h.PDSim,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -193,10 +193,10 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 	}
 	svc, err := New(
 		Deps{
-			PD:         pd,
-			Watcher:    pd,
-			Upstream:   h.Upstream,
-			Downstream: h.Downstream,
+			PD:       pd,
+			Watcher:  pd,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -376,8 +376,8 @@ func (h *serviceHarness) flushRoundsAndGetCheckpoint(stores []uint64, rounds int
 		for _, storeID := range stores {
 			record, err := h.FlushSim.FlushStore(h.ctx, storeID)
 			require.NoError(h.t, err)
-			if record.FlushTS < roundCheckpoint {
-				roundCheckpoint = record.FlushTS
+			if record.CheckpointTS < roundCheckpoint {
+				roundCheckpoint = record.CheckpointTS
 			}
 		}
 	}
