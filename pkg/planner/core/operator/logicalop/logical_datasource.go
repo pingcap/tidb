@@ -822,17 +822,6 @@ func (ds *DataSource) CheckPartialIndexByFilters(index *model.IndexInfo, filters
 // The v8.5 planner PredicatePushDown interface cannot return an error. The FTS
 // validation rule invokes this method immediately after predicate pushdown.
 func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
-	hasDirtyWrite := ds.SCtx().HasDirtyContent(ds.TableInfo.ID)
-	if !hasFTSFuncGlobal && hasDirtyWrite {
-		// If there is no FTS function, and there're dirty writes on the table,
-		// we should not use any TiCI index.
-		// Because the TiCI index may be not consistent with the table data.
-		// These TiCI indexes will be removed by CleanUnusedTiCIIndexes later.
-		return nil
-	}
-	if hasFTSFuncGlobal && hasDirtyWrite {
-		return errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data")
-	}
 	// Predicate pushdown performs the conversion before statistics derivation.
 	// The following validation rule calls this method again to surface errors;
 	// keep the successful conversion idempotent.
@@ -841,87 +830,22 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 			return nil
 		}
 	}
-	var matchedIdx *model.IndexInfo
-	tmpMatchedExprSet := intset.NewFastIntSet()
-	matchedExprSetForChosenIndex := intset.NewFastIntSet()
 	condHasFTSFunc := intset.NewFastIntSet()
-	hasUnmatchedFTSOverAllIdx := false
 	if hasFTSFuncGlobal {
-		for i, cond := range ds.PushedDownConds {
-			if expression.ContainsFullTextSearchFn(cond) {
-				condHasFTSFunc.Insert(i)
-				hasUnmatchedFTSOverAllIdx = true
-			}
-		}
+		// Use the plan-level flag as a fast pre-check so we don't rescan
+		// this DataSource when the whole query contains no FTS function.
+		condHasFTSFunc = ds.collectPushedDownCondsHasFTSFuncSet()
 	}
-	matchedIndexIsHinted := false
-	for _, path := range ds.AllPossibleAccessPaths {
-		if path.Index == nil || !path.Index.IsTiCIIndex() {
-			continue
-		}
-		if hasFTSFuncGlobal && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
-			continue
-		}
-		if !hasFTSFuncGlobal {
-			if ds.HasForceHints && !path.Forced {
-				continue
-			}
-			if path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0 {
-				continue
-			}
-		}
-		if matchedIndexIsHinted && !path.Forced {
-			continue
-		}
+	hasFTSFuncLocal := !condHasFTSFunc.IsEmpty()
 
-		ftsCols := intset.NewFastIntSet()
-		invertedIndexedCols := intset.NewFastIntSet()
-		if path.Index.FullTextInfo != nil {
-			for _, col := range path.Index.Columns {
-				ftsCols.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
-			}
-		}
-		if path.Index.HybridInfo != nil {
-			for _, ftsInfo := range path.Index.HybridInfo.FullText {
-				for _, indexCol := range ftsInfo.Columns {
-					ftsCols.Insert(int(ds.TableInfo.Columns[indexCol.Offset].ID))
-				}
-			}
-			for _, invertedInfo := range path.Index.HybridInfo.Inverted {
-				for _, indexCol := range invertedInfo.Columns {
-					invertedIndexedCols.Insert(int(ds.TableInfo.Columns[indexCol.Offset].ID))
-				}
-			}
-		}
-
-		allFTSFuncIsCovered := true
-		tmpMatchedExprSet.Clear()
-	checkExprForIndexLoop:
-		for i, cond := range ds.PushedDownConds {
-			fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, &invertedIndexedCols)
-			if !fullyCovered {
-				// If this expression can not be calculated at TiCI side, check whether it has fts function.
-				// If yes, we should skip this index path.
-				if condHasFTSFunc.Has(i) {
-					allFTSFuncIsCovered = false
-					break checkExprForIndexLoop
-				}
-				continue
-			}
-			tmpMatchedExprSet.Insert(i)
-		}
-		if !allFTSFuncIsCovered {
-			continue
-		}
-		// We get here means this index can cover all FTS functions.
-		hasUnmatchedFTSOverAllIdx = false
-		if (path.Forced && !matchedIndexIsHinted) || tmpMatchedExprSet.Len() > matchedExprSetForChosenIndex.Len() {
-			matchedExprSetForChosenIndex.CopyFrom(tmpMatchedExprSet)
-			matchedIdx = path.Index
-			matchedIndexIsHinted = path.Forced
-		}
+	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncLocal)
+	if err != nil {
+		return err
 	}
-
+	if shouldSkip {
+		return nil
+	}
+	matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx := ds.chooseTiCIIndex(hasFTSFuncLocal, condHasFTSFunc)
 	if hasUnmatchedFTSOverAllIdx {
 		return errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")
 	}
@@ -936,8 +860,157 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 		return nil
 	}
 
-	matchedCondIdxes := make([]int, 0, matchedExprSetForChosenIndex.Len())
-	matchedExprSetForChosenIndex.ForEach(func(i int) {
+	matchedCondIdxes, err := ds.rewriteMatchedTiCIFTSExprs(matchedIdx, matchedExprSetForChosenIndex)
+	if err != nil {
+		return err
+	}
+
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedCondIdxes)
+}
+
+func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFuncLocal bool) (shouldSkip bool, err error) {
+	hasDirtyWrite := ds.SCtx().HasDirtyContent(ds.TableInfo.ID)
+	if !hasDirtyWrite {
+		return false, nil
+	}
+	if hasFTSFuncLocal {
+		return false, errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data")
+	}
+	// If there is no FTS function, and there're dirty writes on the table,
+	// we should not use any TiCI index.
+	// Because the TiCI index may be not consistent with the table data.
+	// These TiCI indexes will be removed by CleanUnusedTiCIIndexes later.
+	return true, nil
+}
+
+func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet() intset.FastIntSet {
+	condHasFTSFunc := intset.NewFastIntSet()
+	for i, cond := range ds.PushedDownConds {
+		if expression.ContainsFullTextSearchFn(cond) {
+			condHasFTSFunc.Insert(i)
+		}
+	}
+	return condHasFTSFunc
+}
+
+func (ds *DataSource) chooseTiCIIndex(
+	hasFTSFuncLocal bool,
+	condHasFTSFunc intset.FastIntSet,
+) (*model.IndexInfo, intset.FastIntSet, bool) {
+	var matchedIdx *model.IndexInfo
+	tmpMatchedExprSet := intset.NewFastIntSet()
+	matchedExprSetForChosenIndex := intset.NewFastIntSet()
+	hasUnmatchedFTSOverAllIdx := !condHasFTSFunc.IsEmpty()
+	matchedIndexIsHinted := false
+
+	for _, path := range ds.AllPossibleAccessPaths {
+		if !ds.isTiCIIndexPathCandidate(path, hasFTSFuncLocal, matchedIndexIsHinted) {
+			continue
+		}
+
+		ftsCols, invertedIndexedCols := ds.collectTiCIIndexCoveredColumns(path.Index)
+		if !ds.collectMatchedExprSetForTiCIIndex(condHasFTSFunc, ftsCols, invertedIndexedCols, &tmpMatchedExprSet) {
+			continue
+		}
+
+		// We get here means this index can cover all FTS functions.
+		hasUnmatchedFTSOverAllIdx = false
+		// We have filtered out (!path.Forced && matchedIndexIsHinted) case before.
+		// So after we check the (path.Forced && !matchedIndexIsHinted) case, the implicit case is:
+		// !path.Forced && !matchedIndexIsHinted or path.Forced && matchedIndexIsHinted
+		if (path.Forced && !matchedIndexIsHinted) || tmpMatchedExprSet.Len() > matchedExprSetForChosenIndex.Len() {
+			matchedExprSetForChosenIndex.CopyFrom(tmpMatchedExprSet)
+			matchedIdx = path.Index
+			matchedIndexIsHinted = path.Forced
+		}
+	}
+	return matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx
+}
+
+func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFuncLocal bool, matchedIndexIsHinted bool) bool {
+	// Not TiCI index, skip it.
+	if path.Index == nil || !path.Index.IsTiCIIndex() {
+		return false
+	}
+	// Has FTS function, but the index doesn't support FTS search.
+	if hasFTSFuncLocal && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
+		return false
+	}
+	if !hasFTSFuncLocal {
+		// If there is no FTS function, predicates are free to choose normal TiKV index.
+		// So if there is any hint, we should skip the non-hinted indexes.
+		if ds.HasForceHints && !path.Forced {
+			return false
+		}
+		// If this index doesn't have inverted index, it can't support normal predicates.
+		if path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0 {
+			return false
+		}
+	}
+	if matchedIndexIsHinted && !path.Forced {
+		// If we have found a hinted index matched before, we should skip
+		// the non-hinted indexes later.
+		return false
+	}
+	return true
+}
+
+func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ftsCols intset.FastIntSet, invertedIndexedCols intset.FastIntSet) {
+	ftsCols = intset.NewFastIntSet()
+	invertedIndexedCols = intset.NewFastIntSet()
+	if index.FullTextInfo != nil {
+		for _, indexCol := range index.Columns {
+			col := ds.TableInfo.Columns[indexCol.Offset]
+			ftsCols.Insert(int(col.ID))
+		}
+	}
+	if index.HybridInfo != nil {
+		for _, ftsInfo := range index.HybridInfo.FullText {
+			for _, indexCol := range ftsInfo.Columns {
+				col := ds.TableInfo.Columns[indexCol.Offset]
+				ftsCols.Insert(int(col.ID))
+			}
+		}
+		for _, invertedInfo := range index.HybridInfo.Inverted {
+			for _, indexCol := range invertedInfo.Columns {
+				col := ds.TableInfo.Columns[indexCol.Offset]
+				invertedIndexedCols.Insert(int(col.ID))
+			}
+		}
+	}
+	return ftsCols, invertedIndexedCols
+}
+
+// collectMatchedExprSetForTiCIIndex collects the pushed-down conditions that can
+// be covered by the TiCI index into matchedExprSet. It returns false if any
+// pushed-down condition containing an FTS function cannot be covered by this index.
+func (ds *DataSource) collectMatchedExprSetForTiCIIndex(
+	condHasFTSFunc intset.FastIntSet,
+	ftsCols, invertedIndexedCols intset.FastIntSet,
+	matchedExprSet *intset.FastIntSet,
+) bool {
+	matchedExprSet.Clear()
+	for i, cond := range ds.PushedDownConds {
+		fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, &invertedIndexedCols)
+		if !fullyCovered {
+			// If this expression can not be calculated at TiCI side, check whether it has FTS function.
+			// If yes, we should skip this index path.
+			if condHasFTSFunc.Has(i) {
+				return false
+			}
+			continue
+		}
+		matchedExprSet.Insert(i)
+	}
+	return true
+}
+
+func (ds *DataSource) rewriteMatchedTiCIFTSExprs(
+	matchedIdx *model.IndexInfo,
+	matchedExprSet intset.FastIntSet,
+) ([]int, error) {
+	matchedCondIdxes := make([]int, 0, matchedExprSet.Len())
+	matchedExprSet.ForEach(func(i int) {
 		if _, ok := ds.PushedDownConds[i].(*expression.ScalarFunction); ok {
 			matchedCondIdxes = append(matchedCondIdxes, i)
 		}
@@ -948,21 +1021,15 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 	if matchedIdx.FullTextInfo != nil {
 		parserType = matchedIdx.FullTextInfo.ParserType
 	}
+
 	for _, idx := range matchedCondIdxes {
 		rewrittenExpr, _, err := expression.RewriteMySQLMatchAgainstRecursively(ds.SCtx().GetExprCtx(), ds.PushedDownConds[idx], parserType)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ds.PushedDownConds[idx] = rewrittenExpr
 	}
-
-	// The v8.5 planner may rebuild PossibleAccessPaths from AllPossibleAccessPaths
-	// after logical rules. Keep the TiCI-only choice in both slices so the table
-	// path cannot be reintroduced before physical optimization.
-	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index == nil || path.Index.ID != matchedIdx.ID
-	})
-	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedCondIdxes)
+	return matchedCondIdxes, nil
 }
 
 func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
@@ -972,6 +1039,12 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently can not be cached")
 	// Fulltext index must be used, so prune all other access paths.
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index == nil || path.Index.ID != index.ID
+	})
+	// The v8.5 planner may rebuild PossibleAccessPaths from AllPossibleAccessPaths
+	// after logical rules. Keep the TiCI-only choice in both slices so the table
+	// path cannot be reintroduced before physical optimization.
+	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index == nil || path.Index.ID != index.ID
 	})
 	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
