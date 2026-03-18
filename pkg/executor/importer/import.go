@@ -32,6 +32,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -876,7 +877,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
-			if !isSupportedCloudStorageBackend(b.GetS3() != nil, b.GetGcs() != nil, b.GetAzureBlobStorage() != nil) {
+			if !isSupportedCloudStorageBackend(b) {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
 		}
@@ -946,8 +947,8 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	}
 }
 
-func isSupportedCloudStorageBackend(hasS3, hasGcs, hasAzureBlobStorage bool) bool {
-	return hasS3 || hasGcs || hasAzureBlobStorage
+func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
+	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
