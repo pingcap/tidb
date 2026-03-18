@@ -80,7 +80,9 @@ const (
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
 	flagPDAddr                   = "pd"
-	flagPDCA                     = "pd-ca"
+	flagClusterSSLCA             = "cluster-ssl-ca"
+	flagClusterSSLCert           = "cluster-ssl-cert"
+	flagClusterSSLKey            = "cluster-ssl-key"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -199,9 +201,11 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
-	// PDCAPath overrides Security.CAPath when connecting to PD endpoints for GC control.
-	// The client certificate and private key still reuse Security.CertPath/KeyPath.
-	PDCAPath string
+	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
+	// to PD endpoints for GC control.
+	ClusterSSLCA   string
+	ClusterSSLCert string
+	ClusterSSLKey  string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -256,7 +260,9 @@ func DefaultConfig() *Config {
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
 		PDAddr:                   "",
-		PDCAPath:                 "",
+		ClusterSSLCA:             "",
+		ClusterSSLCert:           "",
+		ClusterSSLKey:            "",
 	}
 }
 
@@ -375,7 +381,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 
 	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
-	flags.String(flagPDCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
+	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
+	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
+	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -625,7 +633,15 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.PDCAPath, err = flags.GetString(flagPDCA)
+	conf.ClusterSSLCA, err = flags.GetString(flagClusterSSLCA)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLCert, err = flags.GetString(flagClusterSSLCert)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLKey, err = flags.GetString(flagClusterSSLKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
