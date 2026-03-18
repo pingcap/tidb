@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/sync/errgroup"
@@ -2039,6 +2040,7 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 	}
 
 	fieldTypes := e.Children(0).RetFieldTypes()
+	typeCtx := e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	for bitPos, colID := range e.aggOutputColIDs {
 		if colID < 0 || colID >= input.NumCols() {
 			return nil, nil, 0, 0, errors.Errorf("agg output col %d out of input chunk range", colID)
@@ -2063,6 +2065,7 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 			oldCol,
 			newCol,
 			fieldTypes[colID],
+			typeCtx,
 		); err != nil {
 			return nil, nil, 0, 0, err
 		}
@@ -2085,6 +2088,7 @@ func markUpdateTouchedRowsByColumn(
 	oldCol *chunk.Column,
 	newCol *chunk.Column,
 	ft *types.FieldType,
+	typeCtx types.Context,
 ) error {
 	if ft == nil {
 		return errors.New("field type is nil when comparing aggregate outputs")
@@ -2235,6 +2239,9 @@ func markUpdateTouchedRowsByColumn(
 		}
 		return nil
 	case types.ETString:
+		// Keep update touched detection consistent with updateRecord:
+		// compare with binary collation instead of column collation.
+		binaryCollator := collate.GetBinaryCollator()
 		for updateOrdinal, rowIdx := range updateRows {
 			oldIsNull := oldCol.IsNull(rowIdx)
 			newIsNull := newCol.IsNull(rowIdx)
@@ -2249,7 +2256,13 @@ func markUpdateTouchedRowsByColumn(
 				}
 				continue
 			}
-			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+			oldDatum := chunkRowColDatum(oldCol, rowIdx, ft)
+			newDatum := chunkRowColDatum(newCol, rowIdx, ft)
+			cmp, err := newDatum.Compare(typeCtx, &oldDatum, binaryCollator)
+			if err != nil {
+				return err
+			}
+			if cmp != 0 {
 				updateChanged[updateOrdinal] = true
 				if singleByteStride {
 					updateTouchedBitmap[updateOrdinal] |= bitMask
@@ -2335,168 +2348,6 @@ func markUpdateTouchedRowsByColumn(
 				} else {
 					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
 				}
-			}
-		}
-		return nil
-	default:
-		return errors.Errorf("unsupported eval type %d in aggregate change comparison", ft.EvalType())
-	}
-}
-
-func markChangedRowsByColumn(changedMask []bool, oldCol, newCol *chunk.Column, ft *types.FieldType) error {
-	if ft == nil {
-		return errors.New("field type is nil when comparing aggregate outputs")
-	}
-	rowCnt := len(changedMask)
-	switch ft.EvalType() {
-	case types.ETInt:
-		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			oldVals := oldCol.Uint64s()
-			newVals := newCol.Uint64s()
-			for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						changedMask[rowIdx] = true
-					}
-					continue
-				}
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					changedMask[rowIdx] = true
-				}
-			}
-			return nil
-		}
-		oldVals := oldCol.Int64s()
-		newVals := newCol.Int64s()
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				changedMask[rowIdx] = true
-			}
-		}
-		return nil
-	case types.ETReal:
-		if ft.GetType() == mysql.TypeFloat {
-			oldVals := oldCol.Float32s()
-			newVals := newCol.Float32s()
-			for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						changedMask[rowIdx] = true
-					}
-					continue
-				}
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					changedMask[rowIdx] = true
-				}
-			}
-			return nil
-		}
-		oldVals := oldCol.Float64s()
-		newVals := newCol.Float64s()
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				changedMask[rowIdx] = true
-			}
-		}
-		return nil
-	case types.ETDecimal:
-		oldVals := oldCol.Decimals()
-		newVals := newCol.Decimals()
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
-				changedMask[rowIdx] = true
-			}
-		}
-		return nil
-	case types.ETString:
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-				changedMask[rowIdx] = true
-			}
-		}
-		return nil
-	case types.ETDatetime, types.ETTimestamp:
-		oldVals := oldCol.Times()
-		newVals := newCol.Times()
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				changedMask[rowIdx] = true
-			}
-		}
-		return nil
-	case types.ETDuration:
-		oldVals := oldCol.GoDurations()
-		newVals := newCol.GoDurations()
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				changedMask[rowIdx] = true
-			}
-		}
-		return nil
-	case types.ETJson, types.ETVectorFloat32:
-		for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					changedMask[rowIdx] = true
-				}
-				continue
-			}
-			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-				changedMask[rowIdx] = true
 			}
 		}
 		return nil

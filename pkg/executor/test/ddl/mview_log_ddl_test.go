@@ -407,6 +407,9 @@ func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
 	err := tk.ExecToErr("truncate table mv_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
 
+	err = tk.ExecToErr("truncate table `$mlog$t_truncate_mv`")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view log table")
+
 	err = tk.ExecToErr("truncate table t_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
 }

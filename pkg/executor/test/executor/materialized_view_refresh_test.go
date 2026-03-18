@@ -569,6 +569,132 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	tk.MustExec("set @@tidb_snapshot = ''")
 }
 
+func TestMaterializedViewRefreshFastStmtRetryReadTSOSnapshotMatchesMV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+ON DUPLICATE KEY
+UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2"))
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	// Make MV stale before refresh starts.
+	tk.MustExec("insert into t values (1, 1)")
+
+	const (
+		afterInsertHistRunningFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInsertRefreshHistRunning"
+		beforeRetryTSFailpoint          = "github.com/pingcap/tidb/pkg/executor/beforePessimisticStmtErrorForNextAction"
+		writeConflictFailpoint          = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"
+	)
+
+	preMergeResumeCh := make(chan struct{})
+	preMergeReadyCh := make(chan struct{})
+	require.NoError(t, failpoint.EnableCall(afterInsertHistRunningFailpoint, func() {
+		select {
+		case <-preMergeReadyCh:
+		default:
+			close(preMergeReadyCh)
+		}
+		<-preMergeResumeCh
+	}))
+	defer func() {
+		select {
+		case <-preMergeResumeCh:
+		default:
+			close(preMergeResumeCh)
+		}
+		require.NoError(t, failpoint.Disable(afterInsertHistRunningFailpoint))
+	}()
+
+	retryResumeCh := make(chan struct{})
+	retryReadyCh := make(chan struct{})
+	require.NoError(t, failpoint.EnableCall(beforeRetryTSFailpoint, func() {
+		select {
+		case <-retryReadyCh:
+		default:
+			close(retryReadyCh)
+		}
+		<-retryResumeCh
+	}))
+	defer func() {
+		select {
+		case <-retryResumeCh:
+		default:
+			close(retryResumeCh)
+		}
+		require.NoError(t, failpoint.Disable(beforeRetryTSFailpoint))
+	}()
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv fast")
+	}()
+
+	select {
+	case <-preMergeReadyCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to reach fast-merge prelude")
+	}
+
+	require.NoError(t, failpoint.Enable(writeConflictFailpoint, "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(writeConflictFailpoint))
+	}()
+	close(preMergeResumeCh)
+
+	select {
+	case <-retryReadyCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh fast merge to enter statement retry")
+	}
+
+	// This base-table change commits after the first attempt fails but before the retry chooses its new for_update_ts.
+	tkConcurrent := testkit.NewTestKit(t, store)
+	tkConcurrent.MustExec("use test")
+	tkConcurrent.MustExec("insert into t values (2, 7)")
+
+	close(retryResumeCh)
+
+	select {
+	case err := <-refreshDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh fast merge to finish")
+	}
+
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 16 3", "2 7 1"))
+
+	tsRow := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
+	require.Len(t, tsRow, 1)
+	refreshReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", tsRow[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, refreshReadTSO)
+
+	tk.MustExec("set @@tidb_snapshot = '" + strconv.FormatUint(refreshReadTSO, 10) + "'")
+	tk.MustQuery("select a, sum(b), count(1) from t group by a order by a").Check(testkit.Rows("1 16 3", "2 7 1"))
+	tk.MustExec("set @@tidb_snapshot = ''")
+
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", refreshReadTSO, mviewID)).
+		Check(testkit.Rows("success fast manually 1 1 1"))
+}
+
 func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUpdate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

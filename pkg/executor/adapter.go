@@ -1193,6 +1193,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	}()
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	failpoint.InjectCall("beforePessimisticStmtErrorForNextAction")
 	action, err := txnManager.OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	if err != nil {
 		return nil, err
