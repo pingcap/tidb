@@ -11,7 +11,7 @@
 * [Detailed Design](#detailed-design)
     * [Current Approach: Merge-Based Global Stats](#current-approach-merge-based-global-stats)
     * [Proposed Approach: Sample-Based Global Stats](#proposed-approach-sample-based-global-stats)
-    * [Sampling Methods and Cross-Partition Merging](#sampling-methods-and-cross-partition-merging)
+    * [Sampling and Cross-Partition Merging](#sampling-and-cross-partition-merging)
     * [Persisting Samples for Incremental Rebuild](#persisting-samples-for-incremental-rebuild)
     * [Progressive Pruning](#progressive-pruning)
     * [Single-Partition Re-Analyze](#single-partition-re-analyze)
@@ -61,7 +61,7 @@ For a table with 8,000 partitions, this means that even a single-partition re-an
 
 ### Proposed Solution
 
-Each partition's ANALYZE already produces a sample collector containing random samples. These collectors can be merged across partitions using weighted sampling (with the A-Res weight fix for Bernoulli described below), and the merged samples can be used to build global histograms and TopN directly — bypassing the lossy histogram merge entirely.
+Each partition's ANALYZE already produces a sample collector containing random samples. These collectors can be pruned proportionally and concatenated across partitions, and the merged samples can be used to build global histograms and TopN directly — bypassing the lossy histogram merge entirely.
 
 By persisting pruned samples per partition, future single-partition re-analyzes can load saved samples for unchanged partitions from storage and merge them with the fresh partition's samples in memory. This avoids re-scanning unchanged partitions from TiKV.
 
@@ -97,9 +97,8 @@ ANALYZE TABLE t
     1. Scan partition data from TiKV (sampling)
     2. Build partition histogram + TopN from samples
     3. Save partition stats to mysql.stats_* tables
-    4. Prune samples and persist to storage          ◄── NEW
-    5. Merge samples into running global collector   ◄── NEW
-       (A-Res weighted merge, O(MaxSampleSize) per partition)
+    4. Prune samples proportionally and persist       ◄── NEW
+    5. Append pruned samples to global accumulator   ◄── NEW
                               │
                               ▼
   After all partitions complete:
@@ -110,43 +109,32 @@ ANALYZE TABLE t
 
 The key differences:
 
-- **Step 5** merges each partition's sample collector into a single accumulator as it completes. The previous partition's collector is discarded, so memory does not grow with partition count.
+- **Step 5** appends each partition's pruned samples to a global accumulator. The partition's full collector is discarded after pruning, so memory is bounded by the total budget (~110K samples).
 - **Step 6** builds global stats from actual sample data using the same histogram construction logic as per-partition stats. There is no histogram merging step.
 - **Step 4** persists a pruned copy of each partition's samples to enable future incremental rebuilds.
 
-### Sampling Methods and Cross-Partition Merging
+### Sampling and Cross-Partition Merging
 
-TiDB V2 stats supports two row-level sampling methods. Each solves a different problem:
+TiDB V2 stats supports two row-level sampling methods:
 
-- **Bernoulli sampling** (the V2 default): Each row is independently included with probability `SampleRate`. No coordination between TiKV regions is needed — each region samples independently at the same rate. The sample size is variable and proportional to data size, which means larger regions naturally contribute more samples. TiDB V2 switched to Bernoulli as the default because the auto-calculated sample rate adapts to table size: the rate is set to `min(1, 110000 / rowCount)`, targeting ~110K samples per partition regardless of size. Small tables get higher coverage (up to rate=1), large tables get lower rates but still enough samples for good histograms. Used when `SampleRate > 0` (default: auto-calculated, `NumSamples = 0`).
+- **Bernoulli sampling** (the V2 default): Each row is independently included with probability `SampleRate`. No coordination between TiKV regions is needed — each region samples independently at the same rate. The auto-calculated rate is `min(1, 110000 / rowCount)`, targeting ~110K samples per partition. Small tables get higher coverage (up to rate=1), large tables get lower rates but still enough samples for good histograms. Used when `SampleRate > 0` (default: auto-calculated, `NumSamples = 0`).
 
-- **A-Res (weighted reservoir sampling)** ([Efraimidis & Spirakis, 2006](https://www.sciencedirect.com/science/article/abs/pii/S002001900500298X)): Maintains exactly K samples from a stream of unknown length. Each item gets a random key; the reservoir keeps the K items with the largest keys via a min-heap. Fixed output size regardless of input, and the key property for this design: **mergeability** — two reservoirs can be merged by combining all items and keeping the top-K by key. Larger sources produce more random draws, so they naturally win more top-K slots, giving correct proportional representation. Used when `NumSamples > 0` (e.g., `ANALYZE TABLE t WITH 10000 SAMPLES`).
+- **A-Res (weighted reservoir sampling)** ([Efraimidis & Spirakis, 2006](https://www.sciencedirect.com/science/article/abs/pii/S002001900500298X)): Maintains exactly K samples via a min-heap of random keys. Fixed output size regardless of input. Used when `NumSamples > 0` (e.g., `ANALYZE TABLE t WITH 10000 SAMPLES`).
 
-Cross-partition merging requires both **bounded memory** (fixed output size) and **mergeability** (correct proportional representation across sources of different sizes). Bernoulli provides neither — it has variable output size and currently produces `Weight = 0` (no key to compete on). A-Res provides both but is not the V2 default.
+Cross-partition merging requires **bounded memory** and **proportional representation**. This design achieves both by pruning each partition's samples using the same random value that was used for the original Bernoulli inclusion — a tighter threshold on the same draw:
 
-**Two-phase approach**: This design uses Bernoulli for initial collection (adaptive, parallel, no coordination) and A-Res for the merge phase (bounded, mergeable). Each method handles what it's best at:
+1. TiKV collects samples via Bernoulli at the auto-calculated rate, and derives a weight from the same random draw (see below)
+2. After region merge within a partition, the full sample set (~110K) is used to build partition histograms and TopN (unchanged quality)
+3. Samples are pruned by calculating a lower `pruneRate` and keeping only samples whose weight is below the corresponding threshold (see Progressive Pruning)
+4. Pruned samples are appended to the global accumulator (simple concatenation)
 
-1. TiKV collects samples via Bernoulli at the auto-calculated rate (unchanged behavior for per-partition stats)
-2. After region merge within a partition, the full Bernoulli sample set is used to build partition histograms and TopN (unchanged quality)
-3. The samples are then sub-sampled to a fixed reservoir size via A-Res weighted selection before entering the cross-partition merge accumulator
+Proportional representation is enforced by the per-partition pruning targets (see Progressive Pruning): larger partitions get higher targets, so they contribute more samples to the global merge. The accumulator grows to at most the total budget (~110K) — bounded. The merge is just concatenation of already-proportionally-pruned samples.
 
-This requires Bernoulli samples to carry weights. The proposed fix is in TiKV's analyze coprocessor — derive the weight from the same random draw already used for the Bernoulli include/exclude decision:
+**Bernoulli weights**: Currently Bernoulli samples have `Weight = 0` in the `tipb.RowSample` proto. We propose that TiKV derive the weight from the same value used for the Bernoulli include/exclude decision. One approach is to use a deterministic hash of the row key, as prototyped in [tikv#19414](https://github.com/tikv/tikv/pull/19414/files#diff-4aad4af2afccbb967f83555af3ab4820c6995c3f896f5d0d7c51993bd6d7662cR126-R133) — the hash is already computed for the Bernoulli gate and can be stored as `RowSample.Weight` at zero additional cost.
 
-```go
-// Pseudocode for TiKV's Bernoulli sampling (currently discards the random value)
-rngFloat := rng.Float64()
-if rngFloat > sampleRate {
-    skip row
-}
-// Derive weight from the same draw — zero additional cost
-RowSample.Weight = int64(rngFloat * float64(math.MaxInt64))
-```
+The weight is uniformly distributed in `[0, SampleRate × MaxUint64]` for included samples. This enables deterministic pruning: to reduce the sample count, calculate a lower `pruneRate` and keep samples where `Weight <= pruneRate × MaxUint64`. The same samples always survive pruning because the decision reuses the original hash, not a new random draw. TiDB already copies the weight from the proto response (`pbSample.Weight`), so no TiDB-side deserialization changes are needed.
 
-This produces weights uniformly distributed in `[0, SampleRate × MaxInt64]` at zero additional cost — the random value is already generated for the include/exclude decision. TiDB already copies the weight from the proto response (`pbSample.Weight`), so no TiDB-side deserialization changes are needed.
-
-Key property of the merge: it is **associative** — `merge(merge(A, B), C) == merge(A, merge(B, C))`. This allows streaming: each partition's collector is merged into a running accumulator and then discarded, so memory usage is constant regardless of partition count.
-
-**TiKV version compatibility**: If a new TiDB receives Bernoulli samples with `Weight = 0` from an old TiKV (pre-weight-fix), TiDB can assign weights on the TiDB side using `int64(rng.Float64() * sampleRate * float64(math.MaxInt64))`. The weight range must match what new TiKV would produce — `[0, SampleRate × MaxInt64]` — because the samples already passed the Bernoulli test (their original random draw was in `[0, SampleRate]`). Using the full `rng.Int63()` range would cause these samples to dominate unfairly during incremental rebuilds where some partitions have TiKV-assigned weights.
+**TiKV version compatibility**: If TiDB receives Bernoulli samples with `Weight = 0` from an old TiKV (pre-weight-fix), TiDB can assign weights on the TiDB side using `int64(rng.Float64() * sampleRate * float64(math.MaxInt64))`. The weight range must match what new TiKV would produce — `[0, SampleRate × MaxInt64]` — because the samples already passed the Bernoulli test (their original random draw was in `[0, SampleRate]`).
 
 ### Persisting Samples for Incremental Rebuild
 
@@ -168,7 +156,15 @@ The per-partition blob size depends on the number of pruned samples (determined 
 
 ### Progressive Pruning
 
-After region merge within a partition, the sample set can be large — the default Bernoulli rate targets ~110K samples per partition, and A-Res produces up to `MaxSampleSize` (default 10,000). Persisting this full set per partition would use excessive storage. Instead, samples are pruned to a smaller size for persistence using the same A-Res weighted selection that makes cross-partition merging work: all samples compete for slots via their weights, and only the top-K survivors are persisted.
+After region merge within a partition, the sample set can be large (~110K for the default Bernoulli rate). Persisting this full set per partition would use excessive storage, and concatenating full sets from all partitions would exceed the memory budget. Instead, each partition's samples are pruned by applying a tighter threshold on the same random value used for initial inclusion:
+
+```text
+pruneRate = sampleRate × (target / currentCount)
+threshold = int64(pruneRate * MaxInt64)
+keep sample if Weight <= threshold
+```
+
+This is O(N) per partition — a single pass with no sorting or heap. It is deterministic: the same samples always survive because the decision reuses the original Bernoulli random draw encoded in the weight.
 
 The total pruning budget across all partitions should match the same sample target used for non-partitioned tables (currently ~110K via `DefRowsForSampleRate`). This ensures the global histogram is built from the same sample density that already produces good histograms for non-partitioned tables. It also opens the path for a future unified sample target that adapts consistently across non-partitioned tables, per-partition stats, and partitioned table global stats.
 
@@ -181,10 +177,7 @@ Subsequent partitions: target = (budget / totalPartitions) × (partitionRows / a
 
 Larger partitions get proportionally more samples. No per-partition minimum is needed — a tiny partition contributing very few (or zero) samples to the global merge is statistically correct, since it represents a tiny fraction of the data. This keeps the total within the budget regardless of partition count.
 
-Pruning applies in two places:
-
-1. **For persistence**: The pruned copy is saved to `mysql.stats_table_data` for future incremental rebuilds. The full unpruned collector is used for the in-memory global merge during the current ANALYZE.
-2. **For the in-memory global merge**: Before entering the cross-partition accumulator, each partition's samples are sub-sampled to a fixed reservoir size. This is essential for Bernoulli samples (~110K per partition) to keep the accumulator bounded — without sub-sampling, the global merge would accumulate all Bernoulli samples from all partitions. For A-Res (already fixed-size at 10K), this step is a no-op.
+The same pruning applies for both persistence and the in-memory global merge: the pruned copy is saved to `mysql.stats_table_data` for future incremental rebuilds, and the pruned samples are appended to the global accumulator. The full unpruned collector is used only for building per-partition histograms and TopN.
 
 ### Single-Partition Re-Analyze
 
@@ -194,7 +187,7 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
   1. Analyze partition p5 (scan from TiKV, build stats)
   2. Load saved samples for all other partitions from mysql.stats_table_data
   3. Validate schema compatibility (see below)
-  4. Merge all collectors (fresh p5 + loaded others) via A-Res
+  4. Prune fresh p5 samples proportionally, concatenate with loaded others
   5. Build global histogram + TopN from merged samples
   6. Save global stats
   7. Persist p5's pruned samples (replacing old entry)
@@ -264,7 +257,7 @@ When some but not all partitions lack saved samples (e.g., newly created partiti
 - Save/load round-trip for serialized collectors produces identical results.
 - Progressive pruning allocates budgets proportionally across partitions of varying sizes.
 - Merge order does not affect resulting global stats (within sampling variance).
-- Both sampling methods (A-Res with `NumSamples` and Bernoulli with `SampleRate`) produce weighted samples that merge correctly across partitions of different sizes.
+- Bernoulli sub-sampling for pruning produces proportionally representative global samples across partitions of different sizes.
 
 ### Scenario Tests
 
@@ -273,7 +266,7 @@ When some but not all partitions lack saved samples (e.g., newly created partiti
 3. **Schema change between analyzes**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path.
 4. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
 5. **Empty partitions**: Partitions with zero rows are handled gracefully during merge.
-6. **Old TiKV (Bernoulli Weight=0)**: When TiKV does not populate Bernoulli weights, TiDB assigns weights in the correct `[0, SampleRate × MaxInt64]` range and the sample-based path proceeds normally.
+
 
 ### Compatibility Tests
 
@@ -346,5 +339,3 @@ Store intermediate merge results in a tree structure, enabling O(log N) incremen
 3. **Removing the variable**: The variable defaults to ON. Once the implementation is stable and validated, should the variable be removed entirely, making the sample-based path the only option?
 
 4. **Interaction with async merge**: The existing `tidb_enable_async_merge_global_stats` merges partition stats asynchronously. How should the sample-based path interact with this? Should sample persistence also be async?
-
-5. **Bernoulli sampling compatibility**: The default V2 ANALYZE uses Bernoulli sampling (`SampleRate`, `Weight = 0` in the proto). The current implementation silently falls back to merge-based when Bernoulli samples are detected. The proposed fix is a TiKV-side change: derive the `RowSample.Weight` from the same random draw already used for the Bernoulli decision (see Weighted Reservoir Sampling section). TiDB already copies the weight through from the proto, so no TiDB deserialization changes are needed — only removing the `isReservoir` type assertion gate that currently causes the fallback. This change also benefits the existing region merge within a single partition by enabling proper weighted sub-sampling.
