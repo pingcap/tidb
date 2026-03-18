@@ -244,7 +244,7 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 
 // Build constructs the join graph (edges + conflict rules) from a joinGroup.
 // It returns the list of leaf Nodes (vertexes) of current join group, which will be merged to new join by the enumerator.
-func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
+func (d *ConflictDetector) Build(group *JoinGroup) ([]*Node, error) {
 	d.groupRoot = group.root
 	d.allInnerJoin = group.allInnerJoin
 
@@ -272,7 +272,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 //  3. Returns the accumulated edges and the union of all vertex sets seen so far.
 //
 // The returned edges list is used by parent calls to generate conflict rules.
-func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
+func (d *ConflictDetector) buildRecursive(group *JoinGroup, p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil

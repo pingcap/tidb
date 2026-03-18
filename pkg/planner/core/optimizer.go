@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"math"
 	"slices"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -81,6 +83,7 @@ var (
 	// note this two list will differ when some trade-off rules is moved out of norm phase for cascades.
 )
 
+// LOGICAL OPTIMIZATION PHASE
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
 	&rule.ColumnPruner{},
@@ -103,13 +106,41 @@ var optRuleList = []base.LogicalOptRule{
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
-	&JoinReOrderSolver{},
 	&rule.OuterJoinToSemiJoin{},
 	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
 	&ResolveExpand{},
+}
+
+// EXPLORE PHASE
+type memoLiteExploreRule struct {
+	flag     uint64
+	rule     base.LogicalOptRule
+	match    func(*memo.GroupExpression) bool
+	optimize func(*memo.GroupExpression) (base.LogicalPlan, error)
+}
+
+type memoLiteExploreCandidate struct {
+	ge     *memo.GroupExpression
+	target *memo.Group
+}
+
+var exploreRuleList = []memoLiteExploreRule{
+	{
+		flag: rule.FlagJoinReOrder,
+		// move join reorder rule to the end of optimization for explore more alternatives, otherwise, multi order
+		// alternatives still need to go through other single tree based rules to finish up logical optimization phase.
+		rule: &JoinReOrderSolver{},
+		match: func(ge *memo.GroupExpression) bool {
+			_, ok := ge.GetWrappedLogicalPlan().(*logicalMultiJoin)
+			return ok
+		},
+		optimize: func(ge *memo.GroupExpression) (base.LogicalPlan, error) {
+			return joinorder.OptimizeJoinGroup(ge.GetWrappedLogicalPlan().SCtx(), ge.GetWrappedLogicalPlan().(*logicalMultiJoin).advancedGroup)
+		},
+	},
 }
 
 // Interaction Rule List
@@ -324,10 +355,76 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	return logic, finalPlan, cost, nil
 }
 
+func getExploreCandidates(mm *memo.Memo, match func(*memo.GroupExpression) bool) []*memoLiteExploreCandidate {
+	candidates := make([]*memoLiteExploreCandidate, 0)
+	mm.ForEachGroup(func(g *memo.Group) bool {
+		g.ForEachGE(func(ge *memo.GroupExpression) bool {
+			if match == nil || match(ge) {
+				candidates = append(candidates, &memoLiteExploreCandidate{
+					ge:     ge,
+					target: g,
+				})
+			}
+			return true
+		})
+		return true
+	})
+	return candidates
+}
+
+func exploreLogicalAlternatives(flag uint64, logic base.LogicalPlan) (*memo.Memo, error) {
+	// init memo
+	mm := memo.NewMemo(logic.SCtx().GetSessionVars().StmtCtx.OperatorNum)
+	if _, err := mm.Init(logic); err != nil {
+		return nil, err
+	}
+	// extract join groups inside as usual, wrapper them as a flatten multi-join node.
+	err := toMultiJoin(mm, logic)
+	if err != nil {
+		return nil, err
+	}
+
+	// explore alternatives in memo.
+	for _, exploreRule := range exploreRuleList {
+		if exploreRule.flag != 0 && flag&exploreRule.flag == 0 {
+			continue
+		}
+		if exploreRule.rule != nil && isLogicalRuleDisabled(exploreRule.rule) {
+			continue
+		}
+		// get explore rule targeted candidate.
+		candidates := getExploreCandidates(mm, exploreRule.match)
+		// dfs for each ge, like tree down calling optimize for valid anchor.
+		for _, candidate := range candidates {
+			var (
+				alt base.LogicalPlan
+				err error
+			)
+			alt, err = exploreRule.optimize(candidate.ge)
+			if err != nil {
+				return nil, err
+			}
+			if alt == nil {
+				continue
+			}
+			// alternative copyIn.
+			if _, err = mm.CopyIn(candidate.target, alt); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return mm, nil
+}
+
 // VolcanoOptimize includes: logicalOptimize, physicalOptimize
 func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	flag = adjustOptimizationFlags(flag, logic)
+	// logical optimization phase.
 	logic, err := logicalOptimize(ctx, flag, logic)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	mm, err := exploreLogicalAlternatives(flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -335,7 +432,11 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
-	physical, cost, err := physicalOptimize(logic)
+	var (
+		cost     float64
+		physical base.PhysicalPlan
+	)
+	physical, cost, err = impl.ImplementMemoAndCost(mm.GetRootGroup())
 	if err != nil {
 		return nil, nil, 0, err
 	}

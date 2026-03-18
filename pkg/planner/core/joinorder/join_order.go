@@ -35,13 +35,19 @@ import (
 // JoinOrder is the base struct for join order optimization.
 type JoinOrder struct {
 	ctx   base.PlanContext
-	group *joinGroup
+	group *JoinGroup
 }
 
-// A joinGroup is a subtree of the original plan tree. It's the unit for join order.
-// root is the root of the subtree, if root is not a join, then the joinGroup only contains one vertex.
+// ExtractedJoinGroup wraps a pre-extracted join-group so callers can
+// normalize once and optimize later without re-walking the source tree.
+type ExtractedJoinGroup struct {
+	group *JoinGroup
+}
+
+// A JoinGroup is a subtree of the original plan tree. It's the unit for join order.
+// root is the root of the subtree, if root is not a join, then the JoinGroup only contains one vertex.
 // vertexes are the leaf nodes of the subtree, it may have its children, but they are considered as a vertex in this subtree.
-type joinGroup struct {
+type JoinGroup struct {
 	root base.LogicalPlan
 	// All vertexes in this join group.
 	// A vertex means a leaf node in this join group tree,
@@ -64,7 +70,12 @@ type joinGroup struct {
 	selConds map[int][]expression.Expression
 }
 
-func (g *joinGroup) merge(other *joinGroup) {
+// Nodes return all the vertexes in this join group, the vertexes are all leaf nodes in the join group tree.
+func (g *JoinGroup) Nodes() []base.LogicalPlan {
+	return g.vertexes
+}
+
+func (g *JoinGroup) merge(other *JoinGroup) {
 	g.vertexes = append(g.vertexes, other.vertexes...)
 	g.leadingHints = append(g.leadingHints, other.leadingHints...)
 	if len(other.vertexHints) > 0 {
@@ -83,7 +94,7 @@ func (g *joinGroup) merge(other *joinGroup) {
 	}
 }
 
-func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
+func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *JoinGroup) {
 	if sel, isSel := p.(*logicalop.LogicalSelection); isSel {
 		if p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
 			!slices.ContainsFunc(sel.Conditions, expression.IsMutableEffectsExpr) {
@@ -182,7 +193,7 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		}
 	}
 
-	resJoinGroup = &joinGroup{
+	resJoinGroup = &JoinGroup{
 		root:         p,
 		vertexes:     []base.LogicalPlan{},
 		vertexHints:  vertexHints,
@@ -190,7 +201,7 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 
 	leftShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[0], curLeadingHint)
-	var leftJoinGroup, rightJoinGroup *joinGroup
+	var leftJoinGroup, rightJoinGroup *JoinGroup
 	if !leftHasHint && !leftShouldPreserve {
 		leftJoinGroup = extractJoinGroup(join.Children()[0])
 	} else {
@@ -208,12 +219,30 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	return resJoinGroup
 }
 
-func makeSingleGroup(p base.LogicalPlan) *joinGroup {
-	return &joinGroup{
+func makeSingleGroup(p base.LogicalPlan) *JoinGroup {
+	return &JoinGroup{
 		root:         p,
 		vertexes:     []base.LogicalPlan{p},
 		allInnerJoin: true,
 	}
+}
+
+// ExtractJoinGroup precomputes the join-group rooted at p.
+// It returns nil when p does not form a reorderable multi-vertex join-group.
+func ExtractJoinGroup(p base.LogicalPlan) *JoinGroup {
+	group := extractJoinGroup(p)
+	if group == nil || len(group.vertexes) <= 1 {
+		return nil
+	}
+	return group
+}
+
+// Optimize builds a reordered join tree from the pre-extracted join-group.
+func (g *ExtractedJoinGroup) Optimize(ctx base.PlanContext) (base.LogicalPlan, error) {
+	if g == nil || g.group == nil {
+		return nil, nil
+	}
+	return optimizeForJoinGroup(ctx, g.group)
 }
 
 // Optimize performs join order optimization on the given plan.
@@ -272,6 +301,16 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	return p, nil
 }
 
+func OptimizeJoinGroup(ctx base.PlanContext, group *JoinGroup) (base.LogicalPlan, error) {
+	// in memo, logicalMultiJoinNode is generically connected with its child by group.
+	// so we don't need  vertexMap and replaceJoinGroupVertexes here, just directly optimize the join group with the original root is enough.
+	p, err := optimizeForJoinGroup(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // replaceJoinGroupVertexes walks the join-group subtree rooted at `root` and
 // swaps every leaf vertex with its optimized replacement from vertexMap.
 //
@@ -300,7 +339,7 @@ func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.Logi
 	return root
 }
 
-func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
+func optimizeForJoinGroup(ctx base.PlanContext, group *JoinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
 	// TODO impl DP OR merge the old DP impl with the new CD-C impl.
@@ -335,7 +374,7 @@ type joinOrderDP struct {
 	JoinOrder
 }
 
-func newJoinOrderDP(_ base.PlanContext, _ *joinGroup) *joinOrderDP {
+func newJoinOrderDP(_ base.PlanContext, _ *JoinGroup) *joinOrderDP {
 	panic("not implement yet")
 }
 
@@ -347,7 +386,7 @@ type joinOrderGreedy struct {
 	JoinOrder
 }
 
-func newJoinOrderGreedy(ctx base.PlanContext, group *joinGroup) *joinOrderGreedy {
+func newJoinOrderGreedy(ctx base.PlanContext, group *JoinGroup) *joinOrderGreedy {
 	return &joinOrderGreedy{
 		JoinOrder: JoinOrder{
 			ctx:   ctx,

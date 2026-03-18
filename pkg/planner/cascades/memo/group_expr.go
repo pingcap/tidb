@@ -170,6 +170,14 @@ func (e *GroupExpression) addr() unsafe.Pointer {
 	return unsafe.Pointer(e)
 }
 
+// GetAttachedGroupExpression returns the current GroupExpression itself.
+func (e *GroupExpression) GetAttachedGroupExpression() base.GroupExpression {
+	return e
+}
+
+// SetAttachedGroupExpression is a no-op for GroupExpression because it is already the attachment target.
+func (*GroupExpression) SetAttachedGroupExpression(base.GroupExpression) {}
+
 // GetWrappedLogicalPlan overrides the logical plan interface implemented by BaseLogicalPlan.
 func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
 	return e.LogicalPlan
@@ -206,6 +214,19 @@ func (e *GroupExpression) GetJoinChildStatsAndSchema() (stats0, stats1 *property
 // InputsLen returns the length of inputs.
 func (e *GroupExpression) InputsLen() int {
 	return len(e.Inputs)
+}
+
+// ExtractLogicalPlan materializes a logical tree from the current GE path.
+func (e *GroupExpression) ExtractLogicalPlan() base.LogicalPlan {
+	lp := e.GetWrappedLogicalPlan()
+	children := make([]base.LogicalPlan, 0, len(e.Inputs))
+	for _, childGroup := range e.Inputs {
+		childElem := childGroup.GetFirstElem(pattern.OperandAny)
+		intest.Assert(childElem != nil)
+		children = append(children, childElem.Value.(*GroupExpression).ExtractLogicalPlan())
+	}
+	lp.SetChildren(children...)
+	return lp
 }
 
 // GetInputSchema returns the logical schema of the idx-th child group.

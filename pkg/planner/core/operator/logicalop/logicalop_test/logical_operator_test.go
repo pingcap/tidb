@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -68,6 +69,33 @@ func TestLogicalSchemaClone(t *testing.T) {
 	// the column slice inside schema will grow at both case.
 	require.Equal(t, cloneSp.Schema().Len(), 2)
 	require.Equal(t, sp.Schema().Len(), 2)
+
+	t.Run("InjectExprClonesProjection", func(t *testing.T) {
+		projCol := &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+		child := logicalop.LogicalSelection{}.Init(ctx, 0)
+		proj := logicalop.LogicalProjection{
+			Exprs: []expression.Expression{projCol},
+		}.Init(ctx, 0)
+		proj.SetSchema(expression.NewSchema(projCol))
+		proj.SetChildren(child)
+
+		origID := proj.ID()
+		newPlan, newCol := logicalop.InjectExpr(proj, expression.NewOne())
+		newProj, ok := newPlan.(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.NotSame(t, proj, newProj)
+		require.NotEqual(t, origID, newProj.ID())
+		require.Len(t, proj.Exprs, 1)
+		require.Len(t, proj.Schema().Columns, 1)
+		require.Len(t, newProj.Exprs, 2)
+		require.Len(t, newProj.Schema().Columns, 2)
+		require.NotNil(t, newCol)
+		require.Same(t, projCol, proj.Exprs[0])
+		require.Same(t, child, newProj.Children()[0])
+	})
 }
 
 func TestLogicalApplyClone(t *testing.T) {
