@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // Null-reject proof for outer-join simplification.
@@ -122,7 +123,6 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.CharLength:      {},
 	ast.CharacterLength: {},
 	ast.Concat:          {},
-	ast.Field:           {},
 	ast.FindInSet:       {},
 	ast.Format:          {},
 	ast.FromBase64:      {},
@@ -138,7 +138,6 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.Oct:             {},
 	ast.Ord:             {},
 	ast.Position:        {},
-	ast.Quote:           {},
 	ast.Repeat:          {},
 	ast.Replace:         {},
 	ast.Reverse:         {},
@@ -360,6 +359,8 @@ func tryFoldNullifiedScalarFunc(ctx base.PlanContext, innerSchema *expression.Sc
 	switch expr.FuncName.L {
 	case ast.Coalesce, ast.Ifnull:
 		return tryFoldNullifiedCoalesceLike(ctx, innerSchema, expr)
+	case ast.If:
+		return tryFoldNullifiedIf(ctx, innerSchema, expr)
 	}
 
 	args := make([]expression.Expression, 0, len(expr.GetArgs()))
@@ -394,6 +395,22 @@ func tryFoldNullifiedCoalesceLike(ctx base.PlanContext, innerSchema *expression.
 		}
 	}
 	return expression.NewNull(), true
+}
+
+func tryFoldNullifiedIf(ctx base.PlanContext, innerSchema *expression.Schema, expr *expression.ScalarFunction) (*expression.Constant, bool) {
+	args := expr.GetArgs()
+	cond, ok := tryFoldNullifiedConstant(ctx, innerSchema, args[0])
+	if !ok {
+		return nil, false
+	}
+	condVal, isNull, err := cond.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return nil, false
+	}
+	if !isNull && condVal != 0 {
+		return tryFoldNullifiedConstant(ctx, innerSchema, args[1])
+	}
+	return tryFoldNullifiedConstant(ctx, innerSchema, args[2])
 }
 
 func foldNullifiedFunction(ctx base.PlanContext, expr *expression.ScalarFunction, args []expression.Expression) (*expression.Constant, bool) {

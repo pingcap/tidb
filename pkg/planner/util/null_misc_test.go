@@ -35,7 +35,8 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 	innerA := newNullRejectIntColumn(1)
 	innerB := newNullRejectIntColumn(2)
 	outerC := newNullRejectIntColumn(3)
-	innerSchema := expression.NewSchema(innerA, innerB)
+	innerS := newNullRejectStringColumn(4)
+	innerSchema := expression.NewSchema(innerA, innerB, innerS)
 
 	gtInnerAZero := newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
 	eqInnerAZero := newNullRejectFunc(t, exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
@@ -44,6 +45,17 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 	coalesceInnerA := newNullRejectFunc(t, exprCtx, ast.Coalesce, types.NewFieldType(mysql.TypeLonglong), innerA, expression.NewOne())
 	coalesceInnerATwo := newNullRejectFunc(t, exprCtx, ast.Coalesce, types.NewFieldType(mysql.TypeLonglong), innerA, newNullRejectIntConst(2))
 	nullSafeEqInnerA := newNullRejectFunc(t, exprCtx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewOne())
+	fieldInnerA := newNullRejectFunc(t, exprCtx, ast.Field, types.NewFieldType(mysql.TypeLonglong), innerA, expression.NewOne())
+	quoteInnerSLikeA := newNullRejectFunc(t, exprCtx, ast.Like, types.NewFieldType(mysql.TypeTiny),
+		newNullRejectFunc(t, exprCtx, ast.Quote, types.NewFieldType(mysql.TypeVarString), innerS),
+		newNullRejectStringConst("A%"),
+		newNullRejectIntConst(92),
+	)
+	ifInnerANullThenZeroElseOuterC := newNullRejectFunc(t, exprCtx, ast.If, types.NewFieldType(mysql.TypeLonglong),
+		newNullRejectFunc(t, exprCtx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), innerA),
+		expression.NewZero(),
+		outerC,
+	)
 
 	cases := []struct {
 		name     string
@@ -115,6 +127,22 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			expr:     nullSafeEqInnerA,
 			expected: true,
 		},
+		{
+			name: "field_with_null_input_can_make_not_predicate_true",
+			expr: newNullRejectFunc(t, exprCtx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny),
+				newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), fieldInnerA, expression.NewZero())),
+			expected: false,
+		},
+		{
+			name:     "quote_with_null_input_can_make_not_predicate_true",
+			expr:     newNullRejectFunc(t, exprCtx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), quoteInnerSLikeA),
+			expected: false,
+		},
+		{
+			name:     "if_condition_folded_after_nullification_stays_provable",
+			expr:     newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), ifInnerANullThenZeroElseOuterC, expression.NewZero()),
+			expected: true,
+		},
 	}
 
 	for _, tt := range cases {
@@ -146,6 +174,15 @@ func newNullRejectIntColumn(id int64) *expression.Column {
 		ID:       id,
 		Index:    int(id),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newNullRejectStringColumn(id int64) *expression.Column {
+	return &expression.Column{
+		UniqueID: id,
+		ID:       id,
+		Index:    int(id),
+		RetType:  types.NewFieldType(mysql.TypeVarString),
 	}
 }
 
