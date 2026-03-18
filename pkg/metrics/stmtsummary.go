@@ -36,6 +36,11 @@ var (
 	// evictions that have occurred in the current statement summary window.
 	// This value resets to 0 when the window rotates.
 	StmtSummaryWindowEvictedCount *prometheus.GaugeVec
+
+	stmtSummaryWindowRecordCountV1 prometheus.Gauge
+	stmtSummaryWindowRecordCountV2 prometheus.Gauge
+	stmtSummaryWindowEvictedCountV1 prometheus.Gauge
+	stmtSummaryWindowEvictedCountV2 prometheus.Gauge
 )
 
 // InitStmtSummaryMetrics initializes statement summary metrics.
@@ -55,10 +60,24 @@ func InitStmtSummaryMetrics() {
 			Name:      "window_evicted_count",
 			Help:      "The number of LRU evictions in the current statement summary window.",
 		}, []string{LblType})
+
+	stmtSummaryWindowRecordCountV1 = StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV1)
+	stmtSummaryWindowRecordCountV2 = StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)
+	stmtSummaryWindowEvictedCountV1 = StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV1)
+	stmtSummaryWindowEvictedCountV2 = StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)
 }
 
 // SetStmtSummaryWindowMetrics reports statement summary window metrics for a given implementation type.
 func SetStmtSummaryWindowMetrics(typ string, recordCount, evictedCount float64) {
-	StmtSummaryWindowRecordCount.WithLabelValues(typ).Set(recordCount)
-	StmtSummaryWindowEvictedCount.WithLabelValues(typ).Set(evictedCount)
+	switch typ {
+	case StmtSummaryTypeV1:
+		stmtSummaryWindowRecordCountV1.Set(recordCount)
+		stmtSummaryWindowEvictedCountV1.Set(evictedCount)
+	case StmtSummaryTypeV2:
+		stmtSummaryWindowRecordCountV2.Set(recordCount)
+		stmtSummaryWindowEvictedCountV2.Set(evictedCount)
+	default:
+		StmtSummaryWindowRecordCount.WithLabelValues(typ).Set(recordCount)
+		StmtSummaryWindowEvictedCount.WithLabelValues(typ).Set(evictedCount)
+	}
 }
