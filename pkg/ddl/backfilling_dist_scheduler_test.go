@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -282,6 +284,128 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
+}
+
+func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, "handle")
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_pre(id bigint auto_random primary key)")
+	tk.MustExec("insert into t_pre values (), (), (), (), (), ()")
+	scanSnapshotTS := uint64(300)
+	task, server := createAddIndexTask(t, dom, "test", "t_pre", proto.Backfill, true, scanSnapshotTS)
+	require.NotNil(t, server)
+
+	var taskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
+	taskMeta.Job.Type = model.ActionAddFullTextIndex
+	taskMeta.EleIDs = []int64{10}
+	taskMetaBytes, err := json.Marshal(&taskMeta)
+	require.NoError(t, err)
+	task.Meta = taskMetaBytes
+
+	sch := schManager.MockScheduler(task)
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
+	require.NoError(t, err)
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
+	sch.Extension = ext
+
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, "", 1, "", 0, proto.ExtraParams{}, task.Meta)
+	require.NoError(t, err)
+	task.ID = taskID
+	execIDs := []string{":4000"}
+
+	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+	nextStep := ext.GetNextStep(&task.TaskBase)
+	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
+	}
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks))
+	task.Step = nextStep
+
+	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, proto.BackfillStepReadIndex)
+	require.NoError(t, err)
+	sortStepMeta := &ddl.BackfillSubTaskMeta{
+		MetaGroups: []*external.SortedKVMeta{{
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
+			TotalKVSize: 12,
+			TotalKVCnt:  7,
+			MultipleFilesStats: []external.MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+					},
+					MaxOverlappingNum: 3,
+				},
+			},
+		}},
+		EleIDs: []int64{10},
+	}
+	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockGenerateGlobalSortIngestPlanAfterPreSplit", `return()`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockGenerateGlobalSortIngestPlanAfterPreSplit"))
+		tici.ResetMockTiCIPreSplitImportShardsRequest()
+	})
+	tici.ResetMockTiCIPreSplitImportShardsRequest()
+
+	mergeSortSubtasks := []*proto.Subtask{
+		proto.NewSubtask(proto.BackfillStepMergeSort, task.ID, task.Type, execIDs[0], 1, sortStepMetaBytes, 1),
+	}
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, proto.BackfillStepMergeSort, mergeSortSubtasks))
+	task.Step = proto.BackfillStepMergeSort
+
+	gotSubtasks, err = mgr.GetSubtasksByExecIDAndStepAndStates(ctx, execIDs[0], taskID, proto.BackfillStepMergeSort, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+	}
+
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+
+	raw := tici.GetMockTiCIPreSplitImportShardsRequest()
+	require.NotEmpty(t, raw)
+	var req tici.PreSplitImportShardsRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	require.Equal(t, strconv.FormatInt(taskMeta.Job.ID, 10), req.TidbTaskId)
+	require.Equal(t, taskMeta.Job.ID, req.JobId)
+	require.Equal(t, task.ID, req.DistTaskId)
+	require.Equal(t, taskMeta.Job.TableID, req.TableId)
+	require.Equal(t, taskMeta.Job.Type.String(), req.JobType)
+	require.Equal(t, []int64{10}, req.IndexIds)
+	require.Equal(t, scanSnapshotTS, req.ScanSnapshotTs)
+	require.Equal(t, uint64(12), req.TotalKvSize)
+	require.Equal(t, uint64(7), req.TotalKvCnt)
+	require.EqualValues(t, 1, req.MetaGroupCount)
+	require.EqualValues(t, 1, req.DataFileCount)
+	require.EqualValues(t, 1, req.StatFileCount)
+	require.EqualValues(t, 1, req.MultipleFileStatCount)
+	require.EqualValues(t, 3, req.MaxOverlappingNum)
+	require.Len(t, req.MetaGroups, 1)
+	require.Equal(t, int64(10), req.MetaGroups[0].EleId)
 }
 
 func TestGetNextStep(t *testing.T) {

@@ -17,9 +17,11 @@ package tici
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -217,6 +219,54 @@ func TestFinishIndexUpload(t *testing.T) {
 		Once()
 	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
+}
+
+func TestPreSplitImportShardsMock(t *testing.T) {
+	ResetMockTiCIPreSplitImportShardsRequest()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
+		ResetMockTiCIPreSplitImportShardsRequest()
+	})
+
+	req := &PreSplitImportShardsRequest{
+		TidbTaskId:     "job-1",
+		JobId:          1,
+		DistTaskId:     2,
+		TableId:        3,
+		IndexIds:       []int64{4},
+		JobType:        model.ActionAddFullTextIndex.String(),
+		ScanSnapshotTs: 123,
+		StartKey:       []byte("a"),
+		EndKey:         []byte("z"),
+		TotalKvSize:    100,
+		TotalKvCnt:     20,
+		MetaGroupCount: 1,
+		MetaGroups: []*PreSplitImportShardMeta{{
+			EleId:       4,
+			StartKey:    []byte("a"),
+			EndKey:      []byte("z"),
+			TotalKvSize: 100,
+			TotalKvCnt:  20,
+		}},
+	}
+
+	err := PreSplitImportShards(context.Background(), nil, req)
+	require.NoError(t, err)
+
+	raw := GetMockTiCIPreSplitImportShardsRequest()
+	require.NotEmpty(t, raw)
+	var got PreSplitImportShardsRequest
+	require.NoError(t, json.Unmarshal(raw, &got))
+	require.Equal(t, req.TidbTaskId, got.TidbTaskId)
+	require.Equal(t, req.JobId, got.JobId)
+	require.Equal(t, req.DistTaskId, got.DistTaskId)
+	require.Equal(t, req.TableId, got.TableId)
+	require.Equal(t, req.IndexIds, got.IndexIds)
+	require.Equal(t, req.TotalKvSize, got.TotalKvSize)
+	require.Equal(t, req.TotalKvCnt, got.TotalKvCnt)
+	require.Len(t, got.MetaGroups, 1)
+	require.Equal(t, req.MetaGroups[0].EleId, got.MetaGroups[0].EleId)
 }
 
 func TestCheckAddIndexProgress(t *testing.T) {

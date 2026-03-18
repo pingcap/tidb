@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -59,6 +61,11 @@ type LitBackfillScheduler struct {
 	GlobalSort     bool
 	MergeTempIndex bool
 	nodeRes        *proto.NodeResource
+}
+
+type storageWithPDAndCodec interface {
+	kv.StorageWithPD
+	GetCodec() tikv.Codec
 }
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
@@ -169,9 +176,10 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				store.(kv.StorageWithPD),
+				store.(storageWithPDAndCodec),
 				taskHandle,
 				task,
+				&backfillMeta,
 				backfillMeta.CloudStorageURI,
 				backfillMeta.ScanSnapshotTS,
 				logger)
@@ -450,9 +458,10 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	store kv.StorageWithPD,
+	store storageWithPDAndCodec,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	backfillMeta *BackfillTaskMeta,
 	cloudStorageURI string,
 	scanSnapshotTS uint64,
 	logger *zap.Logger,
@@ -492,6 +501,27 @@ func generateGlobalSortIngestPlan(
 		// If there is no subtask for merge sort step,
 		// it means the merge sort step is skipped.
 	}
+
+	if shouldCallTiCIPreSplit(backfillMeta) {
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		err := triggerTiCIPreSplitImportShards(timeoutCtx, store, task, backfillMeta, eleIDs, kvMetaGroups)
+		cancel()
+		if err != nil {
+			logger.Error("tici pre-split shard failed, fallback to default global-sort ingest planning",
+				zap.Int64("taskID", task.ID),
+				zap.Int64("jobID", backfillMeta.Job.ID),
+				zap.String("jobType", backfillMeta.Job.Type.String()),
+				zap.Error(err))
+		}
+	}
+
+	failpoint.Inject("mockGenerateGlobalSortIngestPlanAfterPreSplit", func() {
+		m := &BackfillSubTaskMeta{
+			MetaGroups: []*external.SortedKVMeta{},
+		}
+		metaBytes, _ := m.Marshal()
+		failpoint.Return([][]byte{metaBytes}, nil)
+	})
 
 	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
@@ -535,6 +565,94 @@ func generateGlobalSortIngestPlan(
 		metas = append(metas, metaBytes)
 	}
 	return metas, nil
+}
+
+func shouldCallTiCIPreSplit(backfillMeta *BackfillTaskMeta) bool {
+	if backfillMeta == nil {
+		return false
+	}
+	switch backfillMeta.Job.Type {
+	case model.ActionAddFullTextIndex, model.ActionAddHybridIndex:
+		return true
+	default:
+		return false
+	}
+}
+
+func triggerTiCIPreSplitImportShards(
+	ctx context.Context,
+	store storageWithPDAndCodec,
+	task *proto.Task,
+	backfillMeta *BackfillTaskMeta,
+	eleIDs []int64,
+	kvMetaGroups []*external.SortedKVMeta,
+) error {
+	req, err := buildTiCIPreSplitImportShardsRequest(task, backfillMeta, eleIDs, kvMetaGroups)
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return nil
+	}
+	return tici.PreSplitImportShards(ctx, store, req)
+}
+
+func buildTiCIPreSplitImportShardsRequest(
+	task *proto.Task,
+	backfillMeta *BackfillTaskMeta,
+	eleIDs []int64,
+	kvMetaGroups []*external.SortedKVMeta,
+) (*tici.PreSplitImportShardsRequest, error) {
+	if backfillMeta == nil {
+		return nil, errors.New("backfill meta is nil")
+	}
+	if len(kvMetaGroups) == 0 {
+		return nil, nil
+	}
+	req := &tici.PreSplitImportShardsRequest{
+		TidbTaskId:     strconv.FormatInt(backfillMeta.Job.ID, 10),
+		TableId:        backfillMeta.Job.TableID,
+		ScanSnapshotTs: backfillMeta.ScanSnapshotTS,
+		IndexIds:       append([]int64(nil), eleIDs...),
+		MetaGroups:     make([]*tici.PreSplitImportShardMeta, 0, len(kvMetaGroups)),
+	}
+	if len(req.IndexIds) == 0 {
+		req.IndexIds = append([]int64(nil), backfillMeta.EleIDs...)
+	}
+
+	for i, g := range kvMetaGroups {
+		if g == nil {
+			return nil, errors.Errorf("subtask kv group %d is empty", i)
+		}
+		if len(req.StartKey) == 0 && len(req.EndKey) == 0 {
+			req.StartKey = g.StartKey
+			req.EndKey = g.EndKey
+		} else {
+			req.StartKey = external.BytesMin(req.StartKey, g.StartKey)
+			req.EndKey = external.BytesMax(req.EndKey, g.EndKey)
+		}
+		req.TotalKvSize += g.TotalKVSize
+		req.TotalKvCnt += g.TotalKVCnt
+
+		groupReq := &tici.PreSplitImportShardMeta{
+			StartKey:    g.StartKey,
+			EndKey:      g.EndKey,
+			TotalKvSize: g.TotalKVSize,
+			TotalKvCnt:  g.TotalKVCnt,
+		}
+		if i < len(eleIDs) {
+			groupReq.EleId = eleIDs[i]
+		}
+		for _, stat := range g.MultipleFilesStats {
+			fileCnt := int32(len(stat.Filenames))
+			groupReq.DataFileCount += fileCnt
+			groupReq.StatFileCount += fileCnt
+		}
+		req.DataFileCount += groupReq.DataFileCount
+		req.StatFileCount += groupReq.StatFileCount
+		req.MetaGroups = append(req.MetaGroups, groupReq)
+	}
+	return req, nil
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {

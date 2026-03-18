@@ -1609,6 +1609,10 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 	}
 
 	cloudStorageURI := handle.GetCloudStorageURI(w.workCtx, w.store)
+	// DXF pre-split index requires cloud storage.
+	// local ingest doesn't keep a global order and pre-split is not supported.
+	// FullText index already communiate with tici a cloud storage uri.
+	// TODO: Another fallback is to use the cloud storage uri from tici if not set.
 	if len(cloudStorageURI) == 0 {
 		return ver, errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index requires cloud storage"))
 	}
