@@ -342,7 +342,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	}
 
 	// If there's a vector distance function in the order by column,
-	// try to generate a property for TiCI hybrid vector indexes (CopSingleReadTaskType).
+	// try to generate a property for TiCI hybrid vector indexes.
 	if len(lt.ByItems) == 1 {
 		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
 		if vs != nil && !lt.ByItems[0].Desc {

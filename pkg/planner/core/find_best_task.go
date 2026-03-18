@@ -1048,6 +1048,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 				continue
 			}
 			// Match distance metric.
+			if vecSpec.IndexInfo == nil {
+				continue
+			}
 			propMetric, ok := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
 			if !ok {
 				continue
@@ -2315,6 +2318,10 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	// Check if sort items can be matched. If not, return Invalid task
 	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
+		return base.InvalidTask, nil
+	}
+	// For vector search, the property match is via VectorProp, not SortItems.
+	if prop.VectorProp.VSInfo != nil && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
