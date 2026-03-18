@@ -47,3 +47,18 @@ func buildVectorIndexExtra(
 		},
 	}
 }
+
+// DistanceMetricToTipb converts a model.DistanceMetric to a tipb.VectorDistanceMetric.
+func DistanceMetricToTipb(dm model.DistanceMetric) tipb.VectorDistanceMetric {
+	switch dm {
+	case model.DistanceMetricL2:
+		return tipb.VectorDistanceMetric_L2
+	case model.DistanceMetricCosine:
+		return tipb.VectorDistanceMetric_COSINE
+	case model.DistanceMetricInnerProduct:
+		return tipb.VectorDistanceMetric_INNER_PRODUCT
+	default:
+		return tipb.VectorDistanceMetric_INVALID_DISTANCE_METRIC
+	}
+}
+

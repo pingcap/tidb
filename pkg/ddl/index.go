@@ -1037,20 +1037,43 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			if len(spec.Columns) == 0 {
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector component %d must specify columns", i+1))
 			}
-			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
-			for _, colName := range spec.Columns {
-				colInfo, err := resolveColumn(colName)
-				if err != nil {
-					return nil, err
-				}
-				if colInfo.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
-					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector column '%s' must be of VECTOR type", colInfo.Name.O))
-				}
-				columns = append(columns, makeIndexColumn(colInfo))
+			// Enforce exactly one vector column per vector component.
+			if len(spec.Columns) != 1 {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector component %d must specify exactly one column", i+1))
 			}
+			colName := spec.Columns[0]
+			colInfo, err := resolveColumn(colName)
+			if err != nil {
+				return nil, err
+			}
+			if colInfo.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector column '%s' must be of VECTOR type", colInfo.Name.O))
+			}
+			columns := []*model.IndexColumn{makeIndexColumn(colInfo)}
 			component := &model.HybridVectorSpec{Columns: columns}
 			if spec.IndexInfo != nil {
 				component.IndexInfo = spec.IndexInfo.toModel()
+			}
+			// Validate distance metric: only L2 and COSINE are supported.
+			if component.IndexInfo != nil && component.IndexInfo.DistanceMetric != "" {
+				dm := model.DistanceMetric(component.IndexInfo.DistanceMetric)
+				if _, ok := model.IndexableDistanceMetricToFnName[dm]; !ok {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
+						fmt.Sprintf("HYBRID index vector component %d has unsupported distance metric '%s', only L2 and COSINE are supported", i+1, component.IndexInfo.DistanceMetric))
+				}
+			}
+			// Validate dimension if specified.
+			if component.IndexInfo != nil && component.IndexInfo.Dimension != nil {
+				dim := *component.IndexInfo.Dimension
+				if dim == 0 {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
+						fmt.Sprintf("HYBRID index vector component %d dimension must be greater than 0", i+1))
+				}
+				// If the column has a fixed dimension, verify it matches.
+				if colInfo.FieldType.GetFlen() > 0 && uint64(colInfo.FieldType.GetFlen()) != dim {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
+						fmt.Sprintf("HYBRID index vector component %d dimension %d does not match column '%s' dimension %d", i+1, dim, colInfo.Name.O, colInfo.FieldType.GetFlen()))
+				}
 			}
 			info.Vector = append(info.Vector, component)
 		}

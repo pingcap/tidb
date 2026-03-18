@@ -2212,6 +2212,65 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
 }
 
+func TestHybridIndexVectorValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b text, v1 vector(3), v2 vector(5))")
+
+	// Multiple vector columns in one component should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1, v2) using hybrid parameter '{
+		"vector":[{"columns":["v1","v2"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify exactly one column")
+
+	// Unsupported distance metric should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"HAMMING"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "unsupported distance metric")
+
+	// Zero dimension should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":0}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "dimension must be greater than 0")
+
+	// Dimension mismatch with column definition should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":10}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "does not match column")
+
+	// Valid L2 metric should succeed.
+	tk.MustExec(`create columnar index idx_l2 on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	tk.MustExec("drop index idx_l2 on t")
+
+	// Valid COSINE metric should succeed.
+	tk.MustExec(`create columnar index idx_cos on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"COSINE"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	tk.MustExec("drop index idx_cos on t")
+
+	// Matching dimension should succeed.
+	tk.MustExec(`create columnar index idx_dim on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":3, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+}
+
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
