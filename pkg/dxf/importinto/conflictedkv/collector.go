@@ -156,9 +156,16 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 		c.hdlSet.Add(handle)
 	}
 
+	if err := c.handleEncodedRowInner(ctx, row); err != nil {
+		return err
+	}
+	c.result.RowCount++
+	c.result.Checksum.Update(kvPairs.Pairs)
+	return nil
+}
+
+func (c *Collector) handleEncodedRowInner(ctx context.Context, row []types.Datum) error {
 	if c.stopRecording {
-		c.result.RowCount++
-		c.result.Checksum.Update(kvPairs.Pairs)
 		return nil
 	}
 
@@ -172,12 +179,7 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	// now while we collect real-world feedback for this feature.
 	globalTotalSize := c.sharedTotalFileSize.Add(contentSize)
 	if globalTotalSize > maxTotalConflictRowFileSize {
-		if err := c.onTotalSizeLimitExceeded(ctx, globalTotalSize, contentSize); err != nil {
-			return err
-		}
-		c.result.RowCount++
-		c.result.Checksum.Update(kvPairs.Pairs)
-		return nil
+		return c.onTotalSizeLimitExceeded(ctx, globalTotalSize, contentSize)
 	}
 
 	if c.writer == nil || c.currFileSize >= MaxConflictRowFileSize {
@@ -191,8 +193,6 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	if _, err = c.writer.Write(ctx, content); err != nil {
 		return errors.Trace(err)
 	}
-	c.result.RowCount++
-	c.result.Checksum.Update(kvPairs.Pairs)
 	c.result.TotalFileSize += contentSize
 	c.currFileSize += contentSize
 	return nil

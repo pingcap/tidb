@@ -211,6 +211,8 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	require.EqualValues(t, 48, sharedTotalFileSize.Load())
 	require.EqualValues(t, rowCount, coll.result.RowCount)
 	require.EqualValues(t, 32, coll.result.TotalFileSize)
+	require.True(t, coll.stopRecording)
+	require.Nil(t, coll.writer)
 	require.EqualValues(t, expectedSum.Sum(), coll.result.Checksum.Sum())
 	require.EqualValues(t, expectedSum.SumKVS(), coll.result.Checksum.SumKVS())
 	require.EqualValues(t, expectedSum.SumSize(), coll.result.Checksum.SumSize())
@@ -270,6 +272,8 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	require.EqualValues(t, 48, coll1.result.TotalFileSize)
 	require.EqualValues(t, 3, coll2.result.RowCount)
 	require.EqualValues(t, 0, coll2.result.TotalFileSize)
+	require.False(t, coll1.stopRecording)
+	require.True(t, coll2.stopRecording)
 	require.Equal(t, []string{path.Join("test1", "data-0001.txt")}, coll1.result.Filenames)
 	require.Empty(t, coll2.result.Filenames)
 
