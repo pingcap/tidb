@@ -2319,6 +2319,52 @@ func TestTiFlashHashAggPreAggMode(t *testing.T) {
 	require.ErrorContains(t, err, "incorrect value: `test`. tiflash_hashagg_preaggregation_mode options: force_preagg, auto, force_streaming")
 }
 
+func TestIssue65867(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("SET SESSION tidb_stats_load_sync_wait = 0")
+	tk.MustExec("DROP TABLE IF EXISTS t_spec")
+	tk.MustExec(`CREATE TABLE t_spec (
+		id bigint NOT NULL AUTO_INCREMENT,
+		product_id bigint NOT NULL,
+		shop_id varchar(10) NOT NULL,
+		topic_id char(36) DEFAULT NULL,
+		spec_name varchar(30) NOT NULL,
+		spec_value text DEFAULT NULL,
+		buy_flag char(1) DEFAULT NULL,
+		relation char(1) NOT NULL,
+		creator_id varchar(50) DEFAULT NULL,
+		creator_name varchar(50) DEFAULT NULL,
+		create_time datetime DEFAULT CURRENT_TIMESTAMP,
+		update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		package_id bigint DEFAULT NULL,
+		PRIMARY KEY (id),
+		KEY index_product (product_id),
+		KEY index_package (package_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	tk.MustExec(`INSERT INTO t_spec
+		(product_id, shop_id, spec_name, spec_value, buy_flag, relation, creator_id, creator_name, package_id)
+		VALUES
+		(1, 'XXX', 'a', 'x', '1', '1', 'u1', 'u1', NULL),
+		(2, 'XXX', 'b', 'y', '1', '1', 'u1', 'u1', NULL),
+		(3, 'XXX', 'c', 'z', '1', '1', 'u1', 'u1', 123)`)
+
+	tk.MustExec("ANALYZE TABLE t_spec")
+
+	tk.MustQuery("SHOW STATS_HISTOGRAMS WHERE table_name='t_spec'")
+	tk.MustQuery("SHOW STATS_TOPN WHERE table_name='t_spec'")
+
+	// EXPLAIN should not panic or return error.
+	tk.MustQuery(`EXPLAIN SELECT id, product_id, shop_id, topic_id, spec_name, spec_value, buy_flag, relation,
+		creator_id, creator_name, create_time, update_time, package_id
+		FROM t_spec
+		WHERE package_id = 123 AND shop_id = 'XXX'
+		ORDER BY spec_name ASC`)
+}
+
 func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
