@@ -36,7 +36,11 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
+<<<<<<< HEAD
 	require.Equal(t, 661, len(parser.Keywords))
+=======
+	require.Equal(t, 677, len(parser.Keywords))
+>>>>>>> 270aa759fc2 (parser: add LATERAL derived table syntax (MySQL WL#8652) (#67076))
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
@@ -44,7 +48,7 @@ func TestKeywordsLength(t *testing.T) {
 			reservedNr += 1
 		}
 	}
-	require.Equal(t, 232, reservedNr)
+	require.Equal(t, 233, reservedNr)
 }
 
 func TestKeywordsSorting(t *testing.T) {
