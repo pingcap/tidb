@@ -99,6 +99,26 @@ func (s *statusStore) stop() {
 	s.snapshot.State = stateStopped
 }
 
+func (s *statusStore) setPersistentState(state PersistentState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshot.SafeCheckpoint = state.LastCheckpoint
+	s.snapshot.SyncedTS = state.SyncedTS
+}
+
+func (s *statusStore) clearFailure() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.snapshot.State == stateStopped {
+		return
+	}
+	s.snapshot.Ready = true
+	s.snapshot.State = stateRunning
+	s.snapshot.LastError = ""
+	s.snapshot.LastErrorTime = time.Time{}
+	s.snapshot.ConsecutiveFailures = 0
+}
+
 func (s *statusStore) beginRound() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -125,7 +145,7 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 	if event.SyncedTS > 0 {
 		s.snapshot.SyncedTS = event.SyncedTS
 	}
-	if event.AliveStoreCount > 0 {
+	if event.Type == checkpoint.EventRoundPlanned || event.Type == checkpoint.EventCheckpointAdvanced {
 		s.snapshot.AliveStoreCount = event.AliveStoreCount
 	}
 	s.snapshot.PendingFileCount = event.PendingFileCount
@@ -135,12 +155,14 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 
 	switch event.Type {
 	case checkpoint.EventCheckpointAdvanced:
+		s.snapshot.Ready = true
 		s.snapshot.State = stateRunning
 		s.snapshot.LastSuccessTime = event.Time
 		s.snapshot.LastError = ""
 		s.snapshot.LastErrorTime = time.Time{}
 		s.snapshot.ConsecutiveFailures = 0
 	case checkpoint.EventCalculationFailed:
+		s.snapshot.Ready = false
 		s.snapshot.State = stateDegraded
 		if event.Err != nil {
 			s.snapshot.LastError = event.Err.Error()

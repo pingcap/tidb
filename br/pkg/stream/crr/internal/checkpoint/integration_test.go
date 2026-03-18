@@ -156,7 +156,7 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	)
 }
 
-func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
+func TestCheckpointCalculatorRestoresPersistentState(t *testing.T) {
 	ctx := context.Background()
 	h := newSingleStoreIntegrationHarness(ctx, t)
 
@@ -173,7 +173,7 @@ func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
 
 	upstream := &recordingUpstreamStorage{inner: h.Upstream}
 	calculator := h.newCalculator(
-		withCalculatorConfig(checkpoint.CheckpointCalculatorConfig{InitialSyncedTS: firstRecord.FlushTS}),
+		withPersistentState(checkpoint.PersistentState{SyncedTS: firstRecord.FlushTS}),
 		withUpstream(upstream),
 	)
 
@@ -186,6 +186,31 @@ func TestCheckpointCalculatorUsesConfiguredInitialSyncedTS(t *testing.T) {
 		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "ffffffffffffffff~"),
 		upstream.walkOpts[0].StartAfter,
 	)
+}
+
+func TestCheckpointCalculatorRestoredCheckpointSkipsUnchangedUpstream(t *testing.T) {
+	ctx := context.Background()
+	h := newSingleStoreIntegrationHarness(ctx, t)
+
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+	h.requireReplicateAllPending()
+
+	upstream := &recordingUpstreamStorage{inner: h.Upstream}
+	calculator := h.newCalculator(
+		withPersistentState(checkpoint.PersistentState{
+			LastCheckpoint: upstreamCheckpoint,
+			SyncedTS:       h.calculator.SyncedTS(),
+			SyncedByStore:  map[uint64]uint64{1: h.calculator.SyncedTS()},
+		}),
+		withUpstream(upstream),
+	)
+
+	result, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, upstreamCheckpoint, result)
+	require.Empty(t, upstream.walkOpts)
 }
 
 func TestCheckpointCalculatorReadsMetaFilesInParallelWithinLimit(t *testing.T) {
@@ -576,6 +601,7 @@ type calculatorParams struct {
 	deps     checkpoint.CalculatorDeps
 	cfg      checkpoint.CheckpointCalculatorConfig
 	observer checkpoint.Observer
+	state    *checkpoint.PersistentState
 }
 
 type calculatorOption func(*calculatorParams)
@@ -589,6 +615,12 @@ func withCalculatorConfig(cfg checkpoint.CheckpointCalculatorConfig) calculatorO
 func withUpstream(upstream checkpoint.UpstreamStorageReader) calculatorOption {
 	return func(params *calculatorParams) {
 		params.deps.Upstream = upstream
+	}
+}
+
+func withPersistentState(state checkpoint.PersistentState) calculatorOption {
+	return func(params *calculatorParams) {
+		params.state = &state
 	}
 }
 
@@ -619,6 +651,9 @@ func (h *integrationHarness) newCalculator(
 	}
 	calculator, err := checkpoint.NewCalculator(params.deps, params.cfg, params.observer)
 	require.NoError(h.t, err)
+	if params.state != nil {
+		require.NoError(h.t, calculator.RestorePersistentState(*params.state))
+	}
 	return calculator
 }
 

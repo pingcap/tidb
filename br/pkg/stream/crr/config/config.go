@@ -22,7 +22,7 @@ import (
 
 const (
 	flagTaskName                = "task-name"
-	flagSyncedTS                = "synced-ts"
+	flagStateStorageSubDir      = "state-storage-sub-dir"
 	flagRetryInterval           = "retry-interval"
 	flagCalcPollInterval        = "calc.poll-interval"
 	flagCalcMetaReadConcurrency = "calc.meta-read-concurrency"
@@ -30,13 +30,13 @@ const (
 
 type Config struct {
 	service.Config
+	StateStorageSubDir string
 }
 
 func DefaultConfig() Config {
 	return Config{
 		Config: service.Config{
 			CalculatorConfig: service.CalculatorConfig{
-				InitialSyncedTS:     0,
 				PollInterval:        checkpoint.DefaultPollInterval,
 				MetaReadConcurrency: checkpoint.DefaultMetaReadConcurrency,
 			},
@@ -48,10 +48,10 @@ func DefaultConfig() Config {
 func DefineFlags(flags *pflag.FlagSet) {
 	defaults := DefaultConfig()
 	flags.String(flagTaskName, "", "The name of the upstream log backup task.")
-	flags.Uint64(
-		flagSyncedTS,
-		defaults.InitialSyncedTS,
-		"The initial synced-ts used to skip scanning older backupmeta files.",
+	flags.String(
+		flagStateStorageSubDir,
+		defaults.StateStorageSubDir,
+		"The relative subdirectory under upstream storage used to persist CRR resume state.",
 	)
 	flags.Duration(
 		flagRetryInterval,
@@ -78,7 +78,7 @@ func (cfg *Config) Parse(flags *pflag.FlagSet) error {
 	if err != nil {
 		return err
 	}
-	cfg.InitialSyncedTS, err = flags.GetUint64(flagSyncedTS)
+	cfg.StateStorageSubDir, err = flags.GetString(flagStateStorageSubDir)
 	if err != nil {
 		return err
 	}

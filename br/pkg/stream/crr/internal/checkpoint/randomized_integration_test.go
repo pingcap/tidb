@@ -113,7 +113,7 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 		}
 	}
 
-	require.Greater(t, sim.lastSyncedTS, uint64(0), "synced ts should advance during randomized simulation")
+	require.Greater(t, sim.lastState.SyncedTS, uint64(0), "synced ts should advance during randomized simulation")
 }
 
 type randomizedCRRSimulationConfig struct {
@@ -150,7 +150,7 @@ type randomizedCRRSimulation struct {
 	nextStoreID      uint64
 	pendingStoreIDs  []uint64
 	readyStoreIDs    []uint64
-	lastSyncedTS     uint64
+	lastState        checkpoint.PersistentState
 	emptyStoreRounds map[uint64]int
 }
 
@@ -200,7 +200,7 @@ func newRandomizedCRRSimulation(
 		cfg:              cfg,
 		nextStoreID:      nextStoreID,
 		readyStoreIDs:    append([]uint64(nil), h.PDSim.StoreIDs()...),
-		lastSyncedTS:     h.calculator.SyncedTS(),
+		lastState:        h.calculator.StateSnapshot(),
 		emptyStoreRounds: make(map[uint64]int),
 	}
 }
@@ -493,11 +493,12 @@ func (s *randomizedCRRSimulation) restartCalculatorIfNeeded(rng intNSource) bool
 		return false
 	}
 	cfg := checkpoint.CheckpointCalculatorConfig{PollInterval: s.cfg.CalculatorPollInterval}
-	if s.lastSyncedTS > 0 && rollPercent(rng, s.cfg.RestartCarrySyncedTSChancePercent) {
-		cfg.InitialSyncedTS = s.lastSyncedTS
+	opts := []calculatorOption{withCalculatorConfig(cfg)}
+	if s.lastState.SyncedTS > 0 && rollPercent(rng, s.cfg.RestartCarrySyncedTSChancePercent) {
+		opts = append(opts, withPersistentState(s.lastState))
 	}
 	s.h.calculator = s.h.newCalculator(
-		withCalculatorConfig(cfg),
+		opts...,
 	)
 	return true
 }
@@ -677,8 +678,9 @@ func (s *randomizedCRRSimulation) rollPercent(chancePercent int) bool {
 }
 
 func (s *randomizedCRRSimulation) rememberSyncedTS() {
-	if syncedTS := s.h.calculator.SyncedTS(); syncedTS > s.lastSyncedTS {
-		s.lastSyncedTS = syncedTS
+	state := s.h.calculator.StateSnapshot()
+	if state.SyncedTS > s.lastState.SyncedTS || state.LastCheckpoint > s.lastState.LastCheckpoint {
+		s.lastState = state
 	}
 }
 

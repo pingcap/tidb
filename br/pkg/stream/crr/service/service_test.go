@@ -118,12 +118,56 @@ func TestServiceTracksFailures(t *testing.T) {
 	require.Eventually(t, func() bool {
 		snapshot := svc.Status()
 		return snapshot.State == stateDegraded &&
+			!snapshot.Ready &&
 			snapshot.ConsecutiveFailures > 0 &&
-			snapshot.LastError != ""
+			snapshot.LastError != "" &&
+			!snapshot.LastErrorTime.IsZero() &&
+			!snapshot.LastEventTime.IsZero()
 	}, 5*time.Second, 20*time.Millisecond)
 
 	cancel()
 	require.NoError(t, <-done)
+}
+
+func TestServiceDoesNotDoubleCountCalculatorFailure(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(ctx, t)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	checker := &cancelingFailingDownstreamChecker{cancel: cancel}
+	svc, err := New(
+		Deps{
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(checker),
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+
+	require.NoError(t, <-done)
+
+	snapshot := svc.Status()
+	require.Equal(t, uint64(1), snapshot.ConsecutiveFailures)
+	require.Contains(t, snapshot.LastError, "boom for")
+	require.False(t, snapshot.LastErrorTime.IsZero())
+	require.False(t, snapshot.LastEventTime.IsZero())
 }
 
 func TestServiceWaitsForCheckpointWatch(t *testing.T) {
@@ -220,7 +264,9 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 		return snapshot.SafeCheckpoint == initialCheckpoint &&
 			snapshot.State == stateDegraded &&
 			snapshot.LastError == "watch boom" &&
-			snapshot.ConsecutiveFailures == 1
+			snapshot.ConsecutiveFailures == 1 &&
+			!snapshot.LastErrorTime.IsZero() &&
+			!snapshot.LastEventTime.IsZero()
 	}, 5*time.Second, 20*time.Millisecond)
 
 	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
@@ -231,6 +277,167 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 		snapshot := svc.Status()
 		return snapshot.SafeCheckpoint == upstreamCheckpoint &&
 			snapshot.State == stateRunning &&
+			snapshot.ConsecutiveFailures == 0 &&
+			snapshot.LastError == ""
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestServiceLoadsPersistedResumeState(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(ctx, t)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+
+	firstRecord, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, firstRecord.CheckpointTS)
+	h.requireReplicateAllPending()
+
+	secondRecord, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	h.requireCheckpointAdvancedByTick(firstRecord.CheckpointTS, secondRecord.CheckpointTS)
+
+	stateStore := &inMemoryResumeStateStore{
+		state: &PersistentState{
+			LastCheckpoint: firstRecord.CheckpointTS,
+			SyncedTS:       firstRecord.FlushTS,
+			SyncedByStore:  map[uint64]uint64{1: firstRecord.FlushTS},
+		},
+	}
+	svc, err := New(
+		Deps{
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return snapshot.SafeCheckpoint == firstRecord.CheckpointTS &&
+			snapshot.SyncedTS == firstRecord.FlushTS &&
+			snapshot.PendingFileCount > 0 &&
+			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
+			snapshot.Statistic.EstimatedSyncLogFileCount == 1
+	}, 5*time.Second, 20*time.Millisecond)
+
+	h.requireReplicateAllPending()
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return snapshot.SafeCheckpoint == secondRecord.CheckpointTS &&
+			snapshot.SyncedTS == secondRecord.FlushTS &&
+			stateStore.savedState().LastCheckpoint == secondRecord.CheckpointTS &&
+			stateStore.savedState().SyncedTS == secondRecord.FlushTS &&
+			stateStore.savedState().SyncedByStore[1] == secondRecord.FlushTS
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestServiceRetriesFailedResumeStatePersist(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(ctx, t)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{saveFailuresLeft: 1}
+
+	svc, err := New(
+		Deps{
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	record, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, record.CheckpointTS)
+	h.requireReplicateAllPending()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		state := stateStore.savedState()
+		return state.LastCheckpoint == record.CheckpointTS &&
+			state.SyncedTS == record.FlushTS &&
+			stateStore.saveCount() >= 2 &&
+			snapshot.Ready &&
+			snapshot.State == stateRunning &&
+			snapshot.ConsecutiveFailures == 0 &&
+			snapshot.LastError == ""
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestServiceRetriesFailedResumeStateLoad(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(ctx, t)
+	stateStore := &inMemoryResumeStateStore{loadFailuresLeft: 1}
+
+	svc, err := New(
+		Deps{
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: 5 * time.Millisecond,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return stateStore.loadCount() >= 2 &&
+			snapshot.State == stateRunning &&
+			snapshot.Ready &&
 			snapshot.ConsecutiveFailures == 0 &&
 			snapshot.LastError == ""
 	}, 5*time.Second, 20*time.Millisecond)
@@ -269,6 +476,16 @@ func TestServiceStatusEndpoints(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
+
+	status.applyEvent(checkpoint.CheckpointEvent{
+		Type: checkpoint.EventCalculationFailed,
+		Time: time.Now(),
+		Err:  fmt.Errorf("boom"),
+	})
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -320,6 +537,34 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 
 	snapshot.Statistic.PlannedFileSuffixCounts[".txt"] = 99
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, status.snapshotCopy().Statistic.PlannedFileSuffixCounts)
+}
+
+func TestStatusStorePreservesFailureStoreCountAndTracksZeroAliveStores(t *testing.T) {
+	status := newStatusStore("task")
+	status.start()
+	status.applyEvent(checkpoint.CheckpointEvent{
+		Type:            checkpoint.EventRoundPlanned,
+		Time:            time.Now(),
+		AliveStoreCount: 3,
+	})
+	status.applyEvent(checkpoint.CheckpointEvent{
+		Type: checkpoint.EventCalculationFailed,
+		Time: time.Now(),
+		Err:  fmt.Errorf("boom"),
+	})
+
+	snapshot := status.snapshotCopy()
+	require.Equal(t, 3, snapshot.AliveStoreCount)
+	require.False(t, snapshot.Ready)
+
+	status.applyEvent(checkpoint.CheckpointEvent{
+		Type:            checkpoint.EventRoundPlanned,
+		Time:            time.Now(),
+		AliveStoreCount: 0,
+	})
+
+	snapshot = status.snapshotCopy()
+	require.Equal(t, 0, snapshot.AliveStoreCount)
 }
 
 func TestServiceRegisterPanicsOnNilMux(t *testing.T) {
@@ -414,6 +659,16 @@ func (failingDownstreamChecker) FileExists(ctx context.Context, name string) (bo
 	return false, fmt.Errorf("boom for %s", name)
 }
 
+type cancelingFailingDownstreamChecker struct {
+	once   sync.Once
+	cancel context.CancelFunc
+}
+
+func (c *cancelingFailingDownstreamChecker) FileExists(ctx context.Context, name string) (bool, error) {
+	c.once.Do(c.cancel)
+	return false, fmt.Errorf("boom for %s", name)
+}
+
 type watchErrorPDSim struct {
 	*testutil.PDSim
 	mu        sync.Mutex
@@ -431,4 +686,77 @@ func (p *watchErrorPDSim) WaitGlobalCheckpointAdvance(ctx context.Context, taskN
 	}
 	p.mu.Unlock()
 	return p.PDSim.WaitGlobalCheckpointAdvance(ctx, taskName, current)
+}
+
+type inMemoryResumeStateStore struct {
+	mu               sync.Mutex
+	state            *PersistentState
+	loadFailuresLeft int
+	loads            int
+	saveFailuresLeft int
+	saves            int
+}
+
+func (s *inMemoryResumeStateStore) LoadState(ctx context.Context) (*PersistentState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loads++
+	if s.loadFailuresLeft > 0 {
+		s.loadFailuresLeft--
+		return nil, fmt.Errorf("load boom")
+	}
+	if s.state == nil {
+		return nil, nil
+	}
+	state := *s.state
+	state.SyncedByStore = copyUint64Map(state.SyncedByStore)
+	return &state, nil
+}
+
+func (s *inMemoryResumeStateStore) SaveState(ctx context.Context, state PersistentState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saves++
+	if s.saveFailuresLeft > 0 {
+		s.saveFailuresLeft--
+		return fmt.Errorf("persist boom")
+	}
+	copied := state
+	copied.SyncedByStore = copyUint64Map(state.SyncedByStore)
+	s.state = &copied
+	return nil
+}
+
+func (s *inMemoryResumeStateStore) savedState() PersistentState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return PersistentState{}
+	}
+	state := *s.state
+	state.SyncedByStore = copyUint64Map(state.SyncedByStore)
+	return state
+}
+
+func (s *inMemoryResumeStateStore) saveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves
+}
+
+func (s *inMemoryResumeStateStore) loadCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loads
+}
+
+func copyUint64Map(input map[uint64]uint64) map[uint64]uint64 {
+	if input == nil {
+		return nil
+	}
+	cloned := make(map[uint64]uint64, len(input))
+	for k, v := range input {
+		cloned[k] = v
+	}
+	return cloned
 }

@@ -18,11 +18,11 @@ import (
 	"hash/fnv"
 	"math/rand"
 	"testing"
+	"time"
 )
 
 const (
 	defaultTaskName                = "drr_test_task"
-	defaultDeterministicSeed int64 = 0x435252
 	defaultTaskStartPhysical int64 = 1_700_000_000_000
 	regionIDTag                    = 'r'
 )
@@ -70,11 +70,12 @@ type TestContext struct {
 }
 
 func NewTestContext(t testing.TB) *TestContext {
-	return NewTestContextWithSeed(t, defaultDeterministicSeed)
+	return NewTestContextWithSeed(t, time.Now().Unix())
 }
 
 func NewTestContextWithSeed(t testing.TB, seed int64) *TestContext {
 	t.Helper()
+	t.Log("SEED: ", seed)
 	return &TestContext{T: t, seed: seed}
 }
 

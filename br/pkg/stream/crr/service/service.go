@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
+	"go.uber.org/zap"
 )
 
 const DefaultRetryInterval = time.Second
@@ -39,6 +41,15 @@ type fileExistenceChecker interface {
 	FileExists(ctx context.Context, name string) (bool, error)
 }
 
+// PersistentState captures the persisted calculator progress used for service restart.
+type PersistentState = checkpoint.PersistentState
+
+// ResumeStateStore persists and restores service resume state.
+type ResumeStateStore interface {
+	LoadState(ctx context.Context) (*PersistentState, error)
+	SaveState(ctx context.Context, state PersistentState) error
+}
+
 // ObjectSyncChecker reports whether an object is already safe for CRR restore-side use.
 type ObjectSyncChecker = checkpoint.ObjectSyncChecker
 
@@ -53,6 +64,7 @@ type Deps struct {
 	Watcher  upstreamCheckpointWaiter
 	Upstream checkpoint.UpstreamStorageReader
 	Sync     ObjectSyncChecker
+	State    ResumeStateStore
 }
 
 // CalculatorConfig controls the inner checkpoint calculator behavior.
@@ -65,7 +77,11 @@ type Service struct {
 	observer *statusObserver
 	pd       upstreamCheckpointWaiter
 
-	cfg Config
+	state ResumeStateStore
+	cfg   Config
+
+	resumeStateInitialized bool
+	pendingResumeState     *PersistentState
 }
 
 // New creates a CRR service with an attached calculator observer.
@@ -100,6 +116,7 @@ func New(
 		status:   status,
 		observer: observer,
 		pd:       deps.Watcher,
+		state:    deps.State,
 		cfg:      cfg,
 	}, nil
 }
@@ -111,19 +128,42 @@ func (s *Service) Run(ctx context.Context) error {
 
 	for {
 		if ctx.Err() != nil {
+			s.flushPendingResumeStateOnShutdown()
 			return nil
+		}
+		if err := s.prepareResumeState(ctx); err != nil {
+			if shouldStop(ctx, err) {
+				return nil
+			}
+			s.recordServiceFailure(err)
+			if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
+				return nil
+			}
+			continue
 		}
 
 		s.observer.BeginCalculationRound()
 		lastCheckpoint := s.calc.LastCheckpoint()
 		nextCheckpoint, err := s.calc.ComputeNextCheckpoint(ctx)
 		if err == nil {
+			s.queueResumeStateSave(lastCheckpoint, nextCheckpoint)
+			if err := s.flushPendingResumeState(ctx); err != nil {
+				if shouldStop(ctx, err) {
+					s.flushPendingResumeStateOnShutdown()
+					return nil
+				}
+				s.recordServiceFailure(err)
+				if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
+					return nil
+				}
+				continue
+			}
 			if nextCheckpoint == lastCheckpoint {
 				if err := s.waitCheckpointAdvance(ctx, lastCheckpoint); err != nil {
 					if shouldStop(ctx, err) {
 						return nil
 					}
-					s.recordFailure(err)
+					s.recordServiceFailure(err)
 					if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
 						return nil
 					}
@@ -134,7 +174,6 @@ func (s *Service) Run(ctx context.Context) error {
 		if shouldStop(ctx, err) {
 			return nil
 		}
-		s.recordFailure(err)
 		if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
 			return nil
 		}
@@ -145,9 +184,11 @@ func (s *Service) waitCheckpointAdvance(ctx context.Context, current uint64) err
 	return s.pd.WaitGlobalCheckpointAdvance(ctx, s.cfg.TaskName, current)
 }
 
-func (s *Service) recordFailure(err error) {
+// recordServiceFailure reports failures that happen outside ComputeNextCheckpoint.
+func (s *Service) recordServiceFailure(err error) {
 	s.observer.OnCheckpointEvent(checkpoint.CheckpointEvent{
 		Type:     checkpoint.EventCalculationFailed,
+		Time:     time.Now(),
 		TaskName: s.cfg.TaskName,
 		Err:      err,
 	})
@@ -165,6 +206,65 @@ func shouldStop(ctx context.Context, err error) bool {
 // Status returns a consistent snapshot of the current service status.
 func (s *Service) Status() StatusSnapshot {
 	return s.status.snapshotCopy()
+}
+
+func (s *Service) prepareResumeState(ctx context.Context) error {
+	if !s.resumeStateInitialized {
+		return s.initializeResumeState(ctx)
+	}
+	return s.flushPendingResumeState(ctx)
+}
+
+func (s *Service) initializeResumeState(ctx context.Context) error {
+	if s.state != nil {
+		state, err := s.state.LoadState(ctx)
+		if err != nil {
+			return fmt.Errorf("load resume state: %w", err)
+		}
+		if state != nil {
+			if err := s.calc.RestorePersistentState(*state); err != nil {
+				return err
+			}
+			s.status.setPersistentState(*state)
+		}
+	}
+	s.status.clearFailure()
+	s.resumeStateInitialized = true
+	return nil
+}
+
+func (s *Service) queueResumeStateSave(lastCheckpoint uint64, nextCheckpoint uint64) {
+	if s.state == nil || nextCheckpoint <= lastCheckpoint {
+		return
+	}
+	state := s.calc.StateSnapshot()
+	s.pendingResumeState = &state
+}
+
+func (s *Service) flushPendingResumeState(ctx context.Context) error {
+	if s.pendingResumeState == nil {
+		return nil
+	}
+	if err := s.state.SaveState(ctx, *s.pendingResumeState); err != nil {
+		return fmt.Errorf("save resume state: %w", err)
+	}
+	s.pendingResumeState = nil
+	s.status.clearFailure()
+	return nil
+}
+
+func (s *Service) flushPendingResumeStateOnShutdown() {
+	if s.pendingResumeState == nil || s.state == nil {
+		return
+	}
+	persistCtx, cancel := context.WithTimeout(context.Background(), s.cfg.RetryInterval)
+	defer cancel()
+	if err := s.flushPendingResumeState(persistCtx); err != nil {
+		log.Warn("failed to flush pending CRR resume state during shutdown",
+			zap.String("task", s.cfg.TaskName),
+			zap.Error(err),
+		)
+	}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

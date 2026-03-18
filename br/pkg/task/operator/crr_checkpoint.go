@@ -17,7 +17,11 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -91,17 +95,27 @@ func NewCRRCheckpointService(
 		mgr.Close()
 		return nil, nil, err
 	}
+	stateStore, err := buildResumeStateStore(cfg.CRRConfig.TaskName, upstreamStorage, cfg.CRRConfig.StateStorageSubDir)
+	if err != nil {
+		if downstreamStorage != nil {
+			downstreamStorage.Close()
+		}
+		upstreamStorage.Close()
+		closeEtcdClient(etcdCli)
+		mgr.Close()
+		return nil, nil, err
+	}
 	svc, err := service.New(
 		service.Deps{
 			PD:       env,
 			Watcher:  streamhelper.NewMetaDataClient(etcdCli),
 			Upstream: upstreamStorage,
 			Sync:     syncChecker,
+			State:    stateStore,
 		},
 		service.Config{
 			CalculatorConfig: service.CalculatorConfig{
 				TaskName:            cfg.CRRConfig.TaskName,
-				InitialSyncedTS:     cfg.CRRConfig.InitialSyncedTS,
 				PollInterval:        cfg.CRRConfig.PollInterval,
 				MetaReadConcurrency: cfg.CRRConfig.MetaReadConcurrency,
 			},
@@ -142,6 +156,77 @@ func buildObjectSyncChecker(
 	return nil, fmt.Errorf(
 		"downstream storage must not be nil when upstream storage cannot check object sync",
 	)
+}
+
+type storageResumeStateStore struct {
+	storage storeapi.Storage
+	path    string
+}
+
+func buildResumeStateStore(
+	taskName string,
+	upstreamStorage storeapi.Storage,
+	subDir string,
+) (service.ResumeStateStore, error) {
+	if subDir == "" {
+		return nil, nil
+	}
+	normalizedSubDir, err := normalizeStorageSubDir(subDir)
+	if err != nil {
+		return nil, err
+	}
+	return &storageResumeStateStore{
+		storage: upstreamStorage,
+		path:    path.Join(normalizedSubDir, encodeStoragePathComponent(taskName), "resume-state.json"),
+	}, nil
+}
+
+func normalizeStorageSubDir(subDir string) (string, error) {
+	trimmed := strings.Trim(subDir, "/")
+	if trimmed == "" {
+		return "", fmt.Errorf("state storage subdir must not be empty")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("state storage subdir must stay within upstream storage, got %q", subDir)
+	}
+	return cleaned, nil
+}
+
+func encodeStoragePathComponent(component string) string {
+	return hex.EncodeToString([]byte(component))
+}
+
+func (s *storageResumeStateStore) LoadState(ctx context.Context) (*service.PersistentState, error) {
+	exists, err := s.storage.FileExists(ctx, s.path)
+	if err != nil {
+		return nil, fmt.Errorf("check persisted resume state %s: %w", s.path, err)
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	payload, err := s.storage.ReadFile(ctx, s.path)
+	if err != nil {
+		return nil, fmt.Errorf("read persisted resume state %s: %w", s.path, err)
+	}
+
+	var state service.PersistentState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return nil, fmt.Errorf("decode persisted resume state %s: %w", s.path, err)
+	}
+	return &state, nil
+}
+
+func (s *storageResumeStateStore) SaveState(ctx context.Context, state service.PersistentState) error {
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode persisted resume state %s: %w", s.path, err)
+	}
+	if err := s.storage.WriteFile(ctx, s.path, payload); err != nil {
+		return fmt.Errorf("write persisted resume state %s: %w", s.path, err)
+	}
+	return nil
 }
 
 func closeEtcdClient(etcdCli *clientv3.Client) {

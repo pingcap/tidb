@@ -17,6 +17,7 @@ package checkpoint
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -115,9 +116,15 @@ func (c existenceSyncChecker) FileSynced(ctx context.Context, name string) (bool
 // CheckpointCalculatorConfig controls checkpoint calculation behavior.
 type CheckpointCalculatorConfig struct {
 	TaskName            string
-	InitialSyncedTS     uint64
 	PollInterval        time.Duration
 	MetaReadConcurrency int
+}
+
+// PersistentState captures the calculator progress needed to resume after restart.
+type PersistentState struct {
+	LastCheckpoint uint64            `json:"last_checkpoint"`
+	SyncedTS       uint64            `json:"synced_ts"`
+	SyncedByStore  map[uint64]uint64 `json:"synced_by_store,omitempty"`
 }
 
 // Calculator calculates a downstream-safe checkpoint for CRR.
@@ -167,7 +174,6 @@ func NewCalculator(
 		cfg:      cfg,
 		observer: observer,
 		state: calculatorState{
-			syncedTS:      cfg.InitialSyncedTS,
 			syncedByStore: map[uint64]uint64{},
 		},
 	}, nil
@@ -222,6 +228,30 @@ func (c *Calculator) SyncedTS() uint64 {
 // LastCheckpoint returns the most recent returned checkpoint.
 func (c *Calculator) LastCheckpoint() uint64 {
 	return c.state.lastCheckpoint
+}
+
+// StateSnapshot returns a snapshot of calculator progress suitable for persistence.
+func (c *Calculator) StateSnapshot() PersistentState {
+	return PersistentState{
+		LastCheckpoint: c.state.lastCheckpoint,
+		SyncedTS:       c.state.syncedTS,
+		SyncedByStore:  maps.Clone(c.state.syncedByStore),
+	}
+}
+
+// RestorePersistentState overwrites the calculator progress before checkpoint
+// calculation begins.
+func (c *Calculator) RestorePersistentState(state PersistentState) error {
+	if c.state.lastCheckpoint != 0 {
+		return fmt.Errorf("cannot restore persistent state after checkpoint calculation started")
+	}
+	c.state.lastCheckpoint = state.LastCheckpoint
+	c.state.syncedTS = state.SyncedTS
+	c.state.syncedByStore = maps.Clone(state.SyncedByStore)
+	if c.state.syncedByStore == nil {
+		c.state.syncedByStore = map[uint64]uint64{}
+	}
+	return nil
 }
 
 func (d CalculatorDeps) validate() error {
