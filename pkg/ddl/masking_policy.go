@@ -16,11 +16,11 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -382,11 +382,10 @@ func restoreMaskingExpression(expr ast.ExprNode) (string, error) {
 	return sb.String(), nil
 }
 
-func validateMaskingPolicyExpression(_ sessionctx.Context, _ *model.TableInfo, _ *model.ColumnInfo, exprStr string) error {
-	// Validate that the expression can be parsed correctly.
-	// This prevents invalid expressions (e.g., unknown functions) from being stored.
-	// We use a simpler approach: try to parse as SELECT which catches most errors.
-	_, err := parser.New().ParseOneStmt(fmt.Sprintf("SELECT %s", exprStr), "", "")
+func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, _ *model.ColumnInfo, exprStr string) error {
+	// Validate expression semantics at DDL time (fail-closed), not just SQL syntax.
+	// This catches unknown functions like `unknown_function(c)` before persisting policy.
+	_, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), exprStr, expression.WithTableInfo("", tblInfo))
 	if err != nil {
 		return errors.Trace(err)
 	}
