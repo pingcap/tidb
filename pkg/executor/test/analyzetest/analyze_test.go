@@ -31,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -43,8 +45,19 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+type killQuerySessionManager struct {
+	*testkit.MockSessionManager
+}
+
+func (sm *killQuerySessionManager) Kill(connID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	if sess := sm.Conn[connID]; sess != nil {
+		sess.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	}
+}
 
 func TestAnalyzePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -137,6 +150,104 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
+	t.Run("cancel_on_ctx", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+		tk.MustExec("set @@tidb_analyze_version = 2")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		ctx, cancel := context.WithCancel(baseCtx)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before cancel, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		cancel()
+
+		select {
+		case <-done:
+			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), "context canceled")
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after context canceled")
+		}
+	})
+	t.Run("kill_query", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
+		dom := domain.GetDomain(tk.Session())
+		origSM := dom.InfoSyncer().GetSessionManager()
+		sm := &killQuerySessionManager{
+			MockSessionManager: &testkit.MockSessionManager{
+				Conn: make(map[uint64]sessiontypes.Session),
+			},
+		}
+		dom.InfoSyncer().SetSessionManager(sm)
+		defer dom.InfoSyncer().SetSessionManager(origSM)
+
+		tkAnalyze := testkit.NewTestKit(t, store)
+		tkAnalyze.Session().SetSessionManager(sm)
+		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
+		tkAnalyze.MustExec("use test")
+		tkAnalyze.MustExec("drop table if exists t")
+		tkAnalyze.MustExec("create table t(a int)")
+		tkAnalyze.MustExec("insert into t values (1), (2)")
+		tkAnalyze.MustExec("set @@tidb_analyze_version = 2")
+
+		tkKiller := testkit.NewTestKit(t, store)
+		tkKiller.Session().GetSessionVars().User = &auth.UserIdentity{}
+		tkKiller.Session().SetSessionManager(sm)
+		sm.Conn[tkKiller.Session().GetSessionVars().ConnectionID] = tkKiller.Session()
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tkAnalyze.Session().ExecuteInternal(baseCtx, "analyze table t")
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before kill query, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		require.Eventually(t, func() bool {
+			rows := tkKiller.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+
+		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
+		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
+			rows := tkKiller.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), exeerrors.ErrQueryInterrupted.Error())
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after kill query")
+		}
+	})
 }
 
 func TestAnalyzeParameters(t *testing.T) {
@@ -628,6 +739,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_build_stats_concurrency = 4")
 	tk.MustExec("create table t(a int, index idx(a))")
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
 	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
@@ -1957,6 +2069,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2030,6 +2143,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
