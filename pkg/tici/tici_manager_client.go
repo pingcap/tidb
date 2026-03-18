@@ -103,50 +103,6 @@ type keyspaceStorage interface {
 	GetCodec() tikv.Codec
 }
 
-const preSplitImportShardsRPC = "/tici.MetaService/PreSplitImportShards"
-
-// PreSplitImportShardMeta describes one merged SortedKVMeta group for TiCI pre-split analysis.
-type PreSplitImportShardMeta struct {
-	EleId         int64  `json:"ele_id,omitempty"`
-	StartKey      []byte `json:"start_key,omitempty"`
-	EndKey        []byte `json:"end_key,omitempty"`
-	TotalKvSize   uint64 `json:"total_kv_size,omitempty"`
-	TotalKvCnt    uint64 `json:"total_kv_cnt,omitempty"`
-	DataFileCount int32  `json:"data_file_count,omitempty"`
-	StatFileCount int32  `json:"stat_file_count,omitempty"`
-}
-
-// PreSplitImportShardsRequest is a temporary placeholder request until TiCI proto is updated.
-// It is sent through grpc.ClientConn.Invoke directly so TiDB can prepare the integration path first.
-type PreSplitImportShardsRequest struct {
-	TidbTaskId     string                     `json:"tidb_task_id,omitempty"`
-	TableId        int64                      `json:"table_id,omitempty"`
-	IndexIds       []int64                    `json:"index_ids,omitempty"`
-	ScanSnapshotTs uint64                     `json:"scan_snapshot_ts,omitempty"`
-	StartKey       []byte                     `json:"start_key,omitempty"`
-	EndKey         []byte                     `json:"end_key,omitempty"`
-	TotalKvSize    uint64                     `json:"total_kv_size,omitempty"`
-	TotalKvCnt     uint64                     `json:"total_kv_cnt,omitempty"`
-	DataFileCount  int32                      `json:"data_file_count,omitempty"`
-	StatFileCount  int32                      `json:"stat_file_count,omitempty"`
-	MetaGroups     []*PreSplitImportShardMeta `json:"meta_groups,omitempty"`
-	KeyspaceId     uint32                     `json:"keyspace_id,omitempty"`
-}
-
-// GetKeyspaceId makes the placeholder request compatible with existing keyspace match helpers in tests.
-func (r *PreSplitImportShardsRequest) GetKeyspaceId() uint32 {
-	if r == nil {
-		return 0
-	}
-	return r.KeyspaceId
-}
-
-// PreSplitImportShardsResponse is a temporary placeholder response until TiCI proto is updated.
-type PreSplitImportShardsResponse struct {
-	Status       ErrorCode `json:"status,omitempty"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-}
-
 func newMetaClient(addr string) (*metaClient, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -471,7 +427,6 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 }
 
 // PreSplitImportShards asks TiCI to pre-split internal shards for an incoming TiDB global-sort ingest job.
-// This is a temporary integration path before the TiCI proto is regenerated in TiDB.
 func (t *ManagerCtx) PreSplitImportShards(ctx context.Context, req *PreSplitImportShardsRequest) error {
 	if handled, err := maybeMockPreSplitImportShards(req); handled {
 		return err
@@ -486,12 +441,7 @@ func (t *ManagerCtx) PreSplitImportShards(ctx context.Context, req *PreSplitImpo
 	if err := t.checkMetaClient(); err != nil {
 		return err
 	}
-	if t.metaClient.conn == nil {
-		return errors.New("meta service connection is nil")
-	}
-
-	resp := &PreSplitImportShardsResponse{}
-	err := t.metaClient.conn.Invoke(ctx, preSplitImportShardsRPC, req, resp)
+	resp, err := t.metaClient.client.PreSplitImportShards(ctx, req)
 	if err != nil {
 		return err
 	}

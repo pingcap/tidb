@@ -504,7 +504,7 @@ func generateGlobalSortIngestPlan(
 
 	if shouldCallTiCIPreSplit(backfillMeta) {
 		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
-		err := triggerTiCIPreSplitImportShards(timeoutCtx, store, task, backfillMeta, eleIDs, kvMetaGroups)
+		err := triggerTiCIPreSplitImportShards(timeoutCtx, store, backfillMeta, eleIDs, kvMetaGroups)
 		cancel()
 		if err != nil {
 			logger.Error("tici pre-split shard failed, fallback to default global-sort ingest planning",
@@ -582,12 +582,11 @@ func shouldCallTiCIPreSplit(backfillMeta *BackfillTaskMeta) bool {
 func triggerTiCIPreSplitImportShards(
 	ctx context.Context,
 	store storageWithPDAndCodec,
-	task *proto.Task,
 	backfillMeta *BackfillTaskMeta,
 	eleIDs []int64,
 	kvMetaGroups []*external.SortedKVMeta,
 ) error {
-	req, err := buildTiCIPreSplitImportShardsRequest(task, backfillMeta, eleIDs, kvMetaGroups)
+	req, err := buildTiCIPreSplitImportShardsRequest(backfillMeta, eleIDs, kvMetaGroups)
 	if err != nil {
 		return err
 	}
@@ -598,7 +597,6 @@ func triggerTiCIPreSplitImportShards(
 }
 
 func buildTiCIPreSplitImportShardsRequest(
-	task *proto.Task,
 	backfillMeta *BackfillTaskMeta,
 	eleIDs []int64,
 	kvMetaGroups []*external.SortedKVMeta,
