@@ -979,7 +979,12 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && expression.ConstExprConsiderPlanCache(con, useCache) {
-				ret, _, err := expression.EvalBool(b.ctx.GetExprCtx().GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
+				// Constant predicate folding during planning should not inherit the
+				// outer statement's truncate handling. For view expansion inside DML,
+				// expressions like `WHERE ''` are planned as part of a SELECT and
+				// should not be rejected as invalid view definitions.
+				exprCtx := exprctx.CtxWithHandleTruncateErrLevel(b.ctx.GetExprCtx(), errctx.LevelIgnore)
+				ret, _, err := expression.EvalBool(exprCtx.GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
