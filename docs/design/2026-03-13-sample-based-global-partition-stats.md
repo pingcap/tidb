@@ -121,7 +121,7 @@ TiDB V2 stats supports two row-level sampling methods:
 
 - **A-Res (weighted reservoir sampling)** ([Efraimidis & Spirakis, 2006](https://www.sciencedirect.com/science/article/abs/pii/S002001900500298X)): Maintains exactly K samples via a min-heap of random keys. Fixed output size regardless of input. Used when `NumSamples > 0` (e.g., `ANALYZE TABLE t WITH 10000 SAMPLES`).
 
-Cross-partition merging requires **bounded memory** and **proportional representation**. This design achieves both by pruning each partition's samples using the same random value that was used for the original Bernoulli inclusion — a tighter threshold on the same draw:
+Cross-partition merging requires **bounded memory** and **proportional representation**. This design achieves both by pruning each partition's samples using the sample's weight — for Bernoulli, the same random value that was used for the original inclusion; for A-Res, the existing reservoir key. Pruning applies a tighter threshold on the weight:
 
 1. TiKV collects samples via Bernoulli at the auto-calculated rate, and derives a weight from the same random draw (see below)
 2. After region merge within a partition, the full sample set (~110K) is used to build partition histograms and TopN (unchanged quality)
