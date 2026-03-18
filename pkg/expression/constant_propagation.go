@@ -357,7 +357,7 @@ func (s *propConstSolver) Clear() {
 func (s *propConstSolver) propagateConstantEQ() {
 	intest.Assert(len(s.eqMapper) == 0 && s.eqMapper != nil)
 	visited := make([]bool, len(s.conditions))
-	if PlanCacheGenericEnabled(s.ctx) {
+	if PlanCacheGenericRewriteEnabled(s.ctx) {
 		for i := range s.conditions {
 			if MaybeOverOptimized4PlanCache(s.ctx, s.conditions[i]) {
 				visited[i] = true
@@ -412,7 +412,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 	} else {
 		s.unionSet.GrowNewIntSet(len(s.columns))
 	}
-	if PlanCacheGenericEnabled(s.ctx) {
+	if PlanCacheGenericRewriteEnabled(s.ctx) {
 		for i := range s.conditions {
 			if MaybeOverOptimized4PlanCache(s.ctx, s.conditions[i]) {
 				visited[i] = true
@@ -815,18 +815,6 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
-	if PlanCacheGenericEnabled(s.ctx) {
-		for i := range s.filterConds {
-			if MaybeOverOptimized4PlanCache(s.ctx, s.filterConds[i]) {
-				visited[i] = true
-			}
-		}
-		for i := range s.joinConds {
-			if MaybeOverOptimized4PlanCache(s.ctx, s.joinConds[i]) {
-				visited[i+lenFilters] = true
-			}
-		}
-	}
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -889,10 +877,6 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 			continue
 		}
 		cond := conds[k]
-		if PlanCacheGenericEnabled(s.ctx) && MaybeOverOptimized4PlanCache(s.ctx, cond) {
-			visited[k+offset] = true
-			continue
-		}
 		if !ExprFromSchema(cond, schema) {
 			visited[k+offset] = true
 			continue

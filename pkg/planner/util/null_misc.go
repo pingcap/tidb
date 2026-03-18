@@ -106,15 +106,6 @@ func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema
 	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
 		return false
 	}
-	if expression.PlanCacheGenericEnabled(ctx.GetExprCtx()) &&
-		expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), expr) {
-		// In generic-plan mode, keep null-reject inference away from leaf predicates whose truth value
-		// still depends on runtime parameters after null substitution.
-		// TODO: teach null-reject inference to reason symbolically about null-intolerant functions so
-		// leaf predicates like comparisons/arithmetic can still be proven null-rejected without freezing
-		// runtime parameters into the cached plan template.
-		return false
-	}
 	exprCtx := ctx.GetNullRejectCheckExprCtx()
 	sc := ctx.GetSessionVars().StmtCtx
 	result, err := expression.EvaluateExprWithNull(exprCtx, schema, expr, skipPlanCacheCheck)

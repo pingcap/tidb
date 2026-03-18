@@ -711,7 +711,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 
 // canSurviveAsStandaloneEqOrInAccess reports whether cond is an original Eq/In-style
 // predicate that the existing finalize rules in this function would still keep as a
-// standalone access by itself. Generic mode may fall back only to such original
+// standalone access by itself. Generic-rewrite mode may fall back only to such original
 // holders when a same-slot merge turns out to be bind-sensitive.
 func canSurviveAsStandaloneEqOrInAccess(cond expression.Expression) bool {
 	if !allEqOrIn(cond) {
@@ -745,15 +745,15 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	newConditions = make([]expression.Expression, 0, len(conditions))
 	columnValues = make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
-	genericForPlanCache := expression.PlanCacheGenericEnabled(sctx.ExprCtx) && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...)
-	// The following slices are only meaningful in generic mode.
-	// Generic mode still runs the normal same-slot intersection so we can detect contradiction
+	genericForPlanCache := expression.PlanCacheGenericRewriteEnabled(sctx.ExprCtx) && expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...)
+	// The following slices are only meaningful in generic-rewrite mode.
+	// Generic-rewrite mode still runs the normal same-slot intersection so we can detect contradiction
 	// and classify the slot as point-like vs range-like. What it must not do is cache a new
 	// Eq/In expression synthesized from a merge whose shape depends on current bind values.
 	// mergedHasMutable[i] records that slot i has such a bind-sensitive merge.
 	mergedHasMutable := make([]bool, len(cols))
 	// standaloneHolderOffsets[i] stores the chosen original standalone holder for slot i.
-	// The offset is enough: if generic mode rejects the merged result, we can recover the
+	// The offset is enough: if generic-rewrite mode rejects the merged result, we can recover the
 	// holder as conditions[offset] and return the other same-slot predicates as residual
 	// filters. There is no need to keep a second parallel slice of expressions.
 	standaloneHolderOffsets := make([]int, len(cols))
@@ -767,7 +767,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			continue
 		}
 		if genericForPlanCache && canSurviveAsStandaloneEqOrInAccess(cond) {
-			// If this slot later proves to be bind-sensitive, generic mode can only fall back to one
+			// If this slot later proves to be bind-sensitive, generic-rewrite mode can only fall back to one
 			// original standalone holder. Prefer an immutable holder over a mutable one, but only when
 			// that immutable predicate can still survive standalone finalize by itself.
 			holderOffset := standaloneHolderOffsets[offset]
@@ -825,7 +825,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		if points[i] == nil {
 			// There exists an interval whose length is larger than 0
 			if genericForPlanCache && mergedHasMutable[i] {
-				// The merge result is still useful for shape detection, but generic mode may keep only
+				// The merge result is still useful for shape detection, but generic-rewrite mode may keep only
 				// an original standalone holder here; it must not materialize a bind-sensitive merge
 				// into a new cached Eq/In access.
 				holderOffset := standaloneHolderOffsets[i]
@@ -847,7 +847,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		} else {
 			// All Intervals are single points
 			if genericForPlanCache && mergedHasMutable[i] {
-				// The merged single-point shape depends on current bind values, so generic mode must
+				// The merged single-point shape depends on current bind values, so generic-rewrite mode must
 				// not rewrite it into a new synthetic Eq/In access for the cached template.
 				holderOffset := standaloneHolderOffsets[i]
 				if holderOffset != -1 {

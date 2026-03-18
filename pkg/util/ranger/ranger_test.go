@@ -1862,7 +1862,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 }
 
-func TestExtractEqAndInConditionKeepsStableGenericAccess(t *testing.T) {
+func TestExtractEqAndInConditionKeepsStableGenericRewriteAccess(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	sctx := tk.Session()
@@ -1884,11 +1884,11 @@ func TestExtractEqAndInConditionKeepsStableGenericAccess(t *testing.T) {
 		}
 	}
 
-	origGenericPlan := sctx.GetSessionVars().EnablePlanCacheGenericPlan
+	origGenericRewrite := sctx.GetSessionVars().EnablePlanCacheGenericRewrite
 	sctx.GetSessionVars().StmtCtx.EnablePlanCache()
-	sctx.GetSessionVars().EnablePlanCacheGenericPlan = true
+	sctx.GetSessionVars().EnablePlanCacheGenericRewrite = true
 	defer func() {
-		sctx.GetSessionVars().EnablePlanCacheGenericPlan = origGenericPlan
+		sctx.GetSessionVars().EnablePlanCacheGenericRewrite = origGenericRewrite
 	}()
 
 	ectx := sctx.GetExprCtx().GetEvalCtx()

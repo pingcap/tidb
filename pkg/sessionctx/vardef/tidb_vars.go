@@ -1032,9 +1032,20 @@ const (
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 
-	// TiDBEnablePlanCacheGenericPlan controls whether to use a generic-plan strategy for some parameter-sensitive
-	// optimizations when plan cache is enabled.
-	TiDBEnablePlanCacheGenericPlan = "tidb_enable_plan_cache_generic_plan"
+	// TiDBOptEnablePlanCacheGenericRewrite controls a narrow plan-cache rewrite policy.
+	// It currently covers only these parameter-sensitive cases:
+	//   - non-outer-join constant propagation
+	//   - predicate simplification
+	//   - ranger same-slot Eq/In fallback
+	//
+	// The first two are local predicate rewrites, and the third is range shaping. They share
+	// the same hazard: the optimizer may otherwise cache a derived predicate or access shape
+	// that depends on the current bind values.
+	//
+	// It intentionally does not cover outer-join derivation or null-reject reasoning. Those
+	// rewrites affect join reasoning more globally and may need separate control later. We keep
+	// one narrow switch for now, and only split it further if later tuning demand justifies it.
+	TiDBOptEnablePlanCacheGenericRewrite = "tidb_opt_enable_plan_cache_generic_rewrite"
 
 	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
 	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
@@ -1725,7 +1736,7 @@ const (
 	DefTiDBEnableINLJoinMultiPattern                  = true
 	DefTiFlashComputeDispatchPolicy                   = DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                 = true
-	DefTiDBEnablePlanCacheGenericPlan                 = false
+	DefTiDBOptEnablePlanCacheGenericRewrite           = false
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0

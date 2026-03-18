@@ -3316,8 +3316,8 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanCacheGenericPlan, Value: BoolToOnOff(vardef.DefTiDBEnablePlanCacheGenericPlan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnablePlanCacheGenericPlan = TiDBOptOn(val)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnablePlanCacheGenericRewrite, Value: BoolToOnOff(vardef.DefTiDBOptEnablePlanCacheGenericRewrite), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePlanCacheGenericRewrite = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableLateMaterialization, Value: BoolToOnOff(vardef.DefTiDBOptEnableLateMaterialization), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {

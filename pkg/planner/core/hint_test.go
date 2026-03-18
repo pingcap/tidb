@@ -170,3 +170,14 @@ func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
 		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 	})
 }
+
+func TestSetVarPlanCacheGenericRewrite(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec(`use test`)
+		testKit.MustExec(`set @@tidb_opt_enable_plan_cache_generic_rewrite = off`)
+
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_enable_plan_cache_generic_rewrite=1) */ @@tidb_opt_enable_plan_cache_generic_rewrite`).Check(testkit.Rows("1"))
+		testKit.MustQuery(`show warnings`).Check(testkit.Rows())
+		testKit.MustQuery(`select @@tidb_opt_enable_plan_cache_generic_rewrite`).Check(testkit.Rows("0"))
+	})
+}

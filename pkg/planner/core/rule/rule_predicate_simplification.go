@@ -226,7 +226,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 }
 
 func canUsePredicateSimplificationForPlanCache(sctx base.PlanContext, predicate expression.Expression) bool {
-	if !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
+	if !expression.PlanCacheGenericRewriteEnabled(sctx.GetExprCtx()) {
 		return true
 	}
 	return !expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), predicate)
@@ -257,7 +257,7 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 			if iCol.Equals(jCol) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					if maybeOverOptimized4PlanCache && !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
+					if maybeOverOptimized4PlanCache && !expression.PlanCacheGenericRewriteEnabled(sctx.GetExprCtx()) {
 						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					}
 					if !specialCase {
@@ -265,7 +265,7 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					if maybeOverOptimized4PlanCache && !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
+					if maybeOverOptimized4PlanCache && !expression.PlanCacheGenericRewriteEnabled(sctx.GetExprCtx()) {
 						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					}
 					if !specialCase {
@@ -423,7 +423,7 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 					ithPredicate,
 					jthPredicate)
 				predicates[j], isChanged = updateOrPredicate(sctx, jthPredicate, ithPredicate)
-				if maybeOverOptimized4PlanCache && isChanged && !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
+				if maybeOverOptimized4PlanCache && isChanged && !expression.PlanCacheGenericRewriteEnabled(sctx.GetExprCtx()) {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
 				if unsatisfiableExpression(sctx, predicates[j]) {
@@ -435,7 +435,7 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 					ithPredicate,
 					jthPredicate)
 				predicates[i], isChanged = updateOrPredicate(sctx, ithPredicate, jthPredicate)
-				if maybeOverOptimized4PlanCache && isChanged && !expression.PlanCacheGenericEnabled(sctx.GetExprCtx()) {
+				if maybeOverOptimized4PlanCache && isChanged && !expression.PlanCacheGenericRewriteEnabled(sctx.GetExprCtx()) {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
 				if unsatisfiableExpression(sctx, predicates[i]) {
