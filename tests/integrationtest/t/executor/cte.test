@@ -183,6 +183,18 @@ with recursive cte as (
 	where n < 2
 )
 select * from cte;
+prepare stmt_cte_trunc from '
+	with recursive cte as (
+		select cast(''abcdefgh'' as char(3)) as s, 1 as n
+		union all
+		select s, n + 1
+		from cte
+		where n < 2
+	)
+	select * from cte';
+-- error 1406
+execute stmt_cte_trunc;
+deallocate prepare stmt_cte_trunc;
 with cte as (
 	select cast('abcdefgh' as char(3)) as short_str, 1 as n
 )

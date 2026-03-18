@@ -441,6 +441,18 @@ where n < 2
 )
 select * from cte;
 Error 1406 (22001): Data Too Long, field len 3, data len 8
+prepare stmt_cte_trunc from '
+with recursive cte as (
+select cast(''abcdefgh'' as char(3)) as s, 1 as n
+union all
+select s, n + 1
+from cte
+where n < 2
+)
+select * from cte';
+execute stmt_cte_trunc;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+deallocate prepare stmt_cte_trunc;
 with cte as (
 select cast('abcdefgh' as char(3)) as short_str, 1 as n
 )

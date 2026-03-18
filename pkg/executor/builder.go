@@ -6155,7 +6155,7 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	// MySQL evaluates a recursive CTE by writing rows into an internal worktable, so truncation is handled like INSERT.
 	// In strict SQL mode, build the seed/recursive sub-plans with a strict ExprCtx only.
 	if v.RecurPlan != nil && origCtx.GetSessionVars().SQLMode.HasStrictMode() {
-		buildCtx := wrapSessionCtxForCTEStrictTruncateErr(origCtx)
+		buildCtx := sessionctx.WithTruncateErrLevel(origCtx, errctx.LevelError)
 		buildSubPlan = func(plan base.Plan) exec.Executor {
 			prevCtx := b.ctx
 			b.ctx = buildCtx
