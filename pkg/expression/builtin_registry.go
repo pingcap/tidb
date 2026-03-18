@@ -16,7 +16,7 @@ package expression
 
 import "slices"
 
-// RegisteredBuiltinFunctionNames returns the sorted builtin function registry.
+// RegisteredBuiltinFunctionNames returns a sorted snapshot of builtin function names.
 func RegisteredBuiltinFunctionNames() []string {
 	names := make([]string, 0, len(funcs))
 	for name := range funcs {

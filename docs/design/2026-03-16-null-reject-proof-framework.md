@@ -1,8 +1,8 @@
 # Design: Structural Null-Reject Proof under Three-Valued Logic
 
-- Author(s): TBD
-- Discussion PR: TBD
-- Tracking Issue: TBD
+- Author(s): [Yiding Cui](https://github.com/winoros)
+- Discussion PR: https://github.com/pingcap/tidb/pull/67129
+- Tracking Issue: https://github.com/pingcap/tidb/issues/66825
 
 ## Table of Contents
 

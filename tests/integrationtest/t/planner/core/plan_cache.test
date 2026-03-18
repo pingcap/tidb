@@ -1557,6 +1557,7 @@ set @@tidb_opt_fix_control = default;
 
 # Issue 67048: parameter-invariant null-reject checks on outer joins should
 # still allow prepared plan cache.
+set @orig_tidb_enable_prepared_plan_cache=@@session.tidb_enable_prepared_plan_cache;
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists t1, t2;
 create table t1 (a int, b int);
@@ -1587,6 +1588,7 @@ select @@last_plan_from_cache;
 set @v=2;
 execute stmt67048b using @v;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=@orig_tidb_enable_prepared_plan_cache;
 
 # TestPlanCacheExprBlacklistCompatibility
 drop table if exists t;

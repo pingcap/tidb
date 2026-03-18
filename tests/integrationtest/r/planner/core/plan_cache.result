@@ -2421,6 +2421,7 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 set @@tidb_opt_fix_control = default;
+set @orig_tidb_enable_prepared_plan_cache=@@session.tidb_enable_prepared_plan_cache;
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists t1, t2;
 create table t1 (a int, b int);
@@ -2477,6 +2478,7 @@ t1_a	t2_a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
+set tidb_enable_prepared_plan_cache=@orig_tidb_enable_prepared_plan_cache;
 drop table if exists t;
 create table t (a int);
 prepare st from 'select * from t where mod(a, 2)=1';
