@@ -609,113 +609,6 @@ func BenchmarkRUWindowAggregatorMatrix(b *testing.B) {
 	}
 }
 
-// Benchmarks for takeReportRecords. Each iteration does fill + takeReportRecords
-// (take consumes buckets, so we must re-fill).
-// Use -bench=TakeReportRecords -benchmem to compare ns/op and B/op.
-
-// BenchmarkTakeReportRecordsSmall60s measures takeReportRecords(60, 60)
-// under small cardinality (10x10) as a baseline extraction cost.
-func BenchmarkTakeReportRecordsSmall60s(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 10, 10
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
-
-// BenchmarkTakeReportRecordsMedium60s measures takeReportRecords(60, 60)
-// under medium cardinality (100x100).
-func BenchmarkTakeReportRecordsMedium60s(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 100, 100
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
-
-// BenchmarkTakeReportRecordsLarge60s measures takeReportRecords(60, 60)
-// under large cardinality (200x200).
-func BenchmarkTakeReportRecordsLarge60s(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 200, 200
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
-
-// BenchmarkTakeReportRecordsLarge60SAtDesignLimit measures takeReportRecords(60, 60) when the
-// aggregator is in the 60s design-limit shape: 1 bucket collecting at 400×400 cap and 4 buckets
-// already compacted to 200×200. Run with -benchmem for B/op and allocs/op.
-func BenchmarkTakeReportRecordsLarge60SAtDesignLimit(b *testing.B) {
-	keyspace := []byte("ks")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorSteadyState60s(agg)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
-
-// BenchmarkTakeReportRecordsLarge60SAt10KKeys measures takeReportRecords(60, 60) with 10k keys
-// per bucket (4 compacted + 1 collecting), simulating maxRUKeysPerAggregate=10000. Compare with
-// BenchmarkTakeReportRecordsLarge60SAtDesignLimit (160k keys) for 10k vs 160k reporter load.
-func BenchmarkTakeReportRecordsLarge60SAt10KKeys(b *testing.B) {
-	keyspace := []byte("ks")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorSteadyState60sAt10kKeys(agg)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
-
-// BenchmarkTakeReportRecordsMedium15s measures takeReportRecords(60, 15)
-// with 100x100 cardinality to capture 15s regrouping cost.
-func BenchmarkTakeReportRecordsMedium15s(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 100, 100
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg.takeReportRecords(60, 15, keyspace)
-	}
-}
-
-// BenchmarkFillAggregatorOnlyMedium measures fill-only cost (no take)
-// for 100x100 cardinality to isolate addBatch/rotation overhead.
-func BenchmarkFillAggregatorOnlyMedium(b *testing.B) {
-	const numUsers, numSQLsPerUser = 100, 100
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg
-	}
-}
-
-// BenchmarkTakeReportRecordsOverCap60s keeps reporter around and above 100x100(250*120) final limits.
-// Risk covered: over-cap windows should have bounded extraction cost and no abnormal allocation growth.
-func BenchmarkTakeReportRecordsOverCap60s(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 250, 120 // exceed final 100x100 cap and stress over-cap compaction path
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
-
 func makeHotspotDominatedBatch(numTailKeys int, hotRU float64) stmtstats.RUIncrementMap {
 	batch := make(stmtstats.RUIncrementMap, numTailKeys+1)
 	batch[stmtstats.RUKey{
@@ -731,22 +624,6 @@ func makeHotspotDominatedBatch(numTailKeys int, hotRU float64) stmtstats.RUIncre
 		}] = &stmtstats.RUIncrement{TotalRU: 1, ExecCount: 1, ExecDuration: 1}
 	}
 	return batch
-}
-
-// BenchmarkTakeReportRecordsHotspotDominated60s benchmarks a single dominant hot key plus wide tail keys.
-// Risk covered: hotspot-preserving path should remain stable under highly skewed distributions.
-func BenchmarkTakeReportRecordsHotspotDominated60s(b *testing.B) {
-	keyspace := []byte("ks")
-	batch := makeHotspotDominatedBatch(12000, 1e9)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		agg.addBatchToBucket(1, batch)
-		agg.addBatchToBucket(16, batch)
-		agg.addBatchToBucket(31, batch)
-		agg.addBatchToBucket(46, batch)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
 }
 
 func makeLongTailBatch(numTailUsers, numTailSQLsPerUser, numHotUsers int, hotRU float64) stmtstats.RUIncrementMap {
@@ -775,48 +652,147 @@ func makeLongTailBatch(numTailUsers, numTailSQLsPerUser, numHotUsers int, hotRU 
 	return batch
 }
 
-// BenchmarkTakeReportRecordsLongTail60s benchmarks a few hotspots mixed with a large long tail(180×80 tail + 6 hot).
-// Risk covered: long-tail distributions should not regress takeReportRecords throughput unexpectedly.
-func BenchmarkTakeReportRecordsLongTail60s(b *testing.B) {
+// BenchmarkRUWindowAggregatorScenarios provides a unified benchmark suite for
+// takeReportRecords and fill-only paths, grouped by scenario category.
+// Each iteration does fill + takeReportRecords (take consumes buckets, so we must re-fill).
+// Use -bench=BenchmarkRUWindowAggregatorScenarios -benchmem to compare ns/op and B/op.
+// Use -bench=BenchmarkRUWindowAggregatorScenarios/<category>/<case> for targeted runs.
+func BenchmarkRUWindowAggregatorScenarios(b *testing.B) {
 	keyspace := []byte("ks")
-	batch := makeLongTailBatch(180, 80, 6, 8e8) // long tail + a few dominant hotspots
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		agg.addBatchToBucket(1, batch)
-		agg.addBatchToBucket(16, batch)
-		agg.addBatchToBucket(31, batch)
-		agg.addBatchToBucket(46, batch)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
 
-// BenchmarkTakeReportRecordsOverSQLCapPerUser60S measures extraction cost
-// when per-user SQL cardinality exceeds pre-top cap (10x600).
-func BenchmarkTakeReportRecordsOverSQLCapPerUser60S(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 10, 600 // exceed maxPreTopNSQLsPerUser (400)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
-		_ = agg.takeReportRecords(60, 60, keyspace)
-	}
-}
+	b.Run("baseline_sizes", func(b *testing.B) {
+		b.Run("Small60s", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 10, 10
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+		b.Run("Medium60s", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 100, 100
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+		b.Run("Large60s", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 200, 200
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+	})
 
-// BenchmarkTakeReportRecordsLateTakeDropsOldWindows measures
-// takeReportRecords(180, 60) after filling three windows, where late take drops older windows.
-func BenchmarkTakeReportRecordsLateTakeDropsOldWindows(b *testing.B) {
-	keyspace := []byte("ks")
-	const numUsers, numSQLsPerUser = 100, 100
-	batch := makeRUBatch(numUsers, numSQLsPerUser)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agg := newRUWindowAggregator()
-		// Setup: write 3 windows and report only the last window.
-		for ts := uint64(1); ts < 180; ts += 15 {
-			agg.addBatchToBucket(ts, batch)
-		}
-		_ = agg.takeReportRecords(180, 60, keyspace)
-	}
+	b.Run("design_limits", func(b *testing.B) {
+		b.Run("Large60SAtDesignLimit", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorSteadyState60s(agg)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+		b.Run("Large60SAt10KKeys", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorSteadyState60sAt10kKeys(agg)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+	})
+
+	b.Run("interval_variants", func(b *testing.B) {
+		b.Run("Medium15s", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 100, 100
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg.takeReportRecords(60, 15, keyspace)
+			}
+		})
+	})
+
+	b.Run("fill_only", func(b *testing.B) {
+		b.Run("Medium", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 100, 100
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg
+			}
+		})
+	})
+
+	b.Run("cap_stress", func(b *testing.B) {
+		b.Run("OverCap60s", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 250, 120
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+		b.Run("OverSQLCapPerUser60S", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 10, 600
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+	})
+
+	b.Run("skew_distributions", func(b *testing.B) {
+		b.Run("HotspotDominated60s", func(b *testing.B) {
+			batch := makeHotspotDominatedBatch(12000, 1e9)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				agg.addBatchToBucket(1, batch)
+				agg.addBatchToBucket(16, batch)
+				agg.addBatchToBucket(31, batch)
+				agg.addBatchToBucket(46, batch)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+		b.Run("LongTail60s", func(b *testing.B) {
+			batch := makeLongTailBatch(180, 80, 6, 8e8)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				agg.addBatchToBucket(1, batch)
+				agg.addBatchToBucket(16, batch)
+				agg.addBatchToBucket(31, batch)
+				agg.addBatchToBucket(46, batch)
+				_ = agg.takeReportRecords(60, 60, keyspace)
+			}
+		})
+	})
+
+	b.Run("late_take", func(b *testing.B) {
+		b.Run("DropsOldWindows", func(b *testing.B) {
+			const numUsers, numSQLsPerUser = 100, 100
+			batch := makeRUBatch(numUsers, numSQLsPerUser)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				agg := newRUWindowAggregator()
+				for ts := uint64(1); ts < 180; ts += 15 {
+					agg.addBatchToBucket(ts, batch)
+				}
+				_ = agg.takeReportRecords(180, 60, keyspace)
+			}
+		})
+	})
 }

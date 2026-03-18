@@ -319,164 +319,198 @@ func TestRUCollectingCompactAndReportConsistency(t *testing.T) {
 	require.NotEmpty(t, normalizeTopRURecords(fromCompact))
 }
 
-// compactWithLimits boundary cases:
+// compactWithLimitsCase defines a single boundary test case for compactWithLimits.
+type compactWithLimitsCase struct {
+	name   string
+	setup  func() *ruCollecting
+	assert func(t *testing.T, compacted *ruCollecting)
+}
+
+// compactWithLimitsCases defines all boundary cases for compactWithLimits:
 // - pre-existing others SQL plus evicted SQL are merged
 // - pre-existing others user plus evicted users are merged
 // - only others user is present
 // - single user single SQL remains unchanged
 // - legacy others records are folded into othersRec
-// Keep these cases explicit and focused; add new boundary cases in this block.
+var compactWithLimitsCases = []compactWithLimitsCase{
+	{
+		name: "PreExistingOthersRecAndEvictedSQL",
+		setup: func() *ruCollecting {
+			// Precondition: user already has othersRec, then one SQL is evicted by per-user top1.
+			collecting := newRUCollectingWithCaps(10, 10)
+			u1 := newUserRUCollectingWithCap("u1", 10)
+			u1.add(1000, stmtstats.BinaryDigest("sql-top"), stmtstats.BinaryDigest("plan-top"), &stmtstats.RUIncrement{
+				TotalRU:      100,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			u1.add(1001, stmtstats.BinaryDigest("sql-evicted"), stmtstats.BinaryDigest("plan-evicted"), &stmtstats.RUIncrement{
+				TotalRU:      40,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			u1.addOthers(1002, &stmtstats.RUIncrement{
+				TotalRU:      7,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			collecting.users["u1"] = u1
+			return collecting
+		},
+		assert: func(t *testing.T, compacted *ruCollecting) {
+			// Contract: pre-existing othersRec and evicted SQL RU are merged into one others record.
+			require.NotNil(t, compacted)
+			require.Nil(t, compacted.othersUser)
 
-func TestCompactWithLimitsPreExistingOthersRecAndEvictedSQL(t *testing.T) {
-	// Precondition: user already has othersRec, then one SQL is evicted by per-user top1.
-	// Contract: pre-existing othersRec and evicted SQL RU are merged into one others record.
-	collecting := newRUCollectingWithCaps(10, 10)
-	u1 := newUserRUCollectingWithCap("u1", 10)
-	u1.add(1000, stmtstats.BinaryDigest("sql-top"), stmtstats.BinaryDigest("plan-top"), &stmtstats.RUIncrement{
-		TotalRU:      100,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	u1.add(1001, stmtstats.BinaryDigest("sql-evicted"), stmtstats.BinaryDigest("plan-evicted"), &stmtstats.RUIncrement{
-		TotalRU:      40,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	u1.addOthers(1002, &stmtstats.RUIncrement{
-		TotalRU:      7,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	collecting.users["u1"] = u1
+			compactedU1, ok := compacted.users["u1"]
+			require.True(t, ok)
+			require.Len(t, compactedU1.records, 1)
+			for _, rec := range compactedU1.records {
+				require.Equal(t, stmtstats.BinaryDigest("sql-top"), rec.sqlDigest)
+				require.Equal(t, stmtstats.BinaryDigest("plan-top"), rec.planDigest)
+				require.Equal(t, 100.0, rec.totalRU)
+			}
+			require.NotNil(t, compactedU1.othersRec)
+			require.Empty(t, compactedU1.othersRec.sqlDigest)
+			require.Empty(t, compactedU1.othersRec.planDigest)
+			require.Equal(t, 47.0, compactedU1.othersRec.totalRU) // pre-existing 7 + evicted SQL 40
+		},
+	},
+	{
+		name: "OthersUserAndEvictedUsersBothPresent",
+		setup: func() *ruCollecting {
+			// Precondition: both pre-existing othersUser and newly evicted users exist.
+			collecting := newRUCollectingWithCaps(10, 10)
 
-	compacted := collecting.compactWithLimits(1, 1)
-	require.NotNil(t, compacted)
-	require.Nil(t, compacted.othersUser)
+			u1 := newUserRUCollectingWithCap("u1", 10)
+			u1.add(2000, stmtstats.BinaryDigest("sql-top"), stmtstats.BinaryDigest("plan-top"), &stmtstats.RUIncrement{
+				TotalRU:      100,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			collecting.users["u1"] = u1
 
-	compactedU1, ok := compacted.users["u1"]
-	require.True(t, ok)
-	require.Len(t, compactedU1.records, 1)
-	for _, rec := range compactedU1.records {
-		require.Equal(t, stmtstats.BinaryDigest("sql-top"), rec.sqlDigest)
-		require.Equal(t, stmtstats.BinaryDigest("plan-top"), rec.planDigest)
-		require.Equal(t, 100.0, rec.totalRU)
+			u2 := newUserRUCollectingWithCap("u2", 10)
+			u2.add(2000, stmtstats.BinaryDigest("sql-u2"), stmtstats.BinaryDigest("plan-u2"), &stmtstats.RUIncrement{
+				TotalRU:      30,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			collecting.users["u2"] = u2
+
+			preOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
+			preOthers.add(2000, stmtstats.BinaryDigest("sql-pre-others"), stmtstats.BinaryDigest("plan-pre-others"), &stmtstats.RUIncrement{
+				TotalRU:      6,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			preOthers.addOthers(2001, &stmtstats.RUIncrement{
+				TotalRU:      4,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			collecting.othersUser = preOthers
+			return collecting
+		},
+		assert: func(t *testing.T, compacted *ruCollecting) {
+			// Contract: both sources merge into one othersUser.othersRec without leaking normal records.
+			require.NotNil(t, compacted)
+			require.Len(t, compacted.users, 1)
+			require.Contains(t, compacted.users, "u1")
+
+			require.NotNil(t, compacted.othersUser)
+			require.Equal(t, keyRUOthersUser, compacted.othersUser.user)
+			require.Empty(t, compacted.othersUser.records)
+			require.NotNil(t, compacted.othersUser.othersRec)
+			require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
+			require.Empty(t, compacted.othersUser.othersRec.planDigest)
+			require.Equal(t, 40.0, compacted.othersUser.othersRec.totalRU) // pre-existing 6+4 + evicted user 30
+		},
+	},
+	{
+		name: "OnlyOthersUserNonEmpty",
+		setup: func() *ruCollecting {
+			// Precondition: only othersUser.othersRec has data.
+			collecting := newRUCollectingWithCaps(10, 10)
+			collecting.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, 10)
+			collecting.othersUser.addOthers(3000, &stmtstats.RUIncrement{
+				TotalRU:      11,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			return collecting
+		},
+		assert: func(t *testing.T, compacted *ruCollecting) {
+			// Contract: compacted shape keeps only othersUser with the same othersRec.
+			require.NotNil(t, compacted)
+			require.Empty(t, compacted.users)
+			require.NotNil(t, compacted.othersUser)
+			require.NotNil(t, compacted.othersUser.othersRec)
+			require.Equal(t, 11.0, compacted.othersUser.othersRec.totalRU)
+		},
+	},
+	{
+		name: "SingleUserSingleSQL",
+		setup: func() *ruCollecting {
+			// Precondition: single user with single SQL.
+			collecting := newRUCollectingWithCaps(10, 10)
+			u1 := newUserRUCollectingWithCap("u1", 10)
+			u1.add(4000, stmtstats.BinaryDigest("sql-only"), stmtstats.BinaryDigest("plan-only"), &stmtstats.RUIncrement{
+				TotalRU:      88,
+				ExecCount:    1,
+				ExecDuration: 10,
+			})
+			collecting.users["u1"] = u1
+			return collecting
+		},
+		assert: func(t *testing.T, compacted *ruCollecting) {
+			// Contract: compacted shape preserves the user record without creating othersUser.
+			require.NotNil(t, compacted)
+			require.Nil(t, compacted.othersUser)
+			require.Len(t, compacted.users, 1)
+
+			compactedU1, ok := compacted.users["u1"]
+			require.True(t, ok)
+			require.Len(t, compactedU1.records, 1)
+			require.Nil(t, compactedU1.othersRec)
+		},
+	},
+	{
+		name: "OnlyOthersUserLegacyRecords",
+		setup: func() *ruCollecting {
+			// Precondition: legacy others data sits in othersUser.records with nil digests.
+			collecting := newRUCollectingWithCaps(10, 10)
+			legacyOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
+			legacyRec := newOthersRURecord()
+			legacyRec.add(5000, 13, 2, 30)
+			legacyOthers.records[othersKey] = legacyRec
+			legacyOthers.totalRU = legacyRec.totalRU
+			collecting.othersUser = legacyOthers
+			return collecting
+		},
+		assert: func(t *testing.T, compacted *ruCollecting) {
+			// Contract: compaction folds legacy records into othersUser.othersRec.
+			require.NotNil(t, compacted)
+			require.Empty(t, compacted.users)
+			require.NotNil(t, compacted.othersUser)
+			require.Empty(t, compacted.othersUser.records)
+			require.NotNil(t, compacted.othersUser.othersRec)
+			require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
+			require.Empty(t, compacted.othersUser.othersRec.planDigest)
+			require.Equal(t, 13.0, compacted.othersUser.othersRec.totalRU)
+		},
+	},
+}
+
+// TestCompactWithLimits runs all compactWithLimits boundary cases using table-driven subtests.
+func TestCompactWithLimits(t *testing.T) {
+	for _, tc := range compactWithLimitsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			collecting := tc.setup()
+			compacted := collecting.compactWithLimits(1, 1)
+			tc.assert(t, compacted)
+		})
 	}
-	require.NotNil(t, compactedU1.othersRec)
-	require.Empty(t, compactedU1.othersRec.sqlDigest)
-	require.Empty(t, compactedU1.othersRec.planDigest)
-	require.Equal(t, 47.0, compactedU1.othersRec.totalRU) // pre-existing 7 + evicted SQL 40
-}
-
-func TestCompactWithLimitsOthersUserAndEvictedUsersBothPresent(t *testing.T) {
-	// Precondition: both pre-existing othersUser and newly evicted users exist.
-	// Contract: both sources merge into one othersUser.othersRec without leaking normal records.
-	collecting := newRUCollectingWithCaps(10, 10)
-
-	u1 := newUserRUCollectingWithCap("u1", 10)
-	u1.add(2000, stmtstats.BinaryDigest("sql-top"), stmtstats.BinaryDigest("plan-top"), &stmtstats.RUIncrement{
-		TotalRU:      100,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	collecting.users["u1"] = u1
-
-	u2 := newUserRUCollectingWithCap("u2", 10)
-	u2.add(2000, stmtstats.BinaryDigest("sql-u2"), stmtstats.BinaryDigest("plan-u2"), &stmtstats.RUIncrement{
-		TotalRU:      30,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	collecting.users["u2"] = u2
-
-	preOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
-	preOthers.add(2000, stmtstats.BinaryDigest("sql-pre-others"), stmtstats.BinaryDigest("plan-pre-others"), &stmtstats.RUIncrement{
-		TotalRU:      6,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	preOthers.addOthers(2001, &stmtstats.RUIncrement{
-		TotalRU:      4,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	collecting.othersUser = preOthers
-
-	compacted := collecting.compactWithLimits(1, 1)
-	require.NotNil(t, compacted)
-	require.Len(t, compacted.users, 1)
-	require.Contains(t, compacted.users, "u1")
-
-	require.NotNil(t, compacted.othersUser)
-	require.Equal(t, keyRUOthersUser, compacted.othersUser.user)
-	require.Empty(t, compacted.othersUser.records)
-	require.NotNil(t, compacted.othersUser.othersRec)
-	require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
-	require.Empty(t, compacted.othersUser.othersRec.planDigest)
-	require.Equal(t, 40.0, compacted.othersUser.othersRec.totalRU) // pre-existing 6+4 + evicted user 30
-}
-
-func TestCompactWithLimitsOnlyOthersUserNonEmpty(t *testing.T) {
-	// Precondition: only othersUser.othersRec has data.
-	// Contract: compacted shape keeps only othersUser with the same othersRec.
-	collecting := newRUCollectingWithCaps(10, 10)
-	collecting.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, 10)
-	collecting.othersUser.addOthers(3000, &stmtstats.RUIncrement{
-		TotalRU:      11,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-
-	compacted := collecting.compactWithLimits(1, 1)
-	require.NotNil(t, compacted)
-	require.Empty(t, compacted.users)
-	require.NotNil(t, compacted.othersUser)
-	require.NotNil(t, compacted.othersUser.othersRec)
-	require.Equal(t, 11.0, compacted.othersUser.othersRec.totalRU)
-}
-
-func TestCompactWithLimitsSingleUserSingleSQL(t *testing.T) {
-	// Precondition: single user with single SQL.
-	// Contract: compacted shape preserves the user record without creating othersUser.
-	collecting := newRUCollectingWithCaps(10, 10)
-	u1 := newUserRUCollectingWithCap("u1", 10)
-	u1.add(4000, stmtstats.BinaryDigest("sql-only"), stmtstats.BinaryDigest("plan-only"), &stmtstats.RUIncrement{
-		TotalRU:      88,
-		ExecCount:    1,
-		ExecDuration: 10,
-	})
-	collecting.users["u1"] = u1
-
-	compacted := collecting.compactWithLimits(1, 1)
-	require.NotNil(t, compacted)
-	require.Nil(t, compacted.othersUser)
-	require.Len(t, compacted.users, 1)
-
-	compactedU1, ok := compacted.users["u1"]
-	require.True(t, ok)
-	require.Len(t, compactedU1.records, 1)
-	require.Nil(t, compactedU1.othersRec)
-}
-
-func TestCompactWithLimitsOnlyOthersUserLegacyRecords(t *testing.T) {
-	// Precondition: legacy others data sits in othersUser.records with nil digests.
-	// Contract: compaction folds legacy records into othersUser.othersRec.
-	collecting := newRUCollectingWithCaps(10, 10)
-	legacyOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
-	legacyRec := newOthersRURecord()
-	legacyRec.add(5000, 13, 2, 30)
-	legacyOthers.records[othersKey] = legacyRec
-	legacyOthers.totalRU = legacyRec.totalRU
-	collecting.othersUser = legacyOthers
-
-	compacted := collecting.compactWithLimits(1, 1)
-	require.NotNil(t, compacted)
-	require.Empty(t, compacted.users)
-	require.NotNil(t, compacted.othersUser)
-	require.Empty(t, compacted.othersUser.records)
-	require.NotNil(t, compacted.othersUser.othersRec)
-	require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
-	require.Empty(t, compacted.othersUser.othersRec.planDigest)
-	require.Equal(t, 13.0, compacted.othersUser.othersRec.totalRU)
 }
 
 func normalizeTopRURecords(records []tipb.TopRURecord) []string {

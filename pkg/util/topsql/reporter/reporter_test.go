@@ -1204,94 +1204,95 @@ func makeTopRURecordsForBench(numUsers, numSQLsPerUser int) []tipb.TopRURecord {
 	return agg.takeReportRecords(60, 60, keyspaceName)
 }
 
-// BenchmarkTopSQLCollectAndIncrementFrequency extends the existing TopSQL benchmark with feature-matrix cases.
-// Risk covered: TopRU on/off should not cause abnormal performance regressions on TopSQL-only reporter path.
-func BenchmarkTopSQLCollectAndIncrementFrequency(b *testing.B) {
-	ruRecords := makeTopRURecordsForBench(100, 100)
+// BenchmarkReporterScenarios provides a unified benchmark suite for reporter paths,
+// grouped by scenario category: collect/increment frequency, collect/evict, and backpressure.
+// Use -bench=BenchmarkReporterScenarios -benchmem to compare ns/op and B/op.
+// Use -bench=BenchmarkReporterScenarios/<category>/<case> for targeted runs.
+func BenchmarkReporterScenarios(b *testing.B) {
+	b.Run("collect_frequency", func(b *testing.B) {
+		ruRecords := makeTopRURecordsForBench(100, 100)
 
-	b.Run("TopSQLOnly", func(b *testing.B) {
-		tsr, _ := initializeCache(maxSQLNum, 120)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			populateCache(tsr, 0, maxSQLNum, uint64(i))
-		}
-	})
-	b.Run("TopRUOnly", func(b *testing.B) {
-		tsr, _ := initializeCache(maxSQLNum, 120)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			tsr.doReport(&ReportData{RURecords: ruRecords})
-		}
-	})
-	b.Run("TopSQLAndTopRU", func(b *testing.B) {
-		tsr, _ := initializeCache(maxSQLNum, 120)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			populateCacheWithRU(tsr, 0, maxSQLNum, uint64(i), ruRecords)
-		}
-	})
-}
-
-// BenchmarkTopCollectAndEvict verifies top collect and evict and guards against regressions in begin-based RU accounting.
-func BenchmarkTopCollectAndEvict(b *testing.B) {
-	tsr, _ := initializeCache(maxSQLNum, 120)
-	begin := 0
-	end := maxSQLNum
-	for i := range b.N {
-		begin += maxSQLNum
-		end += maxSQLNum
-		populateCache(tsr, begin, end, uint64(i))
-	}
-}
-
-// BenchmarkReporterBackpressure provides an in-process performance scenario for
-// reporter backpressure path and exports drop rate as a benchmark metric.
-func BenchmarkReporterBackpressure(b *testing.B) {
-	origInterval := topsqlstate.GetTopRUItemInterval()
-	topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S)
-	b.Cleanup(func() {
-		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
-	})
-
-	b.Run("normal", func(b *testing.B) {
-		tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
-		b.Cleanup(tsr.Close)
-
-		drainDone := make(chan struct{})
-		go func() {
-			for {
-				select {
-				case <-drainDone:
-					return
-				case <-tsr.reportCollectedDataChan:
-				}
+		b.Run("TopSQLOnly", func(b *testing.B) {
+			tsr, _ := initializeCache(maxSQLNum, 120)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				populateCache(tsr, 0, maxSQLNum, uint64(i))
 			}
-		}()
-		b.Cleanup(func() { close(drainDone) })
+		})
+		b.Run("TopRUOnly", func(b *testing.B) {
+			tsr, _ := initializeCache(maxSQLNum, 120)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tsr.doReport(&ReportData{RURecords: ruRecords})
+			}
+		})
+		b.Run("TopSQLAndTopRU", func(b *testing.B) {
+			tsr, _ := initializeCache(maxSQLNum, 120)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				populateCacheWithRU(tsr, 0, maxSQLNum, uint64(i), ruRecords)
+			}
+		})
+	})
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			tsr.takeDataAndSendToReportChan(60)
+	b.Run("collect_evict", func(b *testing.B) {
+		tsr, _ := initializeCache(maxSQLNum, 120)
+		begin := 0
+		end := maxSQLNum
+		for i := range b.N {
+			begin += maxSQLNum
+			end += maxSQLNum
+			populateCache(tsr, begin, end, uint64(i))
 		}
 	})
 
 	b.Run("backpressure", func(b *testing.B) {
-		tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
-		b.Cleanup(tsr.Close)
-		tsr.reportCollectedDataChan <- collectedData{} // keep channel full to trigger drop path
+		origInterval := topsqlstate.GetTopRUItemInterval()
+		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S)
+		b.Cleanup(func() {
+			topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
+		})
 
-		beforeDrop := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			tsr.takeDataAndSendToReportChan(60)
-		}
-		b.StopTimer()
+		b.Run("normal", func(b *testing.B) {
+			tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+			b.Cleanup(tsr.Close)
 
-		dropped := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter) - beforeDrop
-		b.ReportMetric(dropped, "drop_total")
-		if b.N > 0 {
-			b.ReportMetric(dropped/float64(b.N), "drop/op")
-		}
+			drainDone := make(chan struct{})
+			go func() {
+				for {
+					select {
+					case <-drainDone:
+						return
+					case <-tsr.reportCollectedDataChan:
+					}
+				}
+			}()
+			b.Cleanup(func() { close(drainDone) })
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tsr.takeDataAndSendToReportChan(60)
+			}
+		})
+
+		b.Run("drop_path", func(b *testing.B) {
+			tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+			b.Cleanup(tsr.Close)
+			tsr.reportCollectedDataChan <- collectedData{} // keep channel full to trigger drop path
+
+			beforeDrop := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tsr.takeDataAndSendToReportChan(60)
+			}
+			b.StopTimer()
+
+			dropped := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter) - beforeDrop
+			b.ReportMetric(dropped, "drop_total")
+			if b.N > 0 {
+				b.ReportMetric(dropped/float64(b.N), "drop/op")
+			}
+		})
 	})
 }
 

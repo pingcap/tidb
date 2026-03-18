@@ -25,7 +25,9 @@ const (
 	ruBaseBucketSeconds   uint64 = 15
 	ruReportWindowSeconds uint64 = 60
 
-	// Final 60s report points: compact to 100x100.
+	// Per item-interval output cap: each 15s/30s slice is compacted to at most
+	// ruReportTopNUsers x ruReportTopNSQLsPerUser. A 60s report may contain
+	// multiple such slices (e.g. 4 for 15s, 2 for 30s), so total users can exceed 100.
 	ruReportTopNUsers       = 100
 	ruReportTopNSQLsPerUser = 100
 )

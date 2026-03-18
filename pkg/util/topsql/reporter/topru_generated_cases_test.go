@@ -16,10 +16,11 @@ package reporter
 
 import "testing"
 
-// TestTopRUSqlmetaPresent verifies a TopRU payload keeps SQL meta for the
-// target digest marker, even when RURecords are not required by this case.
-func TestTopRUSqlmetaPresent(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+// topRUGeneratedCaseSpecs defines all TopRU generated test cases.
+// Each case validates a specific semantic contract of the TopRU reporting pipeline.
+var topRUGeneratedCaseSpecs = []caseSpec{
+	// sqlmeta_present: payload includes SQLMetas for the triggered marker
+	{
 		GoalID:             "sqlmeta_present",
 		Level:              "should",
 		Description:        "payload includes SQLMetas for the triggered marker",
@@ -30,13 +31,9 @@ func TestTopRUSqlmetaPresent(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "topru_gen_sqlmeta",
 		PlanMetaRequired:   nil,
-	})
-}
-
-// TestTopRUPlanmetaPresent verifies a TopRU payload keeps PlanMeta for the
-// target digest marker, independent from RURecords count.
-func TestTopRUPlanmetaPresent(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// planmeta_present: payload includes PlanMetas for the triggered marker
+	{
 		GoalID:             "planmeta_present",
 		Level:              "should",
 		Description:        "payload includes PlanMetas for the triggered marker",
@@ -47,13 +44,9 @@ func TestTopRUPlanmetaPresent(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   boolPtr(true),
-	})
-}
-
-// TestTopRUMultiRecordsBatch verifies the report can carry multiple
-// RURecords in one payload and preserves the expected exec-count sum.
-func TestTopRUMultiRecordsBatch(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// multi_records_batch: payload batches multiple RURecords and preserves counts
+	{
 		GoalID:             "multi_records_batch",
 		Level:              "should",
 		Description:        "payload batches multiple RURecords and preserves counts",
@@ -64,13 +57,9 @@ func TestTopRUMultiRecordsBatch(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   nil,
-	})
-}
-
-// TestTopRUTotalRuThreshold verifies at least one record crosses the RU
-// threshold, so filtering does not drop all heavy entries.
-func TestTopRUTotalRuThreshold(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// total_ru_threshold: payload contains a record with RU above a threshold
+	{
 		GoalID:             "total_ru_threshold",
 		Level:              "should",
 		Description:        "payload contains a record with RU above a threshold",
@@ -81,12 +70,9 @@ func TestTopRUTotalRuThreshold(t *testing.T) {
 		TotalRUMin:         1.5,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   nil,
-	})
-}
-
-// TestTopRUKey verifies the aggregation key and guards against regressions in begin-based RU accounting.
-func TestTopRUKey(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// key_aggregation_by_user_sql_plan: aggregation key is (user, sql_digest, plan_digest)
+	{
 		GoalID:             "key_aggregation_by_user_sql_plan",
 		Level:              "must",
 		Description:        "aggregation key is (user, sql_digest, plan_digest); different users same SQL are separated",
@@ -97,13 +83,9 @@ func TestTopRUKey(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   nil,
-	})
-}
-
-// TestTopRUSameTimestampMultipleFinishAccumulate verifies multiple finish
-// events at one timestamp accumulate into the same TopRU key deterministically.
-func TestTopRUSameTimestampMultipleFinishAccumulate(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// same_timestamp_multiple_finish_accumulate: multiple finishes for same key accumulate
+	{
 		GoalID:             "same_timestamp_multiple_finish_accumulate",
 		Level:              "should",
 		Description:        "within same timestamp, multiple finishes for same key accumulate ruIncrement into TopN",
@@ -114,13 +96,9 @@ func TestTopRUSameTimestampMultipleFinishAccumulate(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   nil,
-	})
-}
-
-// TestTopRUInternalSqlEmptyUserHandling verifies empty-user internal SQL
-// is keyed consistently and never panics during RU aggregation.
-func TestTopRUInternalSqlEmptyUserHandling(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// internal_sql_empty_user_handling: empty user (internal SQL) is handled deterministically
+	{
 		GoalID:             "internal_sql_empty_user_handling",
 		Level:              "should",
 		Description:        "empty user (internal SQL) is handled deterministically (no panic, stable key)",
@@ -131,12 +109,9 @@ func TestTopRUInternalSqlEmptyUserHandling(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   nil,
-	})
-}
-
-// TestTopRUShort verifies short exec time handling and guards against regressions in begin-based RU accounting.
-func TestTopRUShort(t *testing.T) {
-	runTopRUCase(t, caseSpec{
+	},
+	// short_exec_time_lt_1s_handling: exec_duration < 1s still produces correct RU record
+	{
 		GoalID:             "short_exec_time_lt_1s_handling",
 		Level:              "should",
 		Description:        "exec_duration < 1s still produces correct RU record (or explicitly skipped by design)",
@@ -147,5 +122,15 @@ func TestTopRUShort(t *testing.T) {
 		TotalRUMin:         0.0,
 		SQLMetaMatchMarker: "",
 		PlanMetaRequired:   nil,
-	})
+	},
+}
+
+// TestTopRUGeneratedCases runs all TopRU generated test cases using table-driven subtests.
+// Each subtest validates a specific semantic contract of the TopRU reporting pipeline.
+func TestTopRUGeneratedCases(t *testing.T) {
+	for _, cs := range topRUGeneratedCaseSpecs {
+		t.Run(cs.GoalID, func(t *testing.T) {
+			runTopRUCase(t, cs)
+		})
+	}
 }
