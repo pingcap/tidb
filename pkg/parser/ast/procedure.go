@@ -36,9 +36,9 @@ var (
 	_ ExprNode = &ProcedureVar{}
 
 	_ StmtNode = &ProcedureBlock{}
-	_ StmtNode = &CreateProcedureInfo{}
-	_ StmtNode = &DropProcedureStmt{}
-	_ StmtNode = &AlterProcedureStmt{}
+	_ DDLNode  = &CreateProcedureInfo{}
+	_ DDLNode  = &DropProcedureStmt{}
+	_ DDLNode  = &AlterProcedureStmt{}
 	_ StmtNode = &ProcedureElseIfBlock{}
 	_ StmtNode = &ProcedureElseBlock{}
 	_ StmtNode = &ProcedureIfBlock{}
@@ -466,7 +466,7 @@ type StoredFuncName struct {
 
 // CreateProcedureInfo stored procedure object
 type CreateProcedureInfo struct {
-	stmtNode
+	ddlNode
 	IfNotExists     bool
 	Definer         *auth.UserIdentity
 	ProcedureName   *TableName
@@ -627,7 +627,7 @@ func (n *CreateProcedureInfo) Accept(v Visitor) (Node, bool) {
 
 // DropProcedureStmt is the statement to drop a stored procedure or function.
 type DropProcedureStmt struct {
-	stmtNode
+	ddlNode
 
 	IfExists   bool
 	Name       *TableName
@@ -1522,7 +1522,7 @@ func (n *ProcedureJump) Accept(v Visitor) (Node, bool) {
 
 // AlterProcedureStmt saved change stored procedure Characteristics
 type AlterProcedureStmt struct {
-	stmtNode
+	ddlNode
 	ProcedureName   *TableName
 	Characteristics []ProcedureCharacteristic
 	IsFunction      bool

@@ -26,7 +26,7 @@ func TestNewVariableVars(t *testing.T) {
 	resVar := variable.NewProcedureVars("t1", tp)
 	require.Equal(t, *con.Vars[0], *resVar)
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 1)
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables), UpdateVariables{"t1", "", con, tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables), UpdateVariables{name: "t1", expr: "", context: con, declType: tp})
 	oldPlan := &ProcedurePlan{
 		ProcedureExecPlan: builder.procedurePlan,
 	}
@@ -45,9 +45,9 @@ func TestNewVariableVars(t *testing.T) {
 	resVar3 := variable.NewProcedureVars("t3", tp)
 	require.Equal(t, *con.Vars[2], *resVar3)
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 3)
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables), UpdateVariables{"t1", "", con, tp})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*UpdateVariables), UpdateVariables{"t2", "", con, tp})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*UpdateVariables), UpdateVariables{"t3", "", con, tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables), UpdateVariables{name: "t1", expr: "", context: con, declType: tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*UpdateVariables), UpdateVariables{name: "t2", expr: "", context: con, declType: tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*UpdateVariables), UpdateVariables{name: "t3", expr: "", context: con, declType: tp})
 	// support copy
 	oldPlan = &ProcedurePlan{
 		ProcedureExecPlan: builder.procedurePlan,

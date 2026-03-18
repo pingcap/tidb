@@ -191,8 +191,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowClusterConfigs()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
-	case ast.ShowCreateProcedure:
-		return e.fetchShowCreateProcdure(ctx)
+	case ast.ShowCreateProcedure, ast.ShowCreateFunction:
+		return e.fetchShowCreateProcdure(ctx, e.Tp)
 	case ast.ShowCreateSequence:
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:

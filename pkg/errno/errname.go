@@ -1168,6 +1168,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	// Enterprise Edit errors.
 	ErrInvalidValueOfType: mysql.Message("Invalid %s value", nil),
 
+	// Enterprise Edit errors.
+	ErrProcedureDisabled: mysql.Message("Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`", nil),
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),

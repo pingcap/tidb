@@ -334,6 +334,8 @@ type PlanBuilder struct {
 
 	// procedureGoSet indicates waiting for the completed labels.
 	procedureGoSet []*variable.ProcedureLabel
+
+	storedFuncRetType *types.FieldType
 }
 
 type handleColHelper struct {
@@ -699,14 +701,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildCompactTable(x)
 	case *ast.RecommendIndexStmt:
 		return b.buildRecommendIndex(x)
-	case *ast.CreateProcedureInfo:
-		return b.buildCreateProcedure(ctx, x)
-	case *ast.DropProcedureStmt:
-		return b.buildDropProcedure(ctx, x)
 	case *ast.CallStmt:
-		return b.buildCallProcedure(ctx, x)
-	case *ast.AlterProcedureStmt:
-		return b.buildAlterProcedure(ctx, x)
+		return b.buildCallProcedure(ctx, x, false)
 	case *ast.Signal:
 		return b.buildSignal(ctx, x)
 	case *ast.GetDiagnosticsStmt:
@@ -5820,6 +5816,18 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
+	case *ast.CreateProcedureInfo:
+		if err := b.preprocessCreateProcedure(ctx, v); err != nil {
+			return nil, err
+		}
+	case *ast.DropProcedureStmt:
+		if err := b.preprocessDropProcedure(v); err != nil {
+			return nil, err
+		}
+	case *ast.AlterProcedureStmt:
+		if err := b.preprocessAlterProcedure(v); err != nil {
+			return nil, err
+		}
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -6256,6 +6264,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		}
 	case ast.ShowCreateProcedure:
 		names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
+	case ast.ShowCreateFunction:
+		names = []string{"Function", "sql_mode", "Create Function", "character_set_client", "collation_connection", "Database Collation"}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:

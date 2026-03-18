@@ -20,6 +20,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -136,6 +138,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		varsMutable:        make(map[string]struct{}),
 		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
+		userDefStoredFuncs: make([][2]string, 0),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -151,7 +154,111 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if len(v.varsReadonly) > 0 {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
 	}
+	// Check if user defined variables can be replaced by constant values
+	if sctx.GetSessionVars().EnableUDVSubstitute {
+		extractReplaceAbleVarsForUDV(sctx, v.userDefVarsTypeGet, v.userDefVarsTypeSet)
+	}
+	if err := preloadUserStoredFunction(ctx, sctx, v.userDefStoredFuncs); err != nil {
+		return err
+	}
 	return errors.Trace(v.err)
+}
+
+func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, funcNames [][2]string) error {
+	if len(funcNames) == 0 {
+		return nil
+	}
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.StoredFuncCtx.Lock()
+	if sc.StoredFuncCtx.FuncName == nil {
+		sc.StoredFuncCtx.FuncName = make(map[[2]string]*types.FieldType)
+	}
+	sc.StoredFuncCtx.Unlock()
+	var (
+		do         *domain.Domain
+		sysSession sessionctx.Context
+		sysRes     pools.Resource
+	)
+	defer func() {
+		if sysSession == nil {
+			return
+		}
+		sysSession.RollbackTxn(ctx)
+		do.SysSessionPool().Put(sysRes)
+	}()
+	// TODO(udf): optimize multiple function loading
+	for _, funcName := range funcNames {
+		schema := funcName[0]
+		name := funcName[1]
+		if schema == "" {
+			schema = sctx.GetSessionVars().CurrentDB
+		}
+		key := [2]string{schema, name}
+		sc.StoredFuncCtx.Lock()
+		if _, exists := sc.StoredFuncCtx.FuncName[key]; exists {
+			sc.StoredFuncCtx.Unlock()
+			continue
+		}
+		sc.StoredFuncCtx.Unlock()
+		internalExecCtx := ctx
+		if sysSession == nil {
+			do = domain.GetDomain(sctx)
+			se, err := do.SysSessionPool().Get()
+			if err != nil {
+				logutil.BgLogger().Warn("preloadUserStoredFunction: get sys session failed", zap.Error(err))
+				return errors.Trace(err)
+			}
+			sysRes = se
+			sysSession = se.(sessionctx.Context)
+		}
+		internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
+			internalExecCtx,
+			"SELECT definition_utf8, sql_mode FROM %n.%n WHERE route_schema = %? AND name = %? AND type = 'FUNCTION'",
+			mysql.SystemDB,
+			mysql.Routines,
+			schema,
+			name,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, err := sqlexec.DrainRecordSet(internalExecCtx, rs, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = rs.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			sc.StoredFuncCtx.Lock()
+			sc.StoredFuncCtx.FuncName[key] = nil
+			sc.StoredFuncCtx.Unlock()
+			return nil // Don't return error here, the function not exist error will be reported during plan building.
+		}
+		definition := rows[0].GetString(0)
+		createFnSQL := "create function p() " + definition
+		sqlModeStr := rows[0].GetSet(1).String()
+		sqlExec := sctx.GetRestrictedSQLExecutor()
+		_, _, err = sqlExec.ExecRestrictedSQL(internalExecCtx, nil, "SET SQL_MODE = '"+sqlModeStr+"'")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		stmt, err := sqlExec.ParseWithParams(internalExecCtx, createFnSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		createFn, ok := stmt.(*ast.CreateProcedureInfo)
+		if !ok || createFn.FunctionInfo.RetType == nil {
+			return errors.Errorf("invalid create function statement")
+		}
+		retType := createFn.FunctionInfo.RetType
+		sc.StoredFuncCtx.Lock()
+		sc.StoredFuncCtx.FuncName[key] = retType
+		sc.StoredFuncCtx.Unlock()
+	}
+	return nil
 }
 
 type preprocessorFlag uint64
@@ -255,6 +362,7 @@ type preprocessor struct {
 	// for udv push down
 	userDefVarsTypeGet map[string]struct{}
 	userDefVarsTypeSet map[string]struct{}
+	userDefStoredFuncs [][2]string
 	resolveCtx         *resolve.Context
 }
 
@@ -387,10 +495,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.FuncCallExpr:
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
-		}
-		// not support function right now.
-		if node.Schema.L != "" && p.stmtTp == TypeSelect {
-			p.err = expression.ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", node.Schema.L+"."+node.FnName.L)
 		}
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
@@ -669,6 +773,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 		if x.FnName.L == ast.NextVal || x.FnName.L == ast.LastVal || x.FnName.L == ast.SetVal {
 			p.flag &= ^inSequenceFunction
+		}
+		// When schema is specified, it should resolve stored function first to match MySQL compatibility.
+		if x.Schema.L != "" || !expression.IsFunctionSupported(x.FnName.L) {
+			p.userDefStoredFuncs = append(p.userDefStoredFuncs, [2]string{x.Schema.L, x.FnName.L})
 		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable

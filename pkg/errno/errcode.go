@@ -1175,6 +1175,8 @@ const (
 	ErrLBACNotFound      = 8803
 	ErrLBACAlreadyExists = 8804
 
+	ErrProcedureDisabled = 8810
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

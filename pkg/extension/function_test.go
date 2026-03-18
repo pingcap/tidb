@@ -153,8 +153,8 @@ func TestInvokeExtensionFunc(t *testing.T) {
 	store2 := testkit.CreateMockStore(t)
 	tk2 := testkit.NewTestKit(t, store2)
 	tk2.MustExec("use test")
-	require.EqualError(t, tk2.ExecToErr("select custom_func1(1, 'abc')"), "[expression:1305]FUNCTION test.custom_func1 does not exist")
-	require.EqualError(t, tk2.ExecToErr("select custom_func2(1, 2)"), "[expression:1305]FUNCTION test.custom_func2 does not exist")
+	require.EqualError(t, tk2.ExecToErr("select custom_func1(1, 'abc')"), "[executor:1305]FUNCTION test.custom_func1 does not exist")
+	require.EqualError(t, tk2.ExecToErr("select custom_func2(1, 2)"), "[executor:1305]FUNCTION test.custom_func2 does not exist")
 }
 
 func TestExtensionFuncDynamicArgLen(t *testing.T) {

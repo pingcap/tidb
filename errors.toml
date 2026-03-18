@@ -1776,6 +1776,11 @@ error = '''
 Incorrect number of arguments for %s %s; expected %d, got %d
 '''
 
+["executor:1321"]
+error = '''
+FUNCTION %s ended without RETURN
+'''
+
 ["executor:1330"]
 error = '''
 Duplicate parameter: %s
@@ -2124,6 +2129,11 @@ Unknown background task name '%-.192s'
 ["executor:8800"]
 error = '''
 This row has a unaccessible label, row label [%s], user label [%s]
+'''
+
+["executor:8810"]
+error = '''
+Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`
 '''
 
 ["expression:1139"]

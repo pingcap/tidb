@@ -1681,7 +1681,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 }
 
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
-func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
+func (er *expressionRewriter) newFunctionWithInit(schema, funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
 	if init != nil {
 		ret, err = expression.NewFunctionWithInit(er.sctx, funcName, retType, init, args...)
 	} else if er.disableFoldCounter > 0 {
@@ -1689,7 +1689,7 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	} else if er.tryFoldCounter > 0 {
 		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
 	} else {
-		ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
+		ret, err = expression.NewGenericFunction(er.sctx, schema, funcName, retType, args...)
 	}
 	if err != nil {
 		return
@@ -1704,7 +1704,11 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 
 // newFunction is being redirected to newFunctionWithInit.
 func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
-	return er.newFunctionWithInit(funcName, retType, nil, args...)
+	return er.newFunctionWithInit("", funcName, retType, nil, args...)
+}
+
+func (er *expressionRewriter) newGenericFunction(schema, funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
+	return er.newFunctionWithInit(schema, funcName, retType, nil, args...)
 }
 
 func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
@@ -2432,7 +2436,7 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 				err = groupingFunc.Function.(*expression.BuiltinGroupingImplSig).SetMetadata(planCtx.rollExpand.GroupingMode, planCtx.rollExpand.GenerateGroupingMarks(resolvedCols))
 				return groupingFunc, err
 			}
-			function, er.err = er.newFunctionWithInit(v.FnName.L, &v.Type, init, newArg)
+			function, er.err = er.newFunctionWithInit("", v.FnName.L, &v.Type, init, newArg)
 			er.ctxStackAppend(function, types.EmptyName)
 		}
 	default:
@@ -2467,7 +2471,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			er.ctxStackAppend(c, types.EmptyName)
 		}
 	} else {
-		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+		function, er.err = er.newGenericFunction(v.Schema.L, v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
 	}
 }

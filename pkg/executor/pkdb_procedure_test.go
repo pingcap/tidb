@@ -173,12 +173,57 @@ func TestProcedureSwitch(t *testing.T) {
 	tk.MustExec("create table t1 (id int)")
 	tk.MustGetErrCode("set tidb_enable_procedure = OFF ", 1229)
 	tk.MustExec("set global tidb_enable_procedure = OFF")
-	tk.MustGetErrMsg("create procedure t1() begin insert into t1 value(@a); end", "if enterprise edition, please set global tidb_enable_procedure = ON")
+	tk.MustGetErrMsg("create procedure t1() begin insert into t1 value(@a); end", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
+	tk.MustGetErrMsg("create function f1() returns int return 1", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
 	tk.MustGetErrCode("call t1", 1305)
 	tk.MustExec("set global tidb_enable_procedure = ON")
+	tk.MustExec("create function f1() returns int return 1")
 	tk.MustExec("create procedure t1() begin insert into t1 value(@a); end")
 	tk.MustExec("set global tidb_enable_procedure = OFF")
-	tk.MustGetErrMsg("call t1", "if enterprise edition, please set global tidb_enable_procedure = ON")
+	tk.MustGetErrMsg("call t1", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
+	tk.MustGetErrMsg("select f1()", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
+}
+
+func TestStoredFunctionCallDoesNotLeakStateBetweenCalls(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("create function f(v int) returns int begin declare x int default 0; set x = x + v; return x; end")
+	tk.MustQuery("select f(id) from t order by id").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestStoredFunctionCursorDrainsAllChunks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size = 2")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`create function f_cnt() returns int
+begin
+	declare v int default 0;
+	declare cnt int default 0;
+	declare v_done boolean default false;
+
+	declare c cursor for select id from t order by id;
+	declare continue handler for not found set v_done=true;
+
+	open c;
+	repeat
+		fetch c into v;
+		if v_done = false then
+			set cnt = cnt + 1;
+		end if;
+		until v_done = true
+	end repeat;
+	close c;
+	return cnt;
+end`)
+	tk.MustQuery("select f_cnt()").Check(testkit.Rows("5"))
 }
 
 func TestBaseCall(t *testing.T) {

@@ -179,6 +179,9 @@ type ProcedureContext struct {
 	root *ProcedureContext
 	// depth
 	level uint
+
+	RetDatum *types.Datum
+
 	// save procedure variable.
 	Vars []*ProcedureVars
 	// save procedure handles.
@@ -406,6 +409,30 @@ func (pCon *ProcedureContext) GetProcedureVariable(name string) (*types.FieldTyp
 	return nil, types.NewDatum(""), true
 }
 
+// SetReturnDatum sets return datum.
+func (pCon *ProcedureContext) SetReturnDatum(datum *types.Datum) {
+	c := pCon
+	for c.root != nil {
+		c = c.root
+	}
+	c.RetDatum = datum
+}
+
+// GetReturnDatum gets return datum.
+func (pCon *ProcedureContext) GetReturnDatum() *types.Datum {
+	if pCon == nil {
+		return nil
+	}
+	if pCon.RetDatum != nil {
+		return pCon.RetDatum.Clone()
+	}
+	if pCon.root != nil {
+		return pCon.root.GetReturnDatum()
+	}
+
+	return nil
+}
+
 // SetProcedureContext set SessionVars context value.
 // use this context as environment variable.
 func (s *SessionVars) SetProcedureContext(context *ProcedureContext) error {
@@ -504,7 +531,20 @@ func (s *SessionVars) AppendBackupStmtCtx() {
 	}
 	s.procedureContext.Lock.Lock()
 	defer s.procedureContext.Lock.Unlock()
-	s.procedureContext.BackupStmtCtx = append(s.procedureContext.BackupStmtCtx, s.StmtCtx.BackupForHandler())
+	b := s.StmtCtx.BackupForHandler()
+	// `StmtCtx.BackupForHandler` uses `PrevAffectedRows`, which might not be updated yet when entering a handler.
+	// For `GET STACKED DIAGNOSTICS`, we need the ROW_COUNT of the statement that raised the condition.
+	switch {
+	case s.StmtCtx.InUpdateStmt || s.StmtCtx.InDeleteStmt || s.StmtCtx.InInsertStmt || s.StmtCtx.InSetSessionStatesStmt:
+		b.AffectedRows = int64(s.StmtCtx.AffectedRows())
+	case s.StmtCtx.InSelectStmt:
+		b.AffectedRows = -1
+	case s.StmtCtx.InDiagnostics:
+		b.AffectedRows = s.StmtCtx.PrevAffectedRows
+	default:
+		b.AffectedRows = 0
+	}
+	s.procedureContext.BackupStmtCtx = append(s.procedureContext.BackupStmtCtx, b)
 }
 
 // PopBackupStmtCtx deletes last backup stmtctx

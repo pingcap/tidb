@@ -130,6 +130,13 @@ type BuildContext interface {
 	ConnectionID() uint64
 	// IsReadonlyUserVar checks whether the user variable is readonly.
 	IsReadonlyUserVar(name string) bool
+	// LoadStoredFunction loads stored function info by schema and function name.
+	LoadStoredFunction(schema, funcName string) (*StoredFuncInfo, error)
+}
+
+// StoredFuncInfo contains the information of a stored function.
+type StoredFuncInfo struct {
+	RetType *types.FieldType
 }
 
 // ExprContext contains full context for expression building and evaluating.

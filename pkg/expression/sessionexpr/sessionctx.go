@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -148,6 +150,25 @@ func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
 // IntoStatic turns the ExprContext into a ExprContext.
 func (ctx *ExprContext) IntoStatic() *exprstatic.ExprContext {
 	return exprstatic.MakeExprContextStatic(ctx)
+}
+
+// LoadStoredFunction loads stored function info by schema and function name.
+func (ctx *ExprContext) LoadStoredFunction(schema, funcName string) (*exprctx.StoredFuncInfo, error) {
+	if schema == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+	sc := ctx.sctx.GetSessionVars().StmtCtx
+	sc.StoredFuncCtx.Lock()
+	defer sc.StoredFuncCtx.Unlock()
+
+	if sc.StoredFuncCtx.FuncName == nil {
+		return nil, exeerrors.ErrSpDoesNotExist.FastGenByArgs("FUNCTION", schema+"."+funcName)
+	}
+	retType, ok := sc.StoredFuncCtx.FuncName[[2]string{schema, funcName}]
+	if !ok || retType == nil {
+		return nil, exeerrors.ErrSpDoesNotExist.FastGenByArgs("FUNCTION", schema+"."+funcName)
+	}
+	return &exprctx.StoredFuncInfo{RetType: retType}, nil
 }
 
 // EvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.

@@ -206,6 +206,12 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeRepairTable(x)
 	case *ast.CreateSequenceStmt:
 		err = e.executeCreateSequence(x)
+	case *ast.CreateProcedureInfo:
+		err = e.executeCreateProcedure(x)
+	case *ast.DropProcedureStmt:
+		err = e.executeDropProcedure(x)
+	case *ast.AlterProcedureStmt:
+		err = e.executeAlterProcedure(x)
 	case *ast.DropSequenceStmt:
 		err = e.executeDropSequence(x)
 	case *ast.AlterSequenceStmt:
@@ -732,6 +738,18 @@ func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 	return e.ddlExecutor.CreateSequence(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateProcedure(s *ast.CreateProcedureInfo) error {
+	return e.ddlExecutor.CreateProcedure(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeDropProcedure(s *ast.DropProcedureStmt) error {
+	return e.ddlExecutor.DropProcedure(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeAlterProcedure(s *ast.AlterProcedureStmt) error {
+	return e.ddlExecutor.AlterProcedure(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {

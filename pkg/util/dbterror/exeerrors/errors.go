@@ -105,6 +105,7 @@ var (
 	ErrUdfExists                      = dbterror.ClassExecutor.NewStd(mysql.ErrUdfExists)
 	ErrSpAlreadyExists                = dbterror.ClassExecutor.NewStd(mysql.ErrSpAlreadyExists)
 	ErrSpDoesNotExist                 = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)
+	ErrSpNoreturnend                  = dbterror.ClassExecutor.NewStd(mysql.ErrSpNoreturnend)
 	ErrSpDupParam                     = dbterror.ClassExecutor.NewStd(mysql.ErrSpDupParam)
 	ErrSpNotVarArg                    = dbterror.ClassOptimizer.NewStd(mysql.ErrSpNotVarArg)
 	ErrOperandColumns                 = dbterror.ClassOptimizer.NewStd(mysql.ErrOperandColumns)
@@ -134,4 +135,5 @@ var (
 	ErrGetStackedDaWithoutActiveHandler = dbterror.ClassExecutor.NewStd(mysql.ErrGetStackedDaWithoutActiveHandler)
 	ErrDaInvalidConditionNumber         = dbterror.ClassExecutor.NewStd(mysql.ErrDaInvalidConditionNumber)
 	ErrCantUpdateUsedTableInSfOrTrg     = dbterror.ClassExecutor.NewStd(mysql.ErrCantUpdateUsedTableInSfOrTrg)
+	ErrProcedureDisabled                = dbterror.ClassExecutor.NewStd(mysql.ErrProcedureDisabled)
 )

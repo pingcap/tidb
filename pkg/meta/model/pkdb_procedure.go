@@ -4,6 +4,7 @@ package model
 
 import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	types "github.com/pingcap/tidb/pkg/parser/types"
 )
 
 // ProcedureInfo provides meta data describing a stored procedure/function.
@@ -30,7 +31,14 @@ type ProcedureInfo struct {
 	Options          *string `json:"options,omitempty"`
 	ExternalLanguage string  `json:"external_language"`
 
-	State SchemaState `json:"state"`
+	// above fields mirrors the mysql.routines table schema
+	//
+
+	// RetType is set when infoschema loads ProcedureInfo into memory. A stored
+	// function may have not nil RetType. Nil RetType for stored function means error
+	// happens in infoschema, it will be process again later.
+	RetType *types.FieldType `json:"ret_type"`
+	State   SchemaState      `json:"state"`
 }
 
 // LoadableFunctionInfo contains metadata for creating a loadable function.
