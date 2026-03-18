@@ -205,7 +205,15 @@ func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
 	}
 
 	sentinel := maskingPolicySentinelDatum(colInfo)
-	row := chunk.MutRowFromDatums([]types.Datum{sentinel}).ToRow()
+	// The masking expression placeholder keeps the original column offset.
+	// Build a row with enough columns and place the sentinel at that offset.
+	colIdx := placeholder.Index
+	if colIdx < 0 {
+		colIdx = 0
+	}
+	rowDatums := make([]types.Datum, colIdx+1)
+	rowDatums[colIdx] = sentinel
+	row := chunk.MutRowFromDatums(rowDatums).ToRow()
 	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
 	val, err := expr.Eval(evalCtx, row)
 	if err != nil {
