@@ -297,6 +297,7 @@ Measurements: wall-clock duration, CPU time, memory usage, and accuracy (row cou
 - **Faster single-partition re-analyze**: Rebuilding global stats after a single-partition ANALYZE requires only I/O (loading saved samples) + in-memory merge, not re-merging all partitions' histograms.
 - **Improved global stats quality**: Histograms built from actual sampled data avoid the information loss inherent in histogram merging, potentially improving cardinality estimation.
 - **Additional storage**: Since the total pruning budget is fixed (~110K samples), total storage is roughly constant regardless of partition count — approximately 10–20 MB for 50 mixed-type columns (see blob size table in the Persisting Samples section). Narrower tables or predicate-column analysis produce proportionally less.
+- **`mysql.stats_fm_sketch` becomes obsolete**: FMSketches are only read from `stats_fm_sketch` when merging partition stats into global stats — non-partitioned tables and normal query planning never read them. The sample-based path replaces that merge entirely, and the persisted collector already contains per-column FMSketches. This eliminates the need for `stats_fm_sketch` and its per-column-per-partition I/O (e.g., 8,000 partitions × 50 columns = 400,000 individual queries in the current merge path, replaced by one blob read per partition). The new `stats_table_data` table also has a proper PRIMARY KEY, unlike `stats_fm_sketch` which only has a non-unique INDEX (see [#66303](https://github.com/pingcap/tidb/pull/66303)).
 
 ### Risks
 
