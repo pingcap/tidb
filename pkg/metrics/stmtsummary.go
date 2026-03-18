@@ -37,8 +37,8 @@ var (
 	// This value resets to 0 when the window rotates.
 	StmtSummaryWindowEvictedCount *prometheus.GaugeVec
 
-	stmtSummaryWindowRecordCountV1 prometheus.Gauge
-	stmtSummaryWindowRecordCountV2 prometheus.Gauge
+	stmtSummaryWindowRecordCountV1  prometheus.Gauge
+	stmtSummaryWindowRecordCountV2  prometheus.Gauge
 	stmtSummaryWindowEvictedCountV1 prometheus.Gauge
 	stmtSummaryWindowEvictedCountV2 prometheus.Gauge
 )
