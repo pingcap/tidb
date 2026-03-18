@@ -2232,6 +2232,24 @@ func TestHybridIndexVectorValidation(t *testing.T) {
 		"sharding_key":{"columns":["b"]}
 	}'`, "must specify exactly one column")
 
+	// Missing index_info entirely should be rejected (distance_metric required).
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+
+	// Empty index_info should be rejected (distance_metric required).
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+
+	// Missing distance_metric with only dimension should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":3}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+
 	// Unsupported distance metric should be rejected.
 	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
 		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"HAMMING"}}],
@@ -2240,24 +2258,24 @@ func TestHybridIndexVectorValidation(t *testing.T) {
 
 	// Zero dimension should be rejected.
 	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
-		"vector":[{"columns":["v1"], "index_info":{"dimension":0}}],
+		"vector":[{"columns":["v1"], "index_info":{"dimension":0, "distance_metric":"L2"}}],
 		"sharding_key":{"columns":["b"]}
 	}'`, "dimension must be greater than 0")
 
 	// Dimension mismatch with column definition should be rejected.
 	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
-		"vector":[{"columns":["v1"], "index_info":{"dimension":10}}],
+		"vector":[{"columns":["v1"], "index_info":{"dimension":10, "distance_metric":"L2"}}],
 		"sharding_key":{"columns":["b"]}
 	}'`, "does not match column")
 
-	// Valid L2 metric should succeed.
+	// Valid L2 metric should succeed (dimension auto-materialized from column).
 	tk.MustExec(`create columnar index idx_l2 on t(b, v1) using hybrid parameter '{
 		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
 		"sharding_key":{"columns":["b"]}
 	}'`)
 	tk.MustExec("drop index idx_l2 on t")
 
-	// Valid COSINE metric should succeed.
+	// Valid COSINE metric should succeed (dimension auto-materialized from column).
 	tk.MustExec(`create columnar index idx_cos on t(b, v1) using hybrid parameter '{
 		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"COSINE"}}],
 		"sharding_key":{"columns":["b"]}

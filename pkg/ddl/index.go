@@ -1054,16 +1054,30 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			if spec.IndexInfo != nil {
 				component.IndexInfo = spec.IndexInfo.toModel()
 			}
-			// Validate distance metric: only L2 and COSINE are supported.
-			if component.IndexInfo != nil && component.IndexInfo.DistanceMetric != "" {
-				dm := model.DistanceMetric(component.IndexInfo.DistanceMetric)
-				if _, ok := model.IndexableDistanceMetricToFnName[dm]; !ok {
-					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
-						fmt.Sprintf("HYBRID index vector component %d has unsupported distance metric '%s', only L2 and COSINE are supported", i+1, component.IndexInfo.DistanceMetric))
-				}
+			// Ensure IndexInfo is always populated.
+			if component.IndexInfo == nil {
+				component.IndexInfo = &model.HybridVectorIndexInfo{}
 			}
-			// Validate dimension if specified.
-			if component.IndexInfo != nil && component.IndexInfo.Dimension != nil {
+			// Require distance metric: only L2 and COSINE are supported.
+			if component.IndexInfo.DistanceMetric == "" {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
+					fmt.Sprintf("HYBRID index vector component %d must specify a distance_metric (L2 or COSINE)", i+1))
+			}
+			dm := model.DistanceMetric(component.IndexInfo.DistanceMetric)
+			if _, ok := model.IndexableDistanceMetricToFnName[dm]; !ok {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
+					fmt.Sprintf("HYBRID index vector component %d has unsupported distance metric '%s', only L2 and COSINE are supported", i+1, component.IndexInfo.DistanceMetric))
+			}
+			// Materialize dimension from column definition if not specified.
+			if component.IndexInfo.Dimension == nil {
+				if colInfo.FieldType.GetFlen() > 0 {
+					dim := uint64(colInfo.FieldType.GetFlen())
+					component.IndexInfo.Dimension = &dim
+				} else {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
+						fmt.Sprintf("HYBRID index vector component %d must specify dimension for variable-length vector column '%s'", i+1, colInfo.Name.O))
+				}
+			} else {
 				dim := *component.IndexInfo.Dimension
 				if dim == 0 {
 					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
