@@ -89,3 +89,26 @@ func TestMaskingPolicyRestrictOnNoneToggle(t *testing.T) {
 	tkUser.MustExec("insert into dst_toggle select c from src_toggle")
 	tkUser.MustQuery("select c from dst_toggle").Check(testkit.Rows("******"))
 }
+
+func TestMaskingPolicyRestrictOnInsertSelectStar(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tkRoot := testkit.NewTestKit(t, store)
+	require.NoError(t, tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tkRoot.MustExec("use test")
+
+	tkRoot.MustExec("drop table if exists payment_details, payment_details_copy")
+	tkRoot.MustExec("create table payment_details (id int primary key, customer_id int, card_no varchar(20), expiry_date date)")
+	tkRoot.MustExec("insert into payment_details values (1, 1, '23233438477283', '2030-05-06')")
+	tkRoot.MustExec(`create masking policy p_pan_mask on payment_details(card_no) as
+		case when current_user() = 'root@%' then card_no else mask_partial(card_no, 6, 4, '*') end enable`)
+	tkRoot.MustExec("alter table payment_details modify masking policy p_pan_mask set restrict on (insert_into_select)")
+	tkRoot.MustExec("create table payment_details_copy like payment_details")
+
+	tkRoot.MustExec("create user if not exists 'u_star'@'%'")
+	tkRoot.MustExec("grant select, insert on test.* to 'u_star'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u_star", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("use test")
+	tkUser.MustGetErrCode("insert into payment_details_copy select * from payment_details", errno.ErrAccessDeniedToMaskedColumn)
+}
