@@ -22,6 +22,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -52,6 +53,9 @@ type CollectResult struct {
 	// total number of conflicted rows.
 	RowCount      int64
 	TotalFileSize int64
+	// FilesTruncated is true if conflicted-row file recording is stopped due to
+	// maxTotalConflictRowFileSize.
+	FilesTruncated bool
 	// it's the checksum of the encoded KV of the conflicted rows.
 	Checksum *verification.KVChecksum
 	// name of the files which records the conflicted rows
@@ -73,6 +77,7 @@ func (r *CollectResult) Merge(other *CollectResult) {
 	}
 	r.RowCount += other.RowCount
 	r.TotalFileSize += other.TotalFileSize
+	r.FilesTruncated = r.FilesTruncated || other.FilesTruncated
 	r.Checksum.Add(other.Checksum)
 	r.Filenames = append(r.Filenames, other.Filenames...)
 }
@@ -177,9 +182,11 @@ func (c *Collector) handleEncodedRowInner(ctx context.Context, row []types.Datum
 	// We intentionally check the hard limit after Add to keep cross-collector
 	// accounting simple. A small overflow above the threshold is acceptable for
 	// now while we collect real-world feedback for this feature.
+	limit := maxTotalConflictRowFileSize
+	failpoint.InjectCall("mockTotalConflictRowFileSizeLimit", &limit)
 	globalTotalSize := c.sharedTotalFileSize.Add(contentSize)
-	if globalTotalSize > maxTotalConflictRowFileSize {
-		return c.onTotalSizeLimitExceeded(ctx, globalTotalSize, contentSize)
+	if globalTotalSize > limit {
+		return c.onTotalSizeLimitExceeded(ctx, globalTotalSize, contentSize, limit)
 	}
 
 	if c.writer == nil || c.currFileSize >= MaxConflictRowFileSize {
@@ -222,13 +229,14 @@ func (c *Collector) switchFile(ctx context.Context) error {
 	return nil
 }
 
-func (c *Collector) onTotalSizeLimitExceeded(ctx context.Context, totalSize, rowSize int64) error {
+func (c *Collector) onTotalSizeLimitExceeded(ctx context.Context, totalSize, rowSize, limit int64) error {
 	if c.stopRecording {
 		return nil
 	}
 	c.stopRecording = true
+	c.result.FilesTruncated = true
 	c.logger.Info("conflicted row files reached the hardcoded total size limit, stop recording more rows",
-		zap.String("sizeLimit", units.BytesSize(float64(maxTotalConflictRowFileSize))),
+		zap.String("sizeLimit", units.BytesSize(float64(limit))),
 		zap.String("currentTotalFileSize", units.BytesSize(float64(totalSize))),
 		zap.String("nextRowSize", units.BytesSize(float64(rowSize))),
 	)
