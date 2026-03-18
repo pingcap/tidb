@@ -123,7 +123,7 @@ const (
 	ActionCreateMaskingPolicy                   ActionType = 81
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
-  ActionAlterTableSetRegionSplitPolicy        ActionType = 84
+	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
 
 	// range [200, 256) is reserved for a downstream fork
 )
