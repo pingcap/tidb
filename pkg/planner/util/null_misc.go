@@ -225,7 +225,11 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	return proveNullRejected(ctx, innerSchema, predicate).nonTrue
 }
 
-func proveNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, expr expression.Expression) nullRejectProof {
+func proveNullRejected(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr expression.Expression,
+) nullRejectProof {
 	if cons, ok := tryFoldNullifiedConstant(ctx, innerSchema, expr); ok {
 		return proofFromConstant(ctx, cons)
 	}
@@ -243,7 +247,11 @@ func proveNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, exp
 	return nullRejectProof{}
 }
 
-func proveNullRejectedScalarFunc(ctx base.PlanContext, innerSchema *expression.Schema, expr *expression.ScalarFunction) nullRejectProof {
+func proveNullRejectedScalarFunc(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr *expression.ScalarFunction,
+) nullRejectProof {
 	switch expr.FuncName.L {
 	case ast.LogicAnd:
 		lhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0])
@@ -303,7 +311,11 @@ func proveNullRejectedScalarFunc(ctx base.PlanContext, innerSchema *expression.S
 // proveNullRejectedIn handles IN(value, list...).
 // IN returns NULL (not FALSE) when value is NULL, or when all list-element
 // comparisons yield NULL, making the whole predicate nonTrue in either case.
-func proveNullRejectedIn(ctx base.PlanContext, innerSchema *expression.Schema, expr *expression.ScalarFunction) nullRejectProof {
+func proveNullRejectedIn(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr *expression.ScalarFunction,
+) nullRejectProof {
 	args := expr.GetArgs()
 	if len(args) == 0 {
 		return nullRejectProof{}
@@ -325,7 +337,11 @@ func proveNullRejectedIn(ctx base.PlanContext, innerSchema *expression.Schema, e
 	return nullRejectProof{}
 }
 
-func tryFoldNullifiedConstant(ctx base.PlanContext, innerSchema *expression.Schema, expr expression.Expression) (*expression.Constant, bool) {
+func tryFoldNullifiedConstant(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr expression.Expression,
+) (*expression.Constant, bool) {
 	if cons, ok := tryFoldStaticConstant(ctx, expr); ok {
 		return cons, true
 	}
@@ -355,7 +371,11 @@ func tryFoldStaticConstant(ctx base.PlanContext, expr expression.Expression) (*e
 	return cons, true
 }
 
-func tryFoldNullifiedScalarFunc(ctx base.PlanContext, innerSchema *expression.Schema, expr *expression.ScalarFunction) (*expression.Constant, bool) {
+func tryFoldNullifiedScalarFunc(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr *expression.ScalarFunction,
+) (*expression.Constant, bool) {
 	switch expr.FuncName.L {
 	case ast.Coalesce, ast.Ifnull:
 		return tryFoldNullifiedCoalesceLike(ctx, innerSchema, expr)
@@ -384,7 +404,11 @@ func tryFoldNullifiedScalarFunc(ctx base.PlanContext, innerSchema *expression.Sc
 	return foldNullifiedFunction(ctx, expr, args)
 }
 
-func tryFoldNullifiedCoalesceLike(ctx base.PlanContext, innerSchema *expression.Schema, expr *expression.ScalarFunction) (*expression.Constant, bool) {
+func tryFoldNullifiedCoalesceLike(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr *expression.ScalarFunction,
+) (*expression.Constant, bool) {
 	for _, arg := range expr.GetArgs() {
 		cons, ok := tryFoldNullifiedConstant(ctx, innerSchema, arg)
 		if !ok {
@@ -397,7 +421,11 @@ func tryFoldNullifiedCoalesceLike(ctx base.PlanContext, innerSchema *expression.
 	return expression.NewNull(), true
 }
 
-func tryFoldNullifiedIf(ctx base.PlanContext, innerSchema *expression.Schema, expr *expression.ScalarFunction) (*expression.Constant, bool) {
+func tryFoldNullifiedIf(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	expr *expression.ScalarFunction,
+) (*expression.Constant, bool) {
 	args := expr.GetArgs()
 	cond, ok := tryFoldNullifiedConstant(ctx, innerSchema, args[0])
 	if !ok {
@@ -413,7 +441,11 @@ func tryFoldNullifiedIf(ctx base.PlanContext, innerSchema *expression.Schema, ex
 	return tryFoldNullifiedConstant(ctx, innerSchema, args[2])
 }
 
-func foldNullifiedFunction(ctx base.PlanContext, expr *expression.ScalarFunction, args []expression.Expression) (*expression.Constant, bool) {
+func foldNullifiedFunction(
+	ctx base.PlanContext,
+	expr *expression.ScalarFunction,
+	args []expression.Expression,
+) (*expression.Constant, bool) {
 	folded, err := expression.NewFunction(ctx.GetExprCtx(), expr.FuncName.L, expr.RetType.Clone(), args...)
 	if err != nil {
 		return nil, false
