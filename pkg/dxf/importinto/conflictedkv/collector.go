@@ -167,8 +167,11 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 		return errors.Trace(err)
 	}
 	contentSize := int64(len(str) + 1)
-	globalTotalSize, ok := c.tryReserveTotalFileSize(contentSize)
-	if !ok {
+	// We intentionally check the hard limit after Add to keep cross-collector
+	// accounting simple. A small overflow above the threshold is acceptable for
+	// now while we collect real-world feedback for this feature.
+	globalTotalSize := c.sharedTotalFileSize.Add(contentSize)
+	if globalTotalSize > maxTotalConflictRowFileSize {
 		if err := c.onTotalSizeLimitExceeded(ctx, globalTotalSize, contentSize); err != nil {
 			return err
 		}
@@ -186,7 +189,6 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 
 	content := []byte(str + "\n")
 	if _, err = c.writer.Write(ctx, content); err != nil {
-		c.sharedTotalFileSize.Add(-contentSize)
 		return errors.Trace(err)
 	}
 	c.result.RowCount++
@@ -239,19 +241,6 @@ func (c *Collector) onTotalSizeLimitExceeded(ctx context.Context, totalSize, row
 		c.currFileSize = 0
 	}
 	return nil
-}
-
-func (c *Collector) tryReserveTotalFileSize(contentSize int64) (totalSize int64, ok bool) {
-	for {
-		curr := c.sharedTotalFileSize.Load()
-		next := curr + contentSize
-		if next > maxTotalConflictRowFileSize {
-			return curr, false
-		}
-		if c.sharedTotalFileSize.CompareAndSwap(curr, next) {
-			return next, true
-		}
-	}
 }
 
 // Close the collector.
