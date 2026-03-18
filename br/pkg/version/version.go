@@ -353,7 +353,7 @@ type ServerType int
 
 const (
 	// ServerTypeUnknown represents unknown server type
-	ServerTypeUnknown = iota
+	ServerTypeUnknown ServerType = iota
 	// ServerTypeMySQL represents MySQL server type
 	ServerTypeMySQL
 	// ServerTypeMariaDB represents MariaDB server type

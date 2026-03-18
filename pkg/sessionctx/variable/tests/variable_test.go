@@ -469,6 +469,12 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	val := sv.ValidateWithRelaxedValidation(vars, "1", vardef.ScopeGlobal)
 	require.Equal(t, "ON", val)
 
+	sv = variable.GetSysVar(vardef.TiDBAnalyzeVersion)
+	_, err := sv.Validate(vars, "1", vardef.ScopeSession)
+	require.ErrorContains(t, err, "tidb_analyze_version=1 is no longer supported")
+	val = sv.ValidateWithRelaxedValidation(vars, "1", vardef.ScopeSession)
+	require.Equal(t, "1", val)
+
 	// Relaxed validation catches the error and squashes it.
 	// The incorrect value is returned as-is.
 	// I am not sure this is the correct behavior, we might need to

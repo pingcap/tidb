@@ -400,8 +400,21 @@ func mockWorkerReadJob(
 	ret := make([]*regionJob, len(jobs))
 	jobToWorkerCh <- jobs[0]
 	require.Eventually(t, func() bool {
-		// wait runSendToWorker goroutine is blocked at sending
-		return b.jobLen() == 0
+		// wait runSendToWorker goroutine is blocked at sending.
+		// Besides b.jobLen() == 0, we also need to make sure jobs[0] has really been
+		// picked. Otherwise this condition can pass before runReadToWorkerCh stores
+		// jobs[0], and the following assertions become flaky.
+		if b.jobLen() != 0 {
+			return false
+		}
+		peers := jobs[0].region.Region.Peers
+		for _, peer := range peers {
+			v, ok := b.storeLoadMap.Load(peer.StoreId)
+			if !ok || v.(int) <= 0 {
+				return false
+			}
+		}
+		return true
 	}, time.Second, 10*time.Millisecond)
 
 	for _, job := range jobs[1:] {

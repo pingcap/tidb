@@ -260,7 +260,7 @@
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexReader(Probe) 12475.01 root  index:Selection",
           "  └─Selection 12475.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) lt(test.t2.b, plus(test.t1.b, 1)) gt(test.t2.b, minus(test.t1.b, 1))], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -543,7 +543,7 @@
           "Limit 2.00 root  offset:0, count:2837",
           "└─HashJoin 2.00 root  inner join, equal:[eq(test.t19f3e4f1.colc864, test.t19f3e4f1.colc864)]",
           "  ├─StreamAgg(Build) 1.60 root  group by:test.t19f3e4f1.colc864, funcs:firstrow(test.t19f3e4f1.colc864)->test.t19f3e4f1.colc864",
-          "  │ └─Apply 2.00 root  semi join, left side:Projection, equal:[eq(test.t19f3e4f1.colaadb, test.t0da79f8d.colf2af)]",
+          "  │ └─Apply 1.60 root  semi join, left side:Projection, equal:[eq(test.t19f3e4f1.colaadb, test.t0da79f8d.colf2af)]",
           "  │   ├─Projection(Build) 2.00 root  test.t19f3e4f1.colc864, test.t19f3e4f1.colaadb",
           "  │   │ └─IndexLookUp 2.00 root  ",
           "  │   │   ├─IndexFullScan(Build) 2.00 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) keep order:true, stats:pseudo",

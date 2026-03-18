@@ -408,6 +408,14 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 			"      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	}
 
+	// issue-58999-view-equality-expression-join-key-panic
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("CREATE TABLE t0(c2 TINYINT)")
+		tk.MustExec("CREATE VIEW v0(c0) AS SELECT false FROM t0")
+		tk.MustQuery("SELECT /* issue:58999 */ 1 FROM t0, v0 WHERE t0.c2=(-(-1|v0.c0))").Check(testkit.Rows())
+	}
+
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
 	// and use IndexRangeScan, same as lowercase names.

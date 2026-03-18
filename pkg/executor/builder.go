@@ -127,6 +127,10 @@ type executorBuilder struct {
 
 	// Used when building MPPGather.
 	encounterUnionScan bool
+
+	// stmtCtxLock guards statement context and telemetry updates when executor building happens concurrently.
+	// It is only set for dataReaderBuilder instances used by index join inner workers.
+	stmtCtxLock *sync.Mutex
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -136,6 +140,10 @@ type CTEStorages struct {
 	ResTbl    cteutil.Storage
 	IterInTbl cteutil.Storage
 	Producer  *cteProducer
+	// initOnce ensures storage initialization (including Producer setup) is executed once.
+	initOnce sync.Once
+	// initErr records initialization error from initOnce.
+	initErr error
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
@@ -148,6 +156,16 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
+}
+
+func (b *executorBuilder) withStmtCtxLock(fn func()) {
+	if b.stmtCtxLock == nil {
+		fn()
+		return
+	}
+	b.stmtCtxLock.Lock()
+	defer b.stmtCtxLock.Unlock()
+	fn()
 }
 
 // MockExecutorBuilder is a wrapper for executorBuilder.
@@ -3266,100 +3284,6 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task pl
 	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(context.Background(), b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(
-	task plannercore.AnalyzeColumnsTask,
-	opts map[ast.AnalyzeOptionType]uint64,
-	autoAnalyze string,
-	schemaForVirtualColEval *expression.Schema,
-) *analyzeTask {
-	if task.StatsVersion == statistics.Version2 {
-		return b.buildAnalyzeSamplingPushdown(task, opts, schemaForVirtualColEval)
-	}
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
-	cols := task.ColsInfo
-	if hasPkHist(task.HandleCols) {
-		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
-		cols = append([]*model.ColumnInfo{colInfo}, cols...)
-	} else if task.HandleCols != nil && !task.HandleCols.IsInt() {
-		cols = make([]*model.ColumnInfo, 0, len(task.ColsInfo)+task.HandleCols.NumCols())
-		for col := range task.HandleCols.IterColumns() {
-			cols = append(cols, task.TblInfo.Columns[col.Index])
-		}
-		cols = append(cols, task.ColsInfo...)
-		task.ColsInfo = cols
-	}
-
-	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
-	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
-	})
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
-	base := baseAnalyzeExec{
-		ctx:         b.ctx,
-		tableID:     task.TableID,
-		concurrency: concurrency,
-		analyzePB: &tipb.AnalyzeReq{
-			Tp:             tipb.AnalyzeType_TypeColumn,
-			Flags:          sc.PushDownFlags(),
-			TimeZoneOffset: offset,
-		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
-	}
-	e := &AnalyzeColumnsExec{
-		baseAnalyzeExec: base,
-		tableInfo:       task.TblInfo,
-		colsInfo:        task.ColsInfo,
-		handleCols:      task.HandleCols,
-		AnalyzeInfo:     task.AnalyzeInfo,
-	}
-	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
-	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
-		SampleSize:    MaxRegionSampleSize,
-		SketchSize:    statistics.MaxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false, false),
-		CmsketchDepth: &depth,
-		CmsketchWidth: &width,
-	}
-	if task.TblInfo != nil {
-		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
-		if task.TblInfo.IsCommonHandle {
-			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
-		}
-	}
-	if task.CommonHandleInfo != nil {
-		topNSize := new(int32)
-		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
-		statsVersion := new(int32)
-		*statsVersion = int32(task.StatsVersion)
-		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
-			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
-			TopNSize:   topNSize,
-			Version:    statsVersion,
-		}
-		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
-		e.analyzePB.IdxReq.CmsketchDepth = &depth
-		e.analyzePB.IdxReq.CmsketchWidth = &width
-		e.analyzePB.IdxReq.SketchSize = statistics.MaxSketchSize
-		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
-		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
-		e.commonHandle = task.CommonHandleInfo
-	}
-	b.err = tables.SetPBColumnsDefaultValue(b.ctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, cols)
-	return &analyzeTask{taskType: colTask, colExec: e, job: job}
-}
-
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	gp := domain.GetDomain(b.ctx).StatsHandle().GPool()
 	e := &AnalyzeExec{
@@ -3399,7 +3323,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
@@ -3538,10 +3462,14 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	builderForDataReader := *b
 	builderForDataReader.forDataReaderBuilder = true
 	builderForDataReader.dataReaderTS = ts
+	if builderForDataReader.stmtCtxLock == nil {
+		builderForDataReader.stmtCtxLock = &sync.Mutex{}
+	}
 
 	return &dataReaderBuilder{
 		plan:            p,
 		executorBuilder: &builderForDataReader,
+		once:            &dataReaderBuilderOnce{},
 	}, nil
 }
 
@@ -3659,12 +3587,15 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
+	innerKeyColUniqueIDs := make([]int64, len(v.InnerJoinKeys))
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := range v.InnerJoinKeys {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
+		innerKeyColUniqueIDs[i] = v.InnerJoinKeys[i].UniqueID
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
+	readerBuilder.indexJoinKeyUniqueIDs = innerKeyColUniqueIDs
 	e.OuterCtx.KeyCols = outerKeyCols
 	e.InnerCtx.KeyCols = innerKeyCols
 	e.InnerCtx.KeyColIDs = innerKeyColIDs
@@ -3733,9 +3664,13 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
+	innerKeyColUniqueIDs := make([]int64, len(v.InnerJoinKeys))
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := range v.InnerJoinKeys {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
+		innerKeyColUniqueIDs[i] = v.InnerJoinKeys[i].UniqueID
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
 	executor_metrics.ExecutorCounterIndexLookUpJoin.Inc()
@@ -3745,6 +3680,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		b.err = err
 		return nil
 	}
+	readerBuilder.indexJoinKeyUniqueIDs = innerKeyColUniqueIDs
 
 	e := &join.IndexLookUpMergeJoin{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
@@ -3761,6 +3697,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 			RowTypes:                innerTypes,
 			JoinKeys:                v.InnerJoinKeys,
 			KeyCols:                 innerKeyCols,
+			KeyColIDs:               innerKeyColIDs,
 			KeyCollators:            keyCollators,
 			CompareFuncs:            v.CompareFuncs,
 			ColLens:                 v.IdxColLens,
@@ -4827,8 +4764,10 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 
 func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMergeReader) exec.Executor {
 	if b.Ti != nil {
-		b.Ti.UseIndexMerge = true
-		b.Ti.UseTableLookUp.Store(true)
+		b.withStmtCtxLock(func() {
+			b.Ti.UseIndexMerge = true
+			b.Ti.UseTableLookUp.Store(true)
+		})
 	}
 	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 	assertByItemsAreColumns(ts.ByItems)
@@ -4900,11 +4839,15 @@ type dataReaderBuilder struct {
 	*executorBuilder
 
 	selectResultHook // for testing
-	once             struct {
-		sync.Once
-		condPruneResult []table.PhysicalTable
-		err             error
-	}
+	// indexJoinKeyUniqueIDs records the inner join key unique IDs for index join inner build.
+	indexJoinKeyUniqueIDs []int64
+	once                  *dataReaderBuilderOnce
+}
+
+type dataReaderBuilderOnce struct {
+	sync.Once
+	condPruneResult []table.PhysicalTable
+	err             error
 }
 
 type mockPhysicalIndexReader struct {
@@ -4918,10 +4861,26 @@ func (*mockPhysicalIndexReader) MemoryUsage() (sum int64) {
 	return
 }
 
+func (builder *dataReaderBuilder) cloneForIndexJoinBuild() *dataReaderBuilder {
+	// This is intentionally a shallow copy: each inner worker build needs an isolated err field,
+	// while plan/once/stmtCtxLock must stay shared. If executorBuilder later gains mutable map/slice
+	// fields used during concurrent inner builds, revisit this clone to avoid sharing them unsafely.
+	clonedExecBuilder := *builder.executorBuilder
+	clonedExecBuilder.err = nil
+	return &dataReaderBuilder{
+		plan:                  builder.plan,
+		executorBuilder:       &clonedExecBuilder,
+		selectResultHook:      builder.selectResultHook,
+		indexJoinKeyUniqueIDs: builder.indexJoinKeyUniqueIDs,
+		once:                  builder.once,
+	}
+}
+
 func (builder *dataReaderBuilder) BuildExecutorForIndexJoin(ctx context.Context, lookUpContents []*join.IndexJoinLookUpContent,
 	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (exec.Executor, error) {
-	return builder.buildExecutorForIndexJoinInternal(ctx, builder.plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	localBuilder := builder.cloneForIndexJoinBuild()
+	return localBuilder.buildExecutorForIndexJoinInternal(ctx, localBuilder.plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan base.Plan, lookUpContents []*join.IndexJoinLookUpContent,
@@ -4969,14 +4928,123 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		err = exec.OpenSelf()
 		return exec, err
 	case *physicalop.PhysicalHashJoin:
-		// since merge join is rarely used now, we can only support hash join now.
-		// we separate the child build flow out because we want to pass down the runtime constant --- lookupContents.
-		// todo: support hash join in index join inner side.
-		return nil, errors.New("Wrong plan type for dataReaderBuilder")
+		return builder.buildHashJoinForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
+}
+
+func (builder *dataReaderBuilder) buildHashJoinForIndexJoin(ctx context.Context, v *physicalop.PhysicalHashJoin,
+	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
+	cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (joinExec exec.Executor, err error) {
+	childIdx, ok := builder.indexJoinLookupChildIdx(v)
+	if !ok {
+		return nil, errors.New("index join inner hash join cannot locate lookup child")
+	}
+
+	childExecs := make([]exec.Executor, 2)
+	var pendingJoinExec exec.Executor
+	defer func() {
+		if err == nil {
+			return
+		}
+		if pendingJoinExec != nil {
+			terror.Log(exec.Close(pendingJoinExec))
+			return
+		}
+		for _, childExec := range childExecs {
+			if childExec != nil {
+				terror.Log(exec.Close(childExec))
+			}
+		}
+	}()
+
+	childExecs[childIdx], err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[childIdx], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	if err != nil {
+		return nil, err
+	}
+
+	otherIdx := 1 - childIdx
+	childExecs[otherIdx] = builder.executorBuilder.build(v.Children()[otherIdx])
+	if builder.executorBuilder.err != nil {
+		err = builder.executorBuilder.err
+		return nil, err
+	}
+	if err = exec.Open(ctx, childExecs[otherIdx]); err != nil {
+		return nil, err
+	}
+
+	pendingJoinExec, err = builder.buildIndexJoinHashJoinExecFromChildExecs(childExecs, v)
+	if err != nil {
+		return nil, err
+	}
+	if err = openIndexJoinHashJoinExec(pendingJoinExec); err != nil {
+		return nil, err
+	}
+	joinExec = pendingJoinExec
+	return joinExec, nil
+}
+
+func (builder *dataReaderBuilder) buildIndexJoinHashJoinExecFromChildExecs(childExecs []exec.Executor, v *physicalop.PhysicalHashJoin) (exec.Executor, error) {
+	if builder.ctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
+		joinExecV2 := builder.executorBuilder.buildHashJoinV2FromChildExecs(childExecs[0], childExecs[1], v)
+		if builder.executorBuilder.err != nil {
+			return nil, builder.executorBuilder.err
+		}
+		return joinExecV2, nil
+	}
+
+	joinExecV1 := builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
+	if builder.executorBuilder.err != nil {
+		return nil, builder.executorBuilder.err
+	}
+	return joinExecV1, nil
+}
+
+func openIndexJoinHashJoinExec(joinExec exec.Executor) error {
+	switch hashJoinExec := joinExec.(type) {
+	case *join.HashJoinV1Exec:
+		return hashJoinExec.OpenSelf()
+	case *join.HashJoinV2Exec:
+		return hashJoinExec.OpenSelf()
+	default:
+		return errors.New("unexpected index join hash join executor type")
+	}
+}
+
+func (builder *dataReaderBuilder) indexJoinLookupChildIdx(p *physicalop.PhysicalHashJoin) (int, bool) {
+	keyUniqueIDs := builder.indexJoinKeyUniqueIDs
+	if len(keyUniqueIDs) == 0 {
+		return 0, false
+	}
+	leftSchema, rightSchema := p.Children()[0].Schema(), p.Children()[1].Schema()
+	inLeft := schemaContainsUniqueIDs(leftSchema, keyUniqueIDs)
+	inRight := schemaContainsUniqueIDs(rightSchema, keyUniqueIDs)
+	if inLeft == inRight {
+		return 0, false
+	}
+	if inLeft {
+		return 0, true
+	}
+	return 1, true
+}
+
+func schemaContainsUniqueIDs(schema *expression.Schema, ids []int64) bool {
+	for _, id := range ids {
+		found := false
+		for _, col := range schema.Columns {
+			if col.UniqueID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *physicalop.PhysicalUnionScan,
@@ -4987,6 +5055,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+	childBuilder.indexJoinKeyUniqueIDs = builder.indexJoinKeyUniqueIDs
 
 	reader, err := childBuilder.BuildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	if err != nil {
@@ -5868,6 +5937,9 @@ func getPhysicalTableID(t table.Table) int64 {
 }
 
 func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, planPartInfo *physicalop.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
+	if builder.once == nil {
+		builder.once = &dataReaderBuilderOnce{}
+	}
 	builder.once.Do(func() {
 		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, planPartInfo)
 		builder.once.condPruneResult = condPruneResult
@@ -5982,90 +6054,33 @@ func (b *executorBuilder) buildTableSample(v *physicalop.PhysicalTableSample) *T
 }
 
 func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
-	if b.Ti != nil {
-		b.Ti.UseNonRecursive = true
-	}
-	if v.RecurPlan != nil && b.Ti != nil {
-		b.Ti.UseRecursive = true
-	}
+	b.withStmtCtxLock(func() {
+		if b.Ti != nil {
+			b.Ti.UseNonRecursive = true
+			if v.RecurPlan != nil {
+				b.Ti.UseRecursive = true
+			}
+		}
+	})
 
-	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
-	if !ok {
-		b.err = errors.New("type assertion for CTEStorageMap failed")
+	storages, err := b.loadOrStoreCTEStorages(v.CTE.IDForStorage)
+	if err != nil {
+		b.err = err
 		return nil
 	}
 
-	chkSize := b.ctx.GetSessionVars().MaxChunkSize
-	// iterOutTbl will be constructed in CTEExec.Open().
-	var producer *cteProducer
-	storages, ok := storageMap[v.CTE.IDForStorage]
-	if ok {
-		// Storage already setup.
-		producer = storages.Producer
-	} else {
-		if v.SeedPlan == nil {
-			b.err = errors.New("cte.seedPlan cannot be nil")
-			return nil
-		}
-		// Build seed part.
-		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
-		seedExec := b.build(v.SeedPlan)
-		if b.err != nil {
-			return nil
-		}
+	storages.initOnce.Do(func() {
+		storages.initErr = b.buildCTEStorageProducer(v, storages)
+	})
+	if storages.initErr != nil {
+		b.err = storages.initErr
+		return nil
+	}
 
-		// Setup storages.
-		tps := seedExec.RetFieldTypes()
-		resTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := resTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-		iterInTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := iterInTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
-
-		// Build recursive part.
-		var recursiveExec exec.Executor
-		if v.RecurPlan != nil {
-			recursiveExec = b.build(v.RecurPlan)
-			if b.err != nil {
-				return nil
-			}
-			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
-		}
-
-		var sel []int
-		if v.CTE.IsDistinct {
-			sel = make([]int, chkSize)
-			for i := range chkSize {
-				sel[i] = i
-			}
-		}
-
-		var corColHashCodes [][]byte
-		for _, corCol := range corCols {
-			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
-		}
-
-		producer = &cteProducer{
-			ctx:             b.ctx,
-			seedExec:        seedExec,
-			recursiveExec:   recursiveExec,
-			resTbl:          resTbl,
-			iterInTbl:       iterInTbl,
-			isDistinct:      v.CTE.IsDistinct,
-			sel:             sel,
-			hasLimit:        v.CTE.HasLimit,
-			limitBeg:        v.CTE.LimitBeg,
-			limitEnd:        v.CTE.LimitEnd,
-			corCols:         corCols,
-			corColHashCodes: corColHashCodes,
-		}
-		storageMap[v.CTE.IDForStorage].Producer = producer
+	producer := storages.Producer
+	if producer == nil {
+		b.err = errors.Errorf("producer should already be set up by CTEExec(id: %d)", v.CTE.IDForStorage)
+		return nil
 	}
 
 	return &CTEExec{
@@ -6074,20 +6089,146 @@ func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
 	}
 }
 
-func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) exec.Executor {
-	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+func (b *executorBuilder) loadCTEStorages(storageID int) (*CTEStorages, error) {
+	var storages *CTEStorages
+	var ok bool
+	b.withStmtCtxLock(func() {
+		storageMap, castOK := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+		ok = castOK
+		if !castOK {
+			return
+		}
+		storages = storageMap[storageID]
+	})
 	if !ok {
-		b.err = errors.New("type assertion for CTEStorageMap failed")
+		return nil, errors.New("type assertion for CTEStorageMap failed")
+	}
+	return storages, nil
+}
+
+func (b *executorBuilder) loadOrStoreCTEStorages(storageID int) (*CTEStorages, error) {
+	var storages *CTEStorages
+	var ok bool
+	b.withStmtCtxLock(func() {
+		storageMap, castOK := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+		ok = castOK
+		if !castOK {
+			return
+		}
+		storages = storageMap[storageID]
+		if storages == nil {
+			storages = &CTEStorages{}
+			storageMap[storageID] = storages
+		}
+	})
+	if !ok {
+		return nil, errors.New("type assertion for CTEStorageMap failed")
+	}
+	return storages, nil
+}
+
+func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, storages *CTEStorages) error {
+	if v.SeedPlan == nil {
+		return errors.New("cte.seedPlan cannot be nil")
+	}
+
+	// Build seed part.
+	corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
+	seedExec := b.build(v.SeedPlan)
+	if b.err != nil {
+		return b.err
+	}
+
+	// Setup storages.
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	tps := seedExec.RetFieldTypes()
+	resTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+	if err := resTbl.OpenAndRef(); err != nil {
+		return err
+	}
+	iterInTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+	if err := iterInTbl.OpenAndRef(); err != nil {
+		if closeErr := resTbl.DerefAndClose(); closeErr != nil {
+			return closeErr
+		}
+		return err
+	}
+	storages.ResTbl = resTbl
+	storages.IterInTbl = iterInTbl
+	cleanupStoragesOnErr := true
+	defer func() {
+		if !cleanupStoragesOnErr {
+			return
+		}
+		storages.ResTbl = nil
+		storages.IterInTbl = nil
+		storages.Producer = nil
+		terror.Log(iterInTbl.DerefAndClose())
+		terror.Log(resTbl.DerefAndClose())
+	}()
+
+	// Build recursive part.
+	var recursiveExec exec.Executor
+	if v.RecurPlan != nil {
+		recursiveExec = b.build(v.RecurPlan)
+		if b.err != nil {
+			return b.err
+		}
+		corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
+	}
+
+	var sel []int
+	if v.CTE.IsDistinct {
+		sel = make([]int, chkSize)
+		for i := range chkSize {
+			sel[i] = i
+		}
+	}
+
+	corColHashCodes := make([][]byte, 0, len(corCols))
+	for _, corCol := range corCols {
+		corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
+	}
+
+	producer := &cteProducer{
+		ctx:             b.ctx,
+		seedExec:        seedExec,
+		recursiveExec:   recursiveExec,
+		resTbl:          resTbl,
+		iterInTbl:       iterInTbl,
+		isDistinct:      v.CTE.IsDistinct,
+		sel:             sel,
+		hasLimit:        v.CTE.HasLimit,
+		limitBeg:        v.CTE.LimitBeg,
+		limitEnd:        v.CTE.LimitEnd,
+		corCols:         corCols,
+		corColHashCodes: corColHashCodes,
+	}
+	b.withStmtCtxLock(func() {
+		storages.Producer = producer
+	})
+	cleanupStoragesOnErr = false
+	return nil
+}
+
+func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) exec.Executor {
+	storages, err := b.loadCTEStorages(v.IDForStorage)
+	if err != nil {
+		b.err = err
 		return nil
 	}
-	storages, ok := storageMap[v.IDForStorage]
-	if !ok {
+	if storages == nil {
+		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
+		return nil
+	}
+	iterInTbl := storages.IterInTbl
+	if iterInTbl == nil {
 		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
 		return nil
 	}
 	return &CTETableReaderExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		iterInTbl:    storages.IterInTbl,
+		iterInTbl:    iterInTbl,
 		chkIdx:       0,
 	}
 }

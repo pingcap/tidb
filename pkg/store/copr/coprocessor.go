@@ -2000,7 +2000,7 @@ func buildExceedsBoundDiagFields(
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
-		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
+		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, task.bucketsVer, ver)
 	}
 	if regionErr := getRegionError(bo.GetCtx(), resp.pbResp); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {

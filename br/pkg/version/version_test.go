@@ -520,7 +520,7 @@ func TestDetectServerInfo(t *testing.T) {
 		{9, "5.7.25-TiDB-5584f12", ServerTypeTiDB, mkVer(0, 0, 0, "")},
 	}
 	dec := func(d []any) (tag int, verStr string, tp ServerType, v *semver.Version) {
-		return d[0].(int), d[1].(string), ServerType(d[2].(int)), d[3].(*semver.Version)
+		return d[0].(int), d[1].(string), d[2].(ServerType), d[3].(*semver.Version)
 	}
 
 	for _, datum := range data {

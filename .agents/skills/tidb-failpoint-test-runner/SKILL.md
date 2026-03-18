@@ -11,11 +11,11 @@ Follow this workflow before running package tests under `pkg/...`.
 `-tags=intest,deadlock` does not enable failpoints.
 Canonical command details live in `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`.
 
-## Workflow Checklist
+## Workflow
 
-1. Run failpoint decision commands from `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`.
-2. If any decision command matches, run the cleanup-safe failpoint wrapper from the same section (`Failpoint-Enabled Run` block).
-3. If no decision command matches, run the targeted no-failpoint command from `docs/agents/testing-flow.md` -> `Unit tests (/pkg/...)`.
-4. Keep runs targeted with `-run <TestName>`.
-5. For Bazel-specific failpoint flow and full command variants, follow `docs/agents/testing-flow.md`.
-6. Record the decision evidence and exact test command in the final report.
+1. Use `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests` to decide whether the package needs failpoint enablement.
+2. Run the matching command set from `docs/agents/testing-flow.md`:
+   - `Failpoint-enabled run` when the package matches the failpoint checks.
+   - `Unit tests (/pkg/...)` when it does not.
+3. Keep the run targeted with `-run <TestName>`; for Bazel-specific variants, see the Bazel notes in `docs/agents/testing-flow.md` -> `Failpoint-enabled run`.
+4. Record the decision evidence and exact test command in the final report.

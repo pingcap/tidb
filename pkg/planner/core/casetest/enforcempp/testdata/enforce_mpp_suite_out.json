@@ -180,8 +180,8 @@
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  test.s.a",
-          "    └─Selection 1.00 mpp[tiflash]  isnull(test.s.b)",
-          "      └─TableFullScan 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
+          "    └─Selection 1.00 mpp[tiflash]  eq(test.s.a, 10)",
+          "      └─TableFullScan 10.00 mpp[tiflash] table:s pushed down filter:isnull(test.s.b), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
