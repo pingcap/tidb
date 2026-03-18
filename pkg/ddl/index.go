@@ -1608,6 +1608,10 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, nil
 	}
 
+	cloudStorageURI := handle.GetCloudStorageURI(w.workCtx, w.store)
+	if len(cloudStorageURI) == 0 {
+		return ver, errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index requires cloud storage"))
+	}
 	// Handle normal job.
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
