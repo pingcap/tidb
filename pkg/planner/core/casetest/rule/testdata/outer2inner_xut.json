@@ -310,7 +310,7 @@
       {
         "SQL": "select * from dd as outr1 WHERE outr1.col_blob  IN (SELECT DISTINCT innr1.col_blob_key AS y FROM d AS innrcte left outer join dd AS innr1 ON innr1.pk = innrcte.col_date WHERE outr1.col_int_key > 6)",
         "Plan": [
-          "Apply 9990.00 root  semi join, left side:TableReader, equal:[eq(test.dd.col_blob, test.dd.col_blob_key)]",
+          "Apply 7992.00 root  semi join, left side:TableReader, equal:[eq(test.dd.col_blob, test.dd.col_blob_key)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo",

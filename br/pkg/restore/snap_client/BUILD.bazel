@@ -49,6 +49,7 @@ go_library(
         "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/tablecodec",

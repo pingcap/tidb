@@ -77,7 +77,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
-	defaultDDLConcurrency     = 100
+	defaultDDLConcurrency     = 64
 	maxSplitKeysOnce          = 10240
 )
 
@@ -142,6 +142,8 @@ type SnapClient struct {
 	policyMap *sync.Map
 
 	batchDdlSize uint
+
+	txnTotalSizeLimit uint64
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -305,6 +307,10 @@ func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
 	rc.batchDdlSize = batchDdlsize
+}
+
+func (rc *SnapClient) SetTxnTotalSizeLimit(txnTotalSizeLimit uint64) {
+	rc.txnTotalSizeLimit = txnTotalSizeLimit
 }
 
 func (rc *SnapClient) GetBatchDdlSize() uint {
