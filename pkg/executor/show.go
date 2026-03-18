@@ -1797,6 +1797,16 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 	if tb.PreSplitRegions > 0 {
 		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
 	}
+	attrPairs := make([]string, 0, 2)
+	if mvInfo.AlertWarningSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_warning=%d", mvInfo.AlertWarningSec))
+	}
+	if mvInfo.AlertCriticalSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_critical=%d", mvInfo.AlertCriticalSec))
+	}
+	if len(attrPairs) > 0 {
+		fmt.Fprintf(buf, " ATTRIBUTES='%s'", strings.Join(attrPairs, ","))
+	}
 	fmt.Fprintf(buf, " AS %s", mvInfo.SQLContent)
 }
 

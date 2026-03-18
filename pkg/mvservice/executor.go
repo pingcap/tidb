@@ -205,16 +205,6 @@ func (e *TaskExecutor) setTimeout(timeout time.Duration) {
 	e.timeoutNanos.Store(int64(timeout))
 }
 
-// GetConfig returns the current execution config.
-func (e *TaskExecutor) GetConfig() (maxConcurrency int, timeout time.Duration) {
-	if e == nil {
-		return 0, 0
-	}
-	maxConcurrency = int(e.maxConcurrency.Load())
-	timeout = time.Duration(e.timeoutNanos.Load())
-	return maxConcurrency, timeout
-}
-
 // SetBackpressureController sets a task backpressure controller.
 // Passing nil disables backpressure.
 func (e *TaskExecutor) SetBackpressureController(controller TaskBackpressureController) {
@@ -384,7 +374,7 @@ func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 // runTask executes one task with timeout handling and metrics reporting.
 func (e *TaskExecutor) runTask(name string, task func() error) {
 	e.metrics.gauges.runningCount.Add(1)
-
+	taskStart := mvsNow()
 	timeout := time.Duration(e.timeoutNanos.Load())
 	if timeout <= 0 {
 		err := e.safeExecute(name, task)
@@ -412,6 +402,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		logutil.BgLogger().Warn(
 			"mv task timed out, continue in background",
 			zap.String("task", name),
+			zap.Time("exec_start", taskStart),
 			zap.Duration("timeout", timeout),
 			zap.Int64("running_count", e.metrics.gauges.runningCount.Load()),
 			zap.Int64("waiting_count", e.metrics.gauges.waitingCount.Load()),

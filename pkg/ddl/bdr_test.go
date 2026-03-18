@@ -225,6 +225,11 @@ func TestDeniedByBDR(t *testing.T) {
 		{ast.BDRRoleSecondary, model.ActionAlterMaterializedViewRefresh, true},
 		{ast.BDRRoleNone, model.ActionAlterMaterializedViewRefresh, false},
 
+		// Roles for ActionAlterMaterializedViewAttributes
+		{ast.BDRRolePrimary, model.ActionAlterMaterializedViewAttributes, false},
+		{ast.BDRRoleSecondary, model.ActionAlterMaterializedViewAttributes, true},
+		{ast.BDRRoleNone, model.ActionAlterMaterializedViewAttributes, false},
+
 		// Roles for ActionAlterMaterializedViewLogPurge
 		{ast.BDRRolePrimary, model.ActionAlterMaterializedViewLogPurge, false},
 		{ast.BDRRoleSecondary, model.ActionAlterMaterializedViewLogPurge, true},

@@ -41,6 +41,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	mviewAttrAlertWarning  = "mview_alert_warning"
+	mviewAttrAlertCritical = "mview_alert_critical"
+)
+
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
 	is := e.infoCache.GetLatest()
 	schemaName := s.ViewName.Schema
@@ -173,6 +178,10 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
+	alertWarningSec, alertCriticalSec, err := parseMViewAttributes(s.Attributes)
+	if err != nil {
+		return err
+	}
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	mvTableInfo.MaterializedView = &model.MaterializedViewInfo{
 		BaseTableIDs:      []int64{baseTableID},
@@ -180,6 +189,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		RefreshMethod:     refreshMethod,
 		RefreshStartWith:  refreshStartWith,
 		RefreshNext:       refreshNext,
+		AlertWarningSec:   alertWarningSec,
+		AlertCriticalSec:  alertCriticalSec,
 		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
@@ -324,6 +335,10 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 			if _, _, _, err := buildMViewRefreshMeta(ctx, action.Refresh); err != nil {
 				return err
 			}
+		case ast.AlterMaterializedViewActionAttributes:
+			if _, _, err := parseMViewAttributes(action.Attributes); err != nil {
+				return err
+			}
 		default:
 			return errors.Errorf("unknown alter materialized view action type: %d", action.Tp)
 		}
@@ -353,6 +368,17 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 				s.ViewName.Name,
 				tbl.Meta().ID,
 				action.Refresh,
+			); err != nil {
+				return err
+			}
+		case ast.AlterMaterializedViewActionAttributes:
+			if err := e.alterMaterializedViewAttributes(
+				ctx,
+				schema.ID,
+				schemaName,
+				s.ViewName.Name,
+				tbl.Meta().ID,
+				action.Attributes,
 			); err != nil {
 				return err
 			}
@@ -538,6 +564,37 @@ func (e *executor) alterMaterializedViewRefresh(
 	return errors.Trace(e.updateMaterializedViewRefreshInfoNextTime(ctx, mviewID, nextTime))
 }
 
+func (e *executor) alterMaterializedViewAttributes(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName pmodel.CIStr,
+	viewName pmodel.CIStr,
+	mviewID int64,
+	attrs string,
+) error {
+	alertWarningSec, alertCriticalSec, err := parseMViewAttributes(attrs)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schemaID,
+		TableID:        mviewID,
+		SchemaName:     schemaName.L,
+		TableName:      viewName.L,
+		Type:           model.ActionAlterMaterializedViewAttributes,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.AlterMaterializedViewAttributesArgs{
+		AlertWarningSec:  alertWarningSec,
+		AlertCriticalSec: alertCriticalSec,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
 func (e *executor) updateMaterializedViewRefreshInfoNextTime(
 	ctx sessionctx.Context,
 	mviewID int64,
@@ -707,6 +764,54 @@ func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshCla
 	default:
 		return "", "", "", errors.New("unknown refresh method")
 	}
+}
+
+func parseMViewAttributes(attrs string) (alertWarningSec, alertCriticalSec int64, err error) {
+	attrs = strings.TrimSpace(attrs)
+	if attrs == "" {
+		return 0, 0, nil
+	}
+
+	seen := make(map[string]struct{}, 2)
+	for _, rawKV := range strings.Split(attrs, ",") {
+		kv := strings.TrimSpace(rawKV)
+		if kv == "" {
+			return 0, 0, errors.New("invalid ATTRIBUTES format: empty key-value pair")
+		}
+		pos := strings.Index(kv, "=")
+		if pos <= 0 || pos >= len(kv)-1 {
+			return 0, 0, errors.Errorf("invalid ATTRIBUTES format: %q", kv)
+		}
+		key := strings.ToLower(strings.TrimSpace(kv[:pos]))
+		valStr := strings.TrimSpace(kv[pos+1:])
+		if key == "" || valStr == "" {
+			return 0, 0, errors.Errorf("invalid ATTRIBUTES format: %q", kv)
+		}
+		if _, ok := seen[key]; ok {
+			return 0, 0, errors.Errorf("duplicate ATTRIBUTES key: %s", key)
+		}
+		seen[key] = struct{}{}
+
+		val, convErr := strconv.ParseInt(valStr, 10, 64)
+		if convErr != nil || val < 0 {
+			return 0, 0, errors.Errorf("invalid ATTRIBUTES value for %s: %s (must be non-negative integer seconds)", key, valStr)
+		}
+
+		switch key {
+		case mviewAttrAlertWarning:
+			alertWarningSec = val
+		case mviewAttrAlertCritical:
+			alertCriticalSec = val
+		default:
+			return 0, 0, errors.Errorf("unsupported ATTRIBUTES key: %s", key)
+		}
+	}
+
+	if alertWarningSec > 0 && alertCriticalSec > 0 && alertWarningSec > alertCriticalSec {
+		return 0, 0, errors.Errorf("invalid ATTRIBUTES: %s (%d) must be less than or equal to %s (%d)",
+			mviewAttrAlertWarning, alertWarningSec, mviewAttrAlertCritical, alertCriticalSec)
+	}
+	return alertWarningSec, alertCriticalSec, nil
 }
 
 type mviewGroupByInfo struct {

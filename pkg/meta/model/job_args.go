@@ -742,6 +742,25 @@ func GetAlterMaterializedViewRefreshArgs(job *Job) (*AlterMaterializedViewRefres
 	return getOrDecodeArgs[*AlterMaterializedViewRefreshArgs](&AlterMaterializedViewRefreshArgs{}, job)
 }
 
+// AlterMaterializedViewAttributesArgs is the arguments for ActionAlterMaterializedViewAttributes ddl.
+type AlterMaterializedViewAttributesArgs struct {
+	AlertWarningSec  int64 `json:"alert_warning_sec,omitempty"`
+	AlertCriticalSec int64 `json:"alert_critical_sec,omitempty"`
+}
+
+func (a *AlterMaterializedViewAttributesArgs) getArgsV1(*Job) []any {
+	return []any{a.AlertWarningSec, a.AlertCriticalSec}
+}
+
+func (a *AlterMaterializedViewAttributesArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.AlertWarningSec, &a.AlertCriticalSec))
+}
+
+// GetAlterMaterializedViewAttributesArgs gets the args for ActionAlterMaterializedViewAttributes.
+func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAttributesArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewAttributesArgs](&AlterMaterializedViewAttributesArgs{}, job)
+}
+
 // AlterMaterializedViewLogPurgeArgs is the arguments for ActionAlterMaterializedViewLogPurge ddl.
 type AlterMaterializedViewLogPurgeArgs struct {
 	PurgeMethod    string `json:"purge_method,omitempty"`
