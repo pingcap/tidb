@@ -221,7 +221,7 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
 	skipPlanCacheCheck bool) bool {
 	_ = skipPlanCacheCheck // kept for API compatibility; the new proof does not use EvaluateExprWithNull
-	predicate = expression.PushDownNot(ctx.GetExprCtx(), predicate)
+	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	return proveNullRejected(ctx, innerSchema, predicate).nonTrue
 }
 
@@ -361,10 +361,10 @@ func tryFoldNullifiedConstant(
 }
 
 func tryFoldStaticConstant(ctx base.PlanContext, expr expression.Expression) (*expression.Constant, bool) {
-	if !allConstants(ctx.GetExprCtx(), expr) {
+	if !allConstants(ctx.GetNullRejectCheckExprCtx(), expr) {
 		return nil, false
 	}
-	cons, ok := expression.FoldConstant(ctx.GetExprCtx(), expr).(*expression.Constant)
+	cons, ok := expression.FoldConstant(ctx.GetNullRejectCheckExprCtx(), expr).(*expression.Constant)
 	if !ok || cons.ParamMarker != nil || cons.DeferredExpr != nil {
 		return nil, false
 	}
@@ -431,7 +431,7 @@ func tryFoldNullifiedIf(
 	if !ok {
 		return nil, false
 	}
-	condVal, isNull, err := cond.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	condVal, isNull, err := cond.EvalInt(ctx.GetNullRejectCheckExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, false
 	}
@@ -446,11 +446,11 @@ func foldNullifiedFunction(
 	expr *expression.ScalarFunction,
 	args []expression.Expression,
 ) (*expression.Constant, bool) {
-	folded, err := expression.NewFunction(ctx.GetExprCtx(), expr.FuncName.L, expr.RetType.Clone(), args...)
+	folded, err := expression.NewFunction(ctx.GetNullRejectCheckExprCtx(), expr.FuncName.L, expr.RetType.Clone(), args...)
 	if err != nil {
 		return nil, false
 	}
-	cons, ok := expression.FoldConstant(ctx.GetExprCtx(), folded).(*expression.Constant)
+	cons, ok := expression.FoldConstant(ctx.GetNullRejectCheckExprCtx(), folded).(*expression.Constant)
 	if !ok || cons.ParamMarker != nil || cons.DeferredExpr != nil {
 		return nil, false
 	}
