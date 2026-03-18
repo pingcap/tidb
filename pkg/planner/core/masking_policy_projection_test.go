@@ -118,7 +118,7 @@ func TestMaskingPolicyBatchPointGet(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_batch_pointget")
 	tk.MustExec("create table t_batch_pointget(id int primary key, c varchar(10))")
-	tk.MustExec("insert into t_batch_pointget values (1, 'secret'), (2, 'hidden'), (3, 'confidential')")
+	tk.MustExec("insert into t_batch_pointget values (1, 'secret'), (2, 'hidden'), (3, 'masked')")
 	tk.MustExec("create masking policy p_batch on t_batch_pointget(c) as mask_full(c, '*') enable")
 
 	// Test BatchPointGet with WHERE pk IN (...) - this should return masked values
