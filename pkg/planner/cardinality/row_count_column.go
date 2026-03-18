@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -107,8 +108,12 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
+	topNCount := uint64(0)
+	if c.TopN != nil {
+		topNCount = c.TopN.TotalCount()
+	}
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount, topNCount) {
 		return statistics.DefaultRowEst(histCnt), nil
 	}
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
@@ -221,13 +226,14 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
 		// handling the out-of-range part if the estimate does not cover the full range.
 		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
-			histNDV := c.NDV
-			// Exclude the TopN
+			var topN *statistics.TopN
 			if c.StatsVer == statistics.Version2 {
-				histNDV -= int64(c.TopN.Num())
+				topN = c.TopN
 			}
+			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 			var count statistics.RowEstimate
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV))
+			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, topN, skewRatio))
 			cnt.Add(count)
 		}
 
