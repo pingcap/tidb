@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -614,6 +615,74 @@ func TestClassifyAndAppend(t *testing.T) {
 	}))
 	require.Equal(t, dataChecksum.SumKVS(), uint64(2))
 	require.Equal(t, indexChecksum.SumKVS(), uint64(1))
+}
+
+func TestEncodeGeneratedTimestampTZConsistency(t *testing.T) {
+	// Verify that stored generated columns depending on TIMESTAMP produce
+	// identical values regardless of session time_zone, exercising the
+	// Lightning-specific evalGeneratedColumns UTC-normalisation path.
+	// See https://github.com/pingcap/tidb/issues/66753
+	createSQL := "create table t (" +
+		"id int not null, " +
+		"ts timestamp not null, " +
+		"gen_day int as (dayofweek(ts)) stored, " +
+		"key idx_gen(gen_day)" +
+		");"
+	tblInfo := mockTableInfo(t, createSQL)
+	// The TIMESTAMP value we're inserting: 2025-01-15 12:00:00 UTC.
+	// In +08:00 that's 2025-01-15 20:00:00 (Wednesday), but the stored
+	// generated column must still evaluate relative to UTC, so dayofweek
+	// should always be 4 (Wednesday in MySQL's 1=Sunday convention).
+	tsCoreUTC := "2025-01-15 12:00:00"
+
+	encodeWithTZ := func(tz string) encode.Row {
+		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+		require.NoError(t, err)
+
+		encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+			Table: tbl,
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   mysql.ModeStrictAllTables,
+				Timestamp: 1234567890,
+				SysVars: map[string]string{
+					"tidb_row_format_version": "2",
+					"time_zone":               tz,
+				},
+			},
+			Logger: log.L(),
+		}, nil)
+		require.NoError(t, err)
+
+		// Build the timestamp datum in the given session TZ, the same way
+		// Lightning's CSV/SQL parser would deliver it.
+		se := lkv.GetSession4test(encoder)
+		loc := se.GetExprCtx().GetEvalCtx().Location()
+		tsTime, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext, tsCoreUTC)
+		require.NoError(t, err)
+		require.NoError(t, tsTime.ConvertTimeZone(time.UTC, loc))
+
+		row := []types.Datum{
+			types.NewIntDatum(1),       // id
+			types.NewTimeDatum(tsTime), // ts (in session TZ)
+		}
+		// columnPermutation: col0->0(id), col1->1(ts), col2 generated (-1),
+		// extra row-id handle (-1 if not needed, or last slot).
+		perm := []int{0, 1, -1, -1}
+		encoded, err := encoder.Encode(row, 70, perm, 0)
+		require.NoError(t, err)
+		return encoded
+	}
+
+	kvPlus8 := lkv.Row2KvPairs(encodeWithTZ("+08:00"))
+	kvMinus5 := lkv.Row2KvPairs(encodeWithTZ("-05:00"))
+
+	require.Equal(t, len(kvPlus8), len(kvMinus5), "number of KV pairs should match")
+	for i := range kvPlus8 {
+		require.Equalf(t, kvPlus8[i].Key, kvMinus5[i].Key,
+			"key mismatch at pair %d: generated column index should be TZ-independent", i)
+		require.Equalf(t, kvPlus8[i].Val, kvMinus5[i].Val,
+			"value mismatch at pair %d: generated column value should be TZ-independent", i)
+	}
 }
 
 type benchSQL2KVSuite struct {
