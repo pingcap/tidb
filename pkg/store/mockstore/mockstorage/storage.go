@@ -19,11 +19,11 @@ import (
 	"crypto/tls"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -39,8 +39,8 @@ type mockStorage struct {
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
-	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
+	coprCacheConfig := &tidbconfig.GetGlobalConfig().TiKVClient.CoprCache
+	coprStore, err := copr.NewStore(tikvStore, coprCacheConfig)
 	if err != nil {
 		return nil, err
 	}

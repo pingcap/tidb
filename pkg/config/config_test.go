@@ -607,7 +607,7 @@ resolve-lock-lite-threshold = 16
 
 [tikv-client.copr-cache]
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
-capacity-mb = 1000.0
+capacity-mb = 0.0
 
 # If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
 # but still provide service.

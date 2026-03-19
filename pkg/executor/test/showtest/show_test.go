@@ -902,7 +902,7 @@ func TestShowConfig(t *testing.T) {
 	// Test copr-cache
 	coprCacheVal :=
 		"\t\t\"copr-cache\": {\n" +
-			"\t\t\t\"capacity-mb\": 1000\n" +
+			"\t\t\t\"capacity-mb\": 0\n" +
 			"\t\t},\n"
 	require.Equal(t, true, strings.Contains(configValue, coprCacheVal))
 
