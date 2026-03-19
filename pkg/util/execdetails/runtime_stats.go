@@ -979,6 +979,11 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 	buf.WriteString("}")
 }
 
+// displayRUVersion controls which RU accounting version produces EXPLAIN output.
+// Currently hardcoded to "v2"; will be switched dynamically based on a runtime
+// toggle once RU v1 / v2 coexistence is fully rolled out.
+var displayRUVersion = "v2"
+
 // RURuntimeStats is a wrapper of util.RUDetails,
 // which implements the RuntimeStats interface.
 type RURuntimeStats struct {
@@ -986,15 +991,16 @@ type RURuntimeStats struct {
 }
 
 // String implements the RuntimeStats interface.
-func (*RURuntimeStats) String() string {
-	/*  // Original RU v1 output logic, disabled in favor of RU v2.
+func (e *RURuntimeStats) String() string {
+	if displayRUVersion != "v1" {
+		return ""
+	}
 	if e.RUDetails != nil {
 		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
 		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
 		return buf.String()
 	}
-	*/
 	return ""
 }
 
@@ -1027,6 +1033,9 @@ type RUV2RuntimeStats struct {
 
 // String implements the RuntimeStats interface.
 func (e *RUV2RuntimeStats) String() string {
+	if displayRUVersion != "v2" {
+		return ""
+	}
 	// Only output the total RU value, not the detailed ruv2 metrics.
 	totalRU := e.Snapshot.TotalRU(e.Weights)
 	if totalRU == 0 {
