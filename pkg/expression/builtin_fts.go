@@ -104,7 +104,7 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	argTps = append(argTps, types.ETString)
 	for _, arg := range argsMatch {
 		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
-			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
 		}
 		argTps = append(argTps, types.ETString)
 	}
@@ -178,7 +178,7 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 	argTps = append(argTps, types.ETString)
 	for _, arg := range argsMatch {
 		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
-			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
 		}
 		argTps = append(argTps, types.ETString)
 	}
@@ -241,7 +241,7 @@ func (c *ftsMatchPrefixFunctionClass) getFunction(ctx BuildContext, args []Expre
 	argTps = append(argTps, types.ETString)
 	for _, arg := range argsMatch {
 		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
-			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
 		}
 		argTps = append(argTps, types.ETString)
 	}
@@ -289,7 +289,7 @@ func (c *ftsMatchPhraseFunctionClass) getFunction(ctx BuildContext, args []Expre
 	argTps = append(argTps, types.ETString)
 	for _, arg := range argsMatch {
 		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
-			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
 		}
 		argTps = append(argTps, types.ETString)
 	}
