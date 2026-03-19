@@ -115,6 +115,8 @@ func NewCollector(
 	sharedTotalFileSize *atomic.Int64,
 	trafficRec TrafficRecorder,
 ) *Collector {
+	// Allow standalone callers to omit the shared counter. We still allocate
+	// one so recordRowToFile can always use atomic Add without nil checks.
 	if sharedTotalFileSize == nil {
 		sharedTotalFileSize = &atomic.Int64{}
 	}
