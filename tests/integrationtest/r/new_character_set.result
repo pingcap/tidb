@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 set @@sql_mode='';
 drop table if exists t;
 set names utf8mb4;

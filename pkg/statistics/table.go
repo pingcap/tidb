@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
 )
@@ -1061,15 +1062,18 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	return t
 }
 
-// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
-// If not, it will return false and set the version to the tbl's.
-// We use this check to make sure all the statistics of the table are in the same version.
-func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != *version {
-		*version = tbl.StatsVer
-		return false
+// ResolveAnalyzeVersionOnTable returns the requested analyze version and whether the existing
+// analyzed stats on tbl already match it. Auto-analyze still writes with the requested version
+// for now, and callers use versionMatches to record legacy rewrites when needed.
+func ResolveAnalyzeVersionOnTable(tbl *Table, requestedVersion int) (resolvedVersion int, versionMatches bool) {
+	intest.Assert(requestedVersion == Version2, "requested analyze version should be 2")
+	if tbl == nil || tbl.Pseudo {
+		return requestedVersion, true
 	}
-	return true
+	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != requestedVersion {
+		return requestedVersion, false
+	}
+	return requestedVersion, true
 }
 
 // PrepareCols4MVIndex helps to identify the columns of an MV index. We need this information for estimation.

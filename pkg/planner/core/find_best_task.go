@@ -252,8 +252,8 @@ func enumeratePhysicalPlans4TaskHelper(
 func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
 	// check the root, cop, mpp task type matched the required property.
 	if childTask == nil || propRequired == nil {
-		// index join v1 may occur that propRequired is nil, and return task is nil too. Return true
-		// to make sure let it walk through the following logic.
+		// Some callers defer building a concrete child task until later, so treat the
+		// requirement as satisfied here and let the follow-up logic decide.
 		return true
 	}
 	_, isRoot := childTask.(*physicalop.RootTask)
@@ -689,8 +689,9 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 				// If the original property is not enforced and hint cannot
 				// work anyway, we give up `plansNeedEnforce` for efficiency.
 				//
-				// for special case, once we empty the sort item here, the more possible index join can be enumerated, which
-				// may lead the hint work only after child is built up under index join build mode v2. so here we tried
+				// Once we empty the sort item here, more index join candidates can be
+				// enumerated and a hint may only become applicable after the full inner
+				// plan tree is built, so keep the enforced branch in that case.
 				plansNeedEnforce = nil
 			}
 		}
@@ -1908,10 +1909,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		defer func() {
 			ds.StoreTask(prop, t)
 		}()
-		// when datasource leaf is in index join's inner side, build the task out with old
-		// index join build logic, we can't merge this with normal datasource's index range
-		// because normal index range is built on expression EQ/IN. while index join's inner
-		// has its special runtime constants detecting and filling logic.
+		// When a datasource is on the inner side of an index join, build it with the
+		// indexJoinProp-specific range logic instead of the normal EQ/IN range path,
+		// because the runtime constants are filled by the outer side at execution time.
 		return getBestIndexJoinInnerTaskByProp(ds, prop)
 	}
 	var unenforcedTask base.Task
@@ -2228,23 +2228,32 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
-	ts, remainingFilters2, moreColumn, err := physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.matchPropResult == property.PropMatched)
-	if err != nil {
-		return base.InvalidTask, err
+	needTableScan := !canBuildSingleMVIndexOnlyIndexMerge(ds, path)
+	var ts base.PhysicalPlan
+	if needTableScan {
+		var remainingFilters2 []expression.Expression
+		var moreColumn bool
+		ts, remainingFilters2, moreColumn, err = physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.matchPropResult == property.PropMatched)
+		if err != nil {
+			return base.InvalidTask, err
+		}
+		if prop.TaskTp != property.RootTaskType && len(remainingFilters2) > 0 {
+			return base.InvalidTask, nil
+		}
+		globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
+		if moreColumn {
+			cop.NeedExtraProj = true
+			cop.OriginSchema = ds.Schema()
+		}
+	} else if len(path.TableFilters) > 0 {
+		// For index-only index-merge path, table filters can only be evaluated at root.
+		globalRemainingFilters = append(globalRemainingFilters, path.TableFilters...)
 	}
-	if prop.TaskTp != property.RootTaskType && len(remainingFilters2) > 0 {
-		return base.InvalidTask, nil
-	}
-	globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
 	cop.KeepOrder = candidate.matchPropResult == property.PropMatched
 	cop.TablePlan = ts
 	cop.IdxMergePartPlans = scans
 	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
-	if moreColumn {
-		cop.NeedExtraProj = true
-		cop.OriginSchema = ds.Schema()
-	}
 	if len(globalRemainingFilters) != 0 {
 		cop.RootTaskConds = globalRemainingFilters
 	}
@@ -2257,13 +2266,40 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		cop.IndexPlanFinished = true
 		task = cop.ConvertToRootTask(ds.SCtx())
 	} else {
-		_, pureTableScan := ts.(*physicalop.PhysicalTableScan)
-		if !pureTableScan {
+		if ts == nil {
+			cop.IndexPlanFinished = true
+		} else if _, pureTableScan := ts.(*physicalop.PhysicalTableScan); !pureTableScan {
 			cop.IndexPlanFinished = true
 		}
 		task = cop
 	}
 	return task, nil
+}
+
+func canBuildSingleMVIndexOnlyIndexMerge(ds *logicalop.DataSource, path *util.AccessPath) bool {
+	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
+	// Limit this planner-only optimization to plain EXPLAIN before executor support is added.
+	if !stmtCtx.InExplainStmt || stmtCtx.InExplainAnalyzeStmt {
+		return false
+	}
+	if path.IndexMergeIsIntersection || !path.IndexMergeAccessMVIndex || len(path.PartialIndexPaths) != 1 {
+		return false
+	}
+	partialPath := path.PartialIndexPaths[0]
+	if partialPath == nil || partialPath.IsTablePath() || partialPath.Index == nil || !partialPath.Index.MVIndex {
+		return false
+	}
+	// Requirement 1: all predicates are covered by the partial index path.
+	// Non-empty TableFilters means there are predicates left after partial paths.
+	if len(path.TableFilters) > 0 {
+		return false
+	}
+	// Requirement 2: selected columns are covered by this partial index path.
+	selectedCols := ds.ColsRequiringFullLen
+	if selectedCols == nil {
+		selectedCols = ds.Schema().Columns
+	}
+	return ds.IsIndexCoveringColumns(selectedCols, partialPath.FullIdxCols, partialPath.FullIdxColLens)
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {

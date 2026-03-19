@@ -2586,6 +2586,10 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, vardef.DefTiDBOptJoinReorderThreshold)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAdvancedJoinReorder, Value: BoolToOnOff(vardef.DefTiDBOptEnableAdvancedJoinReorder), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
 		return nil
@@ -2734,14 +2738,30 @@ var defaultSysVars = []*SysVar{
 		s.GuaranteeLinearizability = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeVersion, Value: strconv.Itoa(vardef.DefTiDBAnalyzeVersion), Type: vardef.TypeInt, MinValue: 1, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeVersion, Value: strconv.Itoa(vardef.DefTiDBAnalyzeVersion), Type: vardef.TypeInt, MinValue: 1, MaxValue: 2, Validation: func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+		if normalizedValue == "1" {
+			return normalizedValue, errors.New("tidb_analyze_version=1 is no longer supported, please set tidb_analyze_version to 2")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, vardef.DefTiDBAnalyzeVersion)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnhanceIndexJoinBuildV2 = TiDBOptOn(val)
-		return nil
-	}},
+	// Keep this sysvar for upgrade compatibility. The planner always uses the v2 path now.
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool,
+		Validation: func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if !TiDBOptOn(normalizedValue) {
+				return vardef.On, errors.New("tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+			}
+			return vardef.On, nil
+		},
+		GetSession: func(*SessionVars) (string, error) {
+			return vardef.On, nil
+		},
+		GetGlobal: func(context.Context, *SessionVars) (string, error) {
+			return vardef.On, nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashJoinVersion, Value: vardef.DefTiDBHashJoinVersion, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			lowerValue := strings.ToLower(normalizedValue)
@@ -2958,9 +2978,6 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			if TiDBOptOn(val) && s.AnalyzeVersion == 1 {
-				return errors.New("tidb_stats_update_during_ddl can only be enabled with tidb_analyze_version 2")
-			}
 			s.EnableDDLAnalyze = TiDBOptOn(val)
 			return nil
 		}},

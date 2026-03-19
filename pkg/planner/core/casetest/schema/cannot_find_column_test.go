@@ -52,7 +52,7 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 		suite.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, sql := range input {
 			testdata.OnRecord(func() {
-				planRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + sql).Rows())
+				planRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + sql).Rows())
 				if len(planRows) == 0 {
 					t.Fatalf("empty plan for sql: %s", sql)
 				}
@@ -60,7 +60,7 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 				output[i].Plan = planRows
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			})
-			tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
 		tk.MustQuery("SELECT /* issue:66272-nested */ t1.id FROM t1 JOIN t3 USING(id) JOIN t4 ON t4.id = t1.id WHERE t3.id >= 10 AND t3.id <= 20 AND t1.left_v = 93 AND t4.flag = 1").Check(testkit.Rows(

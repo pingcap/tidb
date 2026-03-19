@@ -174,7 +174,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash, tikv'")
 
-	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
+	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
 	require.Equal(t, []string{
 		" TopN                  root ?",
@@ -184,14 +184,14 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p1)
 
-	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
+	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
 	_, d2 := getNormalizedPlan()
 
-	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[]') limit 3")
+	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance(vec, '[]') limit 3")
 	_, d3 := getNormalizedPlan()
 
 	// Projection differs, so that normalized plan should differ.
-	tk.MustExec("explain select * from t order by vec_cosine_distance('[1,2,3]', vec) limit 3")
+	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance('[1,2,3]', vec) limit 3")
 	_, dx1 := getNormalizedPlan()
 
 	require.Equal(t, d1, d2)
@@ -202,7 +202,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = false
-	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
+	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
 	p2, _ := getNormalizedPlan()
 	require.Equal(t, []string{
 		" TopN                  root ?",
@@ -212,7 +212,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p2)
 	tbl.Meta().TiFlashReplica.Available = true
-	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
+	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
 	_, d4 := getNormalizedPlan()
 	require.Equal(t, d1, d4)
 }

@@ -19,7 +19,6 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -289,12 +288,12 @@ type joinTypeWithExtMsg struct {
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	failpoint.Inject("enableCDCJoinReorder", func(val failpoint.Value) {
-		if val.(bool) {
-			p2, err := joinorder.Optimize(p)
-			failpoint.Return(p2, false, err)
-		}
-	})
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder && p.SCtx().GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
+		// The new join reorder implementation doesn't support DP for now,
+		// So disable new impl when TiDBOptJoinReorderThreshold is greater 0.
+		p, err := joinorder.Optimize(p)
+		return p, false, err
+	}
 	p, err := s.optimizeRecursive(p.SCtx(), p)
 	return p, false, err
 }

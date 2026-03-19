@@ -34,22 +34,22 @@ func TestParallelApplyWarnning(t *testing.T) {
 		testKit.MustQuery("show warnings").Check(testkit.Rows())
 		// https://github.com/pingcap/tidb/issues/59863
 		testKit.MustExec("create table t(a int, b int, index idx(a));")
-		testKit.MustQuery(`explain format='brief' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).
+		testKit.MustQuery(`explain format = 'plan_tree' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).
 			Check(testkit.Rows(
-				`Projection 10000.00 root  test.t.a`,
-				`└─Apply 10000.00 root  CARTESIAN inner join`,
-				`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
-				`  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`,
-				`  └─Selection(Probe) 8000.00 root  Column#13`,
-				`    └─HashAgg 10000.00 root  funcs:count(1)->Column#13`,
-				"      └─IndexJoin 99900000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-				"        ├─IndexReader(Build) 99900000.00 root  index:IndexFullScan",
-				"        │ └─IndexFullScan 99900000.00 cop[tikv] table:t2, index:idx(a) keep order:false, stats:pseudo",
-				"        └─IndexLookUp(Probe) 99900000.00 root  ",
-				"          ├─Selection(Build) 124875000.00 cop[tikv]  not(isnull(test.t.a))",
-				"          │ └─IndexRangeScan 125000000.00 cop[tikv] table:t1, index:idx(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
-				"          └─Selection(Probe) 99900000.00 cop[tikv]  gt(test.t.b, test.t.b)",
-				"            └─TableRowIDScan 124875000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+				`Projection root  test.t.a`,
+				`└─Apply root  CARTESIAN inner join`,
+				`  ├─TableReader(Build) root  data:TableFullScan`,
+				`  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
+				`  └─Selection(Probe) root  Column`,
+				`    └─HashAgg root  funcs:count(1)->Column`,
+				"      └─IndexJoin root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+				"        ├─IndexReader(Build) root  index:IndexFullScan",
+				"        │ └─IndexFullScan cop[tikv] table:t2, index:idx(a) keep order:false, stats:pseudo",
+				"        └─IndexLookUp(Probe) root  ",
+				"          ├─Selection(Build) cop[tikv]  not(isnull(test.t.a))",
+				"          │ └─IndexRangeScan cop[tikv] table:t1, index:idx(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
+				"          └─Selection(Probe) cop[tikv]  gt(test.t.b, test.t.b)",
+				"            └─TableRowIDScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		testKit.MustQuery("show warnings;").Check(testkit.Rows())
 	})
 }
@@ -71,7 +71,7 @@ func TestParallelApplyOrderedPlan(t *testing.T) {
 	// expectKeepOrder is true, that the outer (Build) subtree contains
 	// "keep order:true" — indicating ordered parallel apply is used.
 	checkHasApply := func(sql string, expectKeepOrder bool) {
-		rows := tk.MustQuery("explain " + sql).Rows()
+		rows := tk.MustQuery("explain format = 'plan_tree' " + sql).Rows()
 		foundApply := false
 		foundKeepOrder := false
 		inBuildSide := false
@@ -118,7 +118,7 @@ func TestParallelApplyOrderedPlan(t *testing.T) {
 	// 5. Verify no warnings are emitted for ordered parallel apply
 	//    (the old code would emit "Parallel Apply rejects the possible
 	//    order properties" which we removed).
-	tk.MustQuery("explain select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a")
+	tk.MustQuery("explain format = 'plan_tree' select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// 6. Verify correctness: parallel + ordered should match serial.

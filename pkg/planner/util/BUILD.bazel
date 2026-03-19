@@ -16,7 +16,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/expression",
+        "//pkg/expression/exprctx",
         "//pkg/kv",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
