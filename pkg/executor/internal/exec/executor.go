@@ -67,8 +67,8 @@ type nextIOAccKeyType struct{}
 var nextIOAccKey nextIOAccKeyType
 
 type ruv2ExecutorMetric struct {
-	label    string
-	level    int
+	label string
+	level int
 	// useCells selects the counting unit: true means cells (rows*cols), false means rows.
 	useCells bool
 }
