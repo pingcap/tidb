@@ -357,6 +357,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		data.resetFn()
 		if encodeErr != nil {
 			err2 := common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.startPos)
+			// Use the source pos/offset to tell whether this chunk comes from a file:
+			// query chunks use -1 as a sentinel, while file chunks always carry it.
+			if p.offset >= 0 {
+				return errors.Annotatef(err2, "when encoding %d-th data row in file %s", rowNumber, p.chunkName)
+			}
 			return errors.Annotatef(err2, "when encoding %d-th data row in this chunk", rowNumber)
 		}
 		encodeDur += time.Since(encodeDurStart)

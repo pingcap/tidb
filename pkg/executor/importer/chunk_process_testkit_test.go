@@ -182,6 +182,7 @@ func TestFileChunkProcess(t *testing.T) {
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 		chunkInfo := &checkpoints.ChunkCheckpoint{
+			Key:   checkpoints.ChunkCheckpointKey{Path: "db.table.2.sql"},
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
@@ -190,7 +191,7 @@ func TestFileChunkProcess(t *testing.T) {
 		)
 		err2 := processor.Process(ctx)
 		require.ErrorIs(t, err2, common.ErrEncodeKV)
-		require.ErrorContains(t, err2, "encoding 2-th data row in this chunk")
+		require.ErrorContains(t, err2, "when encoding 2-th data row in file db.table.2.sql:0")
 		require.ErrorContains(t, err2, "at offset 6")
 		require.True(t, ctrl.Satisfied())
 	})
