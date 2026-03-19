@@ -4,4 +4,5 @@ This directory contains internal, developer-oriented notes (decisions, pitfalls,
 
 - `planner/`: planner notes.
 - `executor/`: executor notes.
+- `dxf/`: DXF framework and integration notes.
 - `docs/agents/ddl/`: DDL execution framework docs.

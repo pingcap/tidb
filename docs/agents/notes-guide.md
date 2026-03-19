@@ -8,7 +8,8 @@ Policy-level requirements remain in the repository root `AGENTS.md`.
 - Notes live under `docs/note/<component>/`.
 - Keep notes close to the owning component and reuse existing folders before creating new ones.
 - If you add a new `docs/note/<component>/` folder, add a short entry to this document so the new location is discoverable.
-- Current component folders include `docs/note/planner/` and `docs/note/executor/`.
+- Current component folders include `docs/note/planner/`,
+  `docs/note/executor/`, and `docs/note/dxf/`.
 
 ## Update Rules
 
