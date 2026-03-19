@@ -22,7 +22,7 @@ Contact the mentors: **#tidb-challenge-program** channel in [TiDB Community](htt
 ## Recommended Skills
 
 * skills 1
-* skills 1
+* skills 2
 
 ## Learning Materials
 

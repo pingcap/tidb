@@ -225,7 +225,9 @@ func TestCTEIterationMemTracker(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk"))
 	}()
-	tk.MustQuery(fmt.Sprintf("with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select count(*) from cte1", maxIter))
+	expectedRows := tk.MustQuery(fmt.Sprintf("select sum(%d - c1 + 1) from t1", maxIter)).Rows()
+	tk.MustQuery(fmt.Sprintf("with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select count(*) from cte1", maxIter)).
+		Check(testkit.Rows(fmt.Sprintf("%v", expectedRows[0][0])))
 }
 
 func TestCTETableInvalidTask(t *testing.T) {

@@ -1269,6 +1269,10 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 		return true
 	}, 10*time.Second, 20*time.Millisecond)
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/PollAvailableTableProgressMaxCount", `return(2)`))
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/PollAvailableTableProgressMaxCount")
+	}()
 	// After available, reset TiFlash sync status.
 	for i := range tableCount {
 		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableNames[i]))
@@ -1277,10 +1281,6 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 		tableIDs[i] = tbl.Meta().ID
 		s.tiflash.ResetSyncStatus(int(tableIDs[i]), false)
 	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/PollAvailableTableProgressMaxCount", `return(2)`))
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/PollAvailableTableProgressMaxCount")
-	}()
 
 	countUpdated := func() (updated int, ok bool) {
 		for _, id := range tableIDs {
@@ -1356,26 +1356,27 @@ func TestTiFlashPartitionNotAvailable(t *testing.T) {
 	waitTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 
 	s.tiflash.ResetSyncStatus(int(partID), false)
-	stableChecks := 3
-	timeout := time.Second
+	stableFor := ddl.PollTiFlashInterval + 50*time.Millisecond
+	timeout := stableFor + 2*time.Second
 	if testflag.Long() {
-		stableChecks = 10
-		timeout = 3 * time.Second
+		timeout += 2 * time.Second
 	}
-	consecutive := 0
+	stableSince := time.Time{}
 	require.Eventually(t, func() bool {
 		tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 		if err != nil {
-			consecutive = 0
+			stableSince = time.Time{}
 			return false
 		}
 		replica := tb.Meta().TiFlashReplica
 		if replica == nil || !replica.Available {
-			consecutive = 0
+			stableSince = time.Time{}
 			return false
 		}
-		consecutive++
-		return consecutive >= stableChecks
+		if stableSince.IsZero() {
+			stableSince = time.Now()
+		}
+		return time.Since(stableSince) >= stableFor
 	}, timeout, 20*time.Millisecond)
 }
 

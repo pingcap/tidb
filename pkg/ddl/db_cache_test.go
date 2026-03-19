@@ -150,23 +150,10 @@ func TestCacheTableSizeLimit(t *testing.T) {
 		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
 	}
 
-	cached := false
-	for range 200 {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select count(*) from (select * from cache_t2 limit 1) t1").Check(testkit.Rows("1"))
-		if lastReadFromCache(tk) {
-			cached = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// require.True(t, cached)
-	if !cached {
-		// cached should be true, but it depends on the hardward.
-		// If the CI environment is too slow, 200 iteration would not be enough,
-		// check the result makes this test unstable, so skip the following.
-		return
-	}
+		return lastReadFromCache(tk)
+	}, 20*time.Second, 10*time.Millisecond)
 
 	// Forbit the insert once the table size limit is detected.
 	tk.MustGetErrCode("insert into cache_t2 select * from tmp;", errno.ErrOptOnCacheTable)

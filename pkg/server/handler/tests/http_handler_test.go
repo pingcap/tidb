@@ -1754,20 +1754,27 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		return ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()) == nil
 	}, 5*time.Second, 50*time.Millisecond)
 
-	start := make(chan struct{})
+	ready := make(chan struct{})
+	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		<-start
-		for i := 0; i < rounds; i++ {
+		close(ready)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
 			testStoreTopology()
 		}
 	}()
-	close(start)
+	<-ready
 	for i := 0; i < rounds; i++ {
 		testUpdateLabels()
 	}
+	close(done)
 	wg.Wait()
 
 	// reset the global variable

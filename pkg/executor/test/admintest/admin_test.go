@@ -1728,7 +1728,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(rowCount) + rowCount
+		randomRow := rand.Intn(rowCount) + rowCount + 1
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1872,7 +1872,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(rowCount) + rowCount
+		randomRow := rand.Intn(rowCount) + rowCount + 1
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())

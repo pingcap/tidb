@@ -125,6 +125,35 @@ function find_multiple_available_ports() {
     echo "${ports[@]}"
 }
 
+function wait_for_server_ports() {
+    local pid=$1
+    local name=$2
+    shift 2
+
+    for _ in $(seq 1 60); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "Error: $name (PID: $pid) exited before it was ready." >&2
+            return 1
+        fi
+
+        local ready=1
+        for port in "$@"; do
+            if ! lsof -nP -i TCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+                ready=0
+                break
+            fi
+        done
+        if [ "$ready" -eq 1 ]; then
+            return 0
+        fi
+
+        sleep 1
+    done
+
+    echo "Error: $name (PID: $pid) did not listen on ports $* in time." >&2
+    return 1
+}
+
 function build_tidb_server()
 {
     tidb_server="./integrationtest_tidb-server"
@@ -280,6 +309,11 @@ function start_tidb_server()
         -path "${pd_client_addr}" > $log_file 2>&1 &
     SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started, port: $tidb_port"
+    if ! wait_for_server_ports "$SERVER_PID" "tidb-server" "$tidb_port" "$tidb_status_port"; then
+        echo "tidb-server failed to start, log file: $log_file" >&2
+        cat "$log_file" >&2 || true
+        return 1
+    fi
 }
 
 function start_ticdc_server() {

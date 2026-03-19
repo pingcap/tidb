@@ -52,13 +52,17 @@ func TestMemoryLeak(t *testing.T) {
 
 	runtime.GC()
 	runtime.ReadMemStats(&memStat)
+	heapDelta := uint64(0)
+	if memStat.HeapInuse > oldHeapInUse {
+		heapDelta = memStat.HeapInuse - oldHeapInUse
+	}
 	// Before the fix, initAndCloseTiDB for 20 times cost ~900 MiB memory, so we test for a loose per-iteration upper bound.
 	scaleLimit := func(base uint64) uint64 {
 		return base * uint64(iterations) / 20
 	}
 	if syncutil.EnableDeadlock {
-		require.Less(t, memStat.HeapInuse-oldHeapInUse, scaleLimit(uint64(5400*units.MiB)))
+		require.Less(t, heapDelta, scaleLimit(uint64(5400*units.MiB)))
 	} else {
-		require.Less(t, memStat.HeapInuse-oldHeapInUse, scaleLimit(uint64(900*units.MiB)))
+		require.Less(t, heapDelta, scaleLimit(uint64(900*units.MiB)))
 	}
 }
