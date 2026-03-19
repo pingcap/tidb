@@ -99,7 +99,7 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
-    shard_count = 46,
+    shard_count = 47,
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/errors",
@@ -140,6 +140,7 @@ go_test(
         "@com_github_pkg_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//clients/router",
+        "@com_github_tikv_pd_client//opt",
         "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
     ],

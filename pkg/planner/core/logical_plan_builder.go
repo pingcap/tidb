@@ -5430,6 +5430,21 @@ func buildColumns2HandleWithWrtiableColumns(
 	return cols2Handles, nil
 }
 
+// buildUpdateTblColPosInfos resolves the handle columns against the current UPDATE input schema and
+// rebuilds the alias/range-scoped writable-column layout for that schema.
+func buildUpdateTblColPosInfos(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	tblID2Handle map[int64][]util.HandleCols,
+	tblID2Table map[int64]table.Table,
+) (physicalop.TblColPosInfoSlice, error) {
+	resolvedTblID2Handle, err := resolveIndicesForTblID2Handle(tblID2Handle, schema)
+	if err != nil {
+		return nil, err
+	}
+	return buildColumns2HandleWithWrtiableColumns(names, resolvedTblID2Handle, tblID2Table)
+}
+
 // pruneAndBuildColPositionInfoForDelete prune unneeded columns and construct the column position information.
 // We'll have two kinds of columns seen by DELETE:
 //  1. The columns that are public. They are the columns that not affected by any DDL.
@@ -5719,6 +5734,69 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	p = np
+	rawTblID2Handle := b.handleHelper.tailMap()
+	if len(rawTblID2Handle) == 0 {
+		return nil, plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("UPDATE")
+	}
+	tblID2table := make(map[int64]table.Table, len(rawTblID2Handle))
+	for id := range rawTblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(ctx, id)
+	}
+
+	// Identify updated aliases and add a projection to prune read-only columns,
+	// keeping covering indexes available on read-only join inputs.
+	updatedAliases := make(map[string]struct{})
+	for _, assign := range orderedList {
+		if idx := p.Schema().ColumnIndex(assign.Col); idx >= 0 {
+			updatedAliases[p.OutputNames()[idx].TblName.L] = struct{}{}
+		}
+	}
+
+	finalTblID2Handle := make(map[int64][]util.HandleCols)
+	for tid, handleCols := range rawTblID2Handle {
+		for _, hc := range handleCols {
+			if idx := p.Schema().ColumnIndex(hc.GetCol(0)); idx >= 0 {
+				if _, ok := updatedAliases[p.OutputNames()[idx].TblName.L]; ok {
+					finalTblID2Handle[tid] = append(finalTblID2Handle[tid], hc)
+				}
+			}
+		}
+	}
+
+	used := bitset.New(uint(p.Schema().Len()))
+	colRef := b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan
+	for i, col := range p.Schema().Columns {
+		if _, ok := updatedAliases[p.OutputNames()[i].TblName.L]; ok || colRef.Has(int(col.UniqueID)) {
+			used.Set(uint(i))
+		}
+	}
+
+	if used.Count() < uint(p.Schema().Len()) {
+		proj, isProj := p.(*logicalop.LogicalProjection)
+		projExprs := make([]expression.Expression, 0, used.Count())
+		projSchema := make([]*expression.Column, 0, used.Count())
+		projNames := make(types.NameSlice, 0, used.Count())
+		for i, found := used.NextSet(0); found; i, found = used.NextSet(i + 1) {
+			if isProj {
+				projExprs = append(projExprs, proj.Exprs[i])
+			} else {
+				projExprs = append(projExprs, p.Schema().Columns[i])
+			}
+			projSchema = append(projSchema, p.Schema().Columns[i])
+			projNames = append(projNames, p.OutputNames()[i])
+		}
+		if isProj {
+			proj.Exprs = projExprs
+			proj.SetSchema(expression.NewSchema(projSchema...))
+			proj.SetOutputNames(projNames)
+		} else {
+			newProj := logicalop.LogicalProjection{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
+			newProj.SetChildren(p)
+			newProj.SetSchema(expression.NewSchema(projSchema...))
+			newProj.SetOutputNames(projNames)
+			p = newProj
+		}
+	}
 
 	updt := physicalop.Update{
 		OrderedList:               orderedList,
@@ -5737,15 +5815,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
-	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), updt.SelectPlan.Schema())
-	if err != nil {
-		return nil, err
-	}
-	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
-	for id := range tblID2Handle {
-		tblID2table[id], _ = b.is.TableByID(ctx, id)
-	}
-	updt.TblColPosInfos, err = buildColumns2HandleWithWrtiableColumns(updt.OutputNames(), tblID2Handle, tblID2table)
+	updt.TblColPosInfos, err = buildUpdateTblColPosInfos(updt.SelectPlan.Schema(), updt.OutputNames(), finalTblID2Handle, tblID2table)
 	if err != nil {
 		return nil, err
 	}
@@ -5933,6 +6003,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 		col := p.Schema().Columns[idx]
 		name := p.OutputNames()[idx]
+		if col.ID == model.ExtraHandleID && !b.ctx.GetSessionVars().AllowWriteRowID {
+			return nil, nil, false, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
+		}
 		var newExpr expression.Expression
 		var np base.LogicalPlan
 		if i < len(list) {
