@@ -160,9 +160,7 @@ type CollectConflictsStepMeta struct {
 	ConflictedRowFilenames []string `json:"conflicted-row-filenames,omitempty"`
 	// ConflictedRowRecordingCapped is true if conflict-row file recording stops
 	// due to maxTotalConflictRowFileSize.
-	// Keep the historical JSON key for backward compatibility of persisted
-	// subtask metadata.
-	ConflictedRowRecordingCapped bool `json:"conflicted-row-files-truncated,omitempty"`
+	ConflictedRowRecordingCapped bool `json:"conflicted-row-recording-capped,omitempty"`
 	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
 	// if true, we will skip checksum.
 	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
