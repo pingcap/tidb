@@ -475,7 +475,7 @@ func (cr *chunkProcessor) encodeLoop(
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
 					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
-					err = errors.Annotatef(err, "when encoding %d-th data row in this chunk", rowNumber)
+					err = errors.Annotatef(err, "when encoding %d-th data row in file %s", rowNumber, &cr.chunk.Key)
 				}
 				hasIgnoredEncodeErr = true
 			}
