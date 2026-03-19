@@ -1359,6 +1359,7 @@
   "QF1012": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/config/config.go": "config/config.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
