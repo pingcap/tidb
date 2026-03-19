@@ -351,9 +351,11 @@ func (t *mlogTable) writeMLogRow(
 				len(baseRow),
 			)
 		}
-		var d types.Datum
-		baseRow[offset].Copy(&d)
-		mlogRow = append(mlogRow, d)
+		// Keep an independent row slice because AddRecord may rewrite row slots for
+		// non-public/change-state columns, but a shallow Datum copy is enough here:
+		// the downstream AddRecord encode/index paths only consume datum payloads
+		// synchronously and do not retain them after the call returns.
+		mlogRow = append(mlogRow, baseRow[offset])
 	}
 	mlogRow = append(mlogRow, types.NewStringDatum(string(dmlType)), types.NewIntDatum(oldNew))
 
