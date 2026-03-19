@@ -162,21 +162,21 @@ func TestLateralJoinReordering(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := []struct {
-		name            string
-		sql             string
-		expectApply     bool
+		name             string
+		sql              string
+		expectApply      bool
 		expectedMinApply int // minimum number of Apply nodes expected
 	}{
 		{
-			name:            "Multiple LATERAL joins prevent reordering",
-			sql:             "SELECT * FROM t, LATERAL (SELECT t.a) AS dt1, LATERAL (SELECT t.b) AS dt2",
-			expectApply:     true,
+			name:             "Multiple LATERAL joins prevent reordering",
+			sql:              "SELECT * FROM t, LATERAL (SELECT t.a) AS dt1, LATERAL (SELECT t.b) AS dt2",
+			expectApply:      true,
 			expectedMinApply: 2, // Two LATERAL subqueries → two Apply nodes
 		},
 		{
-			name:            "LATERAL with multiple left tables",
-			sql:             "SELECT * FROM t t1, t t2, LATERAL (SELECT t1.a + t2.a) AS dt",
-			expectApply:     true,
+			name:             "LATERAL with multiple left tables",
+			sql:              "SELECT * FROM t t1, t t2, LATERAL (SELECT t1.a + t2.a) AS dt",
+			expectApply:      true,
 			expectedMinApply: 1,
 		},
 	}
