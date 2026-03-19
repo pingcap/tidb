@@ -3959,14 +3959,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if tNameW == nil {
 				continue
 			}
-<<<<<<< HEAD
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
-=======
-			if isExplicitSetTablesNames {
-				// If `LockTableIDs` map is empty, it will lock all records from all tables.
-				// Besides, it will only lock the metioned in `of` part.
-				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
-			}
 			// Use the already-resolved DBInfo to derive the privilege-check DB name.
 			// For OF-alias targets, tName.Schema is empty; falling back to currentDB via getLowerDB would
 			// authorize against the wrong database when the aliased table lives in a different schema.
@@ -3982,7 +3975,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.TableInfo.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.TableInfo.Name.L, "", authErr)
->>>>>>> bab4993b6fd (planner: support table aliases in FOR UPDATE OF Clause (#65532))
 		}
 		p, err = b.buildSelectLock(p, l)
 		if err != nil {

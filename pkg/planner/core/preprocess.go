@@ -1686,7 +1686,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 // lockRef records the FROM table and its alias (if any) for lock-clause name resolution.
 type lockRef struct {
 	table *ast.TableName
-	alias ast.CIStr
+	alias pmodel.CIStr
 }
 
 type lockSelectCtx struct {
@@ -1716,7 +1716,7 @@ func newLockSelectCtx(lockTables []*ast.TableName) lockSelectCtx {
 	}
 }
 
-func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
+func (c *lockSelectCtx) collect(tableName *ast.TableName, asName pmodel.CIStr) {
 	ref := lockRef{
 		table: tableName,
 		alias: asName,
