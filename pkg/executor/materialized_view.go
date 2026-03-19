@@ -816,7 +816,7 @@ func emitMVRefreshStepPlanRows(
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) (err error) {
-	const slowRefreshThreshold = 5 * time.Second
+	const slowRefreshThreshold = 30 * time.Second
 	refreshStart := time.Now()
 	var (
 		lockRefreshInfoRowDur time.Duration
