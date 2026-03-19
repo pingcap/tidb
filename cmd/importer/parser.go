@@ -237,7 +237,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.name = stmt.Table.Name.L
 	t.columns = make([]*column, 0, len(stmt.Cols))
 
-	mockTbl, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), stmt)
+	mockTbl, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), stmt, nil)
 	mockTbl.ID = 1
 	if err != nil {
 		return errors.Trace(err)

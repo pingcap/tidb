@@ -861,13 +861,14 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           model.IndexType
-	Comment      string
-	ParserName   model.CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp model.PrimaryKeyType
-	Global       bool
+	KeyBlockSize               uint64
+	Tp                         model.IndexType
+	Comment                    string
+	ParserName                 model.CIStr
+	Visibility                 IndexVisibility
+	PrimaryKeyTp               model.PrimaryKeyType
+	Global                     bool
+	AddColumnarReplicaOnDemand int
 }
 
 // IsEmpty is true if only default options are given
@@ -879,6 +880,7 @@ func (n *IndexOption) IsEmpty() bool {
 		len(n.ParserName.O) > 0 ||
 		n.Comment != "" ||
 		n.Global ||
+		n.AddColumnarReplicaOnDemand > 0 ||
 		n.Visibility != IndexVisibilityDefault {
 		return false
 	}
@@ -888,7 +890,14 @@ func (n *IndexOption) IsEmpty() bool {
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
+	if n.AddColumnarReplicaOnDemand > 0 {
+		ctx.WriteKeyWord("ADD_COLUMNAR_REPLICA_ON_DEMAND")
+		hasPrevOption = true
+	}
 	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
 			ctx.WriteKeyWord(n.PrimaryKeyTp.String())
 			return nil
@@ -979,9 +988,14 @@ const (
 	ConstraintUniqKey
 	ConstraintUniqIndex
 	ConstraintForeignKey
+	// ConstraintFulltext is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintFulltext
 	ConstraintCheck
+	// ConstraintVector is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
+	ConstraintColumnar
 )
 
 // Constraint is constraint for table definition.
@@ -1948,9 +1962,17 @@ const (
 	IndexKeyTypeNone IndexKeyType = iota
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
-	IndexKeyTypeFullText
+	// IndexKeyTypeFulltext is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
+	IndexKeyTypeFulltext
+	// IndexKeyTypeVector is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeVector
+	IndexKeyTypeColumnar
 )
+
+// IndexKeyTypeFullText keeps compatibility with existing call sites that still use the old exported spelling.
+const IndexKeyTypeFullText = IndexKeyTypeFulltext
 
 // CreateIndexStmt is a statement to create an index.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
@@ -1977,7 +1999,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE ")
 	case IndexKeyTypeSpatial:
 		ctx.WriteKeyWord("SPATIAL ")
-	case IndexKeyTypeFullText:
+	case IndexKeyTypeFulltext:
 		ctx.WriteKeyWord("FULLTEXT ")
 	case IndexKeyTypeVector:
 		ctx.WriteKeyWord("VECTOR ")
@@ -2648,6 +2670,7 @@ const (
 	/* Some options are not cherry-picked from master, reserve the options */
 
 	TableOptionAffinity        = 47
+	TableOptionEngineAttribute = 48
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -3042,6 +3065,10 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+	case TableOptionEngineAttribute:
+		ctx.WriteKeyWord("ENGINE_ATTRIBUTE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -3361,6 +3388,7 @@ type AlterTableSpec struct {
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
 	StatsOptionsSpec *StatsOptionsSpec
+	EngineAttribute  string
 }
 
 type TiFlashReplicaSpec struct {

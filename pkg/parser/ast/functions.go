@@ -368,6 +368,18 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// embedding functions (tidb extension)
+	EmbedText = "embed_text"
+	// The followings are pseudo functions which will be rewritten to its vec distance form
+	// VEC_XX_DISTANCE() but with a generated embedding.
+	VecEmbedL1Distance           = "vec_embed_l1_distance"
+	VecEmbedL2Distance           = "vec_embed_l2_distance"
+	VecEmbedNegativeInnerProduct = "vec_embed_negative_inner_product"
+	VecEmbedCosineDistance       = "vec_embed_cosine_distance"
+
+	// FTS functions (tidb extension)
+	FTSMatchWord = "fts_match_word"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"
