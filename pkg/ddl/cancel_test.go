@@ -295,12 +295,6 @@ func TestCancelVariousJobs(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCloudImportExecutor"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
 	}()
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
 	t.Cleanup(func() {

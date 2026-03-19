@@ -2006,6 +2006,36 @@ func TestFulltextIndexRequiresGlobalSortForBackfill(t *testing.T) {
 		"fulltext index on non-empty table requires global sort")
 }
 
+func TestFulltextIndexProbeErrorDoesNotBecomeGlobalSortError(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCheckTableReorgWorkCanSkip", `return("error")`)
+
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(1)
+	defer func() {
+		vardef.SetDDLErrorCountLimit(limit)
+	}()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(10 * time.Millisecond)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_probe_err(id int, c text)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_probe_err")
+
+	err := tk.ExecToErr("alter table t_probe_err add fulltext index fts_idx(c) with parser standard")
+	require.ErrorContains(t, err, "mock check table reorg work can skip error")
+	require.NotContains(t, err.Error(), "requires global sort")
+}
+
 func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
