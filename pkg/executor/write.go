@@ -223,7 +223,13 @@ func updateRecord(
 	var sessionLoc *time.Location
 	if tblMeta.GetPartitionInfo() == nil {
 		for _, assign := range assignments {
-			colInfo := tblMeta.Columns[assign.Col.Index]
+			// In multi-table UPDATE, assign.Col.Index is the evalBuffer index which
+			// may refer to columns in other tables. Only check this table's columns.
+			idxInTbl := assign.Col.Index - offset
+			if idxInTbl < 0 || idxInTbl >= len(tblMeta.Columns) {
+				continue
+			}
+			colInfo := tblMeta.Columns[idxInTbl]
 			if !colInfo.IsVirtualGenerated() && table.GeneratedColumnDependsOnTimestamp(colInfo, tblMeta.Columns) {
 				sessionLoc = evalCtx.Location()
 				utcEvalCtx = exprctx.CtxWithUTCLocation(sctx.GetExprCtx()).GetEvalCtx()
@@ -243,9 +249,13 @@ func updateRecord(
 		idxInCols := assign.Col.Index - offset
 		// For stored generated columns depending on TIMESTAMP, temporarily convert
 		// TIMESTAMP inputs to UTC, evaluate in UTC context, then restore.
-		colInfo := tblMeta.Columns[assign.Col.Index]
-		useUTC := utcEvalCtx != nil && !colInfo.IsVirtualGenerated() &&
-			table.GeneratedColumnDependsOnTimestamp(colInfo, tblMeta.Columns)
+		// In multi-table UPDATE, idxInCols may be out of this table's range.
+		var useUTC bool
+		if utcEvalCtx != nil && idxInCols >= 0 && idxInCols < len(tblMeta.Columns) {
+			colInfo := tblMeta.Columns[idxInCols]
+			useUTC = !colInfo.IsVirtualGenerated() &&
+				table.GeneratedColumnDependsOnTimestamp(colInfo, tblMeta.Columns)
+		}
 		curEvalCtx := evalCtx
 		var restoreFn func()
 		if useUTC {
