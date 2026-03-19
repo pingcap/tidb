@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -173,13 +172,19 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+	prevInPreparedPlanBuild := vars.StmtCtx.InPreparedPlanBuild
+	prevStaticPartitionPrune := vars.StmtCtx.StaticPartitionPrune
+	vars.StmtCtx.InPreparedPlanBuild = isPrepStmt && cacheable
+	vars.StmtCtx.StaticPartitionPrune = false
 	p, err = destBuilder.Build(ctx, nodeW)
+	staticPartitionPrune := vars.StmtCtx.StaticPartitionPrune
+	vars.StmtCtx.InPreparedPlanBuild = prevInPreparedPlanBuild
+	vars.StmtCtx.StaticPartitionPrune = prevStaticPartitionPrune
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
-	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
-		// dynamic prune mode is not used, could be that global statistics not yet available!
+	if cacheable && !isPrepStmt && staticPartitionPrune {
 		cacheable = false
 		reason = "static partition prune mode used"
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))

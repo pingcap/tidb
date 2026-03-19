@@ -51,6 +51,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "ndv_test.go",
         "row_count_test.go",
         "row_size_test.go",
         "selectivity_test.go",

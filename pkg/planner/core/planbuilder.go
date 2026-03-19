@@ -1439,9 +1439,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
 
-	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
-	// ignore global index if flagPartitionProcessor exists.
-	if hasFlagPartitionProcessor {
+	// Global index paths are usually removed when partition pruning is enabled, because LogicalPartitionAll
+	// is not suitable for global indexes. Dynamic pruning is the exception: keep global index paths in that
+	// case and let removeGlobalIndexPaths(available) run only for the static-pruning path.
+	if hasFlagPartitionProcessor && !ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		available = removeGlobalIndexPaths(available)
 	}
 

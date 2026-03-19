@@ -41,6 +41,18 @@ func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
+// AggregateSelectedPartitionCounts aggregates the realtime and modify count from selected partitions.
+func AggregateSelectedPartitionCounts(partitionStats []*statistics.Table) (realtimeCount, modifyCount int64, ok bool) {
+	for _, partStats := range partitionStats {
+		if partStats == nil || partStats.Pseudo {
+			return 0, 0, false
+		}
+		realtimeCount += partStats.RealtimeCount
+		modifyCount += partStats.ModifyCount
+	}
+	return realtimeCount, modifyCount, true
+}
+
 func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)

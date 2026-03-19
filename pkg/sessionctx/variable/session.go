@@ -1400,6 +1400,9 @@ type SessionVars struct {
 	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
 	EnablePseudoForOutdatedStats bool
 
+	// EnableSelectedPartitionStats controls whether dynamic partition pruning can use selected partition stats.
+	EnableSelectedPartitionStats bool
+
 	// RegardNULLAsPoint if regard NULL as Point
 	RegardNULLAsPoint bool
 
@@ -2289,6 +2292,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		EnableSelectedPartitionStats:  DefTiDBOptEnableSelectedPartitionStats,
 		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize

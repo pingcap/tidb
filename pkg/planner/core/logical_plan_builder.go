@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -4178,10 +4180,11 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
-func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, partitionIDs []int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
+	selectedPartitionCountsOverridden := false
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
 		defer func() {
@@ -4203,7 +4206,30 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if len(partitionIDs) > 0 {
+		usePartitionStats = true
+		uniquePartitionStats := make([]*statistics.Table, 0, len(partitionIDs))
+		seen := make(map[int64]struct{}, len(partitionIDs))
+		for _, partitionID := range partitionIDs {
+			if _, ok := seen[partitionID]; ok {
+				continue
+			}
+			seen[partitionID] = struct{}{}
+			uniquePartitionStats = append(uniquePartitionStats, statsHandle.GetPhysicalTableStats(partitionID, tblInfo))
+		}
+		if len(uniquePartitionStats) == 1 {
+			statsTbl = uniquePartitionStats[0]
+		} else {
+			// Reuse the global stats objects and only narrow the table-level counts to the selected partitions.
+			statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+			if realtimeCount, modifyCount, ok := cardinality.AggregateSelectedPartitionCounts(uniquePartitionStats); ok {
+				statsTbl = statsTbl.ShallowCopy()
+				statsTbl.RealtimeCount = realtimeCount
+				statsTbl.ModifyCount = modifyCount
+				selectedPartitionCountsOverridden = true
+			}
+		}
+	} else if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		usePartitionStats = true
@@ -4217,6 +4243,10 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
 	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
 		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		if selectedPartitionCountsOverridden {
+			// The selected-partition row count is planner-synthesized, so keep it instead of restoring the global analyze count.
+			analyzeCount = statsTbl.RealtimeCount
+		}
 		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
 			// Here is a case that we need specially care about:
@@ -4524,6 +4554,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
+		hasGlobalIndex := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
+			return idx.Global
+		})
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
 		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -4541,23 +4574,25 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, skipMissingPartition)
 
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
+				enableStaticPrune := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
 				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {
 						if isDynamicEnabled {
-							usePartitionProcessor = false
+							enableStaticPrune = false
 						}
 					}
 				})
 
-				if usePartitionProcessor {
+				if enableStaticPrune && !hasGlobalIndex {
 					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 					if isDynamicEnabled {
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 							fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
 					}
+				} else if b.ctx.GetSessionVars().EnableSelectedPartitionStats && !hasGlobalIndex {
+					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 				}
 			}
 		}
@@ -4834,7 +4869,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && b.optFlag&rule.FlagPartitionProcessor == 0 {
+		if tableInfo.Partition != nil {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage

@@ -444,6 +444,10 @@ type StatementContext struct {
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
+	// InPreparedPlanBuild suppresses parameter-value-sensitive planner rewrites while building a prepared statement cache entry.
+	InPreparedPlanBuild bool
+	// StaticPartitionPrune indicates the current planning flow has used static partition pruning information.
+	StaticPartitionPrune bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
 
