@@ -181,10 +181,10 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		valid := false
 		for i, tt := range input {
 			// Test for table without index.
-			plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
+			plan := tk.MustQuery("explain format = 'plan_tree' " + tt.SQL)
 			planTree := testdata.ConvertRowsToStrings(plan.Rows())
 			// Test for table with index.
-			indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
+			indexPlan := tk1.MustQuery("explain format = 'plan_tree' " + tt.SQL)
 			indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
 			testdata.OnRecord(func() {
 				output[i].SQL = tt.SQL
@@ -405,8 +405,9 @@ func runExtractTestCases(t *testing.T, colType string, extractTestCases []Extrac
 			}
 			tk.MustExec(createSQL)
 			for i, op := range cmpOps {
-				res := tk.MustQuery(`explain select * from t where d ` + op + ` '` + pRanges[1] + `'`)
-				parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
+				res := tk.MustQuery(`explain format = 'plan_tree' select * from t where d ` + op + ` '` + pRanges[1] + `'`)
+				parts := res.Rows()[0][2].(string)
+				parts = parts[strings.Index(parts, "partition:")+len("partition:"):]
 				require.Greater(t, len(tc.PruneResult), i, "PruneResults does not include enough values, colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
 				expects := tc.PruneResult[i]
 				if i == 0 && !hasFsp && tc.NoFspResult != "" {
@@ -414,8 +415,9 @@ func runExtractTestCases(t *testing.T, colType string, extractTestCases []Extrac
 				}
 				require.Equal(t, expects, parts, "colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
 			}
-			res := tk.MustQuery(`explain select * from t where d between '` + pRanges[1] + `' and '` + pRanges[2] + `'`)
-			parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
+			res := tk.MustQuery(`explain format = 'plan_tree' select * from t where d between '` + pRanges[1] + `' and '` + pRanges[2] + `'`)
+			parts := res.Rows()[0][2].(string)
+			parts = parts[strings.Index(parts, "partition:")+len("partition:"):]
 			require.Equal(t, tc.PruneResult[len(cmpOps)], parts, "colType %s, EXTRACT %s, BETWEEN", colType, tc.TimeUnit)
 		}
 	})
@@ -561,8 +563,8 @@ func TestPartitionPrunerRegression(t *testing.T) {
 		tk.MustQuery("select /* issue:59827 */ * from t where a = 'b' and (b = '1')").Check(testkit.Rows("b 1 1"))
 		tk.MustQuery("select /* issue:59827 */ * from t where a = 'b' and b = ('2')").Check(testkit.Rows("b 2 2"))
 		tk.MustQuery("select /* issue:59827 */ * from t where a = 'b' and b = ('1')").Check(testkit.Rows("b 1 1"))
-		tk.MustQuery("explain select /* issue:59827 */ * from t where a = 'b' and b = '2'").CheckContain("partition:p2")
-		tk.MustQuery("explain select /* issue:59827 */ * from t where a = 'b' and (b = '2')").CheckContain("partition:p2")
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:59827 */ * from t where a = 'b' and b = '2'").CheckContain("partition:p2")
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:59827 */ * from t where a = 'b' and (b = '2')").CheckContain("partition:p2")
 
 		tk.MustExec("PREPARE stmt FROM 'select * from t where a = ? and b = ?'")
 		tk.MustExec("SET @a = 'b', @b = '2'")
@@ -628,8 +630,8 @@ func TestPartitionPrunerRegression(t *testing.T) {
 		tk.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
 		tk.MustQuery("select /* issue:59827 */ * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
 		tk.MustQuery("select /* issue:59827 */ * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
-		tk.MustQuery("explain select /* issue:59827 */ * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
-		tk.MustQuery("explain select /* issue:59827 */ * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:59827 */ * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:59827 */ * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
 
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (" +
@@ -639,7 +641,7 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			"(partition p0 values in ('', '1'))")
 
 		tk.MustExec("insert into t values ('', 1)")
-		tk.MustQuery("explain select /* issue:61134 */ * from t where a in ('')").CheckContain("Point_Get")
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:61134 */ * from t where a in ('')").CheckContain("Point_Get")
 		tk.MustQuery("select /* issue:61134 */ * from t where a in ('')").Check(testkit.Rows(" 1"))
 
 		testCaseChar := []struct {

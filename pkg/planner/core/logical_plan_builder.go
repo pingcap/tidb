@@ -4090,12 +4090,21 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				// Besides, it will only lock the metioned in `of` part.
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
-			dbName := getLowerDB(tName.Schema, b.ctx.GetSessionVars())
+			// Use the already-resolved DBInfo to derive the privilege-check DB name.
+			// For OF-alias targets, tName.Schema is empty; falling back to currentDB via getLowerDB would
+			// authorize against the wrong database when the aliased table lives in a different schema.
+			var dbName string
+			if tNameW.DBInfo != nil {
+				dbName = tNameW.DBInfo.Name.L
+			} else {
+				dbName = getLowerDB(tName.Schema, b.ctx.GetSessionVars())
+			}
+
 			var authErr error
 			if user := b.ctx.GetSessionVars().User; user != nil {
-				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
+				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.TableInfo.Name.L)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.Name.L, "", authErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.TableInfo.Name.L, "", authErr)
 		}
 		p, err = b.buildSelectLock(p, l)
 		if err != nil {

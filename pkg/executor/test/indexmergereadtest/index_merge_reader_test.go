@@ -164,6 +164,28 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	require.True(t, re.MatchString(indexMergeLine))
 }
 
+func TestMVIndexMergePlanTree(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge=1")
+	tk.MustExec("drop table if exists t_mv_idx_only")
+	tk.MustExec("create table t_mv_idx_only (a int, b int, j json, index idx((cast(j as signed array)), a))")
+
+	tk.MustQuery("explain format='plan_tree' select /*+ use_index_merge(t_mv_idx_only, idx) */ a from t_mv_idx_only where 1 member of (j)").Check(testkit.Rows(
+		"Projection root  test.t_mv_idx_only.a",
+		"└─IndexMerge root  type: union",
+		"  └─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain format='plan_tree' select /*+ use_index_merge(t_mv_idx_only, idx) */ b from t_mv_idx_only where 1 member of (j)").Check(testkit.Rows(
+		"Projection root  test.t_mv_idx_only.b",
+		"└─IndexMerge root  type: union",
+		"  ├─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) cop[tikv] table:t_mv_idx_only keep order:false, stats:pseudo",
+	))
+}
+
 func TestIndexMergeReaderMemTracker(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

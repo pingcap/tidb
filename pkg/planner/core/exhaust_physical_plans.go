@@ -261,19 +261,41 @@ func constructIndexHashJoinStatic(
 	return indexHashJoins
 }
 
-// constructIndexJoinStatic is used to enumerate current a physical index join with undecided inner plan. Via index join prop
+// calcOuterExpectedCnt computes the expected row count for the outer child of
+// an ordered join (IndexJoin or Apply) given the parent's ExpectedCnt. It
+// accounts for the OptOrderingIdxSelRatio to model extra outer rows that may
+// need to be scanned before the inner side produces enough matching rows.
+// The ordering penalty (rowsToMeetFirst) is only applied when the property
+// requires ordered output.
+func calcOuterExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, outerRowCount, estimatedRowCount float64) float64 {
+	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	hasOrder := !prop.IsSortItemEmpty()
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(hasOrder && orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
+		var rowsToMeetFirst float64
+		if hasOrder {
+			rowsToMeetFirst = max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
+		}
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		return (outerRowCount * expCntScale) + rowsToMeetFirst
+	}
+	return math.MaxFloat64
+}
+
+// constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
 // pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
-// operator. This function is quite similar with constructIndexJoin. While differing in following part:
+// operators. This function is quite similar with constructIndexJoin, differing in the following part:
 //
-// Since constructIndexJoin will fill the physicalIndexJoin some runtime detail even for adjusting the keys, hash-keys, move
-// eq condition into other conditions because the underlying ds couldn't use it or something. This is because previously the
-// index join enumeration can see the complete index chosen result after inner task is built. But for the refactored one, the
-// enumerated physical index here can only see the info it owns. That's why we call the function constructIndexJoinStatic.
+// Since constructIndexJoin will fill the physicalIndexJoin with runtime details (adjusting keys, hash-keys, moving eq
+// conditions into other conditions because the underlying ds couldn't use them, etc.) — because previously the index join
+// enumeration could see the complete index chosen result after the inner task is built — the refactored version here can
+// only see the info it owns at static enumeration time. That's why we call the function constructIndexJoinStatic.
 //
-// The indexJoinProp is passed down to the inner side, which contains the runtime constant inner key, which is used to build the
-// underlying index/pk range. When the inner side is built bottom up, it will return the indexJoinInfo, which contains the runtime
-// information that this physical index join wants. That's introduce second function called completePhysicalIndexJoin, which will
-// fill physicalIndexJoin about all the runtime information it lacks in static enumeration phase.
+// The indexJoinProp is passed down to the inner side; it contains the runtime constant inner key used to build the
+// underlying index/pk range. When the inner side is built bottom-up, it returns the indexJoinInfo, which contains the
+// runtime information this physical index join needs. That's why we introduce the second function completePhysicalIndexJoin,
+// which fills physicalIndexJoin with all runtime information it lacks in the static enumeration phase.
 func constructIndexJoinStatic(
 	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
@@ -293,22 +315,11 @@ func constructIndexJoinStatic(
 		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
-		SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
-	// Record the variable usage for explain explore.
-	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	outerRowCount := outerStats.RowCount
-	estimatedRowCount := p.StatsInfo().RowCount
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
-		// Apply the orderRatio to recognize that a large outer table scan may
-		// read additional rows before the inner table reaches the limit values
-		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
-		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
-		chReqProps[outerIdx].ExpectedCnt = expectedCnt
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
+		ExpectedCnt:       calcOuterExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		SortItems:         prop.SortItems,
+		CTEProducerStatus: prop.CTEProducerStatus,
+		NoCopPushDown:     prop.NoCopPushDown,
 	}
 
 	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
@@ -2105,25 +2116,13 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		canUseCache = false
 	}
 
-	// Compute the expected row count for the outer child.  For a semi/anti-semi
-	// join, each outer row produces at most one output row, so if the parent
-	// expects N rows we need N / selectivity outer rows.  For other join types
-	// the ratio may differ, but using the Apply's own selectivity is still a
-	// reasonable approximation.
+	// When the parent requires ordering, compute the expected outer row count
+	// accounting for the ordering index selectivity ratio, so that ordered
+	// scans model the extra outer rows that may need to be read before the
+	// inner side produces enough matching rows (same logic used by IndexJoin).
 	outerExpectedCnt := math.MaxFloat64
-	if prop.ExpectedCnt < math.MaxFloat64 {
-		outerRowCount := stats0.RowCount
-		applyRowCount := la.StatsInfo().RowCount
-		if applyRowCount > 0 && outerRowCount > 0 {
-			selectivity := applyRowCount / outerRowCount
-			if selectivity > 0 {
-				outerExpectedCnt = prop.ExpectedCnt / selectivity
-			}
-		}
-		// The outer side can never need fewer rows than the parent expects.
-		if outerExpectedCnt < prop.ExpectedCnt {
-			outerExpectedCnt = prop.ExpectedCnt
-		}
+	if !prop.IsSortItemEmpty() {
+		outerExpectedCnt = calcOuterExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := physicalop.PhysicalApply{

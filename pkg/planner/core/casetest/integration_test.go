@@ -359,15 +359,15 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 		tk.MustExec(`insert into t value(2,2,2, '{"b":[3,4,5,6]}');`)
 		tk.MustExec(`set tidb_analyze_version=2;`)
 		tk.MustExec(`analyze table t all columns;`)
-		tk.MustQuery("explain format = 'brief' select * from t use index (iad) where a = 1;").Check(testkit.Rows(
-			"TableReader 1.00 root  data:Selection",
-			"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
+		tk.MustQuery("explain format = 'plan_tree' select * from t use index (iad) where a = 1;").Check(testkit.Rows(
+			"TableReader root  data:Selection",
+			"└─Selection cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan cop[tikv] table:t keep order:false",
 		))
-		tk.MustQuery("explain format = 'brief' select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
-			"IndexMerge 1.00 root  type: union",
-			"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-			"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+		tk.MustQuery("explain format = 'plan_tree' select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
+			"IndexMerge root  type: union",
+			"├─IndexRangeScan(Build) cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
 		))
 	})
 }
@@ -526,19 +526,19 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustQuery(`select * from t_issue52023 where a = 5`).Check(testkit.Rows())
 		tk.MustQuery(`select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows())
 		tk.MustQuery(`select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
-		tk.MustQuery(`explain format='brief' select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("Point_Get 1.00 root table:t_issue52023, partition:P4, clustered index:PRIMARY(a) "))
-		tk.MustQuery(`explain format='brief' select * from t_issue52023 where a = 5`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:all data:Selection",
-			"└─Selection 1.00 cop[tikv]  eq(cast(test.t_issue52023.a, double BINARY), 5)",
-			"  └─TableFullScan 1.00 cop[tikv] table:t_issue52023 keep order:false"))
-		tk.MustQuery(`explain format='brief' select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:all data:Selection",
-			"└─Selection 1.00 cop[tikv]  or(eq(cast(test.t_issue52023.a, double BINARY), 5), eq(cast(test.t_issue52023.a, double BINARY), 55))",
-			"  └─TableFullScan 1.00 cop[tikv] table:t_issue52023 keep order:false"))
-		tk.MustQuery(`explain format='brief' select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:all data:Selection",
-			"└─Selection 1.00 cop[tikv]  or(eq(test.t_issue52023.a, \"0x05\"), eq(cast(test.t_issue52023.a, double BINARY), 55))",
-			"  └─TableFullScan 1.00 cop[tikv] table:t_issue52023 keep order:false"))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("Point_Get root table:t_issue52023, partition:P4, clustered index:PRIMARY(a) "))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a = 5`).Check(testkit.Rows(""+
+			"TableReader root partition:all data:Selection",
+			"└─Selection cop[tikv]  eq(cast(test.t_issue52023.a, double BINARY), 5)",
+			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows(""+
+			"TableReader root partition:all data:Selection",
+			"└─Selection cop[tikv]  or(eq(cast(test.t_issue52023.a, double BINARY), 5), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows(""+
+			"TableReader root partition:all data:Selection",
+			"└─Selection cop[tikv]  or(eq(test.t_issue52023.a, \"0x05\"), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
 
 		// issue:56915
 		tk.MustExec(`drop table if exists t_issue56915`)

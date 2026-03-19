@@ -9,7 +9,7 @@ go_library(
         "admin_plugins.go",
         "analyze.go",
         "analyze_col.go",
-        "analyze_col_v2.go",
+        "analyze_col_sampling.go",
         "analyze_global_stats.go",
         "analyze_idx.go",
         "analyze_utils.go",
