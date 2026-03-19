@@ -373,6 +373,7 @@ go_test(
         "recover_test.go",
         "resource_tag_test.go",
         "revoke_test.go",
+        "sample_clamp_test.go",
         "sample_test.go",
         "select_into_test.go",
         "select_test.go",
