@@ -92,21 +92,21 @@ Use it to quickly find:
 
 ```bash
 # DXF registration points.
-grep -R --line-number --include='*.go' \
-  'RegisterSchedulerFactory\|RegisterSchedulerCleanUpFactory\|RegisterTaskType' \
+rg --line-number --glob '*.go' \
+  'RegisterSchedulerFactory|RegisterSchedulerCleanUpFactory|RegisterTaskType' \
   pkg/session pkg/ddl pkg/dxf
 
 # Framework control APIs and their call sites.
-grep -R --line-number --include='*.go' \
-  'SubmitTask\|WaitTask\|CancelTask\|PauseTask\|ResumeTask\|ModifyTaskByID' \
+rg --line-number --glob '*.go' \
+  'SubmitTask|WaitTask|CancelTask|PauseTask|ResumeTask|ModifyTaskByID' \
   pkg/dxf pkg/executor pkg/ddl
 
 # IMPORT INTO + DXF integration points.
-grep -R --line-number --include='*.go' 'proto.ImportInto\|importinto' \
+rg --line-number --glob '*.go' 'proto.ImportInto|importinto' \
   pkg/dxf pkg/executor pkg/session
 
 # DDL distributed backfill + DXF integration points.
-grep -R --line-number --include='*.go' 'proto.Backfill\|backfill' pkg/ddl
+rg --line-number --glob '*.go' 'proto.Backfill|backfill' pkg/ddl
 ```
 
 ## Test Surfaces
