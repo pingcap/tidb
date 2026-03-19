@@ -238,7 +238,7 @@ The sample-based path falls back transparently to the merge-based path when:
 - Schema mismatch detected when loading saved samples (columns were added/dropped between analyzes)
 - Any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms from a prior analyze (see Gradual Transition below)
 
-When a fallback occurs, a warning should be logged indicating the reason (e.g., "N partitions have no saved samples but have existing stats, falling back to merge-based global stats") so that operators can identify tables that need a full `ANALYZE TABLE` to populate samples.
+When a fallback occurs, a warning should be logged and returned to the client as a SQL warning (visible via `SHOW WARNINGS`), indicating the reason (e.g., "N partitions have no saved samples but have existing stats, falling back to merge-based global stats"). This ensures the user running `ANALYZE TABLE` can see that the configured sample-based path was not used, and operators can identify tables that need a full `ANALYZE TABLE` to populate samples.
 
 **Gradual transition after upgrade or DDL**: After upgrade or when new partitions are added, no saved samples exist. Building global stats from only the analyzed partition's samples would be a regression — worse than the current merge-based path which uses all partitions' histograms. To avoid this, the sample-based path uses a hybrid approach during the transition:
 
