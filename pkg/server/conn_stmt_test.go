@@ -22,15 +22,54 @@ import (
 	"fmt"
 	"testing"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
+
+type mockCursorRUV2ConsumptionReporter struct {
+	tikvGroup string
+	tikvRUV2  float64
+	tidbGroup string
+	tidbRUV2  float64
+}
+
+func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockCursorRUV2ConsumptionReporter) ReportTiKVRUV2Consumption(resourceGroupName string, ruv2 float64) {
+	m.tikvGroup = resourceGroupName
+	m.tikvRUV2 += ruv2
+}
+
+func (m *mockCursorRUV2ConsumptionReporter) ReportTiDBRUV2Consumption(resourceGroupName string, ruv2 float64) {
+	m.tidbGroup = resourceGroupName
+	m.tidbRUV2 += ruv2
+}
+
+type mockCursorTrackerRecordSet struct{}
+
+func (*mockCursorTrackerRecordSet) Fields() []*resolve.ResultField { return nil }
+func (*mockCursorTrackerRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return nil
+}
+func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+func (*mockCursorTrackerRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
 
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -102,6 +141,53 @@ func TestCursorExistsFlag(t *testing.T) {
 }
 
 func TestCursorWithParams(t *testing.T) {
+	t.Run("cursor ruv2 delta reporting", func(t *testing.T) {
+		original := config.GetGlobalConfig()
+		t.Cleanup(func() {
+			if original != nil {
+				config.StoreGlobalConfig(original)
+			}
+		})
+		cfg := config.NewConfig()
+		cfg.RUV2 = config.DefaultRUV2Config()
+		config.StoreGlobalConfig(cfg)
+
+		reporter := &mockCursorRUV2ConsumptionReporter{}
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ruv2Metrics)
+		ruv2Metrics.AddPlanCnt(2)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddTiKVRUV2(11)
+		weights := execdetails.DefaultRUV2Weights()
+		baselineTiDBRU := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights)
+
+		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights, true)
+		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
+		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
+		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
+
+		require.Equal(t, "rg1", reporter.tidbGroup)
+		expectedCursorDelta := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights) - baselineTiDBRU
+		require.Equal(t, float64(expectedCursorDelta), reporter.tidbRUV2)
+		require.Equal(t, 0.0, reporter.tikvRUV2)
+
+		ruDetails.AddTiKVRUV2(7)
+		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
+		require.Equal(t, "rg1", reporter.tikvGroup)
+		require.Equal(t, float64(7), reporter.tikvRUV2)
+
+		trackerNoBaseline := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights, false)
+		rsNoBaseline := resultset.New(&mockCursorTrackerRecordSet{}, nil)
+		resultset.AttachCursorRUV2Tracker(rsNoBaseline, trackerNoBaseline)
+		reporter.tidbRUV2 = 0
+		reporter.tikvRUV2 = 0
+		resultset.ReportCursorRUV2Delta(rsNoBaseline, 4)
+		expectedTotal := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights)
+		require.Equal(t, float64(expectedTotal), reporter.tidbRUV2)
+		require.Equal(t, ruDetails.TiKVRUV2(), reporter.tikvRUV2)
+	})
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)
