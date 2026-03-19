@@ -53,9 +53,9 @@ type CollectResult struct {
 	// total number of conflicted rows.
 	RowCount      int64
 	TotalFileSize int64
-	// FilesTruncated is true if conflicted-row file recording is stopped due to
+	// RowRecordingCapped is true if conflicted-row file recording is stopped due to
 	// maxTotalConflictRowFileSize.
-	FilesTruncated bool
+	RowRecordingCapped bool
 	// it's the checksum of the encoded KV of the conflicted rows.
 	Checksum *verification.KVChecksum
 	// name of the files which records the conflicted rows
@@ -77,7 +77,7 @@ func (r *CollectResult) Merge(other *CollectResult) {
 	}
 	r.RowCount += other.RowCount
 	r.TotalFileSize += other.TotalFileSize
-	r.FilesTruncated = r.FilesTruncated || other.FilesTruncated
+	r.RowRecordingCapped = r.RowRecordingCapped || other.RowRecordingCapped
 	r.Checksum.Add(other.Checksum)
 	r.Filenames = append(r.Filenames, other.Filenames...)
 }
@@ -161,7 +161,7 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 		c.hdlSet.Add(handle)
 	}
 
-	if err := c.handleEncodedRowInner(ctx, row); err != nil {
+	if err := c.recordRowToFile(ctx, row); err != nil {
 		return err
 	}
 	c.result.RowCount++
@@ -169,7 +169,7 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	return nil
 }
 
-func (c *Collector) handleEncodedRowInner(ctx context.Context, row []types.Datum) error {
+func (c *Collector) recordRowToFile(ctx context.Context, row []types.Datum) error {
 	if c.stopRecording {
 		return nil
 	}
@@ -207,11 +207,12 @@ func (c *Collector) handleEncodedRowInner(ctx context.Context, row []types.Datum
 
 func (c *Collector) switchFile(ctx context.Context) error {
 	if c.writer != nil {
-		if err := c.writer.Close(ctx); err != nil {
+		err := c.writer.Close(ctx)
+		c.writer = nil
+		if err != nil {
 			c.logger.Warn("failed to close conflict row writer", zap.Error(err))
 			return errors.Trace(err)
 		}
-		c.writer = nil
 	}
 	c.fileSeq++
 	filename := getRowFileName(c.filenamePrefix, c.fileSeq)
@@ -234,19 +235,20 @@ func (c *Collector) onTotalSizeLimitExceeded(ctx context.Context, totalSize, row
 		return nil
 	}
 	c.stopRecording = true
-	c.result.FilesTruncated = true
+	c.result.RowRecordingCapped = true
 	c.logger.Info("conflicted row files reached the hardcoded total size limit, stop recording more rows",
 		zap.String("sizeLimit", units.BytesSize(float64(limit))),
 		zap.String("currentTotalFileSize", units.BytesSize(float64(totalSize))),
 		zap.String("nextRowSize", units.BytesSize(float64(rowSize))),
 	)
 	if c.writer != nil {
-		if err := c.writer.Close(ctx); err != nil {
+		err := c.writer.Close(ctx)
+		c.writer = nil
+		c.currFileSize = 0
+		if err != nil {
 			c.logger.Warn("failed to close conflict row writer", zap.Error(err))
 			return errors.Trace(err)
 		}
-		c.writer = nil
-		c.currFileSize = 0
 	}
 	return nil
 }

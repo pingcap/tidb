@@ -142,7 +142,7 @@ func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *pr
 	subtaskMeta.Checksum = newFromKVChecksum(e.result.Checksum)
 	subtaskMeta.ConflictedRowCount = e.result.RowCount
 	subtaskMeta.ConflictedRowFilenames = e.result.Filenames
-	subtaskMeta.ConflictedRowFilesTruncated = e.result.FilesTruncated
+	subtaskMeta.ConflictedRowRecordingCapped = e.result.RowRecordingCapped
 	subtaskMeta.TooManyConflictsFromIndex = e.sharedHandleSet.BoundExceeded()
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {

@@ -158,9 +158,11 @@ type CollectConflictsStepMeta struct {
 	// ConflictedRowFilenames is the filenames of recorded conflicted rows.
 	// Note: this file is for user to resolve conflicts manually.
 	ConflictedRowFilenames []string `json:"conflicted-row-filenames,omitempty"`
-	// ConflictedRowFilesTruncated is true if conflict-row file recording stops
+	// ConflictedRowRecordingCapped is true if conflict-row file recording stops
 	// due to maxTotalConflictRowFileSize.
-	ConflictedRowFilesTruncated bool `json:"conflicted-row-files-truncated,omitempty"`
+	// Keep the historical JSON key for backward compatibility of persisted
+	// subtask metadata.
+	ConflictedRowRecordingCapped bool `json:"conflicted-row-files-truncated,omitempty"`
 	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
 	// if true, we will skip checksum.
 	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`

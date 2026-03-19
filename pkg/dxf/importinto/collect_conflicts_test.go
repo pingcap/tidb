@@ -51,7 +51,7 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	// we are running them concurrently, so the number of filenames may vary.
 	require.GreaterOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 2)
 	require.LessOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 9)
-	require.False(t, outSTMeta.ConflictedRowFilesTruncated)
+	require.False(t, outSTMeta.ConflictedRowRecordingCapped)
 	require.False(t, outSTMeta.TooManyConflictsFromIndex)
 }
 
@@ -71,7 +71,7 @@ func TestCollectConflictsStepExecutorFilesTruncated(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	require.True(t, outSTMeta.ConflictedRowFilesTruncated)
+	require.True(t, outSTMeta.ConflictedRowRecordingCapped)
 	require.Greater(t, outSTMeta.ConflictedRowCount, int64(0))
 	require.NotEmpty(t, outSTMeta.ConflictedRowFilenames)
 }

@@ -43,6 +43,7 @@ func TestCollectResultMerge(t *testing.T) {
 	checkResultFn := func(expected, in *CollectResult) {
 		require.EqualValues(t, expected.RowCount, in.RowCount)
 		require.EqualValues(t, expected.TotalFileSize, in.TotalFileSize)
+		require.EqualValues(t, expected.RowRecordingCapped, in.RowRecordingCapped)
 		require.EqualValues(t, expected.Checksum.Sum(), in.Checksum.Sum())
 		require.EqualValues(t, expected.Checksum.SumKVS(), in.Checksum.SumKVS())
 		require.EqualValues(t, expected.Checksum.SumSize(), in.Checksum.SumSize())
@@ -52,10 +53,11 @@ func TestCollectResultMerge(t *testing.T) {
 	r1 := NewCollectResult(keyspace)
 	otherSum := verification.MakeKVChecksumWithKeyspace(keyspace, 10, 1, 1)
 	r2 := &CollectResult{
-		RowCount:      10,
-		TotalFileSize: 100,
-		Checksum:      &otherSum,
-		Filenames:     []string{"file1"},
+		RowCount:           10,
+		TotalFileSize:      100,
+		RowRecordingCapped: true,
+		Checksum:           &otherSum,
+		Filenames:          []string{"file1"},
 	}
 	r1.Merge(r2)
 	checkResultFn(r2, r1)
@@ -80,6 +82,7 @@ func TestCollectResultMerge(t *testing.T) {
 	r1.Merge(r4)
 	require.EqualValues(t, int64(30), r1.RowCount)
 	require.EqualValues(t, int64(300), r1.TotalFileSize)
+	require.True(t, r1.RowRecordingCapped)
 	require.EqualValues(t, uint64(3), r1.Checksum.Sum())
 	require.EqualValues(t, uint64(3), r1.Checksum.SumKVS())
 	require.EqualValues(t, uint64(30), r1.Checksum.SumSize())
@@ -88,6 +91,20 @@ func TestCollectResultMerge(t *testing.T) {
 
 type mockKVStore struct {
 	tidbkv.Storage
+}
+
+type mockWriter struct {
+	closeErr   error
+	closeCount int
+}
+
+func (w *mockWriter) Write(_ context.Context, p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (w *mockWriter) Close(context.Context) error {
+	w.closeCount++
+	return w.closeErr
 }
 
 func (s *mockKVStore) GetCodec() tikv.Codec {
@@ -211,7 +228,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	require.EqualValues(t, 48, sharedTotalFileSize.Load())
 	require.EqualValues(t, rowCount, coll.result.RowCount)
 	require.EqualValues(t, 32, coll.result.TotalFileSize)
-	require.True(t, coll.result.FilesTruncated)
+	require.True(t, coll.result.RowRecordingCapped)
 	require.True(t, coll.stopRecording)
 	require.Nil(t, coll.writer)
 	require.EqualValues(t, expectedSum.Sum(), coll.result.Checksum.Sum())
@@ -223,6 +240,46 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
 	require.Len(t, lines, 2)
+
+	t.Run("close failure on size-limit path still clears writer", func(t *testing.T) {
+		writer := &mockWriter{closeErr: fmt.Errorf("close failed")}
+		testCollector := &Collector{
+			logger:       logger,
+			handler:      &BaseHandler{},
+			result:       NewCollectResult(nil),
+			writer:       writer,
+			currFileSize: 16,
+		}
+
+		err := testCollector.onTotalSizeLimitExceeded(ctx, 64, 32, 32)
+		require.ErrorContains(t, err, "close failed")
+		require.True(t, testCollector.stopRecording)
+		require.True(t, testCollector.result.RowRecordingCapped)
+		require.Nil(t, testCollector.writer)
+		require.Zero(t, testCollector.currFileSize)
+		require.Equal(t, 1, writer.closeCount)
+		require.NoError(t, testCollector.Close(ctx))
+		require.Equal(t, 1, writer.closeCount)
+	})
+
+	t.Run("close failure on switch file path still clears writer", func(t *testing.T) {
+		writer := &mockWriter{closeErr: fmt.Errorf("close failed")}
+		testCollector := &Collector{
+			logger:       logger,
+			handler:      &BaseHandler{},
+			result:       NewCollectResult(nil),
+			writer:       writer,
+			currFileSize: 16,
+		}
+
+		err := testCollector.switchFile(ctx)
+		require.ErrorContains(t, err, "close failed")
+		require.Nil(t, testCollector.writer)
+		require.Equal(t, int64(16), testCollector.currFileSize)
+		require.Equal(t, 1, writer.closeCount)
+		require.NoError(t, testCollector.Close(ctx))
+		require.Equal(t, 1, writer.closeCount)
+	})
 }
 
 func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.T) {
@@ -271,10 +328,10 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	require.EqualValues(t, 64, sharedTotalFileSize.Load())
 	require.EqualValues(t, 3, coll1.result.RowCount)
 	require.EqualValues(t, 48, coll1.result.TotalFileSize)
-	require.False(t, coll1.result.FilesTruncated)
+	require.False(t, coll1.result.RowRecordingCapped)
 	require.EqualValues(t, 3, coll2.result.RowCount)
 	require.EqualValues(t, 0, coll2.result.TotalFileSize)
-	require.True(t, coll2.result.FilesTruncated)
+	require.True(t, coll2.result.RowRecordingCapped)
 	require.False(t, coll1.stopRecording)
 	require.True(t, coll2.stopRecording)
 	require.Equal(t, []string{path.Join("test1", "data-0001.txt")}, coll1.result.Filenames)
