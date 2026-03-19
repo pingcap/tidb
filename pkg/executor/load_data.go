@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -581,9 +582,15 @@ func (w *encodeWorker) parserData2TableData(
 		if w.controller.Restrictive {
 			return nil, err
 		}
+		// ErrInvalidAutoRandom should always be returned as a real error,
+		// not treated as a warning, because returning nil row causes panic
+		// when looking up index. See https://github.com/pingcap/tidb/issues/65585
+		if dbterror.ErrInvalidAutoRandom.Equal(err) {
+			return nil, err
+		}
 		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
-		// TODO: should not return nil! caller will panic when lookup index
+		// TODO: shall we ignore this row? Returning nil will make the caller panic.
 		return nil, nil
 	}
 

@@ -92,10 +92,10 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 		for i, sql := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + sql).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + sql).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			})
-			tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
 	})

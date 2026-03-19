@@ -83,12 +83,12 @@ func TestMPPExchangeSender(t *testing.T) {
 
 		testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-		tk.MustQuery("explain format = 'brief' select /* issue:36194 */ /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20 limit 100").Check(testkit.Rows(
-			"Limit 100.00 root  offset:0, count:100",
-			"└─TableReader 100.00 root  MppVersion: 3, data:ExchangeSender",
-			"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"    └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-			"      └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:36194 */ /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20 limit 100").Check(testkit.Rows(
+			"Limit root  offset:0, count:100",
+			"└─TableReader root  MppVersion: 3, data:ExchangeSender",
+			"  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"    └─Selection mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
+			"      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"))
 	})
 }
 
@@ -842,7 +842,7 @@ func TestMppVersion(t *testing.T) {
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 		tk.MustExec("set @@tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@tidb_broadcast_join_threshold_count = 0")
-		tk.MustQuery("explain SELECT /* issue:52828 */ MAX( OUTR . col_int ) AS X FROM C AS OUTR2 INNER JOIN B AS OUTR ON ( OUTR2 . col_decimal_not_null = OUTR . col_decimal_not_null AND OUTR2 . pk = OUTR . col_int_not_null ) " +
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:52828 */ MAX( OUTR . col_int ) AS X FROM C AS OUTR2 INNER JOIN B AS OUTR ON ( OUTR2 . col_decimal_not_null = OUTR . col_decimal_not_null AND OUTR2 . pk = OUTR . col_int_not_null ) " +
 			"WHERE OUTR . col_decimal_not_null IN ( SELECT INNR . col_int_not_null + 1 AS Y FROM DD AS INNR WHERE INNR . pk > INNR . pk OR INNR . col_varchar_10_not_null >= INNR . col_varchar_10 ) GROUP BY OUTR . col_datetime_not_null")
 	})
 }

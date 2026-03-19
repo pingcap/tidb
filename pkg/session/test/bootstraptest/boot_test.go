@@ -428,8 +428,8 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
 	// This case upgrades from 3.0.0, where tidb_analyze_version does not exist.
-	// The old compatibility path initializes the missing value to 1, and version255 rewrites
-	// that persisted legacy value to 2 during upgrade.
+	// The current upgrade path initializes the missing value to 2 because the legacy
+	// analyze version 1 write path has been removed.
 	res = session.MustExecToRecodeSet(t, seCurVer, "select @@tidb_analyze_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)

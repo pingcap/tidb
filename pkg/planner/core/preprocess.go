@@ -132,6 +132,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		sctx:               sctx,
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+		lockSelectCtxStack: make([]lockSelectCtx, 0),
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
 		varsMutable:        make(map[string]struct{}),
 		varsReadonly:       make(map[string]struct{}),
@@ -238,6 +239,11 @@ type preprocessor struct {
 	tableAliasInJoin []map[string]any
 	preprocessWith   *preprocessWith
 
+	// lockSelectCtxStack tracks lock-clause resolution state for each SELECT. Each level keeps both
+	// the LockInfo TableName nodes that should skip normal preprocess resolution and the FROM-clause
+	// table references collected during traversal for later lock-target binding.
+	lockSelectCtxStack []lockSelectCtx
+
 	staleReadProcessor staleread.Processor
 
 	varsMutable  map[string]struct{}
@@ -262,6 +268,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 		p.checkSelectNoopFuncs(node)
+		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
+		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
+		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -396,6 +405,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.flag |= inCreateOrDropTable
 		}
 	case *ast.TableSource:
+		if node.Lateral {
+			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("LATERAL derived tables")
+		}
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		_, isSelectStmt := node.Source.(*ast.SelectStmt)
 		_, isSetOprStmt := node.Source.(*ast.SetOprStmt)
@@ -652,7 +664,19 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
 	case *ast.TableName:
+		// Skip resolving TableName nodes that come from locking clauses; they are bound later against FROM aliases.
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			if _, ok := lockCtx.lockClauseTables[x]; ok {
+				break
+			}
+		}
 		p.handleTableName(x)
+	case *ast.TableSource:
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			if v, ok := x.Source.(*ast.TableName); ok {
+				lockCtx.collect(v, x.AsName)
+			}
+		}
 	case *ast.Join:
 		if len(p.tableAliasInJoin) > 0 {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
@@ -712,6 +736,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.SelectStmt:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
+		}
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			p.checkLockClauseTables(x, lockCtx)
+			p.popLockSelectCtx()
 		}
 	case *ast.SetOprStmt:
 		if x.With != nil {
@@ -1795,6 +1823,174 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		DBInfo:    dbInfo,
 		TableInfo: tableInfo,
 	})
+}
+
+// lockRef records the FROM table and its alias (if any) for lock-clause name resolution.
+type lockRef struct {
+	table *ast.TableName
+	alias ast.CIStr
+}
+
+type lockSelectCtx struct {
+	// lockClauseTables are the TableName nodes that syntactically belong to this SELECT's locking
+	// clause. They skip handleTableName because they are resolved later against the FROM clause.
+	lockClauseTables map[*ast.TableName]struct{}
+	aliasMap         map[string]lockRef
+	qualifiedMap     map[string]lockRef
+	// orderedRefs preserves the left-to-right FROM order for unqualified OF fallback.
+	// For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
+	// When both aliased and unaliased entries share the same base name, checkLockClauseTables first
+	// searches orderedRefs for an exact unaliased match, and only then falls back to aliased entries
+	// for backward compatibility.
+	orderedRefs []lockRef
+}
+
+func newLockSelectCtx(lockTables []*ast.TableName) lockSelectCtx {
+	lockClauseTables := make(map[*ast.TableName]struct{}, len(lockTables))
+	for _, tn := range lockTables {
+		lockClauseTables[tn] = struct{}{}
+	}
+	return lockSelectCtx{
+		lockClauseTables: lockClauseTables,
+		aliasMap:         make(map[string]lockRef),
+		qualifiedMap:     make(map[string]lockRef),
+		orderedRefs:      make([]lockRef, 0),
+	}
+}
+
+func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
+	ref := lockRef{
+		table: tableName,
+		alias: asName,
+	}
+	if asName.L != "" {
+		c.aliasMap[asName.L] = ref
+	}
+	if tableName.Schema.L != "" {
+		qualifiedKey := tableName.Schema.L + "." + tableName.Name.L
+		// Prefer an exact unaliased `schema.table` entry. If only aliased references exist in FROM,
+		// keep one as the backward-compatibility fallback for `OF schema.table`.
+		if asName.L == "" || c.qualifiedMap[qualifiedKey].table == nil {
+			c.qualifiedMap[qualifiedKey] = ref
+		}
+		if asName.L != "" {
+			// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
+			c.qualifiedMap[tableName.Schema.L+"."+asName.L] = ref
+		}
+	}
+	c.orderedRefs = append(c.orderedRefs, ref)
+}
+
+func (p *preprocessor) pushLockSelectCtx(sel *ast.SelectStmt) {
+	var lockTables []*ast.TableName
+	if sel.LockInfo != nil {
+		lockTables = sel.LockInfo.Tables
+	}
+	p.lockSelectCtxStack = append(p.lockSelectCtxStack, newLockSelectCtx(lockTables))
+}
+
+func (p *preprocessor) getLockSelectCtxStackTop() *lockSelectCtx {
+	if len(p.lockSelectCtxStack) == 0 {
+		return nil
+	}
+	return &p.lockSelectCtxStack[len(p.lockSelectCtxStack)-1]
+}
+
+func (p *preprocessor) popLockSelectCtx() {
+	if len(p.lockSelectCtxStack) == 0 {
+		return
+	}
+	p.lockSelectCtxStack = p.lockSelectCtxStack[:len(p.lockSelectCtxStack)-1]
+}
+
+// checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
+// It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
+// base-table names even when aliases exist, with a warning to guide users to explicit aliases.
+func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lockSelectCtx) {
+	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
+		return
+	}
+	if lockCtx == nil {
+		emptyCtx := newLockSelectCtx(nil)
+		lockCtx = &emptyCtx
+	}
+	warnedCompatRefs := make(map[string]struct{})
+
+	for _, ref := range stmt.LockInfo.Tables {
+		name := ref.Name.L
+		var matched lockRef
+		var matchedByAlias bool
+
+		if ref.Schema.L != "" {
+			name = ref.Schema.L + "." + ref.Name.L
+			matched = lockCtx.qualifiedMap[name]
+			matchedByAlias = matched.alias.L != "" && ref.Name.L == matched.alias.L
+			if matchedByAlias {
+				ref.IsAlias = true
+			}
+		} else if t, ok := lockCtx.aliasMap[name]; ok {
+			ref.IsAlias = true
+			matched = t
+			matchedByAlias = true
+		}
+
+		// If still not found and the lock clause is unqualified, first try an exact unaliased match.
+		// For example, `SELECT * FROM db.t AS a, db.t FOR UPDATE OF t` should resolve `t` to the
+		// unaliased `db.t`, not to `a`. Only if no unaliased entry exists do we fall back to aliased
+		// entries for backward compatibility. `SELECT * FROM db1.t, db2.t FOR UPDATE OF t` still
+		// resolves `t` to `db1.t` because lockCtx.orderedRefs preserves the left-to-right FROM order.
+		if matched.table == nil && ref.Schema.L == "" {
+			for _, tblRef := range lockCtx.orderedRefs {
+				if tblRef.alias.L == "" && tblRef.table.Name.L == name {
+					matched = tblRef
+					break
+				}
+			}
+			if matched.table == nil {
+				for _, tblRef := range lockCtx.orderedRefs {
+					if tblRef.alias.L != "" && tblRef.table.Name.L == name {
+						matched = tblRef
+						break
+					}
+				}
+			}
+		}
+
+		if matched.table == nil {
+			if ref.Schema.L != "" {
+				name = ref.Schema.O + "." + ref.Name.O
+			} else {
+				name = ref.Name.O
+			}
+			p.err = plannererrors.ErrUnknownTable.GenWithStackByArgs(name, "locking clause")
+			break
+		}
+
+		// Keep backward compatibility: if an aliased table is referenced by its base name
+		// in OF, accept it and emit a warning to guide users to the alias form.
+		if !matchedByAlias && matched.alias.L != "" {
+			warnKey := ref.Schema.L + "." + ref.Name.L + "->" + matched.alias.L
+			if _, seen := warnedCompatRefs[warnKey]; !seen {
+				p.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+					"FOR UPDATE OF references the base table name while the table is aliased. Use the alias '%s' in OF to make the lock target explicit.",
+					matched.alias.O,
+				))
+				warnedCompatRefs[warnKey] = struct{}{}
+			}
+		}
+
+		tNameW := p.resolveCtx.GetTableName(matched.table)
+		if tNameW == nil {
+			// CTE has no *model.HintedTable, we need to skip it.
+			continue
+		}
+
+		p.resolveCtx.AddTableName(&resolve.TableNameW{
+			TableName: ref,
+			DBInfo:    tNameW.DBInfo,
+			TableInfo: tNameW.TableInfo,
+		})
+	}
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {

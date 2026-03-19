@@ -15,8 +15,13 @@
 package model
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	goast "go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -26,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
+
+//go:embed job.go
+var jobSrc string
 
 func TestJobStartTime(t *testing.T) {
 	job := &Job{
@@ -246,6 +254,46 @@ func TestSchemaState(t *testing.T) {
 	}
 }
 
+func TestActionTypeReserved(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "job.go", jobSrc, 0)
+	require.NoError(t, err)
+
+	const reservedStart = int64(200)
+	const reservedEnd = int64(256)
+
+	for _, decl := range f.Decls {
+		genDecl, ok := decl.(*goast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			continue
+		}
+
+		var prevType goast.Expr
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*goast.ValueSpec)
+			require.True(t, ok)
+
+			if valueSpec.Type != nil {
+				prevType = valueSpec.Type
+			}
+			if !isIdentName(prevType, "ActionType") {
+				continue
+			}
+
+			require.Greaterf(t, len(valueSpec.Values), 0, "unexpected ActionType spec without value: %v", valueSpec.Names)
+
+			for i, name := range valueSpec.Names {
+				expr := valueSpec.Values[min(i, len(valueSpec.Values)-1)]
+				value, ok := int64Value(expr)
+				require.Truef(t, ok, "unexpected ActionType value for %s: %T", name.Name, expr)
+				require.Falsef(t, value >= reservedStart && value < reservedEnd,
+					"action %s must not be in reserved range [%d, %d), but got %d",
+					name.Name, reservedStart, reservedEnd, value)
+			}
+		}
+	}
+}
+
 func TestString(t *testing.T) {
 	acts := []struct {
 		act    ActionType
@@ -279,6 +327,46 @@ func TestString(t *testing.T) {
 	for _, v := range acts {
 		str := v.act.String()
 		require.Equal(t, v.result, str)
+	}
+}
+
+func isIdentName(expr goast.Expr, name string) bool {
+	ident, ok := expr.(*goast.Ident)
+	return ok && ident.Name == name
+}
+
+func int64Value(expr goast.Expr) (int64, bool) {
+	switch v := expr.(type) {
+	case *goast.BasicLit:
+		if v.Kind != token.INT {
+			return 0, false
+		}
+		val, err := strconv.ParseInt(v.Value, 0, 64)
+		if err != nil {
+			return 0, false
+		}
+		return val, true
+	case *goast.UnaryExpr:
+		if v.Op != token.ADD && v.Op != token.SUB {
+			return 0, false
+		}
+		val, ok := int64Value(v.X)
+		if !ok {
+			return 0, false
+		}
+		if v.Op == token.SUB {
+			val = -val
+		}
+		return val, true
+	case *goast.ParenExpr:
+		return int64Value(v.X)
+	case *goast.CallExpr:
+		if len(v.Args) != 1 {
+			return 0, false
+		}
+		return int64Value(v.Args[0])
+	default:
+		return 0, false
 	}
 }
 

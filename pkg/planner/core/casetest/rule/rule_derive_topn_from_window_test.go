@@ -44,7 +44,7 @@ func TestPushDerivedTopnFlash(t *testing.T) {
 		suiteData := GetDerivedTopNSuiteData()
 		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := tk.MustQuery("explain format = 'brief' " + sql)
+			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
@@ -71,10 +71,10 @@ func TestTopNPushdown(t *testing.T) {
 			lastVal = val
 		}
 
-		tk.MustQuery(`explain format='brief' SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
-			Check(testkit.Rows(`TopN 10.00 root  Column#3, offset:0, count:10`,
-				`└─Projection 10000.00 root  rand()->Column#3`,
-				`  └─TableReader 10000.00 root  data:TableFullScan`,
-				`    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+		tk.MustQuery(`explain format = 'plan_tree' SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
+			Check(testkit.Rows(`TopN root  Column, offset:0, count:10`,
+				`└─Projection root  rand()->Column`,
+				`  └─TableReader root  data:TableFullScan`,
+				`    └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`))
 	})
 }
