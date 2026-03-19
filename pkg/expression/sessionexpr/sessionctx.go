@@ -158,13 +158,13 @@ func (ctx *ExprContext) LoadStoredFunction(schema, funcName string) (*exprctx.St
 		return nil, plannererrors.ErrNoDB
 	}
 	sc := ctx.sctx.GetSessionVars().StmtCtx
-	sc.StoredFuncCtx.Lock()
-	defer sc.StoredFuncCtx.Unlock()
+	sc.UserFuncCtx.Lock()
+	defer sc.UserFuncCtx.Unlock()
 
-	if sc.StoredFuncCtx.FuncName == nil {
+	if sc.UserFuncCtx.StoredFuncName == nil {
 		return nil, exeerrors.ErrSpDoesNotExist.FastGenByArgs("FUNCTION", schema+"."+funcName)
 	}
-	retType, ok := sc.StoredFuncCtx.FuncName[[2]string{schema, funcName}]
+	retType, ok := sc.UserFuncCtx.StoredFuncName[[2]string{schema, funcName}]
 	if !ok || retType == nil {
 		return nil, exeerrors.ErrSpDoesNotExist.FastGenByArgs("FUNCTION", schema+"."+funcName)
 	}
@@ -183,6 +183,7 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	// set all optional properties
 	ctx.setOptionalProp(currentUserProp(sctx))
 	ctx.setOptionalProp(expropt.NewSessionVarsProvider(sctx))
+	ctx.setOptionalProp(stmtCleanupProp(sctx))
 	ctx.setOptionalProp(infoSchemaProp(sctx))
 	ctx.setOptionalProp(expropt.KVStorePropProvider(sctx.GetStore))
 	ctx.setOptionalProp(sqlExecutorProp(sctx))
@@ -401,6 +402,13 @@ func infoSchemaProp(sctx sessionctx.Context) expropt.InfoSchemaPropProvider {
 func sqlExecutorProp(sctx sessionctx.Context) expropt.SQLExecutorPropProvider {
 	return func() (expropt.SQLExecutor, error) {
 		return sctx.GetRestrictedSQLExecutor(), nil
+	}
+}
+
+func stmtCleanupProp(sctx sessionctx.Context) expropt.StmtCleanupPropProvider {
+	return func(cleanup func()) {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.RegisterUDFCleanup(cleanup)
 	}
 }
 

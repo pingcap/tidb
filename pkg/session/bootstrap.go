@@ -843,6 +843,15 @@ const (
 		KEY Grantor (Grantor)
 	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Procedure privileges'`
 
+	// CreateFuncTable stores loadable user-defined functions (UDFs).
+	CreateFuncTable = `CREATE TABLE IF NOT EXISTS mysql.func (
+		name char(64) NOT NULL DEFAULT '',
+		ret tinyint NOT NULL DEFAULT '0',
+		dl char(128) NOT NULL DEFAULT '',
+		type enum('function','aggregate') NOT NULL,
+		PRIMARY KEY (name)
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='User defined functions'`
+
 	// CreateLSPolicies is used to create table tidb_ls_policies.
 	CreateLSPolicies = `CREATE TABLE IF NOT EXISTS mysql.tidb_ls_policies(
 		policy_name varchar(64) NOT NULL,
@@ -1005,7 +1014,7 @@ const (
 	eeversion11 = 11
 	// reserve for solves the problem that the `mysql.login_history` table is created by open-source TiDB.
 	eeversion12 = 12
-	// reserve for UDFs.
+	// eeversion13 adds the table mysql.func for UDFs.
 	eeversion13 = 13
 	// eeversion14 add LBAC metadata tables.
 	eeversion14 = 14
@@ -3637,6 +3646,7 @@ func upgradeToEEVer13(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion13 {
 		return
 	}
+	doReentrantDDL(s, CreateFuncTable)
 }
 
 func upgradeToEEVer14(s sessiontypes.Session, ver int64) {
@@ -3838,6 +3848,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	// Create audit tables
 	mustExecute(s, CreateFilterTableSQL)
 	mustExecute(s, CreateFilterRuleTableSQL)
+	// Create mysql.func for loadable UDFs.
+	mustExecute(s, CreateFuncTable)
 	// Create LBAC metadata tables.
 	mustExecute(s, CreateSecurityLabelComponentsTable)
 	mustExecute(s, CreateSecurityPoliciesTable)

@@ -11,10 +11,39 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
+
+type staticPrivManager struct {
+	privilege.Manager
+	allow bool
+}
+
+func (m *staticPrivManager) RequestVerification([]*auth.RoleIdentity, string, string, string, mysql.PrivilegeType) bool {
+	return m.allow
+}
+
+type udfPrivManager struct {
+	privilege.Manager
+	allowInsert bool
+	allowDelete bool
+}
+
+func (m *udfPrivManager) RequestVerification(_ []*auth.RoleIdentity, db, table, _ string, priv mysql.PrivilegeType) bool {
+	if strings.EqualFold(db, mysql.SystemDB) && strings.EqualFold(table, "func") {
+		switch priv {
+		case mysql.InsertPriv:
+			return m.allowInsert
+		case mysql.DeletePriv:
+			return m.allowDelete
+		}
+	}
+	return true
+}
 
 func TestCreateShowDropProcedure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -2391,7 +2420,7 @@ func TestCaseWhenThen(t *testing.T) {
 	require.Equal(t, len(tk.Res), 1)
 	tk.Res[0].Check(testkit.Rows("3"))
 	tk.ClearProcedureRes()
-	tk.ExecToErr("call t1(4)", 1339)
+	tk.MustGetErrCode("call t1(4)", 1339)
 	require.Equal(t, len(tk.Res), 0)
 	tk.ClearProcedureRes()
 
@@ -2437,7 +2466,7 @@ func TestCaseWhenThen(t *testing.T) {
 	when id = 2 then select 2;
 	when id = 3 then select 3;
 	end case;end`)
-	tk.ExecToErr("call t4(-1)", 1339)
+	tk.MustGetErrCode("call t4(-1)", 1339)
 	tk.ClearProcedureRes()
 
 	tk.MustExec(`create procedure t5(id int) begin

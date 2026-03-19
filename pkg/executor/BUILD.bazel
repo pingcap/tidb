@@ -371,6 +371,7 @@ go_test(
         "pkdb_label_security_test.go",
         "pkdb_procedure_test.go",
         "pkdb_set_test.go",
+        "pkdb_stored_function_test.go",
         "pkdb_user_login_history_test.go",
         "pkg_test.go",
         "point_get_test.go",

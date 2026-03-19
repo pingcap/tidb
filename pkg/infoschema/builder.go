@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -39,6 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // Builder builds a new InfoSchema.
@@ -58,6 +62,16 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+	crossKS  bool
+
+	// Snapshot loads must be side-effect free. Reloading loadable functions is a global side effect.
+	// Since loadable functions are registered globally and not versioned, snapshot loads must not touch it.
+	loadableFunctionReload bool
+}
+
+// SetSchemaVersion sets the schema version of the InfoSchema.
+func (b *Builder) SetSchemaVersion(ver int64) {
+	b.schemaMetaVersion = ver
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -87,6 +101,14 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
 		return applyDropResourceGroup(b, m, diff), nil
+	case model.ActionCreateProcedure, model.ActionDropProcedure, model.ActionAlterProcedure:
+		if err := b.reloadRoutines(); err != nil {
+			return nil, err
+		}
+		if err := b.reloadLoadableFunctions(); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -1021,6 +1043,109 @@ func (b *Builder) sortAllTablesByID() {
 	}
 }
 
+func (b *Builder) reloadRoutines() error {
+	return nil
+}
+
+func (b *Builder) reloadLoadableFunctions() error {
+	if !b.loadableFunctionReload {
+		return nil
+	}
+	if b.crossKS {
+		return nil
+	}
+	// The sys session factory is optional. Leave loadable functions unchanged in such cases.
+	if b.factory == nil {
+		return nil
+	}
+
+	res, err := b.factory()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer res.Close()
+	sctx, ok := res.(sessionctx.Context)
+	if !ok {
+		return errors.Errorf("unexpected sys session type %T", res)
+	}
+	sessIS := sctx.GetDomainInfoSchema()
+	if sessIS == nil {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip loadable function loading in such cases; it will be loaded on later infoschema reloads.
+		return nil
+	}
+	if ext, ok := sessIS.(*SessionExtendedInfoSchema); ok && ext.InfoSchema == nil {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip loadable function loading in such cases; it will be loaded on later infoschema reloads.
+		return nil
+	}
+
+	exec := sctx.GetSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnProcedure)
+	rs, err := exec.ExecuteInternal(ctx, "SELECT name, ret, dl FROM mysql.func WHERE type = 'function'")
+	if err != nil {
+		logutil.BgLogger().Error("failed to execute query for loadable functions", zap.Error(err))
+		return nil
+	}
+	if rs == nil {
+		return nil
+	}
+	chunkRows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+	closeErr := rs.Close()
+	if err != nil {
+		logutil.BgLogger().Error("failed to drain record set for loadable functions", zap.Error(err))
+		return nil
+	}
+	if closeErr != nil {
+		logutil.BgLogger().Error("failed to close record set for loadable functions", zap.Error(closeErr))
+		return nil
+	}
+
+	dbFuncs := make(map[string]struct{}, len(chunkRows))
+	for _, row := range chunkRows {
+		name := row.GetString(0)
+		lowerName := strings.ToLower(name)
+		dbFuncs[lowerName] = struct{}{}
+		if expression.HasLoadableFunction(lowerName) {
+			continue
+		}
+
+		ret := row.GetInt64(1)
+		dl := row.GetString(2)
+		funcDef, err := expression.LoadUDF(dl, lowerName, expression.CastUDFArgTypeIntToEvalType(int(ret)))
+		if err != nil {
+			logutil.BgLogger().Error("failed to load UDF expression",
+				zap.String("soName", dl),
+				zap.String("name", lowerName),
+				zap.Error(err))
+			continue
+		}
+
+		exist, err := expression.CreateLoadableFunction(funcDef)
+		if err != nil || exist {
+			logutil.BgLogger().Error(
+				"failed to create loadable function",
+				zap.String("name", lowerName),
+				zap.Bool("exist", exist),
+				zap.Error(err))
+			funcDef.Drop()
+			continue
+		}
+	}
+
+	for _, name := range expression.LoadableFunctionNames() {
+		if _, ok := dbFuncs[name]; ok {
+			continue
+		}
+		if def, ok := expression.RemoveLoadableFunction(name); ok {
+			if def != nil {
+				def.Drop()
+			}
+		}
+	}
+	return nil
+}
+
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
 	info := b.infoSchema
@@ -1064,7 +1189,11 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.sortAllTablesByID()
 
-	return nil
+	if err = b.reloadRoutines(); err != nil {
+		return err
+	}
+	err = b.reloadLoadableFunctions()
+	return err
 }
 
 func tableFromMeta(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error) {
@@ -1182,6 +1311,8 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		factory:      factory,
 		infoData:     infoData,
 		enableV2:     useV2,
+		// Reload loadable functions on schema reload by default.
+		loadableFunctionReload: true,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
@@ -1191,6 +1322,18 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
 	b.store = s
+	return b
+}
+
+// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+func (b *Builder) WithCrossKS(crossKS bool) *Builder {
+	b.crossKS = crossKS
+	return b
+}
+
+// WithLoadableFunctionReload controls whether to reload loadable functions.
+func (b *Builder) WithLoadableFunctionReload(enable bool) *Builder {
+	b.loadableFunctionReload = enable
 	return b
 }
 

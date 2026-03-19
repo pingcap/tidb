@@ -96,6 +96,21 @@ func (b *PlanBuilder) ensureRoutineSchema(name *ast.TableName) (string, error) {
 }
 
 func (b *PlanBuilder) preprocessCreateProcedure(ctx context.Context, node *ast.CreateProcedureInfo) error {
+	// CREATE FUNCTION ... SONAME ... (loadable UDF) has no body / params and is stored in mysql.func.
+	// The regular stored routine validation path (buildCallBodyPlan, schema checks, etc.) doesn't apply.
+	if node.FunctionInfo.IsLoadable {
+		currentUser := b.ctx.GetSessionVars().User
+		checker := privilege.GetPrivilegeManager(b.ctx)
+		activeRoles := b.ctx.GetSessionVars().ActiveRoles
+		if currentUser != nil {
+			// Align with MySQL: creating loadable UDF requires INSERT privilege on mysql.func.
+			if checker != nil && !checker.RequestVerification(activeRoles, mysql.SystemDB, "func", "", mysql.InsertPriv) {
+				return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", currentUser.AuthUsername, currentUser.AuthHostname, "func")
+			}
+		}
+		return checkRoutineName(node.ProcedureName.Name.O)
+	}
+
 	routineSchema, err := b.ensureRoutineSchema(node.ProcedureName)
 	if err != nil {
 		return err
@@ -153,27 +168,98 @@ func (b *PlanBuilder) prepareCallParam(ctx context.Context, stmtNodes *ast.Creat
 }
 
 func (b *PlanBuilder) preprocessDropProcedure(node *ast.DropProcedureStmt) error {
-	// Stored function is parsed into DropProcedureStmt too. Execution is handled in follow-up PRs.
-	if node.IsFunction {
-		return plannererrors.ErrUnsupportedType.GenWithStack("DROP FUNCTION is unimplemented")
-	}
-	if err := checkRoutineName(node.Name.Name.O); err != nil {
+	routineName := node.Name.Name.O
+	if err := checkRoutineName(routineName); err != nil {
 		return err
 	}
+
+	currentUser := b.ctx.GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+
+	checkDropStoredRoutinePrivilege := func(routineSchema string) error {
+		if currentUser != nil {
+			if checker != nil && !checker.RequestProcedureVerification(activeRoles, routineSchema, routineName, mysql.AlterRoutinePriv) {
+				return plannererrors.ErrProcaccessDenied.FastGenByArgs("alter routine", currentUser.AuthUsername, currentUser.AuthHostname, routineSchema+"."+routineName)
+			}
+		}
+		return nil
+	}
+
+	checkDropLoadableFunctionPrivilege := func() error {
+		if currentUser != nil {
+			// Align with MySQL: dropping loadable UDF requires DELETE privilege on mysql.func.
+			if checker != nil && !checker.RequestVerification(activeRoles, mysql.SystemDB, "func", "", mysql.DeletePriv) {
+				return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", currentUser.AuthUsername, currentUser.AuthHostname, "func")
+			}
+		}
+		return nil
+	}
+
+	// DROP FUNCTION can target either:
+	// 1) stored routine FUNCTION (mysql.routines), or
+	// 2) loadable UDF (mysql.func).
+	//
+	// Keep the schema part untouched for the unqualified DROP FUNCTION case, so the executor can
+	// decide the target consistently (see ddl.executor.DropProcedure).
+		if node.IsFunction {
+			routineSchema := node.Name.Schema.O
+			// Qualified name always targets stored routine.
+			if routineSchema == "" {
+				currentDB := b.ctx.GetSessionVars().CurrentDB
+				if currentDB != "" {
+					// If a stored function exists in current DB, treat it as stored routine; otherwise fall back to UDF.
+					exists, err := b.checkRoutineExists(currentDB, node.Name.Name.O, node.Type())
+					if err != nil {
+						return err
+					}
+					if exists {
+						routineSchema = currentDB
+					}
+				}
+			}
+
+		// Unqualified & no routine found => loadable UDF (mysql.func).
+		if routineSchema == "" {
+			return checkDropLoadableFunctionPrivilege()
+		}
+
+		// Stored routine FUNCTION: require ALTER ROUTINE privilege.
+		return checkDropStoredRoutinePrivilege(routineSchema)
+	}
+
+	// DROP PROCEDURE only targets stored routine PROCEDURE, so it requires a schema (current DB if omitted).
 	routineSchema, err := b.ensureRoutineSchema(node.Name)
 	if err != nil {
 		return err
 	}
-	currentUser := b.ctx.GetSessionVars().User
-	checker := privilege.GetPrivilegeManager(b.ctx)
-	activeRoles := b.ctx.GetSessionVars().ActiveRoles
-	// User with SuperPriv can see all rows.
-	if currentUser != nil {
-		if checker != nil && !checker.RequestProcedureVerification(activeRoles, routineSchema, node.Name.Name.O, mysql.AlterRoutinePriv) {
-			return plannererrors.ErrProcaccessDenied.FastGenByArgs("alter routine", currentUser.AuthUsername, currentUser.AuthHostname, routineSchema+"."+node.Name.Name.O)
-		}
+	return checkDropStoredRoutinePrivilege(routineSchema)
+}
+
+func (b *PlanBuilder) checkRoutineExists(db, name, tp string) (bool, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	restrictedCtx, err := b.getSysSession()
+	if err != nil {
+		return false, err
 	}
-	return nil
+	defer b.releaseSysSession(ctx, restrictedCtx)
+
+	exec := restrictedCtx.(sqlexec.SQLExecutor)
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "select 1 from %n.%n where route_schema = %? and name = %? and type = %? limit 1", mysql.SystemDB, mysql.Routines, db, name, tp)
+	rs, err := exec.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return false, err
+	}
+	if rs == nil {
+		return false, nil
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
 }
 
 // ProcedureBaseBody base store procedure structure.

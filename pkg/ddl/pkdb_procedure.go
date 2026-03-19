@@ -8,11 +8,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -28,7 +31,48 @@ const maxRoutineCommentLen = 65535
 func (e *executor) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProcedureInfo) error {
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	if stmt.FunctionInfo.IsLoadable {
-		return errors.New("CREATE FUNCTION SONAME is unimplemented")
+		currentUser := ctx.GetSessionVars().User
+		if currentUser != nil {
+			// Align with MySQL: creating loadable UDF requires INSERT privilege on mysql.func.
+			checker := privilege.GetPrivilegeManager(ctx)
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, mysql.SystemDB, "func", "", mysql.InsertPriv) {
+				return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", currentUser.AuthUsername, currentUser.AuthHostname, "func")
+			}
+		}
+
+		dbInfo, ok := is.SchemaByName(pmodel.NewCIStr(mysql.SystemDB))
+		if !ok {
+			return exeerrors.ErrBadDB.GenWithStackByArgs(mysql.SystemDB)
+		}
+
+		funcInfo := &model.LoadableFunctionInfo{
+			Name:       stmt.ProcedureName.Name,
+			ReturnType: stmt.FunctionInfo.LoadableReturnType,
+			SoName:     stmt.FunctionInfo.SoName,
+		}
+		job := &model.Job{
+			Version:        model.GetJobVerInUse(),
+			SchemaID:       dbInfo.ID,
+			SchemaName:     mysql.SystemDB,
+			TableName:      funcInfo.Name.L,
+			Type:           model.ActionCreateProcedure,
+			BinlogInfo:     &model.HistoryInfo{},
+			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+			InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+				Database: mysql.SystemDB,
+				Table:    funcInfo.Name.L,
+			}},
+			SQLMode: ctx.GetSessionVars().SQLMode,
+		}
+		args := &model.CreateProcedureArgs{LoadableFunctionInfo: funcInfo}
+		if err := e.doDDLJob2(ctx, job, args); err != nil {
+			if stmt.IfNotExists && exeerrors.ErrUdfExists.Equal(err) {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				return nil
+			}
+			return errors.Trace(err)
+		}
+		return nil
 	}
 
 	procName := stmt.ProcedureName.Name
@@ -180,15 +224,32 @@ func (e *executor) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProce
 }
 
 func (e *executor) DropProcedure(ctx sessionctx.Context, stmt *ast.DropProcedureStmt) error {
-	if stmt.IsFunction {
-		return errors.New("DROP FUNCTION is unimplemented")
-	}
-
 	routineSchema := stmt.Name.Schema
 	routineName := stmt.Name.Name
-	definer, exists, err := getRoutineDefiner(e.ctx, ctx, routineSchema.O, routineName.O, stmt.Type())
-	if err != nil {
-		return err
+
+	var (
+		definer string
+		exists  bool
+		err     error
+	)
+	if stmt.IsFunction && routineSchema.O == "" {
+		currentDB := ctx.GetSessionVars().CurrentDB
+		if currentDB == "" {
+			return e.dropLoadableFunction(ctx, stmt)
+		}
+		routineSchema = pmodel.NewCIStr(currentDB)
+		definer, exists, err = getRoutineDefiner(e.ctx, ctx, routineSchema.O, routineName.O, stmt.Type())
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return e.dropLoadableFunction(ctx, stmt)
+		}
+	} else {
+		definer, exists, err = getRoutineDefiner(e.ctx, ctx, routineSchema.O, routineName.O, stmt.Type())
+		if err != nil {
+			return err
+		}
 	}
 
 	if !exists {
@@ -240,7 +301,49 @@ func (e *executor) DropProcedure(ctx sessionctx.Context, stmt *ast.DropProcedure
 }
 
 func (e *executor) dropLoadableFunction(ctx sessionctx.Context, stmt *ast.DropProcedureStmt) error {
-	return errors.New("DROP FUNCTION is unimplemented")
+	funcName := stmt.Name.Name
+	currentUser := ctx.GetSessionVars().User
+	if currentUser != nil {
+		checker := privilege.GetPrivilegeManager(ctx)
+		// Align with MySQL: dropping loadable UDF requires DELETE privilege on mysql.func.
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, mysql.SystemDB, "func", "", mysql.DeletePriv) {
+			return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", currentUser.AuthUsername, currentUser.AuthHostname, "func")
+		}
+	}
+
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr(mysql.SystemDB))
+	if !ok {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(mysql.SystemDB)
+	}
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     mysql.SystemDB,
+		TableName:      funcName.L,
+		Type:           model.ActionDropProcedure,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: mysql.SystemDB,
+			Table:    funcName.L,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.DropProcedureArgs{
+		Name:             funcName,
+		Type:             stmt.Type(),
+		IfExists:         stmt.IfExists,
+		LoadableFunction: true,
+	}
+	if err := e.doDDLJob2(ctx, job, args); err != nil {
+		if stmt.IfExists && exeerrors.ErrSpDoesNotExist.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (e *executor) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedureStmt) error {
@@ -371,8 +474,7 @@ func (w *worker) onCreateProcedure(jobCtx *jobContext, job *model.Job) (ver int6
 		return ver, errors.Trace(err)
 	}
 	if args.LoadableFunctionInfo != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.New("CREATE FUNCTION SONAME is unimplemented")
+		return w.onCreateLoadableFunction(jobCtx, job, args.LoadableFunctionInfo)
 	}
 	if args.ProcedureInfo == nil {
 		job.State = model.JobStateCancelled
@@ -456,8 +558,92 @@ func (w *worker) onCreateLoadableFunction(
 	job *model.Job,
 	funcInfo *model.LoadableFunctionInfo,
 ) (ver int64, errRet error) {
-	job.State = model.JobStateCancelled
-	return ver, errors.New("CREATE FUNCTION SONAME is unimplemented")
+	if funcInfo == nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.New("missing loadable function info")
+	}
+
+	internalCtx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnProcedure)
+	existsRows, err := w.sess.Execute(
+		internalCtx,
+		"SELECT 1 FROM %n.%n WHERE name=%? LIMIT 1",
+		"create-loadable-function-check-exists",
+		mysql.SystemDB,
+		"func",
+		funcInfo.Name.L,
+	)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if len(existsRows) > 0 {
+		job.State = model.JobStateCancelled
+		return ver, exeerrors.ErrUdfExists.FastGenByArgs(funcInfo.Name.O)
+	}
+
+	funcDef, err := expression.LoadUDF(funcInfo.SoName, funcInfo.Name.L, funcInfo.ReturnType)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	defer funcDef.Drop()
+
+	if err := expression.ValidateLoadableFunctionDef(funcDef); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// Only validate dlopen/dlsym + name collision here. The global registry is updated
+	// during infoschema reload based on mysql.func after schema version is published.
+	funcDef.Drop()
+
+	failpoint.Inject("pauseAfterCreateLoadableFunctionRegistered", func() {})
+
+	inserted := false
+	defer func() {
+		if errRet != nil && inserted {
+			// Best-effort cleanup: when the DDL job is cancelled/failed after inserting the row,
+			// ensure mysql.func does not keep a residue entry that may be loaded on later reload.
+			_, _ = w.sess.Execute(
+				internalCtx,
+				"DELETE FROM %n.%n WHERE name=%? AND type='function'",
+				"create-loadable-function-delete-on-error",
+				mysql.SystemDB,
+				"func",
+				funcInfo.Name.L,
+			)
+		}
+	}()
+
+	_, err = w.sess.Execute(
+		internalCtx,
+		"INSERT INTO %n.%n (name, ret, dl, type) VALUES (%?, %?, %?, 'function')",
+		"create-loadable-function-insert",
+		mysql.SystemDB,
+		"func",
+		funcInfo.Name.L,
+		expression.CastEvalTypeToUDFArgTypeInt(funcInfo.ReturnType),
+		funcInfo.SoName,
+	)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	inserted = true
+
+	failpoint.Inject("failAfterCreateLoadableFunctionInserted", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("failpoint: failAfterCreateLoadableFunctionInserted"))
+		}
+	})
+
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.SchemaVersion = ver
+	return ver, nil
 }
 
 func (w *worker) onDropProcedure(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -467,8 +653,7 @@ func (w *worker) onDropProcedure(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 	if args.LoadableFunction {
-		job.State = model.JobStateCancelled
-		return ver, errors.New("DROP FUNCTION is unimplemented")
+		return w.onDropLoadableFunction(jobCtx, job, args)
 	}
 
 	internalCtx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnProcedure)
@@ -506,9 +691,79 @@ func (w *worker) onDropProcedure(jobCtx *jobContext, job *model.Job) (ver int64,
 	return ver, nil
 }
 
-func (w *worker) onDropLoadableFunction(jobCtx *jobContext, job *model.Job, args *model.DropProcedureArgs) (ver int64, _ error) {
-	job.State = model.JobStateCancelled
-	return ver, errors.New("DROP FUNCTION is unimplemented")
+func (w *worker) onDropLoadableFunction(jobCtx *jobContext, job *model.Job, args *model.DropProcedureArgs) (ver int64, errRet error) {
+	internalCtx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnProcedure)
+	existsRows, err := w.sess.Execute(
+		internalCtx,
+		"SELECT ret, dl, type FROM %n.%n WHERE name=%? LIMIT 1",
+		"drop-loadable-function-check-exists",
+		mysql.SystemDB,
+		"func",
+		args.Name.L,
+	)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if len(existsRows) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, exeerrors.ErrSpDoesNotExist.GenWithStackByArgs("FUNCTION (UDF)", args.Name.O)
+	}
+	ret := existsRows[0].GetInt64(0)
+	dl := existsRows[0].GetString(1)
+	funcType := existsRows[0].GetEnum(2).String()
+	if funcType != "function" {
+		job.State = model.JobStateCancelled
+		return ver, exeerrors.ErrSpDoesNotExist.GenWithStackByArgs("FUNCTION (UDF)", args.Name.O)
+	}
+
+	deleted := false
+	defer func() {
+		if errRet != nil && deleted {
+			// Best-effort cleanup: if the DDL job is cancelled/failed after deleting the row,
+			// restore mysql.func so UDF visibility can still be driven by infoschema reload.
+			_, _ = w.sess.Execute(
+				internalCtx,
+				"INSERT IGNORE INTO %n.%n (name, ret, dl, type) VALUES (%?, %?, %?, 'function')",
+				"drop-loadable-function-restore-on-error",
+				mysql.SystemDB,
+				"func",
+				args.Name.L,
+				ret,
+				dl,
+			)
+		}
+	}()
+
+	_, err = w.sess.Execute(
+		internalCtx,
+		"DELETE FROM %n.%n WHERE name=%? AND type='function'",
+		"drop-loadable-function-delete",
+		mysql.SystemDB,
+		"func",
+		args.Name.L,
+	)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	deleted = true
+
+	failpoint.Inject("pauseAfterDropLoadableFunctionRemoved", func() {})
+	failpoint.Inject("failAfterDropLoadableFunctionRemoved", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("failpoint: failAfterDropLoadableFunctionRemoved"))
+		}
+	})
+
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobStateDone
+	job.SchemaState = model.StateNone
+	job.BinlogInfo.SchemaVersion = ver
+	return ver, nil
 }
 
 func (w *worker) onAlterProcedure(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {

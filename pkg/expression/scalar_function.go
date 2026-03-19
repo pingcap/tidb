@@ -221,7 +221,6 @@ func newFunctionImpl(ctx BuildContext, fold int, schema, funcName string, retTyp
 			Name:    [2]string{schema, funcName},
 			RetType: info.RetType,
 		}
-		ok = true
 	} else {
 		switch funcName {
 		case ast.Cast:
@@ -247,16 +246,19 @@ func newFunctionImpl(ctx BuildContext, fold int, schema, funcName string, retTyp
 			}
 		}
 		if !ok {
-			schema = ctx.GetEvalCtx().CurrentDB()
-			info, err := ctx.LoadStoredFunction(schema, funcName)
-			if err != nil {
-				return nil, err
+			if extFunc, exist := loadableFuncs.Load(funcName); exist {
+				fc = extFunc.(*loadableFuncClass)
+			} else {
+				schema = ctx.GetEvalCtx().CurrentDB()
+				info, err := ctx.LoadStoredFunction(schema, funcName)
+				if err != nil {
+					return nil, err
+				}
+				fc = &StoredFuncClass{
+					Name:    [2]string{schema, funcName},
+					RetType: info.RetType,
+				}
 			}
-			fc = &StoredFuncClass{
-				Name:    [2]string{schema, funcName},
-				RetType: info.RetType,
-			}
-			ok = true
 		}
 	}
 

@@ -13,6 +13,7 @@ go_library(
         "sequence.go",
         "sessionvars.go",
         "sqlexec.go",
+        "stmt_cleanup.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/expropt",
     visibility = ["//visibility:public"],

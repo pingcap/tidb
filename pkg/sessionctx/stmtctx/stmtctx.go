@@ -459,9 +459,10 @@ type StatementContext struct {
 		InTrigger bool
 	}
 
-	StoredFuncCtx struct {
+	UserFuncCtx struct {
 		sync.RWMutex
-		FuncName map[[2]string]*types.FieldType
+		StoredFuncName       map[[2]string]*types.FieldType
+		loadableFuncCleanups []func()
 	}
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
@@ -541,6 +542,12 @@ func (sc *StatementContext) Reset() bool {
 		}
 		defer sc.StaleTSOProvider.Unlock()
 	}
+
+	// UDF cleanups are statement-scoped and must not leak across statements.
+	// Execute them here as a safety net in case statement execution exits early
+	// and misses the normal cleanup path in executor.
+	sc.UDFCleanup()
+
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -572,8 +579,27 @@ func (sc *StatementContext) Reset() bool {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
-	sc.StoredFuncCtx.FuncName = nil
+	sc.UserFuncCtx.StoredFuncName = nil
 	return true
+}
+
+// RegisterUDFCleanup registers a statement-scoped cleanup callback for loadable
+// functions (UDF). It is concurrency-safe.
+func (sc *StatementContext) RegisterUDFCleanup(cleanup func()) {
+	if cleanup == nil {
+		return
+	}
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.loadableFuncCleanups = append(sc.UserFuncCtx.loadableFuncCleanups, cleanup)
+	sc.UserFuncCtx.Unlock()
+}
+
+// UDFCleanup calls cleanup functions registered by RegisterUDFCleanup.
+func (sc *StatementContext) UDFCleanup() {
+	for _, f := range sc.UserFuncCtx.loadableFuncCleanups {
+		f()
+	}
+	sc.UserFuncCtx.loadableFuncCleanups = nil
 }
 
 // CtxID returns the context id of the statement

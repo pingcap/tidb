@@ -2191,6 +2191,11 @@ error = '''
 Incorrect parameter count in the call to native function '%-.192s'
 '''
 
+["expression:1585"]
+error = '''
+This function '%-.192s' has the same name as a native function
+'''
+
 ["expression:3020"]
 error = '''
 Invalid argument for logarithm

@@ -282,6 +282,33 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 				require.Same(t, mockPrivChecker, assertReaderFuncValue(t, ctx, r.GetPrivilegeChecker))
 				require.Same(t, mockPrivChecker, val.(PrivilegeCheckerProvider)())
 			}
+		case exprctx.OptPropStmtCleanup:
+			var cleanups []func()
+			p = StmtCleanupPropProvider(func(cleanup func()) { cleanups = append(cleanups, cleanup) })
+			r := StmtCleanupPropReader{}
+			reader = r
+			verifyNoProvider = func(ctx exprctx.EvalContext) {
+				assertReaderFuncReturnErr(t, ctx, func(ctx exprctx.EvalContext) (struct{}, error) {
+					return struct{}{}, r.RegisterCleanup(ctx, func() {})
+				})
+			}
+			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
+				cleanups = nil
+				called := false
+				cleanup := func() { called = true }
+
+				val.(StmtCleanupPropProvider).RegisterCleanup(cleanup)
+				require.Len(t, cleanups, 1)
+				cleanups[0]()
+				require.True(t, called)
+
+				cleanups = nil
+				called = false
+				require.NoError(t, r.RegisterCleanup(ctx, cleanup))
+				require.Len(t, cleanups, 1)
+				cleanups[0]()
+				require.True(t, called)
+			}
 		default:
 			require.Fail(t, "unexpected optional property key")
 		}

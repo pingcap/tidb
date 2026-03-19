@@ -208,6 +208,7 @@ func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
 		err = exec.Close(a.executor)
+		a.stmt.Ctx.GetSessionVars().StmtCtx.UDFCleanup()
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -866,6 +867,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 		// `rs.Close` in `handleStmt`
 		if handled && sc != nil && rs == nil {
 			sc.DetachMemDiskTracker()
+			a.Ctx.GetSessionVars().StmtCtx.UDFCleanup()
 			cteErr := resetCTEStorageMap(a.Ctx)
 			if err == nil {
 				// Only overwrite err when it's nil.

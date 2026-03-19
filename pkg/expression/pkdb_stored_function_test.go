@@ -111,11 +111,11 @@ func TestSchemaQualifiedStoredFunctionResolvesFirst(t *testing.T) {
 	buildCtx := sessionexpr.NewExprContext(sctx)
 
 	sc := sctx.GetSessionVars().StmtCtx
-	sc.StoredFuncCtx.Lock()
-	sc.StoredFuncCtx.FuncName = map[[2]string]*types.FieldType{
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.StoredFuncName = map[[2]string]*types.FieldType{
 		{"test", "abs"}: types.NewFieldType(mysql.TypeLonglong),
 	}
-	sc.StoredFuncCtx.Unlock()
+	sc.UserFuncCtx.Unlock()
 
 	expr, err := newFunctionImpl(buildCtx, 0, "test", "abs", types.NewFieldType(mysql.TypeUnspecified), nil)
 	require.NoError(t, err)

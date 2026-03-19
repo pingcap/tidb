@@ -89,6 +89,8 @@ const (
 	OptPropDDLOwnerInfo
 	// OptPropPrivilegeChecker indicates to provide the privilege checker.
 	OptPropPrivilegeChecker
+	// OptPropStmtCleanup indicates to provide statement cleanup hooks.
+	OptPropStmtCleanup
 	// optPropsCnt is the count of optional properties. DO NOT use it as a property key.
 	optPropsCnt
 )
@@ -152,6 +154,10 @@ var optionalPropertyDescList = []OptionalEvalPropDesc{
 	{
 		key: OptPropPrivilegeChecker,
 		str: "OptPropPrivilegeChecker",
+	},
+	{
+		key: OptPropStmtCleanup,
+		str: "OptPropStmtCleanup",
 	},
 }
 

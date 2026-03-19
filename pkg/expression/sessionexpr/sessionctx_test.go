@@ -174,9 +174,9 @@ func TestLoadStoredFunctionNoDBWhenStoredFuncCtxInited(t *testing.T) {
 	sctx.GetSessionVars().CurrentDB = ""
 
 	sc := sctx.GetSessionVars().StmtCtx
-	sc.StoredFuncCtx.Lock()
-	sc.StoredFuncCtx.FuncName = make(map[[2]string]*types.FieldType)
-	sc.StoredFuncCtx.Unlock()
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.StoredFuncName = make(map[[2]string]*types.FieldType)
+	sc.UserFuncCtx.Unlock()
 
 	ectx := sessionexpr.NewExprContext(sctx)
 	_, err := ectx.LoadStoredFunction("", "xxx")

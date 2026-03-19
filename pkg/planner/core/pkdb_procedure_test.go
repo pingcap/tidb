@@ -6,14 +6,53 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDropFunctionBuildsDDLPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session().(sessionctx.Context)
+
+	p := parser.New()
+
+	check := func(sql string) {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		drop := stmt.(*ast.DropProcedureStmt)
+		require.True(t, drop.IsFunction)
+		require.Empty(t, drop.Name.Schema.O)
+
+		plan, err := core.BuildLogicalPlanForTest(
+			context.Background(),
+			sctx,
+			resolve.NewNodeW(stmt),
+			tk.Session().GetInfoSchema().(infoschema.InfoSchema),
+		)
+		require.NoError(t, err)
+		require.IsType(t, &core.DDL{}, plan)
+		require.Empty(t, drop.Name.Schema.O)
+	}
+
+	// No database selected: should still build a DDL plan (DROP UDF doesn't require current DB).
+	sctx.GetSessionVars().CurrentDB = ""
+	check("DROP FUNCTION f")
+
+	// With a current database, DROP FUNCTION still needs to keep the schema empty to let executor decide
+	// between stored function and loadable UDF.
+	tk.MustExec("use test")
+	check("DROP FUNCTION f2")
+}
 
 func TestCursorExecute(t *testing.T) {
 	store := testkit.CreateMockStore(t)

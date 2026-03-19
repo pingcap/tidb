@@ -43,6 +43,7 @@ type ProcedureInfo struct {
 
 // LoadableFunctionInfo contains metadata for creating a loadable function.
 type LoadableFunctionInfo struct {
-	Name   pmodel.CIStr `json:"name"`
-	SoName string       `json:"so_name"`
+	Name       pmodel.CIStr   `json:"name"`
+	SoName     string         `json:"so_name"`
+	ReturnType types.EvalType `json:"return_type"`
 }

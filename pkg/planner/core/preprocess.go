@@ -169,11 +169,11 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 		return nil
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	sc.StoredFuncCtx.Lock()
-	if sc.StoredFuncCtx.FuncName == nil {
-		sc.StoredFuncCtx.FuncName = make(map[[2]string]*types.FieldType)
+	sc.UserFuncCtx.Lock()
+	if sc.UserFuncCtx.StoredFuncName == nil {
+		sc.UserFuncCtx.StoredFuncName = make(map[[2]string]*types.FieldType)
 	}
-	sc.StoredFuncCtx.Unlock()
+	sc.UserFuncCtx.Unlock()
 	var (
 		do         *domain.Domain
 		sysSession sessionctx.Context
@@ -194,12 +194,12 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 			schema = sctx.GetSessionVars().CurrentDB
 		}
 		key := [2]string{schema, name}
-		sc.StoredFuncCtx.Lock()
-		if _, exists := sc.StoredFuncCtx.FuncName[key]; exists {
-			sc.StoredFuncCtx.Unlock()
+		sc.UserFuncCtx.Lock()
+		if _, exists := sc.UserFuncCtx.StoredFuncName[key]; exists {
+			sc.UserFuncCtx.Unlock()
 			continue
 		}
-		sc.StoredFuncCtx.Unlock()
+		sc.UserFuncCtx.Unlock()
 		internalExecCtx := ctx
 		if sysSession == nil {
 			do = domain.GetDomain(sctx)
@@ -232,9 +232,9 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 			return errors.Trace(err)
 		}
 		if len(rows) == 0 {
-			sc.StoredFuncCtx.Lock()
-			sc.StoredFuncCtx.FuncName[key] = nil
-			sc.StoredFuncCtx.Unlock()
+			sc.UserFuncCtx.Lock()
+			sc.UserFuncCtx.StoredFuncName[key] = nil
+			sc.UserFuncCtx.Unlock()
 			return nil // Don't return error here, the function not exist error will be reported during plan building.
 		}
 		definition := rows[0].GetString(0)
@@ -254,9 +254,9 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 			return errors.Errorf("invalid create function statement")
 		}
 		retType := createFn.FunctionInfo.RetType
-		sc.StoredFuncCtx.Lock()
-		sc.StoredFuncCtx.FuncName[key] = retType
-		sc.StoredFuncCtx.Unlock()
+		sc.UserFuncCtx.Lock()
+		sc.UserFuncCtx.StoredFuncName[key] = retType
+		sc.UserFuncCtx.Unlock()
 	}
 	return nil
 }
