@@ -128,7 +128,7 @@ Cross-partition merging requires **bounded memory** and **proportional represent
 3. Samples are pruned by calculating a lower `pruneRate` and keeping only samples whose weight is below the corresponding threshold (see Progressive Pruning)
 4. Pruned samples are appended to the global accumulator (simple concatenation)
 
-Proportional representation is enforced by the per-partition pruning targets (see Progressive Pruning): larger partitions get higher targets, so they contribute more samples to the global merge. The accumulator grows to at most the total budget (~110K) — bounded. The merge is just concatenation of already-proportionally-pruned samples.
+Proportional representation follows naturally from the weight-based threshold (see Progressive Pruning): larger partitions contribute more samples because their lower `SampleRate` produces more low weights that survive the global threshold. The accumulator grows to at most the total budget (~110K) — bounded. The merge is just concatenation of pruned samples.
 
 **Bernoulli weights**: Currently Bernoulli samples have `Weight = 0` in the `tipb.RowSample` proto. We propose that TiKV derive the weight from the same value used for the Bernoulli include/exclude decision. One approach is to use a deterministic hash of the row key, as prototyped in [tikv#19414](https://github.com/tikv/tikv/pull/19414/files#diff-4aad4af2afccbb967f83555af3ab4820c6995c3f896f5d0d7c51993bd6d7662cR126-R133) — the hash is already computed for the Bernoulli gate and can be stored as `RowSample.Weight` at zero additional cost.
 
@@ -156,26 +156,19 @@ The per-partition blob size depends on the number of pruned samples (determined 
 
 ### Progressive Pruning
 
-After region merge within a partition, the sample set can be large (~110K for the default Bernoulli rate). Persisting this full set per partition would use excessive storage, and concatenating full sets from all partitions would exceed the memory budget. Instead, each partition's samples are pruned by applying a tighter threshold on the same random value used for initial inclusion:
+After region merge within a partition, the sample set can be large (~110K for the default Bernoulli rate). Persisting this full set per partition would use excessive storage, and concatenating full sets from all partitions would exceed the memory budget. Instead, samples are pruned by applying a tighter threshold on the weight:
 
 ```text
-pruneRate = sampleRate × (target / currentCount)
-threshold = int64(pruneRate * MaxInt64)
+pruneRate = budget / estimatedTableRowCount
+threshold = pruneRate × MaxUint64
 keep sample if Weight <= threshold
 ```
 
-This is O(N) per partition — a single pass with no sorting or heap. It is deterministic: the same samples always survive because the decision reuses the original Bernoulli random draw encoded in the weight.
+The total pruning budget should match the same sample target used for non-partitioned tables (currently ~110K via `DefRowsForSampleRate`). This ensures the global histogram is built from the same sample density that already produces good histograms for non-partitioned tables. It also opens the path for a future unified sample target that adapts consistently across non-partitioned tables, per-partition stats, and partitioned table global stats.
 
-The total pruning budget across all partitions should match the same sample target used for non-partitioned tables (currently ~110K via `DefRowsForSampleRate`). This ensures the global histogram is built from the same sample density that already produces good histograms for non-partitioned tables. It also opens the path for a future unified sample target that adapts consistently across non-partitioned tables, per-partition stats, and partitioned table global stats.
+The estimated table row count is available from `mysql.stats_meta` (adjusted by DML `modify_count` tracking) or from PD's approximate region-based row count as a fallback — the same estimation already used for calculating the Bernoulli `SampleRate` per partition (via `getAdjustedSampleRate`).
 
-The budget is distributed proportionally across partitions:
-
-```text
-First partition:       target = budget / totalPartitions
-Subsequent partitions: target = (budget / totalPartitions) × (partitionRows / avgRowsSoFar)
-```
-
-Larger partitions get proportionally more samples. No per-partition minimum is needed — a tiny partition contributing very few (or zero) samples to the global merge is statistically correct, since it represents a tiny fraction of the data. This keeps the total within the budget regardless of partition count.
+Proportional representation follows naturally: partitions with more rows have more samples with low weights (from a lower `SampleRate`), so more of their samples survive the global threshold. No per-partition target calculation is needed — a single threshold applied to all partitions gives correct proportionality. Pruning is O(N) per partition — a single pass with no sorting or heap, and deterministic: the same samples always survive because the decision reuses the original random draw encoded in the weight.
 
 The same pruning applies for both persistence and the in-memory global merge: the pruned copy is saved to `mysql.stats_table_data` for future incremental rebuilds, and the pruned samples are appended to the global accumulator. The full unpruned collector is used only for building per-partition histograms and TopN.
 
