@@ -551,7 +551,9 @@ func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Conte
 		}
 	}()
 	return ctx, func() {
-		cancel(context.Canceled)
+		if ctx.Err() == nil && killer.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
+			cancel(context.Canceled)
+		}
 	}
 }
 

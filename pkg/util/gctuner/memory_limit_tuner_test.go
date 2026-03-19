@@ -72,6 +72,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 		}, 5*time.Second, 100*time.Millisecond)
 		require.Eventually(t, func() bool {
 			//nolint: all_revive
+			runtime.GC()
 			return !GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load()
 		}, 5*time.Second, 100*time.Millisecond)
 	}()
@@ -82,6 +83,12 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	getNowGCNum := func() uint32 {
 		runtime.ReadMemStats(r)
 		return r.NumGC
+	}
+	waitMemoryLimitGC := func(lastGCNum uint32) {
+		require.Eventually(t, func() bool {
+			runtime.GC()
+			return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && lastGCNum < getNowGCNum()
+		}, 5*time.Second, 100*time.Millisecond)
 	}
 	checkNextGCEqualMemoryLimit := func() {
 		runtime.ReadMemStats(r)
@@ -95,9 +102,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	gcNum := getNowGCNum()
 
 	memory210mb := allocator.alloc(210 << 20)
-	require.Eventually(t, func() bool {
-		return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond)
+	waitMemoryLimitGC(gcNum)
 	// Test waiting for reset
 	require.Eventually(t, func() bool {
 		return GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage) == debug.SetMemoryLimit(-1)
@@ -119,9 +124,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	gcNum = getNowGCNum()
 	checkNextGCEqualMemoryLimit()
 	memory210mb = allocator.alloc(210 << 20)
-	require.Eventually(t, func() bool {
-		return gcNum < getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond)
+	waitMemoryLimitGC(gcNum)
 	allocator.free(memory210mb)
 	allocator.free(memory600mb)
 }
