@@ -186,6 +186,11 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		err = normalizeCtxErrWithCause(ctx, err)
+	} else if ctx.Err() != nil {
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err != nil {
 		finishRemainingAnalyzeJobsOnErr(statsHandle, tasks, err)
 		return err
 	}
