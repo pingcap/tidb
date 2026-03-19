@@ -156,7 +156,7 @@ func TestVarsutil(t *testing.T) {
 		err          error
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
+		{"America/New_York", "America/New_York", true, 5 * time.Hour, nil},
 		// TODO: Check it out and reopen this case.
 		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},

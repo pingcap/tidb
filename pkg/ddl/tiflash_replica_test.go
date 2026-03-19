@@ -162,6 +162,7 @@ func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm sessmgr.M
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
+		conf.AdvertiseAddress = "127.0.0.1"
 	})
 	return srv, addr
 }
