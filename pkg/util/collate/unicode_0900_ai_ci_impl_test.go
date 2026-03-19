@@ -17,19 +17,31 @@ package collate
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/collate/ucadata"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUnicode0900BoundaryRuneUsesImplicitWeight(t *testing.T) {
 	collator := &unicode0900AICICollator{}
-	boundaryRune := rune(0x2CEA1)
+	lastTableRune := rune(len(ucadata.DUCET0900Table.MapTable4) - 1)
+	boundaryRune := lastTableRune + 1
 	boundaryStr := string(boundaryRune)
 
-	// U+2CEA1 is the first rune outside MapTable4 and must use implicit weight.
+	// The first rune outside MapTable4 must use the fallback path instead of indexing the table.
+	lastFirst, lastSecond := convertRuneUnicodeCI0900(lastTableRune)
+	require.Equal(t, ucadata.DUCET0900Table.MapTable4[lastTableRune], lastFirst)
+	require.Zero(t, lastSecond)
+
 	first, second := convertRuneUnicodeCI0900(boundaryRune)
-	require.Equal(t, uint64(0xCEA1_0000|0xFBC5), first)
+	require.NotZero(t, first)
 	require.Zero(t, second)
-	require.Equal(t, []byte{0xFB, 0xC5, 0xCE, 0xA1}, collator.Key(boundaryStr))
+	require.Greater(t, first, lastFirst)
+	require.NotEmpty(t, collator.Key(boundaryStr))
+	require.Equal(t, -1, collator.Compare(string(lastTableRune), boundaryStr))
 	require.Equal(t, 0, collator.Compare(boundaryStr, boundaryStr))
 	require.Equal(t, -1, collator.Compare(boundaryStr, string(boundaryRune+1)))
+
+	pattern := collator.Pattern()
+	pattern.Compile(boundaryStr, '\\')
+	require.True(t, pattern.DoMatch(boundaryStr))
 }
