@@ -257,7 +257,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		KVVars:                               vars.KVVars,
 		KvExecCounter:                        sc.KvExecCounter,
 		RUV2Metrics:                          vars.RUV2Metrics,
-		RUV2RPCInterceptor:                   drivertxn.NewStorageProcessedKeysRUV2RPCInterceptor(vars.RUV2Metrics),
+		RUV2RPCInterceptor:                   drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics),
 		SessionMemTracker:                    vars.MemTracker,
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,

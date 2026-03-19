@@ -296,6 +296,7 @@ type RUV2MetricsSnapshot struct {
 	TiKVCoprocessorExecutorWorkTotal  map[string]int64
 
 	// TiKVRU is the TiKV RU v2 value (scaled integer) calculated in client-go and stored in RUDetails.
+	// Callers must populate this from RUDetails.TiKVRUV2() after calling Snapshot(), as it is not set automatically.
 	TiKVRU int64
 	// TiFlashRU is the TiFlash RU value (scaled integer after truncation) calculated in client-go and stored in RUDetails.
 	TiFlashRU int64

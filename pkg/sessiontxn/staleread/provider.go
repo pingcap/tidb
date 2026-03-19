@@ -254,7 +254,7 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	ruv2Interceptor := driver.NewStorageProcessedKeysRUV2RPCInterceptor(sessVars.RUV2Metrics)
+	ruv2Interceptor := driver.NewStatementRUV2RPCInterceptor(sessVars.RUV2Metrics)
 
 	var snapshot kv.Snapshot
 	if txn.Valid() {

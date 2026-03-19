@@ -3276,7 +3276,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			KVVars:                 vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
 			RUV2Metrics:            vars.RUV2Metrics,
-			RUV2RPCInterceptor:     drivertxn.NewStorageProcessedKeysRUV2RPCInterceptor(vars.RUV2Metrics),
+			RUV2RPCInterceptor:     drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics),
 			SessionMemTracker:      vars.MemTracker,
 
 			Location:         sc.TimeZone(),
@@ -3332,7 +3332,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	}
 	if dctx.RUV2Metrics != vars.RUV2Metrics {
 		dctx.RUV2Metrics = vars.RUV2Metrics
-		dctx.RUV2RPCInterceptor = drivertxn.NewStorageProcessedKeysRUV2RPCInterceptor(vars.RUV2Metrics)
+		dctx.RUV2RPCInterceptor = drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics)
 	}
 
 	return dctx

@@ -82,7 +82,7 @@ func currentStatementRUV2RPCInterceptor(sessVars *variable.SessionVars) intercep
 	if sessVars == nil {
 		return nil
 	}
-	return drivertxn.NewStorageProcessedKeysRUV2RPCInterceptor(sessVars.RUV2Metrics)
+	return drivertxn.NewStatementRUV2RPCInterceptor(sessVars.RUV2Metrics)
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider

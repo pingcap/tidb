@@ -23,22 +23,22 @@ import (
 
 const statementRUV2MetricsInterceptorName = "ruv2-statement-metrics"
 
-// NewStorageProcessedKeysRUV2RPCInterceptor creates an interceptor that
-// collects statement-level RUv2 request counters and response-side metrics
-// from ExecDetailsV2.RuV2.
-func NewStorageProcessedKeysRUV2RPCInterceptor(ruv2Metrics *execdetails.RUV2Metrics) interceptor.RPCInterceptor {
+// NewStatementRUV2RPCInterceptor creates an interceptor that collects
+// statement-level RUv2 request counters and response-side metrics from
+// ExecDetailsV2.RuV2.
+func NewStatementRUV2RPCInterceptor(ruv2Metrics *execdetails.RUV2Metrics) interceptor.RPCInterceptor {
 	if ruv2Metrics == nil {
 		return nil
 	}
-	return NewStorageProcessedKeysRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
+	return NewStatementRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
 		return ruv2Metrics
 	})
 }
 
-// NewStorageProcessedKeysRUV2RPCInterceptorWithGetter creates an interceptor that
-// collects statement-level RUv2 request counters and response-side metrics from
+// NewStatementRUV2RPCInterceptorWithGetter creates an interceptor that collects
+// statement-level RUv2 request counters and response-side metrics from
 // ExecDetailsV2.RuV2 using the metrics returned by getter at request time.
-func NewStorageProcessedKeysRUV2RPCInterceptorWithGetter(getter func() *execdetails.RUV2Metrics) interceptor.RPCInterceptor {
+func NewStatementRUV2RPCInterceptorWithGetter(getter func() *execdetails.RUV2Metrics) interceptor.RPCInterceptor {
 	if getter == nil {
 		return nil
 	}

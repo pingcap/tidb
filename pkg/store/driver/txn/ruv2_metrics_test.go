@@ -23,9 +23,9 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
-func TestStorageProcessedKeysRUV2RPCInterceptor(t *testing.T) {
+func TestStatementRUV2RPCInterceptor(t *testing.T) {
 	ruv2Metrics := execdetails.NewRUV2Metrics()
-	it := NewStorageProcessedKeysRUV2RPCInterceptor(ruv2Metrics)
+	it := NewStatementRUV2RPCInterceptor(ruv2Metrics)
 	require.NotNil(t, it)
 
 	readReq := &tikvrpc.Request{Type: tikvrpc.CmdBatchGet, StoreTp: tikvrpc.TiKV}
@@ -62,16 +62,16 @@ func TestStorageProcessedKeysRUV2RPCInterceptor(t *testing.T) {
 	require.Equal(t, int64(1), snapshot.TiKVStorageProcessedKeysGet)
 }
 
-func TestStorageProcessedKeysRUV2RPCInterceptorNilMetrics(t *testing.T) {
-	require.Nil(t, NewStorageProcessedKeysRUV2RPCInterceptor(nil))
+func TestStatementRUV2RPCInterceptorNilMetrics(t *testing.T) {
+	require.Nil(t, NewStatementRUV2RPCInterceptor(nil))
 }
 
-func TestStorageProcessedKeysRUV2RPCInterceptorWithGetterFollowsCurrentStatement(t *testing.T) {
+func TestStatementRUV2RPCInterceptorWithGetterFollowsCurrentStatement(t *testing.T) {
 	metrics1 := execdetails.NewRUV2Metrics()
 	metrics2 := execdetails.NewRUV2Metrics()
 	current := metrics1
 
-	it := NewStorageProcessedKeysRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
+	it := NewStatementRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
 		return current
 	})
 	require.NotNil(t, it)
