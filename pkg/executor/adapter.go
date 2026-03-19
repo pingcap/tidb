@@ -1680,12 +1680,21 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 }
 
 func (a *ExecStmt) recordInsertRows2Metrics() {
-	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.StmtCtx.StmtType != "Insert" {
+	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
+}
+
+func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx.StmtType != "Insert" {
+		return
+	}
+	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
+	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
+	if stmtCtx.InsertRowsAsRUV2Recorded {
 		return
 	}
 
-	affectedRows := sessVars.StmtCtx.AffectedRows()
+	affectedRows := stmtCtx.AffectedRows()
 	if affectedRows <= 0 {
 		return
 	}
@@ -1694,6 +1703,7 @@ func (a *ExecStmt) recordInsertRows2Metrics() {
 	if sessVars.RUV2Metrics != nil {
 		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
 	}
+	stmtCtx.InsertRowsAsRUV2Recorded = true
 }
 
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
