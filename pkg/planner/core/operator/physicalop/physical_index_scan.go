@@ -344,7 +344,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 
 // IsFullScan checks whether the index scan covers the full range of the index.
 func (p *PhysicalIndexScan) IsFullScan() bool {
-	if len(p.RangeInfo) > 0 || p.haveCorCol() || p.FtsQueryInfo != nil {
+	if len(p.RangeInfo) > 0 || p.haveCorCol() || p.FtsQueryInfo != nil || p.TiCIVectorQueryInfo != nil {
 		return false
 	}
 	for _, ran := range p.Ranges {

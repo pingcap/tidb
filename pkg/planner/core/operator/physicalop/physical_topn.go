@@ -348,6 +348,10 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		if vs != nil && !lt.ByItems[0].Desc {
 			// Check if the child is a DataSource with a TiCI hybrid vector index.
 			if ds, ok := lt.Children()[0].(*logicalop.DataSource); ok {
+				// Filter pushdown for TiCI vector search is not implemented yet.
+				if len(ds.PushedDownConds) > 0 {
+					return ret
+				}
 				hasTiCIHybridVector := false
 				for _, path := range ds.PossibleAccessPaths {
 					if path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {

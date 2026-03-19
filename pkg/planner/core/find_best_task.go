@@ -2347,6 +2347,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil {
 		is.TiCIVectorQueryInfo = buildTiCIVectorQueryInfo(path.Index, prop.VectorProp.VSInfo, prop.VectorProp.TopK, ds.TableInfo)
+		ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI vector query currently can not be cached")
 		is.SetStats(property.DeriveLimitStats(is.StatsInfo(), float64(prop.VectorProp.TopK)))
 	}
 	cop := &physicalop.CopTask{
