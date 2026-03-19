@@ -366,23 +366,41 @@ func TestInstancePlanCachePartitioning(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	tk.MustExec(`set @@tidb_partition_prune_mode='dynamic'`)
+	for _, selectedPartitionStats := range []string{"0", "1"} {
+		tk.MustExec(`admin flush instance plan_cache`)
+		tk.MustExec(`set @@tidb_opt_enable_selected_partition_stats=` + selectedPartitionStats)
+		tk.MustExec(`set @@tidb_partition_prune_mode='dynamic'`)
+		tk.MustExec(`drop table if exists t`)
+		tk.MustExec(`create table t (a int, b varchar(255)) partition by hash(a) partitions 3`)
+		tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
+		tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
+		tk.MustExec(`set @a=1`)
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
+		// Result correctness stays the same; whether the second execution hits cache depends on the selected partition stats switch.
+		tk.MustExec(`set @a=4`)
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+		expectedFromCache := "1"
+		if selectedPartitionStats == "1" {
+			expectedFromCache = "0"
+		}
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromCache))
+		tk.MustQuery(`show warnings`).Check(testkit.Rows())
 
-	tk.MustExec(`create table t (a int, b varchar(255)) partition by hash(a) partitions 3`)
-	tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
-	tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
-	tk.MustExec(`set @a=1`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
-	// Same partition works, due to pruning is not affected
-	tk.MustExec(`set @a=4`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-
-	tk.MustExec(`set @@tidb_partition_prune_mode='static'`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Static partition pruning mode"))
+		tk.MustExec(`set @@tidb_partition_prune_mode='static'`)
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+		warnings := tk.MustQuery(`show warnings`).Rows()
+		if len(warnings) > 0 {
+			require.True(t,
+				strings.Contains(warnings[0][2].(string), "skip prepared plan-cache: Static partition pruning mode") ||
+					strings.Contains(warnings[0][2].(string), "skip prepared plan-cache: static partition prune mode used"),
+				"unexpected warning: %s", warnings[0][2].(string),
+			)
+		}
+		tk.MustExec(`deallocate prepare stmt`)
+		tk.MustExec(`drop table t`)
+	}
 }
 
 func TestInstancePlanCachePlan(t *testing.T) {

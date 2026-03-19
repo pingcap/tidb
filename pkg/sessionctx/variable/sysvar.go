@@ -2607,6 +2607,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableSelectedPartitionStats, Value: BoolToOnOff(DefTiDBOptEnableSelectedPartitionStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSelectedPartitionStats = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRegardNULLAsPoint, Value: BoolToOnOff(DefTiDBRegardNULLAsPoint), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.RegardNULLAsPoint = TiDBOptOn(val)
 		return nil

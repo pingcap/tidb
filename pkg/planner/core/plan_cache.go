@@ -17,11 +17,13 @@ package core
 import (
 	"context"
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -270,6 +273,12 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
 		return nil, nil, false, err
 	}
+	if skip, err := shouldSkipCachedPlanForStaticPartitionPruning(sctx, cachedVal.Plan); err != nil {
+		return nil, nil, false, err
+	} else if skip {
+		stmtCtx.SetSkipPlanCache("static partition prune mode used")
+		return nil, nil, false, nil
+	}
 	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
@@ -285,6 +294,240 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
 	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+}
+
+func shouldSkipCachedPlanForStaticPartitionPruning(sctx sessionctx.Context, plan base.Plan) (bool, error) {
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() || !sctx.GetSessionVars().EnableSelectedPartitionStats {
+		return false, nil
+	}
+	switch p := plan.(type) {
+	case *Update:
+		if p.SelectPlan == nil {
+			return false, nil
+		}
+		return cachedPlanUsesStaticPartitionPruning(sctx, p.SelectPlan)
+	case *Delete:
+		if p.SelectPlan == nil {
+			return false, nil
+		}
+		return cachedPlanUsesStaticPartitionPruning(sctx, p.SelectPlan)
+	case base.PhysicalPlan:
+		return cachedPlanUsesStaticPartitionPruning(sctx, p)
+	default:
+		return false, nil
+	}
+}
+
+func cachedPlanUsesStaticPartitionPruning(sctx sessionctx.Context, plan base.PhysicalPlan) (bool, error) {
+	switch p := plan.(type) {
+	case *PointGetPlan:
+		if skip, err := pointGetUsesSubsetPartition(sctx, p); err != nil || skip {
+			return skip, err
+		}
+	case *BatchPointGetPlan:
+		if skip, err := batchPointGetUsesSubsetPartition(sctx, p); err != nil || skip {
+			return skip, err
+		}
+	case *PhysicalTableReader:
+		if ts := findPhysicalTableScan(p.TablePlans); ts != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), ts.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	case *PhysicalIndexReader:
+		if is := findPhysicalIndexScan(p.IndexPlans); is != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), is.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	case *PhysicalIndexLookUpReader:
+		if ts := findPhysicalTableScan(p.TablePlans); ts != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), ts.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	case *PhysicalIndexMergeReader:
+		if ts := findPhysicalTableScan(p.TablePlans); ts != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), ts.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	}
+	for _, child := range plan.Children() {
+		if skip, err := cachedPlanUsesStaticPartitionPruning(sctx, child); err != nil || skip {
+			return skip, err
+		}
+	}
+	return false, nil
+}
+
+func findPhysicalTableScan(plans []base.PhysicalPlan) *PhysicalTableScan {
+	for i := len(plans) - 1; i >= 0; i-- {
+		if ts, ok := plans[i].(*PhysicalTableScan); ok {
+			return ts
+		}
+	}
+	return nil
+}
+
+func findPhysicalIndexScan(plans []base.PhysicalPlan) *PhysicalIndexScan {
+	for i := len(plans) - 1; i >= 0; i-- {
+		if is, ok := plans[i].(*PhysicalIndexScan); ok {
+			return is
+		}
+	}
+	return nil
+}
+
+func dynamicPartitionAccessUsesSubset(sctx base.PlanContext, tblInfo *model.TableInfo, partInfo *PhysPlanPartInfo) (bool, error) {
+	if tblInfo == nil || tblInfo.GetPartitionInfo() == nil || partInfo == nil {
+		return false, nil
+	}
+	is, ok := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return true, nil
+	}
+	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return true, nil
+	}
+	tbl, ok := tmp.(table.PartitionedTable)
+	if !ok {
+		return false, nil
+	}
+	currentPartitionIDs, err := getPrunedPartitionIDs(sctx, tbl, partInfo, partInfo.PruningConds)
+	if err != nil {
+		return true, nil
+	}
+	staticPartitionIDs, err := getPrunedPartitionIDs(sctx, tbl, partInfo, getStaticPartitionPruningConds(partInfo.PruningConds))
+	if err != nil {
+		return true, nil
+	}
+	return !slices.Equal(currentPartitionIDs, staticPartitionIDs), nil
+}
+
+func getPrunedPartitionIDs(
+	sctx base.PlanContext,
+	tbl table.PartitionedTable,
+	partInfo *PhysPlanPartInfo,
+	conds []expression.Expression,
+) ([]int64, error) {
+	partitionIdxs, err := PartitionPruning(sctx, tbl, conds, partInfo.PartitionNames, partInfo.Columns, partInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+	return getPartitionIDsFromPruningResult(tbl.Meta().GetPartitionInfo(), partitionIdxs), nil
+}
+
+func getStaticPartitionPruningConds(conds []expression.Expression) []expression.Expression {
+	staticConds := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		if containsMutableConst(cond) {
+			continue
+		}
+		staticConds = append(staticConds, cond)
+	}
+	return staticConds
+}
+
+func containsMutableConst(expr expression.Expression) bool {
+	switch x := expr.(type) {
+	case *expression.Constant:
+		return x.ParamMarker != nil || x.DeferredExpr != nil
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			if containsMutableConst(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pointGetUsesSubsetPartition(sctx sessionctx.Context, plan *PointGetPlan) (bool, error) {
+	if plan == nil || plan.TblInfo == nil {
+		return false, nil
+	}
+	pi := plan.TblInfo.GetPartitionInfo()
+	if pi == nil || (plan.IndexInfo != nil && plan.IndexInfo.Global) {
+		return false, nil
+	}
+	selectedPartitionIDs := getSelectedPartitionIDs(pi, plan.PartitionNames)
+	if len(selectedPartitionIDs) == 0 {
+		return false, nil
+	}
+	clonedPlan, ok := plan.CloneForPlanCache(sctx.GetPlanCtx())
+	if !ok {
+		return false, nil
+	}
+	clonedPointGet, ok := clonedPlan.(*PointGetPlan)
+	if !ok {
+		return false, nil
+	}
+	if err := rebuildRange(clonedPointGet); err != nil {
+		return false, nil
+	}
+	noMatch, err := clonedPointGet.PrunePartitions(sctx)
+	if err != nil {
+		return false, nil
+	}
+	if noMatch {
+		return len(selectedPartitionIDs) > 0, nil
+	}
+	if clonedPointGet.PartitionIdx == nil {
+		return false, nil
+	}
+	partitionIdx := *clonedPointGet.PartitionIdx
+	if partitionIdx < 0 || partitionIdx >= len(pi.Definitions) {
+		return true, nil
+	}
+	return !slices.Equal(selectedPartitionIDs, []int64{pi.Definitions[partitionIdx].ID}), nil
+}
+
+func batchPointGetUsesSubsetPartition(sctx sessionctx.Context, plan *BatchPointGetPlan) (bool, error) {
+	if plan == nil || plan.TblInfo == nil {
+		return false, nil
+	}
+	pi := plan.TblInfo.GetPartitionInfo()
+	if pi == nil || (plan.IndexInfo != nil && plan.IndexInfo.Global) {
+		return false, nil
+	}
+	selectedPartitionIDs := getSelectedPartitionIDs(pi, plan.PartitionNames)
+	if len(selectedPartitionIDs) == 0 {
+		return false, nil
+	}
+	clonedPlan, ok := plan.CloneForPlanCache(sctx.GetPlanCtx())
+	if !ok {
+		return false, nil
+	}
+	clonedBatchPointGet, ok := clonedPlan.(*BatchPointGetPlan)
+	if !ok {
+		return false, nil
+	}
+	if err := rebuildRange(clonedBatchPointGet); err != nil {
+		return false, nil
+	}
+	_, noMatch, err := clonedBatchPointGet.PrunePartitionsAndValues(sctx)
+	if err != nil {
+		return false, nil
+	}
+	if noMatch {
+		return len(selectedPartitionIDs) > 0, nil
+	}
+	usedPartitionIDs := make([]int64, 0, len(clonedBatchPointGet.PartitionIdxs))
+	if clonedBatchPointGet.SinglePartition {
+		if len(clonedBatchPointGet.PartitionIdxs) == 0 {
+			return false, nil
+		}
+		idx := clonedBatchPointGet.PartitionIdxs[0]
+		if idx < 0 || idx >= len(pi.Definitions) {
+			return true, nil
+		}
+		usedPartitionIDs = append(usedPartitionIDs, pi.Definitions[idx].ID)
+		return !slices.Equal(selectedPartitionIDs, usedPartitionIDs), nil
+	}
+	usedPartitionIDs = getPartitionIDsFromPruningResult(pi, clonedBatchPointGet.PartitionIdxs)
+	return !slices.Equal(selectedPartitionIDs, usedPartitionIDs), nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
