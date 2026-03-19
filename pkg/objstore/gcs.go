@@ -17,6 +17,7 @@ package objstore
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -449,33 +450,27 @@ skipHandleCred:
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
-	httpClient := opts.HTTPClient
+	httpClient := prepareGCSHTTPClient(opts.HTTPClient)
 	if opts.AccessRecording != nil {
-		if httpClient == nil {
-			transport, _ := http.DefaultTransport.(*http.Transport)
-			httpClient = &http.Client{Transport: transport.Clone()}
-		}
 		httpClient.Transport = &roundTripperWrapper{
 			RoundTripper: httpClient.Transport,
 			accessRec:    opts.AccessRecording,
 		}
 	}
-	if httpClient != nil {
-		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
-		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
-		// type of credential-file.
-		newTransport, err := htransport.NewTransport(ctx, httpClient.Transport,
-			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
-		if err != nil {
-			if intest.InTest && !mustReportCredErr {
-				goto skipHandleTransport
-			}
-			return nil, errors.Trace(err)
+	// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+	// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+	// type of credential-file.
+	newTransport, err := htransport.NewTransport(ctx, httpClient.Transport,
+		append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+	if err != nil {
+		if intest.InTest && !mustReportCredErr {
+			goto skipHandleTransport
 		}
-		httpClient.Transport = newTransport
-	skipHandleTransport:
-		clientOps = append(clientOps, option.WithHTTPClient(httpClient))
+		return nil, errors.Trace(err)
 	}
+	httpClient.Transport = newTransport
+skipHandleTransport:
+	clientOps = append(clientOps, option.WithHTTPClient(httpClient))
 
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
@@ -493,6 +488,42 @@ skipHandleCred:
 		return nil, errors.Trace(err)
 	}
 	return ret, nil
+}
+
+func prepareGCSHTTPClient(base *http.Client) *http.Client {
+	if base == nil {
+		return &http.Client{Transport: newGCSHTTPTransport()}
+	}
+	cloned := *base
+	switch transport := cloned.Transport.(type) {
+	case nil:
+		cloned.Transport = newGCSHTTPTransport()
+	case *http.Transport:
+		clonedTransport := transport.Clone()
+		disableGCSHTTP2(clonedTransport)
+		cloned.Transport = clonedTransport
+	}
+	return &cloned
+}
+
+func newGCSHTTPTransport() *http.Transport {
+	transport, _ := http.DefaultTransport.(*http.Transport)
+	if transport == nil {
+		transport = &http.Transport{}
+	} else {
+		transport = transport.Clone()
+	}
+	disableGCSHTTP2(transport)
+	return transport
+}
+
+func disableGCSHTTP2(transport *http.Transport) {
+	transport.ForceAttemptHTTP2 = false
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(false)
+	transport.Protocols = protocols
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 }
 
 // Reset resets the GCS storage. Reset should not be used concurrently with

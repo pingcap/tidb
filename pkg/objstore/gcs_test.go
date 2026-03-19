@@ -460,6 +460,39 @@ func TestNewGCSStorage(t *testing.T) {
 	}
 }
 
+func TestPrepareGCSHTTPClientDisablesHTTP2(t *testing.T) {
+	client := prepareGCSHTTPClient(nil)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.False(t, transport.ForceAttemptHTTP2)
+	require.NotNil(t, transport.Protocols)
+	require.True(t, transport.Protocols.HTTP1())
+	require.False(t, transport.Protocols.HTTP2())
+	require.NotNil(t, transport.TLSNextProto)
+}
+
+func TestPrepareGCSHTTPClientClonesTransport(t *testing.T) {
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	require.True(t, ok)
+
+	originalTransport := baseTransport.Clone()
+	originalTransport.ForceAttemptHTTP2 = true
+	originalClient := &http.Client{Transport: originalTransport}
+
+	client := prepareGCSHTTPClient(originalClient)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+
+	require.NotSame(t, originalClient, client)
+	require.NotSame(t, originalTransport, transport)
+	require.True(t, originalTransport.ForceAttemptHTTP2)
+	require.False(t, transport.ForceAttemptHTTP2)
+	require.NotNil(t, transport.Protocols)
+	require.True(t, transport.Protocols.HTTP1())
+	require.False(t, transport.Protocols.HTTP2())
+	require.NotNil(t, transport.TLSNextProto)
+}
+
 func createGCSStore(t *testing.T) *GCSStorage {
 	t.Helper()
 	require.True(t, intest.InTest)
