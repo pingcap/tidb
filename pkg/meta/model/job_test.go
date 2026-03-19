@@ -370,13 +370,6 @@ func int64Value(expr goast.Expr) (int64, bool) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestJobEncodeV2(t *testing.T) {
 	j := &Job{
 		Version: JobVersion2,
