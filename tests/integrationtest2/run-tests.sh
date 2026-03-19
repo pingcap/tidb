@@ -249,7 +249,7 @@ function reserve_port() {
 
 function refresh_minio_vars() {
     MINIO_ENDPOINT="http://127.0.0.1:${MINIO_PORT}"
-    TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
+    TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true&use-table-id-as-path=true"
     if [ -z "$TICDC_S3_SINK_URI" ]; then
         TICDC_S3_SINK_URI="$TICDC_S3_SINK_URI_DEFAULT"
     fi
