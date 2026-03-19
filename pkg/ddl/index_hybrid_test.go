@@ -127,20 +127,34 @@ func TestEnsureFulltextIndexReorgMeta(t *testing.T) {
 			name: "non ingest reorg type",
 			job: &model.Job{
 				ReorgMeta: &model.DDLReorgMeta{
-					IsDistReorg: true,
-					IsFastReorg: true,
-					ReorgTp:     model.ReorgTypeTxn,
+					IsDistReorg:     true,
+					IsFastReorg:     true,
+					UseCloudStorage: true,
+					ReorgTp:         model.ReorgTypeTxn,
 				},
 			},
 			want: "fulltext index requires",
 		},
 		{
+			name: "missing global sort",
+			job: &model.Job{
+				ReorgMeta: &model.DDLReorgMeta{
+					IsDistReorg:     true,
+					IsFastReorg:     true,
+					UseCloudStorage: false,
+					ReorgTp:         model.ReorgTypeIngest,
+				},
+			},
+			want: "requires global sort",
+		},
+		{
 			name: "ingest ok",
 			job: &model.Job{
 				ReorgMeta: &model.DDLReorgMeta{
-					IsDistReorg: true,
-					IsFastReorg: true,
-					ReorgTp:     model.ReorgTypeIngest,
+					IsDistReorg:     true,
+					IsFastReorg:     true,
+					UseCloudStorage: true,
+					ReorgTp:         model.ReorgTypeIngest,
 				},
 			},
 		},

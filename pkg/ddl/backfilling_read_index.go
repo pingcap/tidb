@@ -444,6 +444,10 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		idxNames.WriteString(idx.Name.O)
 	}
 	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	tikvCodec := r.store.GetCodec()
+	if r.backend != nil {
+		tikvCodec = r.backend.GetTiKVCodec()
+	}
 	return NewWriteIndexToExternalStoragePipeline(
 		wctx,
 		r.store,
@@ -461,7 +465,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		concurrency,
 		r.GetResource(),
 		rowCntCollector,
-		r.backend.GetTiKVCodec(),
+		tikvCodec,
 	)
 }
 
