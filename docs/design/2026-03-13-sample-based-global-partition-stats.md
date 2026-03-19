@@ -202,12 +202,12 @@ Persisted samples must be cleaned up when partitions change:
 
 | DDL Operation | Cleanup |
 |--------------|---------|
-| `DROP TABLE` | All samples deleted via stats GC |
-| `TRUNCATE TABLE` | All samples deleted (table gets new IDs) |
-| `DROP PARTITION` | Partition's samples deleted |
-| `TRUNCATE PARTITION` | Partition's samples deleted (new partition ID) |
-| `EXCHANGE PARTITION` | Both sides' samples deleted |
-| `REORGANIZE PARTITION` | Old partitions' samples deleted; new partitions have no samples until analyzed |
+| `DROP TABLE` | Old table/partition IDs become orphaned; samples deleted by GC |
+| `TRUNCATE TABLE` | Old table/partition IDs become orphaned; samples deleted by GC. Recreated table and partitions get new IDs with no samples until analyzed |
+| `DROP PARTITION` | Old partition ID becomes orphaned; samples deleted by GC |
+| `TRUNCATE PARTITION` | Old partition ID becomes orphaned; samples deleted by GC. Recreated partition gets a new ID with no samples until analyzed |
+| `EXCHANGE PARTITION` | Both sides' old IDs become orphaned; samples deleted by GC |
+| `REORGANIZE PARTITION` | Old partition IDs become orphaned; samples deleted by GC. New partitions get new IDs with no samples until analyzed |
 
 Cleanup is handled by the existing stats GC path (`GCStats`), which deletes rows by `table_id` from all `mysql.stats_*` tables when a physical table or partition ID becomes orphaned. `mysql.stats_table_data` must be added to this GC sweep. Since rows are keyed by `table_id` (the physical partition ID), the same `table_id`-based deletion used for other stats tables applies directly — no histogram-level or `hist_id`-based cleanup is needed.
 
