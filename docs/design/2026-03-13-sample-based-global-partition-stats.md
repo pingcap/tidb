@@ -191,7 +191,7 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
 **Partial coverage**: If some partitions lack saved samples (e.g., newly created by `REORGANIZE PARTITION`, or never analyzed with the sample-based path), those partitions are skipped during the merge. Global stats are built from the available samples, which may underrepresent the missing partitions. To ensure complete coverage, a full `ANALYZE TABLE` (without partition restriction) should be run after schema changes that add new partitions.
 
 This avoids re-scanning unchanged partitions entirely. The cost is:
-- **I/O**: reading ~50–700 KB per partition from TiKV (pruned sample blobs, depending on column count and types)
+- **I/O**: reading pruned sample blobs from TiKV (~10–20 MB total for 50 mixed-type columns, distributed across all partitions)
 - **CPU**: merging N collectors in memory (milliseconds for 1,000 partitions)
 
 Compared to today's approach of re-merging all P partitions' histograms, this is both faster and produces higher-quality global stats.
