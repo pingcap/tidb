@@ -15,9 +15,9 @@
 package model
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	_ "embed"
 	goast "go/ast"
 	"go/parser"
 	"go/token"
