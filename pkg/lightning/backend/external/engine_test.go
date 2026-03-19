@@ -364,3 +364,67 @@ func TestEngineOnDup(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadIngestDataMultiBatch(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	// Create data spread across 4 key ranges, with 2 files to exercise
+	// cross-file offset reuse in the multi-batch path (start > 0).
+	contents := [][]kvPair{
+		{
+			{key: []byte{1}, value: []byte("v1")},
+			{key: []byte{2}, value: []byte("v2")},
+			{key: []byte{3}, value: []byte("v3")},
+			{key: []byte{4}, value: []byte("v4")},
+		},
+		{
+			{key: []byte{5}, value: []byte("v5")},
+			{key: []byte{6}, value: []byte("v6")},
+			{key: []byte{7}, value: []byte("v7")},
+			{key: []byte{8}, value: []byte("v8")},
+		},
+	}
+	dataFiles, statFiles := prepareKVFiles(t, store, contents)
+
+	// 5 job keys = 4 ranges. With workerConcurrency=2 the loop produces
+	// two batches: keys[0:3] (ranges 1-2) and keys[2:5] (ranges 3-4).
+	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
+	extEngine := NewExternalEngine(
+		ctx,
+		store, dataFiles, statFiles,
+		[]byte{1}, []byte{9},
+		jobKeys,
+		[][]byte{{1}, {5}, {9}},
+		2, // workerConcurrency forces 2 batches
+		123,
+		456,
+		8,
+		true,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyError,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan engineapi.DataAndRanges, 4)
+	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
+
+	var allKVs []kvPair
+	for range 2 {
+		dr := <-loadDataCh
+		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
+	}
+	require.EqualValues(t, []kvPair{
+		{key: []byte{1}, value: []byte("v1")},
+		{key: []byte{2}, value: []byte("v2")},
+		{key: []byte{3}, value: []byte("v3")},
+		{key: []byte{4}, value: []byte("v4")},
+		{key: []byte{5}, value: []byte("v5")},
+		{key: []byte{6}, value: []byte("v6")},
+		{key: []byte{7}, value: []byte("v7")},
+		{key: []byte{8}, value: []byte("v8")},
+	}, allKVs)
+}
