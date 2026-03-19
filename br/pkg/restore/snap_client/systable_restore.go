@@ -5,6 +5,7 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -475,9 +477,27 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) (retErr error) {
 	dbName := db.Name.L
 	tableName := ti.Name.L
+	if rc.txnTotalSizeLimit > 0 {
+		sessionVars := rc.db.Session().GetSessionCtx().GetSessionVars()
+		originMemQuota := sessionVars.MemQuotaQuery
+		if err := sessionVars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.FormatUint(rc.txnTotalSizeLimit, 10)); err != nil {
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", vardef.TiDBMemQuotaQuery)
+		}
+		defer func() {
+			if err := sessionVars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
+				log.Warn("failed to restore session variable",
+					zap.String("var", vardef.TiDBMemQuotaQuery),
+					zap.Int64("restore-to", originMemQuota),
+					zap.Error(err),
+				)
+				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", vardef.TiDBMemQuotaQuery))
+			}
+		}()
+	}
+
 	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {

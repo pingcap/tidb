@@ -427,7 +427,9 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-	// We are now in version no lower than 5.x, tidb_enable_index_merge should be 1.
+	// This case upgrades from 3.0.0, where tidb_analyze_version does not exist.
+	// The current upgrade path initializes the missing value to 2 because the legacy
+	// analyze version 1 write path has been removed.
 	res = session.MustExecToRecodeSet(t, seCurVer, "select @@tidb_analyze_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
@@ -435,7 +437,61 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, "1", row.GetString(0))
+	require.Equal(t, "2", row.GetString(0))
+}
+
+func TestAnalyzeVersionUpgradeRewritesLegacyV1To2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver254 := 254
+	seV254 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver254))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.RevertVersionAndVariables(t, seV254, ver254)
+	session.MustExec(t, seV254, fmt.Sprintf("update mysql.global_variables set variable_value='1' where variable_name='%s'", vardef.TiDBAnalyzeVersion))
+	session.MustExec(t, seV254, "commit")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV254)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver254), ver)
+
+	dom.Close()
+	domCurVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	res := session.MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select variable_value from mysql.global_variables where variable_name='%s'", vardef.TiDBAnalyzeVersion))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "2", row.GetString(0))
+
+	res = session.MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_analyze_version")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "2", row.GetString(0))
 }
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {

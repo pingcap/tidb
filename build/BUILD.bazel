@@ -150,6 +150,7 @@ nogo(
                "//build/linter/deferrecover",
                "//build/linter/durationcheck",
                "//build/linter/etcdconfig",
+               "//build/linter/assertionapi",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",
                "//build/linter/forbidigo",

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -1481,6 +1482,9 @@ func TestPITRIDMap(t *testing.T) {
 }
 
 func TestPITRIDMapOnStorage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be dropped")
+	}
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)

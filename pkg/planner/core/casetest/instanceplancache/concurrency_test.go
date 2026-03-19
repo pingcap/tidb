@@ -78,8 +78,6 @@ func isDeadlockErr(err error) bool {
 }
 
 func restartTxn(tk *testkit.TestKit) {
-	// Ignore rollback error. If the txn is already aborted by the deadlock error, rollback may fail
-	// with "no active transaction", which is fine for restarting a new txn.
 	_ = tk.ExecToErr("rollback")
 	tk.MustExec("begin")
 }

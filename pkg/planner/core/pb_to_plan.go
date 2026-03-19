@@ -97,6 +97,15 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
 		}
+		if memTable, ok := p.Children()[0].(*physicalop.PhysicalMemTable); ok {
+			if extractor, ok := memTable.Extractor.(*SlowQueryExtractor); ok {
+				end := limit.Offset + limit.Count
+				if end < limit.Offset {
+					end = ^uint64(0)
+				}
+				extractor.SetRowLimitHint(end)
+			}
+		}
 	}
 	return p, err
 }

@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/aws/smithy-go/logging"
-	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 
@@ -26,9 +25,9 @@ type pingcapLogger struct {
 	logger *zap.Logger
 }
 
-func newLogger(extraFields ...zap.Field) pingcapLogger {
+func newLogger(logger *zap.Logger) pingcapLogger {
 	return pingcapLogger{
-		logger: log.L().WithOptions(zap.AddCallerSkip(1)).With(extraFields...),
+		logger: logger.WithOptions(zap.AddCallerSkip(1)),
 	}
 }
 

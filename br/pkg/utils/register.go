@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -115,6 +116,9 @@ func (tr *taskRegister) Close(ctx context.Context) (err error) {
 	if tr.curLeaseID != clientv3.NoLease {
 		_, err = tr.client.Lease.Revoke(ctx, tr.curLeaseID)
 		if err != nil {
+			if rpctypes.Error(err) == rpctypes.ErrLeaseNotFound {
+				return nil
+			}
 			log.Warn("failed to revoke the lease", zap.Error(err), zap.Int64("lease-id", int64(tr.curLeaseID)))
 		}
 	}
@@ -348,6 +352,10 @@ func GetImportTasksFrom(ctx context.Context, client *clientv3.Client) (RegisterT
 	for _, kv := range resp.Kvs {
 		leaseResp, err := client.Lease.TimeToLive(ctx, clientv3.LeaseID(kv.Lease))
 		if err != nil {
+			// The lease might be revoked between KV.Get and TimeToLive.
+			if rpctypes.Error(err) == rpctypes.ErrLeaseNotFound {
+				continue
+			}
 			return list, errors.Annotatef(err, "failed to get time-to-live of lease: %x", kv.Lease)
 		}
 		// the lease has expired

@@ -31,11 +31,11 @@ func TestCascadesDrive(t *testing.T) {
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2),(1,1)")
 
-	// simple select for quick debug of memo, the normal test case is in tests/planner/cascades/integration.test.
+	// simple select for quick debug of memo.
 	tk.MustQuery("select 1").Check(testkit.Rows("1"))
-	tk.MustQuery("explain select 1").Check(testkit.Rows(""+
-		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_5 1.00 root  rows:1"))
+	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(""+
+		"Projection 1.00 root  1->Column#1",
+		"└─TableDual 1.00 root  rows:1"))
 }
 
 func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {

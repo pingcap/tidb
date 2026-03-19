@@ -74,8 +74,10 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if cfg.concurrency > 0 {
 		loaderOptions = append(loaderOptions, mydump.WithScanFileConcurrency(cfg.concurrency))
 	}
+	if !cfg.estimateRealSize {
+		loaderOptions = append(loaderOptions, mydump.WithSkipRealSizeEstimation(true))
+	}
 
-	// TODO: we can skip some time-consuming operation in constructFileInfo (like get real size of compressed file).
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
 		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {

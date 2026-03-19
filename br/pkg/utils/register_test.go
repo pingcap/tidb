@@ -93,7 +93,6 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
 	defer func() {
 		err := register.Close(ctx)
-		// for flaky test, the lease would expire
 		if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
 			require.NoError(t, err)
 		}
@@ -114,7 +113,6 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 	require.Eventually(t, func() bool {
 		list, err := GetImportTasksFrom(ctx, client)
 		if err != nil {
-			// The task lease might be revoked during TTL query.
 			return strings.Contains(err.Error(), "requested lease not found")
 		}
 		return len(list.Tasks) == 0
@@ -122,17 +120,16 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant")
+	var list RegisterTasksList
 	require.Eventually(t, func() bool {
-		list, err := GetImportTasksFrom(ctx, client)
+		var err error
+		list, err = GetImportTasksFrom(ctx, client)
 		return err == nil && len(list.Tasks) > 0
 	}, 5*time.Second, 50*time.Millisecond)
-	list, err := GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
-	require.True(t, len(list.Tasks) > 0)
 }
 
 func TestTaskRegisterFailedReput(t *testing.T) {
@@ -146,7 +143,6 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
 	defer func() {
 		err := register.Close(ctx)
-		// for flaky test, the lease would expire
 		if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
 			require.NoError(t, err)
 		}
@@ -167,7 +163,6 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 	require.Eventually(t, func() bool {
 		list, err := GetImportTasksFrom(ctx, client)
 		if err != nil {
-			// The task lease might be revoked during TTL query.
 			return strings.Contains(err.Error(), "requested lease not found")
 		}
 		return len(list.Tasks) == 0
@@ -175,15 +170,14 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput")
+	var list RegisterTasksList
 	require.Eventually(t, func() bool {
-		list, err := GetImportTasksFrom(ctx, client)
+		var err error
+		list, err = GetImportTasksFrom(ctx, client)
 		return err == nil && len(list.Tasks) > 0
 	}, 5*time.Second, 50*time.Millisecond)
-	list, err := GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
-	require.True(t, len(list.Tasks) > 0)
 }

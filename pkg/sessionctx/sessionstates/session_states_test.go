@@ -583,10 +583,10 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_12 10000.00 root  MppVersion: 3, data:ExchangeSender_11`,
-					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
+					`TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender`,
+					`└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+					`  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -598,9 +598,9 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_6 10000.00 root  data:TableFullScan_5`,
-					`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
+					`TableReader 10000.00 root  data:TableFullScan`,
+					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -615,8 +615,8 @@ func TestSessionCtx(t *testing.T) {
 					"  `id` int(11) DEFAULT NULL,\n" +
 					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
-					`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`IndexReader 10000.00 root  index:IndexFullScan`,
+					`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -631,8 +631,8 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 					"  `id` int(11) DEFAULT NULL\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_6 10000.00 root  data:TableFullScan_5`,
-					`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`TableReader 10000.00 root  data:TableFullScan`,
+					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{

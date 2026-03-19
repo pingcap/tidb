@@ -389,14 +389,13 @@ func (m *MySQLCheckpointManager) Initialize(ctx context.Context) error {
 
 	// Create table if not exists
 	createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s (
-		db_name VARCHAR(64) NOT NULL,
-		table_name VARCHAR(64) NOT NULL,
+		table_name VARCHAR(256) NOT NULL,
 		job_id BIGINT NOT NULL,
 		status TINYINT NOT NULL,
 		message TEXT,
 		group_key VARCHAR(128),
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		PRIMARY KEY (db_name, table_name)
+		PRIMARY KEY (table_name)
 	)`, common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 
 	if _, err := m.db.ExecContext(ctx, createTableSQL); err != nil {

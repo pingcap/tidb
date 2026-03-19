@@ -312,13 +312,13 @@ func blockingMergePartitionStats2GlobalStats(
 				globalStats.Fms[i] = allFms[i][j]
 			} else {
 				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-				allFms[i][j].DestroyAndPutToPool()
+				allFms[i][j] = nil // Release for GC.
 			}
 		}
 
 		// Update the global NDV.
 		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
-		globalStats.Fms[i].DestroyAndPutToPool()
+		globalStats.Fms[i] = nil // Release for GC.
 
 		// Merge CMSketch.
 		globalStats.Cms[i] = allCms[i][0]
@@ -333,6 +333,8 @@ func blockingMergePartitionStats2GlobalStats(
 		// Note: We need to merge TopN before merging the histogram.
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
+		// FIXME: Global stats merge semantics here are driven by SessionVars().AnalyzeVersion,
+		// but the stats version persisted for the same global stats can be different.
 		var poppedTopN []statistics.TopNMeta
 		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
 		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,

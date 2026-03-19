@@ -21,12 +21,17 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	storekv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func TestStaleReadTxnScope(t *testing.T) {
@@ -82,6 +87,88 @@ func TestStaleReadReplicaReadScope(t *testing.T) {
 	}()
 
 	checkProviderReplicaReadScope("bj")
+}
+
+func TestGetStmtReadTSActivateTxnWhenAutocommitOff(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("commit")
+	tk.MustExec("set @@autocommit=0")
+
+	createStaleReadProvider(t, tk, false)
+
+	se := tk.Session()
+	mgr := sessiontxn.GetTxnManager(se)
+	require.NoError(t, mgr.OnStmtStart(context.Background(), nil))
+
+	txn, err := se.Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	require.False(t, se.GetSessionVars().InTxn())
+
+	// GetStmtReadTS should activate the transaction when autocommit is off.
+	snap, err := mgr.GetStmtReadTS()
+	require.NoError(t, err)
+	require.NotNil(t, snap)
+
+	txn, err = se.Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	require.True(t, se.GetSessionVars().InTxn())
+}
+
+func TestGetSnapshotWithStmtReadTSActivateTxnWhenAutocommitOff(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("commit")
+	tk.MustExec("set @@autocommit=0")
+	tk.MustExec("set @@tidb_replica_read='follower'")
+
+	createStaleReadProvider(t, tk, false)
+
+	se := tk.Session()
+	mgr := sessiontxn.GetTxnManager(se)
+	require.NoError(t, mgr.OnStmtStart(context.Background(), nil))
+	se.GetSessionVars().StmtCtx.IsReadOnly = true
+	require.Equal(t, kv.ReplicaReadFollower, se.GetSessionVars().GetReplicaRead())
+
+	snap, err := mgr.GetSnapshotWithStmtReadTS()
+	require.NoError(t, err)
+	require.NotNil(t, snap)
+
+	// In client-go, stale point-get requests (CmdGet) always override ReplicaReadType to "mixed"
+	// via EnableStaleWithMixedReplicaRead(), which makes it hard to observe the snapshot's replica
+	// read option. Use a scan request (CmdScan) to validate ReplicaReadType directly.
+	got := storekv.ReplicaReadType(255)
+	snap.SetOption(kv.RPCInterceptor, interceptor.NewRPCInterceptor("capture-replica-read", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			if req != nil && req.Type == tikvrpc.CmdScan {
+				got = req.ReplicaReadType
+			}
+			return next(target, req)
+		}
+	}))
+
+	is := domain.GetDomain(se).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+
+	iter, err := snap.Iter(rowKey, rowKey.PrefixNext())
+	require.NoError(t, err)
+	require.True(t, iter.Valid())
+	iter.Close()
+
+	require.Equal(t, storekv.ReplicaReadFollower, got)
 }
 
 func createStaleReadProvider(t *testing.T, tk *testkit.TestKit, explicitTxn bool) *staleread.StalenessTxnContextProvider {

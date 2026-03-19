@@ -457,6 +457,26 @@ set @@tidb_enable_outer_join_reorder=default;
 select @@tidb_enable_outer_join_reorder;
 @@tidb_enable_outer_join_reorder
 1
+select /*+ set_var(tidb_opt_enable_advanced_join_reorder=0) */ @@tidb_opt_enable_advanced_join_reorder;
+@@tidb_opt_enable_advanced_join_reorder
+0
+select @@tidb_opt_enable_advanced_join_reorder;
+@@tidb_opt_enable_advanced_join_reorder
+1
+set @@tidb_opt_enable_advanced_join_reorder=default;
+select @@tidb_opt_enable_advanced_join_reorder;
+@@tidb_opt_enable_advanced_join_reorder
+1
+select /*+ set_var(tidb_opt_enable_advanced_join_reorder=1) */ @@tidb_opt_enable_advanced_join_reorder;
+@@tidb_opt_enable_advanced_join_reorder
+1
+select @@tidb_opt_enable_advanced_join_reorder;
+@@tidb_opt_enable_advanced_join_reorder
+1
+set @@tidb_opt_enable_advanced_join_reorder=default;
+select @@tidb_opt_enable_advanced_join_reorder;
+@@tidb_opt_enable_advanced_join_reorder
+1
 select /*+ set_var(tidb_enable_null_aware_anti_join=0) */ @@tidb_enable_null_aware_anti_join;
 @@tidb_enable_null_aware_anti_join
 0
@@ -1217,26 +1237,6 @@ set @@tidb_enable_index_merge=default;
 select @@tidb_enable_index_merge;
 @@tidb_enable_index_merge
 1
-select /*+ set_var(tidb_enable_extended_stats=0) */ @@tidb_enable_extended_stats;
-@@tidb_enable_extended_stats
-0
-select @@tidb_enable_extended_stats;
-@@tidb_enable_extended_stats
-0
-set @@tidb_enable_extended_stats=default;
-select @@tidb_enable_extended_stats;
-@@tidb_enable_extended_stats
-0
-select /*+ set_var(tidb_enable_extended_stats=1) */ @@tidb_enable_extended_stats;
-@@tidb_enable_extended_stats
-1
-select @@tidb_enable_extended_stats;
-@@tidb_enable_extended_stats
-0
-set @@tidb_enable_extended_stats=default;
-select @@tidb_enable_extended_stats;
-@@tidb_enable_extended_stats
-0
 select /*+ set_var(tidb_executor_concurrency=1) */ @@tidb_executor_concurrency;
 @@tidb_executor_concurrency
 1

@@ -565,11 +565,12 @@ type PlanHints struct {
 	NoIndexLookUpPushDown []HintedTable    // no_index_lookup_pushdown
 
 	// Hints belows are not associated with any particular table.
-	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on
-	PreferAggToCop   bool
-	PreferLimitToCop bool // limit_to_cop
-	CTEMerge         bool // merge
-	TimeRangeHint    ast.HintTimeRange
+	PreferAggType     uint // hash_agg, merge_agg, agg_to_cop and so on
+	PreferAggToCop    bool
+	PreferLimitToCop  bool // limit_to_cop
+	CTEMerge          bool // merge
+	TimeRangeHint     ast.HintTimeRange
+	StraightJoinOrder bool // straight_join
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -784,6 +785,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
 		leadingList                                                                     *ast.LeadingList
+		straightJoinHint                                                                bool
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -952,6 +954,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				continue
 			}
 			subQueryHintFlags |= HintFlagNoDecorrelate
+		case HintStraightJoin:
+			straightJoinHint = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -988,6 +992,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		HJBuild:               hjBuildTables,
 		HJProbe:               hjProbeTables,
 		NoIndexLookUpPushDown: noIndexLookUpPushDownTables,
+		StraightJoinOrder:     straightJoinHint,
 	}, subQueryHintFlags, nil
 }
 

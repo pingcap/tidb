@@ -18,13 +18,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"time"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
-	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
@@ -56,7 +57,7 @@ func (w *withCompression) Create(ctx context.Context, name string, o *storeapi.W
 		writer = bw.GetWriter()
 	}
 	// the external storage will do access recording, so no need to pass it again.
-	compressedWriter := objectio.NewBufferedWriter(writer, s3store.HardcodedChunkSize, w.compressType, nil)
+	compressedWriter := objectio.NewBufferedWriter(writer, s3like.HardcodedChunkSize, w.compressType, nil)
 	return compressedWriter, nil
 }
 
@@ -97,6 +98,10 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 		return nil, err
 	}
 	return io.ReadAll(compressBf)
+}
+
+func (w *withCompression) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	return w.Storage.PresignFile(ctx, fileName, expire)
 }
 
 // compressReader is a wrapper for compress.Reader
