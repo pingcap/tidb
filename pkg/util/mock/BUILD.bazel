@@ -33,7 +33,6 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
-        "//pkg/store/driver/txn",
         "//pkg/table/tblctx",
         "//pkg/table/tblsession",
         "//pkg/util/chunk",
