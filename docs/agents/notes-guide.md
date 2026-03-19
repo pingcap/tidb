@@ -23,3 +23,7 @@ Policy-level requirements remain in the repository root `AGENTS.md`.
 ## Planner Rule Notes
 
 - Planner rule notes live at `docs/note/planner/rule/rule_ai_notes.md`.
+
+## IMPORT INTO Notes
+
+- IMPORT INTO notes live at `docs/note/import-into/README.md`.

@@ -60,6 +60,25 @@ Use it to quickly find:
   - `pkg/ddl/backfilling_dist_executor.go`: backfill task executor extension.
   - `pkg/ddl/backfilling_clean_s3.go`: backfill cleanup hook implementation.
 
+- Framework internals:
+  - `pkg/dxf/framework/proto/task.go`: task rank/order (`priority`, `create_time`,
+    `id`), slot-related task fields, and runtime slot calculation.
+  - `pkg/dxf/framework/proto/step.go`: task-type step definitions and step-order
+    contracts (includes compatibility notes on step constants).
+  - `pkg/dxf/framework/scheduler/scheduler_manager.go`: owner-side task admission,
+    slot reservation, cleanup/historical transfer loops.
+  - `pkg/dxf/framework/taskexecutor/manager.go`: node-side executor start/stop,
+    preemption handling, and meta recovery loop.
+  - `pkg/dxf/framework/scheduler/slots.go` and
+    `pkg/dxf/framework/taskexecutor/slot.go`: slot/stripe reservation logic and
+    preemption decisions.
+
+- Learning/edge-case references:
+  - `docs/note/import-into/README.md`: IMPORT INTO conflict-resolution and
+    cleanup troubleshooting map.
+  - `pkg/dxf/example/`: minimal DXF app skeleton (scheduler + executor extension
+    wiring) useful when adding a new task type.
+
 ## Runtime Flow (Cheatsheet)
 
 1. Business logic builds task metadata/logical plan and submits a DXF task.
@@ -68,6 +87,47 @@ Use it to quickly find:
 4. Scheduler-manager loop runs only while the local node is DDL owner.
 5. Scheduler extension advances steps and dispatches subtasks.
 6. Executor extension executes subtasks and reports state/summary.
+
+## New Task Type Checklist
+
+- Define/extend task type and step enums in `pkg/dxf/framework/proto/` first.
+  - Keep step values backward-compatible (`step.go` explicitly forbids changing
+    existing constant values).
+- Implement scheduler extension (`scheduler.Extension`) and task executor extension
+  (`taskexecutor.Extension`) for the new task type.
+- Register all required factories:
+  - owner side: `scheduler.RegisterSchedulerFactory(...)`
+  - node side: `taskexecutor.RegisterTaskType(...)`
+  - optional cleanup: `scheduler.RegisterSchedulerCleanUpFactory(...)`
+- Keep `GetNextStep` deterministic from task base state (avoid relying on mutable
+  task meta there), and keep subtask generation stable when using batch switch APIs.
+
+## Invariants and Pitfalls
+
+- Task rank drives both scheduling and preemption: higher rank means smaller
+  `(priority, create_time, id)` tuple.
+- `RequiredSlots` is the reservation baseline, while runtime execution may use a
+  lower slot count through `ExtraParams.MaxRuntimeSlots` + `TargetSteps`.
+- Empty target scope prefers `"background"` nodes when present; otherwise it falls
+  back to empty-scope nodes.
+- Scheduler manager processes normal runnable states with slot allocation, but at
+  `MaxConcurrentTask` limit it switches to no-resource states only (for fast handling
+  of pausing/cancelling/reverting/modifying tasks).
+- Task executor can exit after a period with no runnable subtasks (about 10s),
+  then be restarted by manager loops; this is expected behavior for resource reuse.
+
+## Debug Focus Areas
+
+- Task state transitions and scheduling-state handlers:
+  `pkg/dxf/framework/scheduler/state_transform.go` and
+  `pkg/dxf/framework/scheduler/scheduler.go`.
+- Slot reservation / preemption decisions:
+  `pkg/dxf/framework/scheduler/slots.go`,
+  `pkg/dxf/framework/taskexecutor/slot.go`, and
+  `pkg/dxf/framework/taskexecutor/manager.go`.
+- Keyspace/scope routing (classic vs nextgen service behavior):
+  `pkg/domain/domain.go`, `pkg/dxf/framework/handle/handle.go`, and
+  `pkg/dxf/framework/storage/task_table.go`.
 
 ## Problem-Oriented Read Order
 
@@ -88,26 +148,16 @@ Use it to quickly find:
     `pkg/ddl/backfilling_dist_executor.go`, and cross-check
     `docs/agents/ddl/README.md`.
 
-## Fast Search Commands
+## Navigation Queries
 
-```bash
-# DXF registration points.
-rg --line-number --glob '*.go' \
-  'RegisterSchedulerFactory|RegisterSchedulerCleanUpFactory|RegisterTaskType' \
-  pkg/session pkg/ddl pkg/dxf
-
-# Framework control APIs and their call sites.
-rg --line-number --glob '*.go' \
-  'SubmitTask|WaitTask|CancelTask|PauseTask|ResumeTask|ModifyTaskByID' \
-  pkg/dxf pkg/executor pkg/ddl
-
-# IMPORT INTO + DXF integration points.
-rg --line-number --glob '*.go' 'proto.ImportInto|importinto' \
-  pkg/dxf pkg/executor pkg/session
-
-# DDL distributed backfill + DXF integration points.
-rg --line-number --glob '*.go' 'proto.Backfill|backfill' pkg/ddl
-```
+- Find DXF registration points:
+  `rg --line-number --glob '*.go' 'RegisterSchedulerFactory|RegisterSchedulerCleanUpFactory|RegisterTaskType' pkg/session pkg/ddl pkg/dxf`
+- Find framework control APIs and main call sites:
+  `rg --line-number --glob '*.go' 'SubmitTask|WaitTask|CancelTask|PauseTask|ResumeTask|ModifyTaskByID' pkg/dxf pkg/executor pkg/ddl`
+- Find IMPORT INTO integration points:
+  `rg --line-number --glob '*.go' 'proto.ImportInto|importinto' pkg/dxf pkg/executor pkg/session`
+- Find DDL distributed backfill integration points:
+  `rg --line-number --glob '*.go' 'proto.Backfill|backfill' pkg/ddl`
 
 ## Test Surfaces
 
