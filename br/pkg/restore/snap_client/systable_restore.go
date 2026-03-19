@@ -48,16 +48,15 @@ var statsTables = map[string]map[string]struct{}{
 
 var renameableSysTables = map[string]map[string]struct{}{
 	"mysql": {
-		"bind_info":           {},
-		"user":                {},
-		"db":                  {},
-		"tables_priv":         {},
-		"columns_priv":        {},
-		"default_roles":       {},
-		"role_edges":          {},
-		"global_priv":         {},
-		"global_grants":       {},
-		"tidb_masking_policy": {}, // column-level masking policies (since v8.5.0)
+		"bind_info":     {},
+		"user":          {},
+		"db":            {},
+		"tables_priv":   {},
+		"columns_priv":  {},
+		"default_roles": {},
+		"role_edges":    {},
+		"global_priv":   {},
+		"global_grants": {},
 	},
 }
 

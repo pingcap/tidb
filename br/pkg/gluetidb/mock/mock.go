@@ -78,6 +78,12 @@ func (*mockSession) CreatePlacementPolicy(_ context.Context, _ *model.PolicyInfo
 	return nil
 }
 
+// CreateMaskingPolicy implements glue.Session.
+func (*mockSession) CreateMaskingPolicy(_ context.Context, _ *model.MaskingPolicyInfo) error {
+	log.Fatal("unimplemented CreateMaskingPolicy for mock session")
+	return nil
+}
+
 // CreateTables implements glue.BatchCreateTableSession.
 func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableInfo,
 	_ ...ddl.CreateTableOption) error {

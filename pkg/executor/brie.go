@@ -817,6 +817,38 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
+// CreateMaskingPolicy implements glue.Session
+func (gs *tidbGlueSession) CreateMaskingPolicy(_ context.Context, policy *model.MaskingPolicyInfo) error {
+	// Generate and execute CREATE MASKING POLICY DDL
+	ddlSQL := generateCreateMaskingPolicyDDLForBRIE(policy)
+	err := gs.Execute(context.Background(), ddlSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("create masking policy succeed", zap.Stringer("name", policy.Name))
+	return nil
+}
+
+func generateCreateMaskingPolicyDDLForBRIE(policy *model.MaskingPolicyInfo) string {
+	var sb strings.Builder
+	sb.WriteString("CREATE MASKING POLICY ")
+	sb.WriteString(policy.Name.String())
+	sb.WriteString(" ON ")
+	sb.WriteString(policy.DBName.String())
+	sb.WriteString(".")
+	sb.WriteString(policy.TableName.String())
+	sb.WriteString(" (")
+	sb.WriteString(policy.ColumnName.String())
+	sb.WriteString(") AS ")
+	sb.WriteString(policy.Expression)
+	if policy.Status == model.MaskingPolicyStatusEnable {
+		sb.WriteString(" ENABLE")
+	} else {
+		sb.WriteString(" DISABLE")
+	}
+	return sb.String()
+}
+
 // Close implements glue.Session
 func (gs *tidbGlueSession) Close() {
 	CloseSession(gs.se)

@@ -5,6 +5,7 @@ package gluetidb
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -242,6 +243,38 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	gs.se.SetValue(sessionctx.QueryString, gs.showCreatePlacementPolicy(policy))
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
+}
+
+// CreateMaskingPolicy implements glue.Session.
+func (gs *tidbSession) CreateMaskingPolicy(ctx context.Context, policy *model.MaskingPolicyInfo) error {
+	// Generate and execute CREATE MASKING POLICY DDL
+	ddlSQL := generateCreateMaskingPolicyDDL(policy)
+	err := gs.Execute(ctx, ddlSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("create masking policy succeed", zap.Stringer("name", policy.Name))
+	return nil
+}
+
+func generateCreateMaskingPolicyDDL(policy *model.MaskingPolicyInfo) string {
+	var sb strings.Builder
+	sb.WriteString("CREATE MASKING POLICY ")
+	sb.WriteString(policy.Name.String())
+	sb.WriteString(" ON ")
+	sb.WriteString(policy.DBName.String())
+	sb.WriteString(".")
+	sb.WriteString(policy.TableName.String())
+	sb.WriteString(" (")
+	sb.WriteString(policy.ColumnName.String())
+	sb.WriteString(") AS ")
+	sb.WriteString(policy.Expression)
+	if policy.Status == model.MaskingPolicyStatusEnable {
+		sb.WriteString(" ENABLE")
+	} else {
+		sb.WriteString(" DISABLE")
+	}
+	return sb.String()
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
