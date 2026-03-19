@@ -445,14 +445,19 @@ func TestWriteSlowLog(t *testing.T) {
 
 func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	original := config.GetGlobalConfig()
+	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
 	t.Cleanup(func() {
 		if original != nil {
 			config.StoreGlobalConfig(original)
 		}
+		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
 	})
+	variable.GenerateBinaryPlan.Store(false)
 
 	cfg := config.NewConfig()
 	cfg.RUV2 = config.DefaultRUV2Config()
+	cfg.Instance.EnableSlowLog.Store(false)
+	cfg.Instance.RecordPlanInSlowLog = 0
 	config.StoreGlobalConfig(cfg)
 
 	reporter := &mockRUV2ConsumptionReporter{}
