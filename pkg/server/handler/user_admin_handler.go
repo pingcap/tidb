@@ -88,18 +88,18 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	auditUser := auditValue(username)
 	if req.Method != http.MethodPost {
 		err := errors.New("only POST is supported")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusMethodNotAllowed, err)
 		return
 	}
 	if err := requireMTLS(req, h.cfg); err != nil {
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusForbidden, err)
 		return
 	}
 	if username == "" {
 		err := errors.New("missing username")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
@@ -107,13 +107,13 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	var payload resetPasswordRequest
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil && err != io.EOF {
 		wrapped := errors.Wrap(err, "invalid request body")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), wrapped)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), wrapped)
 		WriteErrorWithCode(w, http.StatusBadRequest, wrapped)
 		return
 	}
 	if strings.TrimSpace(payload.NewPassword) == "" {
 		err := errors.New("missing new_password")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
@@ -121,7 +121,7 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
 	if err != nil {
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -129,19 +129,19 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 
 	hosts, err := listUserHosts(ctx, se, username)
 	if err != nil {
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	if len(hosts) == 0 {
 		err := errors.New("user not found")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusNotFound, err)
 		return
 	}
 
 	for _, host := range hosts {
-		stmtText := buildAlterUserPasswordSQL(username, host)
+		stmtText := buildAlterUserPasswordSQL(username, host, payload.NewPassword)
 		if _, err := se.ExecuteInternal(ctx, "ALTER USER %?@%? IDENTIFIED BY %?", username, host, payload.NewPassword); err != nil {
 			auditUserAdminStmt(req, stmtText, err)
 			WriteErrorWithCode(w, http.StatusInternalServerError, err)
@@ -251,7 +251,7 @@ func NewUserCreateHandler(store kv.Storage, cfg *config.Config) *UserCreateHandl
 
 // ServeHTTP implements http.Handler.
 func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	placeholderStmt := buildCreateUserSQL(auditUnknownValue, defaultUserHost)
+	placeholderStmt := buildCreateUserSQL(auditUnknownValue, defaultUserHost, auditRedactedPassword)
 	if req.Method != http.MethodPost {
 		err := errors.New("only POST is supported")
 		auditUserAdminStmt(req, placeholderStmt, err)
@@ -274,13 +274,16 @@ func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	username := strings.TrimSpace(payload.Username)
 	password := payload.Password
-	stmtText := buildCreateUserSQL(auditValue(username), defaultUserHost)
+	stmtText := buildCreateUserSQL(auditValue(username), defaultUserHost, auditRedactedPassword)
 	if username == "" || strings.TrimSpace(password) == "" {
 		err := errors.New("missing username or password")
 		auditUserAdminStmt(req, stmtText, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
+
+	// username and password are valid; rebuild with real password so audit log can show it when redact=OFF
+	stmtText = buildCreateUserSQL(username, defaultUserHost, password)
 
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
@@ -530,12 +533,12 @@ func buildAlterUserExpireSQL(username, host string) string {
 	return sqlescape.MustEscapeSQL("ALTER USER %?@%? PASSWORD EXPIRE", username, host)
 }
 
-func buildAlterUserPasswordSQL(username, host string) string {
-	return sqlescape.MustEscapeSQL("ALTER USER %?@%? IDENTIFIED BY %?", username, host, auditRedactedPassword)
+func buildAlterUserPasswordSQL(username, host, password string) string {
+	return sqlescape.MustEscapeSQL("ALTER USER %?@%? IDENTIFIED BY %?", username, host, password)
 }
 
-func buildCreateUserSQL(username, host string) string {
-	return sqlescape.MustEscapeSQL("CREATE USER %?@%? IDENTIFIED BY %?", username, host, auditRedactedPassword)
+func buildCreateUserSQL(username, host, password string) string {
+	return sqlescape.MustEscapeSQL("CREATE USER %?@%? IDENTIFIED BY %?", username, host, password)
 }
 
 func buildDropUserSQL(username, host string) string {
@@ -585,6 +588,28 @@ func parseStmtNode(sql string) ast.StmtNode {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
 		return nil
+	}
+	// Clear ByAuthString/ByHashString so that isPasswordStmt() in the audit extension
+	// returns false for HTTP API events. The audit log's isPasswordStmt guard exists to
+	// prevent real passwords from leaking via OriginalText(); for HTTP API calls the
+	// password in originalText is either '******' (early-exit paths) or the real password
+	// intentionally passed by the caller — in both cases the redact flag alone should
+	// control whether OriginalText() or SQLDigest() is used.
+	switch n := stmt.(type) {
+	case *ast.CreateUserStmt:
+		for _, spec := range n.Specs {
+			if spec.AuthOpt != nil {
+				spec.AuthOpt.ByAuthString = false
+				spec.AuthOpt.ByHashString = false
+			}
+		}
+	case *ast.AlterUserStmt:
+		for _, spec := range n.Specs {
+			if spec.AuthOpt != nil {
+				spec.AuthOpt.ByAuthString = false
+				spec.AuthOpt.ByHashString = false
+			}
+		}
 	}
 	return stmt
 }
@@ -685,6 +710,7 @@ func (i *userAdminStmtEventInfo) PreparedParams() []types.Datum {
 func (i *userAdminStmtEventInfo) OriginalText() string {
 	return i.originalText
 }
+
 
 func (i *userAdminStmtEventInfo) SQLDigest() (normalized string, digest *parser.Digest) {
 	return i.normalizedSQL, i.digest
