@@ -407,15 +407,12 @@ func TestTiCIHybridVectorPlannerPath(t *testing.T) {
 	// No LIMIT: should NOT use TiCI vector path (not a top-k query).
 	tk.MustQuery("explain format='brief' select * from t_vec order by vec_l2_distance(v, '[1,2,3]')").CheckNotContain("vector search")
 
-	// Hybrid index without index_info (no distance_metric specified): should not panic.
+	// Hybrid index without distance_metric should be rejected by DDL validation.
 	tk.MustExec("create table t_vec2(a int primary key, b text, v vector(3))")
-	tk.MustExec(`create hybrid index idx_hybrid2 on t_vec2(b, v) parameter '{
+	tk.MustContainErrMsg(`create hybrid index idx_hybrid2 on t_vec2(b, v) parameter '{
 		"vector":[{"columns":["v"]}],
 		"sharding_key":{"columns":["b"]}
-	}'`)
-	testkit.SetTiFlashReplica(t, dom, "test", "t_vec2")
-	// Should not panic, and should not use vector path (no metric to match).
-	tk.MustQuery("explain format='brief' select * from t_vec2 order by vec_l2_distance(v, '[1,2,3]') limit 10").CheckNotContain("vector search")
+	}'`, "must specify a distance_metric")
 }
 
 func TestTiCIWithWrongColumn(t *testing.T) {
