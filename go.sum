@@ -63,10 +63,6 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c h1:pxW6RcqyfI9/kWtOwnv/G+AzdKuy2ZrqINhenH4HyNs=
 github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
-github.com/ClamChowderTiDB/client-go/v2 v2.0.8-0.20260327194506-26bf6c5f752d h1:/iv8R2MGOCarSqZnDYfaVc6lklLxxWjLYYT6qgsC6/s=
-github.com/ClamChowderTiDB/client-go/v2 v2.0.8-0.20260327194506-26bf6c5f752d/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
-github.com/ClamChowderTiDB/pd/client v0.0.0-20260325174811-bb159202fc25 h1:hrpYgfTKPB/D5QBr4upIYQzAOrD+qynWjoGVwCgr51k=
-github.com/ClamChowderTiDB/pd/client v0.0.0-20260325174811-bb159202fc25/go.mod h1:W5a0sDadwUpI9k8p7M77d3jo253ZHdmua+u4Ho4Xw8U=
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
 github.com/DATA-DOG/go-sqlmock v1.5.0/go.mod h1:f/Ixk793poVmq4qj/V1dPUg2JEAKC73Q5eFN3EC/SaM=
 github.com/DataDog/zstd v1.5.5 h1:oWf5W7GtOLgp6bciQYDmhHHjdhYkALu6S/5Ni9ZgSvQ=
