@@ -69,6 +69,7 @@ var nextIOAccKey nextIOAccKeyType
 type ruv2ExecutorMetric struct {
 	label    string
 	level    int
+	// useCells selects the counting unit: true means cells (rows*cols), false means rows.
 	useCells bool
 }
 
@@ -581,6 +582,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	inRows := stdatomic.LoadInt64(&myAcc.inRows)
 	inCells := stdatomic.LoadInt64(&myAcc.inCells)
 	outCells := calcCellCount(outRows, outCols)
+	// Dispatch both row-based and cell-based deltas; info.useCells filters each executor to its configured unit.
 	if inRows != 0 {
 		addRUV2ExecutorMetricWithInfo(ctx, info, false, inRows)
 	}
