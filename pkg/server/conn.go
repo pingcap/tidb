@@ -2590,12 +2590,8 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
-<<<<<<< HEAD
-	if !cc.ctx.AuthWithoutVerification(user) {
-=======
 	cc.moveResourceGroupCounter(oldResourceGroup)
-	if !cc.ctx.AuthWithoutVerification(ctx, user) {
->>>>>>> 2455c28685f (conn: fix the issue that the connection count for resource group is not correctly tracked for `ComUserChange` and `ComReset` (#65607))
+	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB
