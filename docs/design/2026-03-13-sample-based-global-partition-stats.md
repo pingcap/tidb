@@ -188,7 +188,7 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
 
 **Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th column in the original ANALYZE request. On load, the FMSketch array length of the saved collector is compared against the current ANALYZE's collector. If they differ (columns added or dropped), the saved samples are discarded and the partition falls back to merge-based global stats. This check does not detect column type or collation changes with the same column count; a schema fingerprint (column IDs + types) could strengthen this in a future iteration.
 
-**Partial coverage**: If some partitions lack saved samples (e.g., newly created by `REORGANIZE PARTITION`, or never analyzed with the sample-based path), those partitions are skipped during the merge. Global stats are built from the available samples, which may underrepresent the missing partitions. To ensure complete coverage, a full `ANALYZE TABLE` (without partition restriction) should be run after schema changes that add new partitions.
+**Missing samples**: If any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms, the merge-based path is used for global stats instead (a warning is logged). If no partition has existing TopN/histograms, global stats are built from whatever samples are available. In both cases, the analyzed partition's samples are still saved for future use. To enable the sample-based path for all partitions, run a full `ANALYZE TABLE`.
 
 This avoids re-scanning unchanged partitions entirely. The cost is:
 - **I/O**: reading pruned sample blobs from TiKV (~10–20 MB total for 50 mixed-type columns, distributed across all partitions)
@@ -213,27 +213,43 @@ Cleanup is handled by the existing stats GC path (`GCStats`), which deletes rows
 
 ### User Interface
 
-A session variable `tidb_enable_sample_based_global_stats` guards the feature during development and serves as a fallback to the merge-based path if needed. The goal is to enable it by default once the implementation is validated.
+A session variable `tidb_sample_based_global_stats` controls the feature as a three-level enum, allowing staged rollout and safe fallback:
 
 | Property | Value |
 |----------|-------|
 | Scope | SESSION, GLOBAL |
 | Default | ON |
-| Type | Boolean |
+| Type | Enum: OFF, SAVE, ON |
 | Prerequisite | Analyze Version 2 with dynamic partition pruning |
 
-When enabled, ANALYZE for partitioned tables will collect samples, persist pruned copies, and build global stats from merged samples instead of merging histograms. Setting it to OFF reverts to the merge-based path.
+| Value | Behavior |
+|-------|----------|
+| `OFF` | No new code exercised. Merge-based path used for global stats. No samples saved. |
+| `SAVE` | Samples are saved to `mysql.stats_table_data` after each partition ANALYZE, but merge-based path is still used for global stats. This validates the persistence code without affecting stats quality. |
+| `ON` | Samples are saved and used for building global stats. Falls back to merge-based when needed (see Fallback and Compatibility). |
+
+The variable defaults to `ON` and serves as a fail-safe: if issues are discovered after release, operators can set it to `SAVE` (continues populating samples without using them, allowing investigation) or `OFF` (disables all new code paths) without requiring a version rollback. SESSION scope allows testing individual ANALYZE runs. The goal is to eventually remove the variable (effectively always `ON`).
 
 ### Fallback and Compatibility
 
 The sample-based path falls back transparently to the merge-based path when:
-- The variable is disabled
+- The variable is set to `OFF` or `SAVE`
 - No sample collector is available (e.g., all partition analyses failed)
 - Schema mismatch detected when loading saved samples (columns were added/dropped between analyzes)
+- Any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms from a prior analyze (see Gradual Transition below)
 
-When some but not all partitions lack saved samples (e.g., newly created partitions or first analysis), those partitions are skipped during the sample merge and global stats are built from available samples only — this is partial coverage, not a full fallback (see [Partial coverage](#single-partition-re-analyze)).
+When a fallback occurs, a warning should be logged indicating the reason (e.g., "N partitions have no saved samples but have existing stats, falling back to merge-based global stats") so that operators can identify tables that need a full `ANALYZE TABLE` to populate samples.
 
-**Upgrade**: No samples exist yet. First ANALYZE with the flag enabled populates them. The merge-based path works as fallback until then.
+**Gradual transition after upgrade or DDL**: After upgrade or when new partitions are added, no saved samples exist. Building global stats from only the analyzed partition's samples would be a regression — worse than the current merge-based path which uses all partitions' histograms. To avoid this, the sample-based path uses a hybrid approach during the transition:
+
+1. Each partition's ANALYZE saves its pruned samples to `mysql.stats_table_data` regardless of whether all partitions have saved sample data yet (a partition with zero rows or very few rows still gets an entry — it just contains zero or few samples)
+2. For building global stats, if any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms from a prior analyze, the merge-based path is used instead — the existing stats are more representative than partial sample coverage
+3. If no partition has existing TopN/histograms (e.g., a freshly created table), global stats are built from whatever samples are available — there is nothing to fall back to
+4. Once all partitions have saved sample data in `mysql.stats_table_data` (after a full `ANALYZE TABLE` or after auto-analyze has covered every partition), the sample-based path takes over
+
+This means auto-analyze gradually populates samples partition by partition, while global stats quality is maintained by the merge-based fallback when existing stats are available.
+
+**Upgrade**: No saved sample data exists in `mysql.stats_table_data` yet, but existing TopN/histograms are available from prior analyzes. The merge-based path is used for global stats while auto-analyze gradually populates saved samples. A full `ANALYZE TABLE` populates all partitions at once.
 
 **Downgrade**: Saved sample rows in `mysql.stats_table_data` are harmlessly ignored by older versions. The merge-based path works without samples.
 
@@ -259,11 +275,12 @@ When some but not all partitions lack saved samples (e.g., newly created partiti
 3. **Schema change between analyzes**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path.
 4. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
 5. **Empty partitions**: Partitions with zero rows are handled gracefully during merge.
-
+6. **Gradual transition after upgrade**: Auto-analyze of individual partitions saves samples but falls back to merge-based global stats when other partitions have TopN/histograms but no saved sample data in `mysql.stats_table_data`. A warning is logged. After all partitions have saved sample data, the sample-based path activates.
+7. **All partitions new (no prior stats)**: A freshly created table where no partition has TopN/histograms — sample-based path is used directly since there is nothing to fall back to.
 
 ### Compatibility Tests
 
-- **Upgrade**: Cluster analyzed with merge-based path upgrades, enables flag, re-analyzes one partition — global stats are rebuilt correctly.
+- **Upgrade**: Cluster analyzed with merge-based path upgrades, auto-analyzes one partition — samples are saved, merge-based path used for global stats, warning logged. After full `ANALYZE TABLE`, sample-based path takes over.
 - **Downgrade**: Cluster with saved samples downgrades — merge-based path works, samples ignored.
 - **BR**: Full backup with stats included preserves samples. After restore, incremental rebuild works.
 
@@ -330,6 +347,6 @@ Store intermediate merge results in a tree structure, enabling O(log N) incremen
 
 2. **Staleness policy**: When loading saved samples for incremental rebuild, should there be a staleness threshold (e.g., skip partitions whose `ModifyCount` exceeds X% of `Count`)? Currently, any saved sample is used regardless of age.
 
-3. **Removing the variable**: The variable defaults to ON. Once the implementation is stable and validated, should the variable be removed entirely, making the sample-based path the only option?
+3. **Removing the variable**: The variable defaults to ON and serves as a fail-safe. Once the implementation is stable and validated, should the variable be removed entirely, making the sample-based path the only option?
 
 4. **Interaction with async merge**: The existing `tidb_enable_async_merge_global_stats` merges partition stats asynchronously. How should the sample-based path interact with this? Should sample persistence also be async?
