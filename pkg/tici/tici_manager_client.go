@@ -289,7 +289,7 @@ func buildCreateFulltextIndexRequest(tblInfo *model.TableInfo, indexID int64, sc
 }
 
 func buildAddPartitionRequest(tblInfo *model.TableInfo, indexIDs []int64, schemaName string, keyspaceID uint32, parserInfo *ParserInfo) (*AddPartitionRequest, error) {
-	tableInfoJSON, err := cloneAndMarshalTableInfo(tblInfo)
+	tableInfoJSON, err := cloneAndMarshalAddPartitionTableInfo(tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,6 +1329,25 @@ func cloneAndMarshalTableInfo(tbl *model.TableInfo) ([]byte, error) {
 	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
 	if err != nil {
 		return nil, err
+	}
+	return json.Marshal(clonedTbl)
+}
+
+// cloneAndMarshalAddPartitionTableInfo narrows the partition snapshot in AddPartition
+// requests to the newly-added partitions only, so TiCI does not treat existing
+// partitions as fresh additions.
+func cloneAndMarshalAddPartitionTableInfo(tbl *model.TableInfo) ([]byte, error) {
+	if tbl == nil {
+		return nil, errors.New("tableInfo is nil")
+	}
+	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
+	if err != nil {
+		return nil, err
+	}
+	if clonedTbl.Partition != nil && len(clonedTbl.Partition.AddingDefinitions) > 0 {
+		clonedTbl.Partition.Definitions = append([]model.PartitionDefinition(nil), clonedTbl.Partition.AddingDefinitions...)
+		clonedTbl.Partition.AddingDefinitions = nil
+		clonedTbl.Partition.DroppingDefinitions = nil
 	}
 	return json.Marshal(clonedTbl)
 }

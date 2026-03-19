@@ -17,6 +17,7 @@ package tici
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -198,6 +199,44 @@ func TestCreateFulltextIndex(t *testing.T) {
 		err = ctx.DropPartition(context.Background(), tableID, indexIDs)
 		require.ErrorContains(t, err, "rpc error")
 	})
+}
+
+func TestBuildAddPartitionRequestUsesOnlyAddingDefinitions(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("t"),
+		Version: 1,
+		Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}},
+		Partition: &model.PartitionInfo{
+			Type: ast.PartitionTypeRange,
+			Definitions: []model.PartitionDefinition{
+				{ID: 101, Name: ast.NewCIStr("p2023")},
+				{ID: 102, Name: ast.NewCIStr("p2024")},
+			},
+			AddingDefinitions: []model.PartitionDefinition{
+				{ID: 103, Name: ast.NewCIStr("p2026")},
+			},
+			DroppingDefinitions: []model.PartitionDefinition{
+				{ID: 104, Name: ast.NewCIStr("p_old")},
+			},
+		},
+	}
+
+	req, err := buildAddPartitionRequest(tblInfo, []int64{2, 3}, "testdb", 123, nil)
+	require.NoError(t, err)
+
+	var got model.TableInfo
+	require.NoError(t, json.Unmarshal(req.TableInfo, &got))
+	require.NotNil(t, got.Partition)
+	require.Len(t, got.Partition.Definitions, 1)
+	require.Equal(t, "p2026", got.Partition.Definitions[0].Name.L)
+	require.Empty(t, got.Partition.AddingDefinitions)
+	require.Empty(t, got.Partition.DroppingDefinitions)
+
+	// Keep the source table unchanged for the caller.
+	require.Len(t, tblInfo.Partition.Definitions, 2)
+	require.Len(t, tblInfo.Partition.AddingDefinitions, 1)
+	require.Len(t, tblInfo.Partition.DroppingDefinitions, 1)
 }
 
 func TestGetImportStoragePrefix(t *testing.T) {

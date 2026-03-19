@@ -313,8 +313,9 @@ func TestAddDropPartitionWithTiCIIndex(t *testing.T) {
 	var addReqTbl model.TableInfo
 	require.NoError(t, json.Unmarshal(addReq.TableInfo, &addReqTbl))
 	require.NotNil(t, addReqTbl.Partition)
-	require.Len(t, addReqTbl.Partition.AddingDefinitions, 1)
-	require.Equal(t, "p2026", addReqTbl.Partition.AddingDefinitions[0].Name.L)
+	require.Len(t, addReqTbl.Partition.Definitions, 1)
+	require.Equal(t, "p2026", addReqTbl.Partition.Definitions[0].Name.L)
+	require.Empty(t, addReqTbl.Partition.AddingDefinitions)
 
 	// DROP PARTITION should call TiCI DropPartition for the dropped physical table id.
 	tici.ResetMockTiCIDropPartitionRequest()
