@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -127,8 +128,15 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	}
 	version := txn.StartTS()
 	failpoint.Inject("saveAnalyzeResultToStorageErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(uint64(0), errors.New("mock save analyze result error"))
+		switch v := val.(type) {
+		case bool:
+			if v {
+				failpoint.Return(uint64(0), errors.New("mock save analyze result error"))
+			}
+		case string:
+			if v == "deadlock" {
+				failpoint.Return(uint64(0), exeerrors.ErrDeadlock)
+			}
 		}
 	})
 	failpoint.InjectCall("saveAnalyzeResultToStorage")

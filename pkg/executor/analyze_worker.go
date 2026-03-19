@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
@@ -110,6 +112,9 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 func isRetryableSaveStatsErr(err error) bool {
 	if err == nil {
 		return false
+	}
+	if dbutil.IsRetryableError(err) || exeerrors.ErrDeadlock.Equal(err) || strings.Contains(err.Error(), exeerrors.ErrDeadlock.Error()) {
+		return true
 	}
 	// This error is produced by statement retry exhaustion during pessimistic locking; retrying the
 	// whole SaveAnalyzeResultToStorage usually succeeds in a new internal txn.
