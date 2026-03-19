@@ -362,9 +362,13 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBuildTiCIPreSplitReportGroups", `return()`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockSplitSubtaskMetaForOneKVMetaGroup", `return()`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockGenerateGlobalSortIngestPlanAfterPreSplit", `return()`))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBuildTiCIPreSplitReportGroups"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockSplitSubtaskMetaForOneKVMetaGroup"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockGenerateGlobalSortIngestPlanAfterPreSplit"))
 		tici.ResetMockTiCIPreSplitImportShardsRequest()
 	})
@@ -400,6 +404,8 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	require.EqualValues(t, 1, req.StatFileCount)
 	require.Len(t, req.MetaGroups, 1)
 	require.Equal(t, int64(10), req.MetaGroups[0].EleId)
+	require.Equal(t, uint64(12), req.MetaGroups[0].TotalKvSize)
+	require.Equal(t, uint64(7), req.MetaGroups[0].TotalKvCnt)
 }
 
 func TestGetNextStep(t *testing.T) {
