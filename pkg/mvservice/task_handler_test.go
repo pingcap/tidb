@@ -37,11 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 const (
 	testSQLFetchMVLogPurge   = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMVRefresh    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVRefresh    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	testSQLRefreshMV         = `REFRESH MATERIALIZED VIEW %n.%n FAST`
 	testSQLFindMVNextTime    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	testSQLPurgeMVLog        = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
@@ -68,6 +69,18 @@ type mockSessionPool struct{}
 func (mockSessionPool) Get() (pools.Resource, error) { return nil, nil }
 func (mockSessionPool) Put(pools.Resource)           {}
 func (mockSessionPool) Close()                       {}
+
+type countingSessionPool struct {
+	getCount atomic.Int64
+}
+
+func (p *countingSessionPool) Get() (pools.Resource, error) {
+	p.getCount.Add(1)
+	return nil, nil
+}
+
+func (*countingSessionPool) Put(pools.Resource) {}
+func (*countingSessionPool) Close()             {}
 
 type recordingSessionPool struct {
 	se pools.Resource
@@ -256,7 +269,7 @@ func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool,
 	return m.purgeNext, m.purgeErr
 }
 
-func (m *mockMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
+func (m *mockMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
 	m.fetchLogsCalls.Add(1)
 	if m.fetchLogsErr != nil {
 		return nil, m.fetchLogsErr
@@ -264,7 +277,7 @@ func (m *mockMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic.Sess
 	return m.fetchLogs, nil
 }
 
-func (m *mockMVServiceHelper) fetchAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
+func (m *mockMVServiceHelper) loadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	m.fetchViewCalls.Add(1)
 	if m.fetchViewsErr != nil {
 		return nil, m.fetchViewsErr
@@ -936,25 +949,38 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	mvLogEvent := &notifier.SchemaChangeEvent{}
 	require.NoError(t, mvLogEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionCreateMaterializedViewLog))))
 	require.NoError(t, gotHandler(context.Background(), nil, mvLogEvent))
-	require.Equal(t, int32(3), called.Load())
+	require.Equal(t, int32(2), called.Load())
 
 	mvEvent := &notifier.SchemaChangeEvent{}
 	require.NoError(t, mvEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionCreateMaterializedView))))
 	require.NoError(t, gotHandler(context.Background(), nil, mvEvent))
-	require.Equal(t, int32(4), called.Load())
+	require.Equal(t, int32(2), called.Load())
 
 	alterMVRefreshEvent := &notifier.SchemaChangeEvent{}
 	require.NoError(t, alterMVRefreshEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionAlterMaterializedViewRefresh))))
 	require.NoError(t, gotHandler(context.Background(), nil, alterMVRefreshEvent))
-	require.Equal(t, int32(5), called.Load())
+	require.Equal(t, int32(3), called.Load())
 
 	alterMLogPurgeEvent := &notifier.SchemaChangeEvent{}
 	require.NoError(t, alterMLogPurgeEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionAlterMaterializedViewLogPurge))))
 	require.NoError(t, gotHandler(context.Background(), nil, alterMLogPurgeEvent))
-	require.Equal(t, int32(6), called.Load())
+	require.Equal(t, int32(4), called.Load())
+
+	dropTableEvent := notifier.NewDropTableEvent(&meta.TableInfo{ID: 4})
+	require.NoError(t, gotHandler(context.Background(), nil, dropTableEvent))
+	require.Equal(t, int32(4), called.Load())
+
+	dropMVTableEvent := notifier.NewDropTableEvent(&meta.TableInfo{
+		ID: 5,
+		MaterializedView: &meta.MaterializedViewInfo{
+			BaseTableIDs: []int64{1},
+		},
+	})
+	require.NoError(t, gotHandler(context.Background(), nil, dropMVTableEvent))
+	require.Equal(t, int32(5), called.Load())
 }
 
-func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
+func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {
 	installMockTimeForTest(t)
 	nextPurgeSec1 := int64(600)
 	nextPurgeSec2 := int64(720)
@@ -984,7 +1010,7 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serviceHelper{}).fetchAllTiDBMVLogPurge(context.Background(), pool)
+	got, err := (&serviceHelper{}).loadAllTiDBMVLogPurge(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLFetchMVLogPurge}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
@@ -994,17 +1020,15 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	expect201 := time.Unix(nextPurgeSec1, 0)
 	require.Equal(t, expect201, l201.nextPurge)
 	require.Equal(t, expect201.UnixMilli(), l201.orderTs)
-	require.Equal(t, int64(0), int64(l201.purgeInterval))
 
 	l202 := got[int64(202)]
 	require.NotNil(t, l202)
 	expect202 := time.Unix(nextPurgeSec2, 0)
 	require.Equal(t, expect202, l202.nextPurge)
 	require.Equal(t, expect202.UnixMilli(), l202.orderTs)
-	require.Equal(t, int64(0), int64(l202.purgeInterval))
 }
 
-func TestServerHelperFetchAllTiDBMVRefresh(t *testing.T) {
+func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 	installMockTimeForTest(t)
 	nextRefreshSec1 := int64(900)
 	nextRefreshSec2 := int64(1200)
@@ -1015,26 +1039,30 @@ func TestServerHelperFetchAllTiDBMVRefresh(t *testing.T) {
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec1),
 			types.NewIntDatum(101),
+			types.NewIntDatum(123456789),
 		}).ToRow(),
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec2),
 			types.NewIntDatum(102),
+			types.NewIntDatum(223456789),
 		}).ToRow(),
 		// Invalid row with non-positive ID should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec2),
 			types.NewIntDatum(0),
+			types.NewIntDatum(323456789),
 		}).ToRow(),
 		// Invalid row with NULL NEXT_TIME should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewDatum(nil),
 			types.NewIntDatum(103),
+			types.NewIntDatum(423456789),
 		}).ToRow(),
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serviceHelper{}).fetchAllTiDBMVRefresh(context.Background(), pool)
+	got, err := (&serviceHelper{}).loadAllTiDBMVRefresh(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLFetchMVRefresh}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
@@ -1044,14 +1072,16 @@ func TestServerHelperFetchAllTiDBMVRefresh(t *testing.T) {
 	expect101 := time.Unix(nextRefreshSec1, 0)
 	require.Equal(t, expect101, m101.nextRefresh)
 	require.Equal(t, expect101.UnixMilli(), m101.orderTs)
-	require.Equal(t, int64(0), int64(m101.refreshInterval))
+	require.Equal(t, uint64(123456789), m101.lastSuccessReadTSO)
+	require.Equal(t, mvsUnixMilli(oracle.ExtractPhysical(123456789)), m101.lastSuccessTime)
 
 	m102 := got[int64(102)]
 	require.NotNil(t, m102)
 	expect102 := time.Unix(nextRefreshSec2, 0)
 	require.Equal(t, expect102, m102.nextRefresh)
 	require.Equal(t, expect102.UnixMilli(), m102.orderTs)
-	require.Equal(t, int64(0), int64(m102.refreshInterval))
+	require.Equal(t, uint64(223456789), m102.lastSuccessReadTSO)
+	require.Equal(t, mvsUnixMilli(oracle.ExtractPhysical(223456789)), m102.lastSuccessTime)
 }
 
 func TestServerHelperGetCurrentTSO(t *testing.T) {

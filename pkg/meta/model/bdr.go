@@ -49,6 +49,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionSetDefaultValue,
 		ActionModifyTableComment,
 		ActionAlterMaterializedViewRefresh,
+		ActionAlterMaterializedViewAttributes,
 		ActionAlterMaterializedViewLogPurge,
 		ActionRenameIndex,
 		ActionAddTablePartition,

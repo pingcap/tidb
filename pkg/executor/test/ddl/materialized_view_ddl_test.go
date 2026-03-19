@@ -97,6 +97,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshNext)
+	require.Equal(t, int64(0), mvTable.Meta().MaterializedView.AlertWarningSec)
+	require.Equal(t, int64(0), mvTable.Meta().MaterializedView.AlertCriticalSec)
 	expectedTZName, expectedTZOffset := ddlutil.GetTimeZone(tk.Session())
 	require.Equal(t, tk.Session().GetSessionVars().SQLMode, mvTable.Meta().MaterializedView.DefinitionSQLMode)
 	require.Equal(t, expectedTZName, mvTable.Meta().MaterializedView.DefinitionTimeZone.Name)
@@ -122,6 +124,27 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvCountColTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshNext)
+
+	// ATTRIBUTES configures overdue-alert thresholds for automatically scheduled MV refresh tasks.
+	tk.MustExec("create materialized view mv_alert (a, cnt) refresh fast attributes='mview_alert_warning=300,mview_alert_critical=600' as select a, count(1) from t group by a")
+	is = dom.InfoSchema()
+	mvAlertTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_alert"))
+	require.NoError(t, err)
+	require.Equal(t, int64(300), mvAlertTable.Meta().MaterializedView.AlertWarningSec)
+	require.Equal(t, int64(600), mvAlertTable.Meta().MaterializedView.AlertCriticalSec)
+	tk.MustExec("create materialized view mv_alert_zero (a, cnt) refresh fast attributes='mview_alert_warning=0,mview_alert_critical=0' as select a, count(1) from t group by a")
+	is = dom.InfoSchema()
+	mvAlertZeroTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_alert_zero"))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), mvAlertZeroTable.Meta().MaterializedView.AlertWarningSec)
+	require.Equal(t, int64(0), mvAlertZeroTable.Meta().MaterializedView.AlertCriticalSec)
+
+	err = tk.ExecToErr("create materialized view mv_alert_bad_key (a, cnt) attributes='unknown=1' as select a, count(1) from t group by a")
+	require.ErrorContains(t, err, "unsupported ATTRIBUTES key")
+	err = tk.ExecToErr("create materialized view mv_alert_bad_value (a, cnt) attributes='mview_alert_warning=-1' as select a, count(1) from t group by a")
+	require.ErrorContains(t, err, "must be non-negative integer seconds")
+	err = tk.ExecToErr("create materialized view mv_alert_bad_order (a, cnt) attributes='mview_alert_warning=600,mview_alert_critical=300' as select a, count(1) from t group by a")
+	require.ErrorContains(t, err, "must be less than or equal")
 
 	// Aggregate function names are case-insensitive in CREATE MATERIALIZED VIEW.
 	tk.MustExec("create materialized view mv_upper_agg (a, s, cnt) as select a, SUM(b), COUNT(1) from t group by a")
@@ -248,6 +271,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	// Drop MV and then drop MV LOG.
 	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view mv_count_col")
+	tk.MustExec("drop materialized view mv_alert")
+	tk.MustExec("drop materialized view mv_alert_zero")
 	tk.MustExec("drop materialized view mv_upper_agg")
 	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
@@ -366,9 +391,25 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	require.Contains(t, showCreate, "COMMENT = 'c1'")
 	require.Contains(t, showCreate, "REFRESH FAST NEXT NOW()")
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.NotContains(t, showCreate, "ATTRIBUTES='")
 	require.Contains(t, showCreate, "AS SELECT `a`,SUM(`b`),COUNT(1) FROM `test`.`t_show_mv` GROUP BY `a`")
 	require.Equal(t, "utf8mb4", rows[0][2])
 	require.Equal(t, "utf8mb4_bin", rows[0][3])
+
+	tk.MustExec("create materialized view mv_show_mv_attr (a, s, cnt) refresh fast attributes='mview_alert_warning=5,mview_alert_critical=10' as select a, sum(b), count(1) from t_show_mv group by a")
+	attrRows := tk.MustQuery("show create materialized view mv_show_mv_attr").Rows()
+	require.Len(t, attrRows, 1)
+	attrShowCreate, ok := attrRows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, attrShowCreate, "ATTRIBUTES='mview_alert_warning=5,mview_alert_critical=10'")
+
+	tk.MustExec("create materialized view mv_show_mv_attr_partial (a, s, cnt) refresh fast attributes='mview_alert_warning=0,mview_alert_critical=10' as select a, sum(b), count(1) from t_show_mv group by a")
+	attrPartialRows := tk.MustQuery("show create materialized view mv_show_mv_attr_partial").Rows()
+	require.Len(t, attrPartialRows, 1)
+	attrPartialShowCreate, ok := attrPartialRows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, attrPartialShowCreate, "ATTRIBUTES='mview_alert_critical=10'")
+	require.NotContains(t, attrPartialShowCreate, "mview_alert_warning=0")
 }
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
@@ -408,6 +449,54 @@ func TestAlterMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	tk.MustExec("alter materialized view mv_ok refresh start with now() next now()")
 	tk.MustExec("drop materialized view mv_ok")
 	tk.MustExec("drop materialized view log on t")
+}
+
+func TestAlterMaterializedViewAttributesUpdatesAlertThresholds(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_attr (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) attributes='mview_alert_warning=300,mview_alert_critical=600' as select a, sum(b), count(1) from t group by a")
+
+	getMViewMeta := func() *model.MaterializedViewInfo {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_attr"))
+		require.NoError(t, err)
+		require.NotNil(t, mvTable.Meta().MaterializedView)
+		return mvTable.Meta().MaterializedView
+	}
+
+	mvInfo := getMViewMeta()
+	require.Equal(t, int64(300), mvInfo.AlertWarningSec)
+	require.Equal(t, int64(600), mvInfo.AlertCriticalSec)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", mvInfo.RefreshNext)
+
+	tk.MustExec("alter materialized view mv_attr attributes='mview_alert_warning=5,mview_alert_critical=5'")
+	mvInfo = getMViewMeta()
+	require.Equal(t, int64(5), mvInfo.AlertWarningSec)
+	require.Equal(t, int64(5), mvInfo.AlertCriticalSec)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", mvInfo.RefreshNext)
+
+	err := tk.ExecToErr("alter materialized view mv_attr refresh next date_add(now(), interval 25 minute), attributes='mview_alert_warning=10,mview_alert_critical=20'")
+	require.Error(t, err)
+	mvInfo = getMViewMeta()
+	require.Equal(t, int64(5), mvInfo.AlertWarningSec)
+	require.Equal(t, int64(5), mvInfo.AlertCriticalSec)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", mvInfo.RefreshNext)
+
+	tk.MustExec("alter materialized view mv_attr refresh next date_add(now(), interval 25 minute)")
+	tk.MustExec("alter materialized view mv_attr attributes='mview_alert_warning=10,mview_alert_critical=20'")
+	mvInfo = getMViewMeta()
+	require.Equal(t, int64(10), mvInfo.AlertWarningSec)
+	require.Equal(t, int64(20), mvInfo.AlertCriticalSec)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
+
+	err = tk.ExecToErr("alter materialized view mv_attr attributes='unknown=1'")
+	require.ErrorContains(t, err, "unsupported ATTRIBUTES key")
+	err = tk.ExecToErr("alter materialized view mv_attr attributes='mview_alert_warning=20,mview_alert_critical=10'")
+	require.ErrorContains(t, err, "must be less than or equal")
 }
 
 func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {

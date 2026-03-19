@@ -1441,7 +1441,6 @@ import (
 	MLogStartWithOpt                       "materialized view log START WITH option"
 	MLogNextOpt                            "materialized view log NEXT option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
-	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
 	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
@@ -5256,12 +5255,13 @@ CreateMaterializedViewStmt:
 	{
 		opts := $8.(*mviewCreateOptions)
 		x := &ast.CreateMaterializedViewStmt{
-			ViewName: $4.(*ast.TableName),
-			Cols:     $6.([]model.CIStr),
-			Comment:  opts.comment,
-			Refresh:  opts.refresh,
-			Options:  opts.options,
-			Select:   $10.(ast.StmtNode).(ast.ResultSetNode),
+			ViewName:   $4.(*ast.TableName),
+			Cols:       $6.([]model.CIStr),
+			Comment:    opts.comment,
+			Refresh:    opts.refresh,
+			Attributes: opts.attributes,
+			Options:    opts.options,
+			Select:     $10.(ast.StmtNode).(ast.ResultSetNode),
 		}
 		$$ = x
 	}
@@ -5299,6 +5299,13 @@ MViewCreateOptionList:
 			opts.hasRefresh = true
 			opts.refresh = opt.refresh
 		}
+		if opt.hasAttributes {
+			if opts.hasAttributes {
+				yylex.AppendError(yylex.Errorf("Duplicate ATTRIBUTES specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasAttributes = true
+			opts.attributes = opt.attributes
+		}
 		if opt.hasShardRowIDBits {
 			if opts.hasShardRowIDBits {
 				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW"))
@@ -5323,6 +5330,10 @@ MViewCreateOption:
 |	MViewRefreshClause
 	{
 		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = &mviewCreateOptions{hasAttributes: true, attributes: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
@@ -5519,23 +5530,13 @@ MLogNextOpt:
 	}
 
 AlterMaterializedViewStmt:
-	"ALTER" "MATERIALIZED" "VIEW" TableName AlterMaterializedViewActionList
+	"ALTER" "MATERIALIZED" "VIEW" TableName AlterMaterializedViewAction
 	{
 		x := &ast.AlterMaterializedViewStmt{
 			ViewName: $4.(*ast.TableName),
-			Actions:  $5.([]*ast.AlterMaterializedViewAction),
+			Actions:  []*ast.AlterMaterializedViewAction{$5.(*ast.AlterMaterializedViewAction)},
 		}
 		$$ = x
-	}
-
-AlterMaterializedViewActionList:
-	AlterMaterializedViewAction
-	{
-		$$ = []*ast.AlterMaterializedViewAction{$1.(*ast.AlterMaterializedViewAction)}
-	}
-|	AlterMaterializedViewActionList ',' AlterMaterializedViewAction
-	{
-		$$ = append($1.([]*ast.AlterMaterializedViewAction), $3.(*ast.AlterMaterializedViewAction))
 	}
 
 AlterMaterializedViewAction:
@@ -5555,6 +5556,10 @@ AlterMaterializedViewAction:
 		}
 		refresh := &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast, StartWith: startWith, Next: next}
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: refresh}
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionAttributes, Attributes: $3}
 	}
 
 AlterMaterializedViewLogStmt:

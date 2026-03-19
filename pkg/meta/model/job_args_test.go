@@ -567,11 +567,24 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 		RefreshStartWith: "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
 		RefreshNext:      "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
 	}
-
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewRefresh)))
 		args, err := GetAlterMaterializedViewRefreshArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec:  10,
+		AlertCriticalSec: 20,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewAttributes)))
+		args, err := GetAlterMaterializedViewAttributesArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}

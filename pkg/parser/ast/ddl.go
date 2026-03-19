@@ -1684,12 +1684,13 @@ func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewStmt struct {
 	ddlNode
 
-	ViewName *TableName
-	Cols     []model.CIStr
-	Comment  string
-	Refresh  *MViewRefreshClause
-	Options  []*TableOption
-	Select   ResultSetNode
+	ViewName   *TableName
+	Cols       []model.CIStr
+	Comment    string
+	Refresh    *MViewRefreshClause
+	Attributes string
+	Options    []*TableOption
+	Select     ResultSetNode
 }
 
 // Restore implements Node interface.
@@ -1722,6 +1723,11 @@ func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewStmt.TableOption[%d]", i)
 		}
+	}
+	if n.Attributes != "" {
+		ctx.WriteKeyWord(" ATTRIBUTES")
+		ctx.WritePlain("=")
+		ctx.WriteString(n.Attributes)
 	}
 	ctx.WriteKeyWord(" AS ")
 	if err := n.Select.Restore(ctx); err != nil {
@@ -1891,14 +1897,16 @@ type AlterMaterializedViewActionType int
 const (
 	AlterMaterializedViewActionComment AlterMaterializedViewActionType = iota
 	AlterMaterializedViewActionRefresh
+	AlterMaterializedViewActionAttributes
 )
 
 // AlterMaterializedViewAction is one action in ALTER MATERIALIZED VIEW.
 type AlterMaterializedViewAction struct {
 	node
-	Tp      AlterMaterializedViewActionType
-	Comment string
-	Refresh *MViewRefreshClause
+	Tp         AlterMaterializedViewActionType
+	Comment    string
+	Refresh    *MViewRefreshClause
+	Attributes string
 }
 
 // Restore implements Node interface.
@@ -1932,6 +1940,11 @@ func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
 				}
 			}
 		}
+		return nil
+	case AlterMaterializedViewActionAttributes:
+		ctx.WriteKeyWord("ATTRIBUTES")
+		ctx.WritePlain("=")
+		ctx.WriteString(n.Attributes)
 		return nil
 	default:
 		return nil

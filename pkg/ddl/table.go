@@ -1085,6 +1085,44 @@ func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job, se *sess
 	return ver, nil
 }
 
+func onAlterMaterializedViewAttributes(jobCtx *jobContext, job *model.Job, se *sess.Session) (ver int64, _ error) {
+	args, err := model.GetAlterMaterializedViewAttributesArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.MaterializedView == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
+	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
+	}
+
+	oldTblInfo := tblInfo.Clone()
+	tblInfo.MaterializedView.AlertWarningSec = args.AlertWarningSec
+	tblInfo.MaterializedView.AlertCriticalSec = args.AlertCriticalSec
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	alterMVAttributesEvent := notifier.NewAlterMaterializedViewAttributesEvent(tblInfo, oldTblInfo)
+	err = asyncNotifyEvent(jobCtx, alterMVAttributesEvent, job, noSubJob, se)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job, se *sess.Session) (ver int64, _ error) {
 	args, err := model.GetAlterMaterializedViewLogPurgeArgs(job)
 	if err != nil {
