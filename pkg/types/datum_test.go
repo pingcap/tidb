@@ -728,6 +728,20 @@ func TestDatumsToString(t *testing.T) {
 	require.Equal(t, str, `(1, 2, -3.1111112, 4.123, +Inf, 6.6, "abc", "", 00:00:00, 0000-00-00 00:00:00, xxx, , null, -inf, +inf)`)
 }
 
+func TestDatumsToStringSmart(t *testing.T) {
+	str, err := DatumsToStringSmart([]Datum{NewStringDatum("abc")}, true)
+	require.NoError(t, err)
+	require.Equal(t, `"abc"`, str)
+
+	str, err = DatumsToStringSmart([]Datum{NewStringDatum(string([]byte{0x00, 0x01, 0x02}))}, true)
+	require.NoError(t, err)
+	require.Equal(t, "0x000102", str)
+
+	str, err = DatumsToStringSmart([]Datum{NewStringDatum("中" + string([]byte{0x00}) + "文")}, true)
+	require.NoError(t, err)
+	require.Equal(t, "0xE4B8AD00E69687", str)
+}
+
 func BenchmarkDatumsToString(b *testing.B) {
 	datums := []Datum{
 		NewIntDatum(1),

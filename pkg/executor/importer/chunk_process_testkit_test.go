@@ -35,10 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -182,10 +184,18 @@ func TestFileChunkProcess(t *testing.T) {
 			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
+<<<<<<< HEAD
 		err2 := processor.Process(ctx)
 		require.ErrorIs(t, err2, common.ErrEncodeKV)
 		require.ErrorContains(t, err2, "encoding 2-th data row in this chunk")
 		require.ErrorContains(t, err2, "at offset 6")
+||||||| parent of 8ef9adda64 (pkg/lightning: unify import cast conversion error path (#2431))
+		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
+=======
+		err = processor.Process(ctx)
+		require.ErrorIs(t, err, common.ErrEncodeKV)
+		require.ErrorContains(t, err, "[Import:ErrCastValue]Value conversion failed for column '")
+>>>>>>> 8ef9adda64 (pkg/lightning: unify import cast conversion error path (#2431))
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -262,4 +272,86 @@ func TestFileChunkProcess(t *testing.T) {
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+func TestImportIntoEncoderCastErrorMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 tinyint)")
+
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	encoder, err := importer.NewTableKVEncoder(
+		&encode.EncodingConfig{
+			Table:  tbl,
+			Logger: log.L(),
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   mysql.ModeStrictAllTables,
+				Timestamp: 1234567890,
+			},
+		},
+		&importer.TableImporter{
+			LoadDataController: &importer.LoadDataController{
+				ASTArgs: &importer.ASTArgs{
+					ColumnsAndUserVars: []*ast.ColumnNameOrUserVar{{
+						ColumnName: &ast.ColumnName{Name: tbl.VisibleCols()[0].Name},
+					}},
+				},
+				FieldMappings: []*importer.FieldMapping{{Column: tbl.VisibleCols()[0]}},
+				InsertColumns: tbl.VisibleCols(),
+			},
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+
+	_, err = encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason:")
+	require.Contains(t, err.Error(), "overflows tinyint")
+}
+
+func TestImportIntoEncoderCastEnumErrorMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 enum('a','b'))")
+
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	encoder, err := importer.NewTableKVEncoder(
+		&encode.EncodingConfig{
+			Table:  tbl,
+			Logger: log.L(),
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   mysql.ModeStrictAllTables,
+				Timestamp: 1234567890,
+			},
+		},
+		&importer.TableImporter{
+			LoadDataController: &importer.LoadDataController{
+				ASTArgs: &importer.ASTArgs{
+					ColumnsAndUserVars: []*ast.ColumnNameOrUserVar{{
+						ColumnName: &ast.ColumnName{Name: tbl.VisibleCols()[0].Name},
+					}},
+				},
+				FieldMappings: []*importer.FieldMapping{{Column: tbl.VisibleCols()[0]}},
+				InsertColumns: tbl.VisibleCols(),
+			},
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+
+	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("c")}, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
+	require.Contains(t, err.Error(), "Data truncated")
 }
