@@ -18,6 +18,10 @@ jobs:
           - ubuntu
     steps:
       - uses: actions/checkout@v6
+        with:
+          # pull_request runs check out the synthetic merge ref; depth 2 keeps
+          # the base-side parent available as HEAD^1 for base-ref detection.
+          fetch-depth: 2
       - name: Build Prepare
         uses: ./.github/actions/tidb_build
         with:

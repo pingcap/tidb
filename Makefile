@@ -879,6 +879,10 @@ bazel_lint: bazel_prepare
 .PHONY: bazel_lint_changed
 bazel_lint_changed: bazel_prepare
 	@PKGS="$$(build/get_changed_bazel_pkgs.sh)"; \
+	rc=$$?; \
+	if [ "$$rc" -ne 0 ]; then \
+		exit "$$rc"; \
+	fi; \
 	echo "$$PKGS"; \
 	if [ -z "$$PKGS" ]; then \
 		echo "No changed bazel packages detected, skip bazel_lint_changed."; \
