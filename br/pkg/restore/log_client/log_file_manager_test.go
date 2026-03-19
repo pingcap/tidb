@@ -20,11 +20,13 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -55,7 +57,7 @@ func wr(start, end uint64, minBegin uint64) *backuppb.DataFileInfo {
 		MinTs:                 start,
 		MaxTs:                 end,
 		MinBeginTsInDefaultCf: minBegin,
-		Cf:                    stream.WriteCF,
+		Cf:                    consts.WriteCF,
 	}
 }
 
@@ -66,7 +68,7 @@ func dr(start, end uint64) *backuppb.DataFileInfo {
 		Path:  fmt.Sprintf("write-%06d", id),
 		MinTs: start,
 		MaxTs: end,
-		Cf:    stream.DefaultCF,
+		Cf:    consts.DefaultCF,
 	}
 }
 
@@ -129,12 +131,12 @@ func (b *mockMetaBuilder) createTempDir() (string, error) {
 	return temp, nil
 }
 
-func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
+func (b *mockMetaBuilder) build(temp string) (*objstore.LocalStorage, error) {
 	err := os.MkdirAll(path.Join(temp, stream.GetStreamBackupMetaPrefix()), 0o755)
 	if err != nil {
 		return nil, err
 	}
-	local, err := storage.NewLocalStorage(temp)
+	local, err := objstore.NewLocalStorage(temp)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +152,7 @@ func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
 	return local, err
 }
 
-func (b *mockMetaBuilder) b(_ bool) (*storage.LocalStorage, string) {
+func (b *mockMetaBuilder) b(_ bool) (*objstore.LocalStorage, string) {
 	path, err := b.createTempDir()
 	if err != nil {
 		panic(err)
@@ -163,7 +165,7 @@ func (b *mockMetaBuilder) b(_ bool) (*storage.LocalStorage, string) {
 }
 
 func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	type Case struct {
 		items           []*backuppb.Metadata
 		startTS         uint64
@@ -491,7 +493,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				),
 			).Item
 		} else {
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx)
+			data, err := fm.LoadDDLFiles(ctx)
 			req.NoError(err)
 			r = data
 		}
@@ -618,8 +620,8 @@ func TestReadAllEntries(t *testing.T) {
 	data, file := generateKvData()
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 	{
-		file.Cf = stream.WriteCF
-		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		file.Cf = consts.WriteCF
+		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
 			encodekvEntryWithTS("mDDL", 37),
@@ -631,8 +633,8 @@ func TestReadAllEntries(t *testing.T) {
 		}, nextKvEntries)
 	}
 	{
-		file.Cf = stream.DefaultCF
-		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		file.Cf = consts.DefaultCF
+		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
 			encodekvEntryWithTS("mDDL", 27),

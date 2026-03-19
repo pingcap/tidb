@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -132,9 +133,25 @@ type LogBackupKit struct {
 	checkerF func(err error)
 }
 
+// getTestTempDir returns a temporary directory for tests.
+// If BRIETEST_TMPDIR is set, it creates a subdirectory there (useful for CI environments
+// where TiKV and test processes need to share the same filesystem).
+// Otherwise, it falls back to t.TempDir().
+func getTestTempDir(t *testing.T) string {
+	if baseDir := os.Getenv("BRIETEST_TMPDIR"); baseDir != "" {
+		dir := filepath.Join(baseDir, t.Name())
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		t.Cleanup(func() {
+			os.RemoveAll(dir)
+		})
+		return dir
+	}
+	return t.TempDir()
+}
+
 func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	tk := initTestKit(t)
-	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).EtcdClient())
+	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).GetEtcdClient())
 	begin := time.Now()
 	// So the cases can finish faster...
 	tk.MustExec("set config tikv `log-backup.max-flush-interval` = '30s';")
@@ -142,12 +159,13 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 		if !t.Failed() {
 			log.Info("[TEST.LogBackupKit] success", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
 		}
+		log.Info("[TEST.LogBackupKit] fail", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
 	})
 	return &LogBackupKit{
 		tk:      tk,
 		t:       t,
 		metaCli: metaCli,
-		base:    t.TempDir(),
+		base:    getTestTempDir(t),
 		checkerF: func(err error) {
 			require.NoError(t, err)
 		},
@@ -155,7 +173,7 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 }
 
 func (kit *LogBackupKit) tempFile(name string, content []byte) string {
-	path := filepath.Join(kit.t.TempDir(), name)
+	path := filepath.Join(kit.base, name)
 	require.NoError(kit.t, os.WriteFile(path, content, 0o666))
 	return path
 }
@@ -234,6 +252,26 @@ func (kit *LogBackupKit) RunLogStart(taskName string, extConfig func(*task.Strea
 		return err
 	})
 	kit.t.Cleanup(func() { kit.StopTaskIfExists(taskName) })
+}
+
+func (kit *LogBackupKit) RunLogPause(taskName string, extConfig func(*task.StreamConfig)) {
+	kit.runAndCheck(func(ctx context.Context) error {
+		cfg := task.DefaultStreamConfig(task.DefineStreamPauseFlags)
+		cfg.TaskName = taskName
+		extConfig(&cfg)
+		return task.RunStreamPause(ctx, kit.Glue(), "stream pause[intest]", &cfg)
+	})
+}
+
+func (kit *LogBackupKit) RunLogStatus(extConfig func(*task.StreamConfig)) (tasks []stream.TaskStatus) {
+	kit.runAndCheck(func(ctx context.Context) error {
+		cfg := task.DefaultStreamConfig(task.DefineStreamStatusCommonFlags)
+		cfg.DumpStatusTo = &tasks
+		cfg.TaskName = "*"
+		extConfig(&cfg)
+		return task.RunStreamStatus(ctx, kit.Glue(), "stream status[intest]", &cfg)
+	})
+	return tasks
 }
 
 func (kit *LogBackupKit) ctx() context.Context {
@@ -633,4 +671,35 @@ func TestPiTRAndIncrementalRestore(t *testing.T) {
 			rc.Storage = kit.LocalURI("incr-legacy")
 		})
 	})
+}
+
+func TestPiTRPauseMessage(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	kit.RunLogStart("nothing", func(sc *task.StreamConfig) {})
+	kit.RunLogPause("nothing", func(sc *task.StreamConfig) {
+		sc.Message = "nothing paused"
+	})
+	s := kit.RunLogStatus(func(sc *task.StreamConfig) {})
+	require.Len(t, s, 1)
+	pl, err := s[0].PauseV2.GetPayload()
+	require.NoError(t, err)
+	hn, err := os.Hostname()
+	require.NoError(t, err)
+	require.Equal(t, s[0].StatusString(), "PAUSE")
+	require.Equal(t, s[0].PauseV2.OperatorHostName, hn)
+	require.Equal(t, pl.(string), "nothing paused")
+
+	kit.StopTaskIfExists("nothing")
+	kit.RunLogStart("nothing2", func(sc *task.StreamConfig) {})
+	kit.RunLogPause("nothing2", func(sc *task.StreamConfig) {
+		sc.AsError = true
+		sc.Message = "nothing is on fire"
+	})
+	s = kit.RunLogStatus(func(sc *task.StreamConfig) {})
+	require.Len(t, s, 1)
+	pl, err = s[0].PauseV2.GetPayload()
+	require.NoError(t, err)
+	require.Equal(t, s[0].StatusString(), "ERROR")
+	require.Equal(t, s[0].PauseV2.OperatorHostName, hn)
+	require.Equal(t, pl.(string), "nothing is on fire")
 }

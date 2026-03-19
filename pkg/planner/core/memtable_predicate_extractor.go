@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -109,12 +110,7 @@ func (helper *extractHelper) setColumnPushedDownFn(
 }
 
 func (extractHelper) isPushDownSupported(fnNameL string) bool {
-	for _, s := range []string{ast.Lower, ast.Upper} {
-		if fnNameL == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains([]string{ast.Lower, ast.Upper}, fnNameL)
 }
 
 // extractColBinaryOpScalarFunc extract the scalar function from a binary operation. For example,
@@ -127,7 +123,7 @@ func (extractHelper) extractColBinaryOpScalarFunc(
 	var constIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, isConst := args[i].(*expression.Constant)
 		if isConst {
 			constIdx = i
@@ -158,7 +154,7 @@ func (helper *extractHelper) tryToFindInnerColAndIdx(args []expression.Expressio
 		return nil, -1
 	}
 	var scalar *expression.ScalarFunction
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var isScalar bool
 		scalar, isScalar = args[i].(*expression.ScalarFunction)
 		if isScalar {
@@ -193,7 +189,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	var colIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var isCol bool
 		col, isCol = args[i].(*expression.Column)
 		if isCol {
@@ -537,8 +533,7 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-	// unix timestamp in nanoseconds
-	startTime int64,
+	startTime int64, // unix timestamp in nanoseconds
 	endTime int64,
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
@@ -824,7 +819,7 @@ func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -960,7 +955,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *HotRegionsHistoryTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1053,9 +1048,8 @@ func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.Time) {
+func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTime time.Time) {
 	const defaultMetricQueryDuration = 10 * time.Minute
-	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		endTime = time.Now()
 		return endTime.Add(-defaultMetricQueryDuration), endTime
@@ -1077,7 +1071,7 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1289,12 +1283,31 @@ type SlowQueryExtractor struct {
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+	// Limit is a hint for early-exit optimizations when scanning slow log files.
+	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
+	// A value of 0 means "no limit hint".
+	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
 type TimeRange struct {
 	StartTime time.Time
 	EndTime   time.Time
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// SetDesc implements base.MemTableDescHintSetter.
+func (e *SlowQueryExtractor) SetDesc(desc bool) {
+	e.Desc = desc
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1437,7 +1450,7 @@ func (e *TableStorageStatsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1564,7 +1577,7 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}

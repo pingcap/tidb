@@ -74,10 +74,28 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop index v_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add vector index v_idx_2((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add vector index v_idx_3((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add vector index v_idx_4((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
-	// Add vector key
+	// Drop full text index
+	{"alter table t drop index fts_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add fulltext index fts_idx_2(ctxt)"}},
+	{"alter table t drop index fts_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add fulltext index fts_idx_3(ctxt)"}},
+	{"alter table t drop index fts_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add fulltext index fts_idx_4(ctxt)"}},
+	// Add vector index
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateNone, true, false, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateDeleteOnly, true, true, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateWriteOnly, true, true, nil},
+	// Add full text index
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateNone, true, false, nil},
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add fulltext index fts_idx_x(ctxt)", false, model.StatePublic, false, true, nil},
+	// Add columnar index
+	{"alter table t add columnar index c_idx(c1) USING INVERTED", true, model.StateNone, true, false, nil},
+	{"alter table t add columnar index c_idx(c2) USING INVERTED", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add columnar index c_idx(c3) USING INVERTED", true, model.StateWriteOnly, true, true, nil},
+	// Drop columnar index
+	{"alter table t drop index c_idx_1", true, model.StatePublic, true, false, []string{"alter table t add columnar index c_idx_1(c1) USING INVERTED"}},
+	{"alter table t drop index c_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add columnar index c_idx_2(c2) USING INVERTED"}},
+	{"alter table t drop index c_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add columnar index c_idx_3(c3) USING INVERTED"}},
+	{"alter table t drop index c_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add columnar index c_idx_4(c11) USING INVERTED"}},
 	// Add column.
 	{"alter table t add column c4 bigint", true, model.StateNone, true, false, nil},
 	{"alter table t add column c4 bigint", true, model.StateDeleteOnly, true, true, nil},
@@ -213,7 +231,6 @@ var allTestCase = []testCancelJob{
 func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
-
 func TestCancelVariousJobs(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
@@ -249,7 +266,7 @@ func TestCancelVariousJobs(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1)
+		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1), ctxt TEXT
 	);`)
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
@@ -258,7 +275,7 @@ func TestCancelVariousJobs(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t_partition values(%d, %d, %d)", i*3, i*2, i))
 		tk.MustExec(fmt.Sprintf("insert into t(c1, c2, c3) values(%d, %d, %d)", i*3, i*2, i))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(2048)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(2048)`)
 
 	// Change some configurations.
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
@@ -276,7 +293,7 @@ func TestCancelVariousJobs(t *testing.T) {
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
+		if testutil.MatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}

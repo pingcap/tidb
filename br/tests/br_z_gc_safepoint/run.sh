@@ -50,29 +50,4 @@ if [ "$backup_gc_fail" -ne "0" ];then
     exit 1
 fi
 
-# set safePoint otherwise the default safePoint is zero
-bin/gc -pd $PD_ADDR \
-    --ca "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key" \
-    -gc-offset "1s"
-
-backup_gc_fail=0
-echo "incremental backup start (expect fail)..."
-run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/2" --db $DB -t $TABLE --lastbackupts 1 --ratelimit 1 --ratelimit-unit 1 || backup_gc_fail=1
-
-if [ "$backup_gc_fail" -ne "1" ];then
-    echo "TEST: [$TEST_NAME] test check last backup ts failed!"
-    exit 1
-fi
-
-backup_gc_fail=0
-echo "incremental backup with max_uint64 start (expect fail)..."
-run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/3" --db $DB -t $TABLE --lastbackupts $MAX_UINT64 --ratelimit 1 --ratelimit-unit 1 || backup_gc_fail=1
-
-if [ "$backup_gc_fail" -ne "1" ];then
-    echo "TEST: [$TEST_NAME] test check max backup ts failed!"
-    exit 1
-fi
-
 run_sql "DROP DATABASE $DB;"

@@ -22,11 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
-var testLongStr1 string = getLongString("平p凯k星x辰c")
-var testLongStr2 string = getLongString("123aa啊啊aa")
+var testLongStr1 string = getLongString("平352p凯额6辰c")
+var testLongStr2 string = getLongString("123a啊f24f去rsgvsfg")
 
 func getChunk() *chunk.Chunk {
 	fieldTypes := make([]*types.FieldType, 1)
@@ -36,7 +37,7 @@ func getChunk() *chunk.Chunk {
 
 func getLongString(originStr string) string {
 	returnStr := originStr
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		returnStr += returnStr
 	}
 	return returnStr
@@ -46,7 +47,7 @@ func getLargeRandBuffer() []byte {
 	byteLen := 10000
 	ret := make([]byte, byteLen)
 	randStart := rand.Int31()
-	for i := 0; i < byteLen; i++ {
+	for i := range byteLen {
 		ret[i] = byte((int(randStart) + i) % 8)
 	}
 	return ret
@@ -105,7 +106,7 @@ func TestPartialResult4Count(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4Count)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -150,7 +151,7 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinInt)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -195,7 +196,7 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinUint)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -240,7 +241,7 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinDecimal)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -285,7 +286,7 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinFloat32)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -330,7 +331,7 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinFloat64)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -375,7 +376,7 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinTime)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -421,7 +422,7 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinString)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -467,7 +468,7 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinJSON)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -513,7 +514,7 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinEnum)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -559,7 +560,7 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4MaxMinSet)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -604,7 +605,7 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4AvgDecimal)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -649,7 +650,7 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4AvgFloat64)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -694,7 +695,7 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4SumDecimal)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -739,20 +740,22 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4SumFloat64)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
 	var serializeHelper = NewSerializeHelper()
+	serializeHelper.buf = make([]byte, 0)
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []basePartialResult4GroupConcat{
+		{valsBuf: bytes.NewBufferString("123"), buffer: nil},
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
-		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString(testLongStr2)},
-		{valsBuf: bytes.NewBufferString(testLongStr1), buffer: bytes.NewBufferString(testLongStr2)},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString(testLongStr1)},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString(testLongStr2)},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -786,9 +789,12 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).valsBuf.String(), deserializedPartialResults[i].valsBuf.String())
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+	for i := range testDataNum {
+		if (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer != nil {
+			require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+		} else {
+			require.Equal(t, (*bytes.Buffer)(nil), deserializedPartialResults[i].buffer)
+		}
 	}
 }
 
@@ -828,7 +834,7 @@ func TestPartialResult4BitFunc(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4BitFunc)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -875,7 +881,7 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4JsonArrayagg)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -884,11 +890,16 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
+	wrapMemAwareMap := func(m map[string]any) (res hack.MemAwareMap[string, any]) {
+		res.Init(m)
+		return res
+	}
+
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
-		{entries: map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
-		{entries: map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)}, bInMap: 0},
-		{entries: map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2}, bInMap: 0},
+		{entries: wrapMemAwareMap(map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"})},
+		{entries: wrapMemAwareMap(map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)})},
+		{entries: wrapMemAwareMap(map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2})},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -922,7 +933,7 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4JsonObjectAgg)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -967,7 +978,7 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowDecimal)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1012,7 +1023,7 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowInt)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1057,7 +1068,7 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowTime)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1103,7 +1114,7 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowString)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1148,7 +1159,7 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowFloat32)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1193,7 +1204,7 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowFloat64)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1238,7 +1249,7 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowDuration)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1284,7 +1295,7 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowJSON)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1330,7 +1341,7 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowEnum)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
@@ -1376,7 +1387,7 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-	for i := 0; i < testDataNum; i++ {
+	for i := range testDataNum {
 		require.Equal(t, *(*partialResult4FirstRowSet)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }

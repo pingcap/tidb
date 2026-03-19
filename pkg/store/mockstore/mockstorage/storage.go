@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 )
 
 var _ helper.Storage = &mockStorage{}
@@ -152,11 +153,28 @@ func (s *mockStorage) GetCodec() tikv.Codec {
 
 	// Get API V2 codec.
 	pdClient := s.KVStore.GetPDClient()
+	ksMeta, err := pdClient.LoadKeyspace(context.Background(), s.keyspaceMeta.Name)
+	if err != nil {
+		panic(err)
+	}
+	// the mock PD client return nil keyspace meta.
+	if ksMeta == nil {
+		pdClient = &pdCliWithCodec{Client: pdClient, ksMeta: s.keyspaceMeta}
+	}
 	pdCodecCli, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdClient, s.keyspaceMeta.Name)
 	if err != nil {
 		panic(err)
 	}
 	return pdCodecCli.GetCodec()
+}
+
+type pdCliWithCodec struct {
+	pd.Client
+	ksMeta *keyspacepb.KeyspaceMeta
+}
+
+func (p *pdCliWithCodec) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return p.ksMeta, nil
 }
 
 // MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the
@@ -167,4 +185,15 @@ type MockLockWaitSetter interface {
 
 func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
 	s.LockWaits = lockWaits
+}
+
+func (s *mockStorage) GetClusterID() uint64 {
+	return 1
+}
+
+func (s *mockStorage) GetKeyspace() string {
+	if s.keyspaceMeta == nil {
+		return ""
+	}
+	return s.keyspaceMeta.Name
 }

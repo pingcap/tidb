@@ -8,9 +8,11 @@ go_test(
         "memory_test.go",
     ],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
+        "//pkg/session/sessmgr",
         "//pkg/testkit",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",

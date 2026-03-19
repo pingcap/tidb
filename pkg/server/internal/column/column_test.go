@@ -83,7 +83,7 @@ func TestDumpColumnWithDefault(t *testing.T) {
 
 func TestColumnNameLimit(t *testing.T) {
 	aLongName := make([]byte, 0, 300)
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		aLongName = append(aLongName, 'a')
 	}
 	info := Info{

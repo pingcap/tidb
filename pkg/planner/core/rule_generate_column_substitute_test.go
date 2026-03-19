@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -255,11 +256,11 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 		"(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s')"
 	addresses := make([]any, 0, 90)
-	for i := 0; i < 80; i++ {
+	for range 80 {
 		addresses = append(addresses, "0x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC51")
 	}
 	condition = fmt.Sprintf(condition, addresses...)
-	s := core.CreatePlannerSuite(tk.Session(), is)
+	s := coretestsdk.CreatePlannerSuite(tk.Session(), is)
 	defer s.Close()
 	ctx := context.Background()
 	sql := "select * from tai where " + condition
@@ -279,7 +280,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	b.ResetTimer()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
+		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema())
 	}
 	b.StopTimer()
 }

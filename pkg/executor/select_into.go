@@ -138,7 +138,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 	}
 
 	cols := s.Children(0).Schema().Columns
-	for i := 0; i < s.chk.NumRows(); i++ {
+	for i := range s.chk.NumRows() {
 		row := s.chk.GetRow(i)
 		s.lineBuf = s.lineBuf[:0]
 		for j, col := range cols {
@@ -235,7 +235,7 @@ const (
 )
 
 // DumpRealOutfile dumps a real number to lineBuf.
-func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldType) ([]byte, []byte) {
+func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldType) (_, _ []byte) {
 	prec := types.UnspecifiedLength
 	if tp.GetDecimal() > 0 && tp.GetDecimal() != mysql.NotFixedDec {
 		prec = tp.GetDecimal()

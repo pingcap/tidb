@@ -1,0 +1,25 @@
+[
+  {
+    "name": "TestRuleAggElimination4Join",
+    "cases": [
+      "SELECT t1.id1, t1.id2, SUM(t1.id3)  FROM t1, t2  WHERE t1.id1=t2.id1 AND t1.id2=t2.id2  GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, SUM(t1.id3)  FROM t1, t4  WHERE t1.id1=t4.id1 AND t1.id2=t4.id2  GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE t1.id1 = t2.id1 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t3 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t3.id1 AND t2.id2=t3.id2 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t4 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t4.id1 AND t2.id2=t4.id2 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t3, t4 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t3.id1 AND t2.id2=t3.id2 AND t3.id1=t4.id1 AND t3.id2=t4.id2 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE ABS(t1.id1) = t2.id1 AND t1.id2 = t2.id2 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE t1.id1 = ABS(t2.id1) AND t1.id2 = t2.id2 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, SUM(t1.id3) FROM t1 WHERE EXISTS ( SELECT 1 FROM t2 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2 ) GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1 left join t2 on t1.id1 = t2.id1 and t1.id2 = t2.id2  inner join t3 on t1.id1 = t3.id1 and t1.id2 = t3.id2 GROUP BY t1.id1, t1.id2;",
+      "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1 left join t2 on t1.id1 = t2.id1 and t1.id2 = t2.id2  inner join t4 on t1.id1 = t4.id1 and t1.id2 = t4.id2 GROUP BY t1.id1, t1.id2;"
+
+    ]
+  },
+  {
+    "name": "TestIssue62331",
+    "cases": [
+      "select /*+ read_from_storage(tiflash[t1]) */ /*+ use_index(t1) */ /*+ agg_to_cop() hash_agg() */  bit_and(t1.col_2) as r0, bit_xor(t1.col_2) as r1 , substring(t1.col_2 ,4) as r2 from t1 where t1.col_1 in ('04:00:09.00' ,'21:06:18.00' ,'18:43:53.00') group by t1.col_1,t1.col_2  having not(t1.col_1 <> '06:32:23.00');"
+    ]
+  }
+]

@@ -320,6 +320,8 @@ execute stmt using @doma;
 select @@last_plan_from_cache;
 execute stmt2 using @doma;
 select @@last_plan_from_cache;
+execute stmt2 using @doma;
+select @@last_plan_from_cache;
 execute stmt using @doma;
 select @@last_plan_from_cache;
 select * from t where id=1;

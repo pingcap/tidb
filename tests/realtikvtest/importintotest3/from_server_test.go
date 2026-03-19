@@ -22,8 +22,8 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -33,12 +33,12 @@ import (
 func (s *mockGCSSuite) TestImportFromServer() {
 	tempDir := s.T().TempDir()
 	var allData []string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		fileName := fmt.Sprintf("server-%d.csv", i)
 		var content []byte
 		rowCnt := 2
-		for j := 0; j < rowCnt; j++ {
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
+		for j := range rowCnt {
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", i*rowCnt+j, i*rowCnt+j)...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
 		}
 		s.NoError(os.WriteFile(path.Join(tempDir, fileName), content, 0o644))
@@ -73,4 +73,5 @@ func (s *mockGCSSuite) TestImportFromServer() {
 	var taskMeta importinto.TaskMeta
 	require.NoError(s.T(), json.Unmarshal(task.Meta, &taskMeta))
 	require.Len(s.T(), taskMeta.ChunkMap, 2)
+	require.False(s.T(), taskMeta.Plan.DisableTiKVImportMode)
 }

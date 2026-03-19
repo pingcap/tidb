@@ -46,7 +46,7 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 30; i++ {
+		for range 30 {
 			_ = p.Run(func() {
 				time.Sleep(100 * time.Microsecond)
 			})
@@ -68,7 +68,7 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	c := make(chan struct{})
 	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(true))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_ = p.Run(func() {
 			<-c
 		})
@@ -83,7 +83,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 
 	// test pool tune scale up multiple
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -97,11 +97,11 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	require.Eventually(t, func() bool { return p.Running() == 8 }, 1*time.Second, 200*time.Millisecond)
 	// test pool tune scale down
 	p.Tune(2)
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		c <- struct{}{}
 	}
 	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		c <- struct{}{}
 	}
 	require.Eventually(t, func() bool { return p.Running() == 0 }, 1*time.Second, 200*time.Millisecond)
@@ -116,7 +116,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	err := p.RunWithConcurrency(fnChan, 2)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), p.Running())
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		fnChan <- workerFn
 	}
 	require.Eventually(t, func() bool { return cnt.Load() == 10 }, 1*time.Second, 200*time.Millisecond)
@@ -141,7 +141,7 @@ func TestRunOverload(t *testing.T) {
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
-	for i := 0; i < poolSize-1; i++ {
+	for range poolSize - 1 {
 		require.NoError(t, p.Run(longRunningFunc), "submit when pool is not full shouldn't return error")
 	}
 	// p is full now.
@@ -180,7 +180,7 @@ func TestRunWithNotEnough2(t *testing.T) {
 	require.Equal(t, int32(1), p.Running())
 	require.Error(t, p.RunWithConcurrency(fnChan, 1))
 	require.Error(t, p.Run(func() {}))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		fnChan <- fn
 	}
 	close(fnChan)

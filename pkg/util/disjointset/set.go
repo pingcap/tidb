@@ -48,7 +48,7 @@ func (s *Set[T]) findRootOriginalVal(a T) int {
 	return s.findRootInternal(idx)
 }
 
-// findRoot is an internal implementation. Call it inside findRootOriginalVal.
+// findRootInternal is an internal implementation. Call it inside findRootOriginalVal.
 func (s *Set[T]) findRootInternal(a int) int {
 	if s.parent[a] != a {
 		// Path compression, which leads the time complexity to the inverse Ackermann function.

@@ -22,13 +22,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -80,7 +80,7 @@ func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		intest.Assert(l.limiter.Limit() > 0)
 		if fn, ok := ctx.Value(beforeWaitLimiterForTest).(func()); ok {
 			fn()
@@ -237,7 +237,7 @@ func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDelRetryItem) [][]types.Datum) t
 	l := b.list.Len()
 	// When `retryInterval==0`, to avoid the infinite retries, limit the max loop to the buffer length.
 	// It means one item only has one chance to retry in one `DoRetry` invoking.
-	for i := 0; i < l; i++ {
+	for range l {
 		ele := b.list.Front()
 		if ele == nil {
 			break
@@ -323,11 +323,11 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 type ttlDeleteWorker struct {
 	baseWorker
 	delCh       <-chan *ttlDeleteTask
-	sessionPool util.SessionPool
+	sessionPool syssession.Pool
 	retryBuffer *ttlDelRetryBuffer
 }
 
-func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool util.SessionPool) *ttlDeleteWorker {
+func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool syssession.Pool) *ttlDeleteWorker {
 	w := &ttlDeleteWorker{
 		delCh:       delCh,
 		sessionPool: sessPool,
@@ -345,14 +345,13 @@ func (w *ttlDeleteWorker) loop() error {
 	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	se, err := getSession(w.sessionPool)
-	if err != nil {
-		return err
-	}
-	defer se.Close()
+	return withSession(w.sessionPool, func(s session.Session) error {
+		ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
+		return w.loopWithSession(ctx, tracer, s)
+	})
+}
 
-	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
-
+func (w *ttlDeleteWorker) loopWithSession(ctx context.Context, tracer *metrics.PhaseTracer, se session.Session) error {
 	doRetry := func(item *ttlDelRetryItem) [][]types.Datum {
 		return item.task.doDelete(
 			logutil.WithFields(

@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // For normal rollup Expand construction, its logical Expand should be bound
@@ -77,11 +76,11 @@ type ResolveExpand struct {
 //	                              (upper required)   (grouping sets columns appended)
 //
 // Expand operator itself is kind like a projection, while difference is that it has a multi projection list, named as leveled projection.
-func (*ResolveExpand) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*ResolveExpand) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// As you see, Expand's leveled projection should be built after all column-prune is done. So we just make generating-leveled-projection
 	// as the last rule of logical optimization, which is more clear. (spark has column prune action before building expand)
-	newLogicalPlan, err := genExpand(p, opt)
+	newLogicalPlan, err := genExpand(p)
 	return newLogicalPlan, planChanged, err
 }
 
@@ -90,9 +89,9 @@ func (*ResolveExpand) Name() string {
 	return "resolve_expand"
 }
 
-func genExpand(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func genExpand(p base.LogicalPlan) (base.LogicalPlan, error) {
 	for i, child := range p.Children() {
-		np, err := genExpand(child, opt)
+		np, err := genExpand(child)
 		if err != nil {
 			return p, err
 		}

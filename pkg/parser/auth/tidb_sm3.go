@@ -86,17 +86,17 @@ func (sm3 *sm3) update(msg []byte) [8]uint32 {
 
 	a, b, c, d, e, f, g, h := sm3.digest[0], sm3.digest[1], sm3.digest[2], sm3.digest[3], sm3.digest[4], sm3.digest[5], sm3.digest[6], sm3.digest[7]
 	for len(msg) >= 64 {
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			w[i] = binary.BigEndian.Uint32(msg[4*i : 4*(i+1)])
 		}
 		for i := 16; i < 68; i++ {
 			w[i] = p1(w[i-16]^w[i-9]^leftRotate(w[i-3], 15)) ^ leftRotate(w[i-13], 7) ^ w[i-6]
 		}
-		for i := 0; i < 64; i++ {
+		for i := range 64 {
 			w1[i] = w[i] ^ w[i+4]
 		}
 		a1, b1, c1, d1, e1, f1, g1, h1 := a, b, c, d, e, f, g, h
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			ss1 := leftRotate(leftRotate(a1, 12)+e1+leftRotate(0x79cc4519, uint32(i)), 7)
 			ss2 := ss1 ^ leftRotate(a1, 12)
 			tt1 := ff0(a1, b1, c1) + d1 + ss2 + w1[i]
@@ -195,7 +195,7 @@ func (sm3 *sm3) Sum(in []byte) []byte {
 		in = newIn
 	}
 	out := in[len(in) : len(in)+needed]
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		binary.BigEndian.PutUint32(out[i*4:], digest[i])
 	}
 	return out

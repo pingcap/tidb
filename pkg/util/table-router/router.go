@@ -257,9 +257,7 @@ func (*TableRule) extractVal(s string, ext any) string {
 }
 
 // FetchExtendColumn get extract rule, return extracted cols and extracted vals.
-func (r *Table) FetchExtendColumn(schema, table, source string) ([]string, []string) {
-	var cols []string
-	var vals []string
+func (r *Table) FetchExtendColumn(schema, table, source string) (cols []string, vals []string) {
 	rules := r.Match(schema, table)
 	var (
 		schemaRules = make([]*TableRule, 0, len(rules))

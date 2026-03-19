@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/zap"
 )
 
@@ -148,7 +149,7 @@ func TestPostSettings(t *testing.T) {
 
 	// test deadlock_history_capacity
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}
 	form = make(url.Values)
@@ -640,9 +641,9 @@ func TestTTL(t *testing.T) {
 	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
 
 	getJobCnt := func(status string) int {
-		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history where table_schema = 'test_ttl' and table_name = 't1'"
 		if status != "" {
-			selectSQL += " where status = '" + status + "'"
+			selectSQL += " and status = '" + status + "'"
 		}
 
 		rs, err := db.Query(selectSQL)
@@ -669,6 +670,7 @@ func TestTTL(t *testing.T) {
 			if cnt == 0 {
 				return
 			}
+			time.Sleep(200 * time.Millisecond)
 		}
 		require.Fail(t, "timeout for waiting job finished")
 	}
@@ -695,12 +697,12 @@ func TestTTL(t *testing.T) {
 		return obj, nil
 	}
 
-	expectedJobCnt := 1
+	baseJobCnt := getJobCnt("")
+	expectedJobCnt := baseJobCnt + 1
 	obj, err := doTrigger("test_ttl", "t1")
-	require.NoError(t, err)
 	if err != nil {
 		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
-		require.Equal(t, expectedJobCnt, getJobCnt(""))
+		require.Equal(t, baseJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
 		obj, err = doTrigger("test_ttl", "t1")
 		require.NoError(t, err)
@@ -709,10 +711,87 @@ func TestTTL(t *testing.T) {
 
 	_, ok := obj["table_result"]
 	require.True(t, ok)
-	require.Equal(t, expectedJobCnt, getJobCnt(""))
+	require.Eventually(t, func() bool {
+		return getJobCnt("") == expectedJobCnt
+	}, 10*time.Second, 200*time.Millisecond)
 
 	// error case, table not exist
 	obj, err = doTrigger("test_ttl", "t2")
 	require.Nil(t, obj)
 	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
+}
+
+func TestGC(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	var data url.Values
+	resp, err := ts.FormStatus("/txn-gc-states", data)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	resp, err = ts.FetchStatus("/txn-gc-states")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	var state gc.GCState
+	err = decoder.Decode(&state)
+	require.NoError(t, err)
+
+	var empty gc.GCState
+	require.NotEqual(t, empty, state)
+}
+
+func TestIngestParam(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testCases := []struct {
+		url         string
+		defaultVal  any
+		modVal      any
+		expectedVal any
+	}{
+		{"/ingest/max-batch-split-ranges", float64(2048), 1000, float64(1000)},
+		{"/ingest/max-split-ranges-per-sec", float64(0), 2000, float64(2000)},
+		{"/ingest/max-ingest-inflight", float64(0), 1000, float64(1000)},
+		{"/ingest/max-ingest-per-sec", float64(0), 2000, float64(2000)},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.url, func(t *testing.T) {
+			resp, err := ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder := json.NewDecoder(resp.Body)
+			var payload struct {
+				Value  float64 `json:"value"`
+				IsNull bool    `json:"is_null"`
+			}
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.defaultVal, payload.Value)
+
+			resp, err = ts.PostStatus(tc.url, "", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %v}`, tc.modVal))))
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			resp, err = ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder = json.NewDecoder(resp.Body)
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedVal, payload.Value)
+		})
+	}
 }

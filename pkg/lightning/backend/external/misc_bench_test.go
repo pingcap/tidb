@@ -28,17 +28,18 @@ import (
 	"time"
 
 	"github.com/felixge/fgprof"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
-func openTestingStorage(t *testing.T) storage.ExternalStorage {
+func openTestingStorage(t *testing.T) storeapi.Storage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
-	s, err := storage.NewFromURL(context.Background(), *testingStorageURI)
+	s, err := objstore.NewFromURL(context.Background(), *testingStorageURI)
 	require.NoError(t, err)
 	t.Cleanup(s.Close)
 	return s
@@ -84,7 +85,7 @@ func (c *ascendingKeyGenerator) run() {
 
 	go func() {
 		defer close(c.keyOutCh)
-		for i := 0; i < c.count; i++ {
+		for range c.count {
 			// try to use most left bytes to alternate the key
 			for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
 				c.curKey[j]++
@@ -115,7 +116,7 @@ func newAscendingKeySource(
 		valueSize: valueSize,
 		keys:      make([][]byte, count),
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		key := <-keyCh
 		s.keys[i] = key
 		s.totalSize += len(key) + valueSize
@@ -207,7 +208,7 @@ func (c *randomKeyGenerator) run() {
 
 	go func() {
 		defer close(c.keyOutCh)
-		for i := 0; i < c.count; i++ {
+		for range c.count {
 			c.rnd.Read(c.curKey[keyCommonPrefixSize : keyCommonPrefixSize+randomLen])
 			for j := len(c.curKey) - 1; j >= keyCommonPrefixSize+randomLen; j-- {
 				c.curKey[j]++
@@ -239,7 +240,7 @@ func newRandomKeySource(
 		valueSize: valueSize,
 		keys:      make([][]byte, count),
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		key := <-keyCh
 		s.keys[i] = key
 		s.totalSize += len(key) + valueSize
@@ -261,7 +262,7 @@ func (s *randomKeySource) outputSize() int {
 }
 
 func createEvenlyDistributedFiles(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	fileSize, fileCount int,
 	subDir string,
 ) (int, kv.Key, kv.Key) {
@@ -272,7 +273,7 @@ func createEvenlyDistributedFiles(
 	value := make([]byte, 100)
 	kvCnt := 0
 	var minKey, maxKey kv.Key
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		builder := NewWriterBuilder().
 			SetBlockSize(10 * 1024 * 1024).
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
@@ -306,7 +307,7 @@ func createEvenlyDistributedFiles(
 }
 
 func createAscendingFiles(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	fileSize, fileCount int,
 	subDir string,
 ) (int, kv.Key, kv.Key) {
@@ -318,7 +319,7 @@ func createAscendingFiles(
 	value := make([]byte, 100)
 	kvCnt := 0
 	var minKey, maxKey kv.Key
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		builder := NewWriterBuilder().
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(

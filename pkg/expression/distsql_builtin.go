@@ -650,6 +650,14 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinIsIPv6Sig{base}
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
+	case tipb.ScalarFuncSig_UUIDv4:
+		f = &builtinUUIDv4Sig{base}
+	case tipb.ScalarFuncSig_UUIDv7:
+		f = &builtinUUIDv7Sig{base}
+	case tipb.ScalarFuncSig_UUIDVersion:
+		f = &builtinUUIDVersionSig{base}
+	case tipb.ScalarFuncSig_UUIDTimestamp:
+		f = &builtinUUIDTimestampSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IlikeSig:
@@ -1148,6 +1156,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
+	case tipb.ScalarFuncSig_FTSMatchWord:
+		f = &builtinFtsMatchWordSig{base}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
@@ -1161,11 +1171,24 @@ func newDistSQLFunctionBySig(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *t
 	if err != nil {
 		return nil, err
 	}
-	return &ScalarFunction{
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	funcName := tipb.ScalarFuncSig_name[int32(sigCode)]
+	argTps := make([]types.EvalType, 0, len(args))
+	for _, arg := range args {
+		argTps = append(argTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
+	}
+	ec, err := deriveCollation(ctx, funcName, args, f.getRetTp().EvalType(), argTps...)
+	if err != nil {
+		return nil, err
+	}
+	funcF := &ScalarFunction{
 		FuncName: ast.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-	}, nil
+	}
+	funcF.SetCoercibility(ec.Coer)
+	return funcF, nil
 }
 
 // PBToExprs converts pb structures to expressions.

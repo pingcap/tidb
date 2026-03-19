@@ -53,19 +53,7 @@ func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (boo
 	slices.Sort(tidbDDLIDs)
 	slices.Sort(pdDDLIDs)
 
-	return sameStringArray(tidbDDLIDs, pdDDLIDs), nil
-}
-
-func sameStringArray(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(tidbDDLIDs, pdDDLIDs), nil
 }
 
 func string2Map(a, b []string) map[string]string {

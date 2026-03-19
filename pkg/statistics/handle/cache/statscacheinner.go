@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/mapcache"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"

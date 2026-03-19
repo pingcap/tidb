@@ -53,7 +53,7 @@ GROUP BY product, country_id, year WITH ROLLUP;
 --echo
 ANALYZE TABLE t1;
 --echo
-EXPLAIN FORMAT='brief' SELECT product, country_id , year, SUM(profit)
+EXPLAIN FORMAT='plan_tree' SELECT product, country_id , year, SUM(profit)
 FROM t1 GROUP BY product, country_id, year WITH ROLLUP;
 --echo
 SELECT product, country_id , SUM(profit) FROM t1

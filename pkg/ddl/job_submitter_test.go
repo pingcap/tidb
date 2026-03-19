@@ -75,17 +75,17 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
 	tks := make([]*testkit.TestKit, threads)
-	for i := 0; i < threads; i++ {
+	for i := range threads {
 		tks[i] = testkit.NewTestKit(t, store)
 	}
 	var wg util.WaitGroupWrapper
 	submitter := ddl.NewJobSubmitterForTest()
-	for i := 0; i < threads; i++ {
+	for i := range threads {
 		idx := i
 		wg.Run(func() {
 			kit := tks[idx]
 			ddlSe := sess.NewSession(kit.Session())
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 			}
 		})
@@ -128,7 +128,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 
 	genTblInfo := func(partitionCnt int) *model.TableInfo {
 		info := &model.TableInfo{Partition: &model.PartitionInfo{}}
-		for i := 0; i < partitionCnt; i++ {
+		for range partitionCnt {
 			info.Partition.Enable = true
 			info.Partition.Definitions = append(info.Partition.Definitions, model.PartitionDefinition{})
 		}
@@ -494,12 +494,12 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 	counters := make([]atomic.Int64, thread+1)
 	var wg util.WaitGroupWrapper
 	submitter := ddl.NewJobSubmitterForTest()
-	for i := 0; i < thread; i++ {
+	for i := range thread {
 		index := i
 		wg.Run(func() {
 			kit := testkit.NewTestKit(t, store)
 			ddlSe := sess.NewSession(kit.Session())
-			for i := 0; i < iterationPerThread; i++ {
+			for range iterationPerThread {
 				require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 
 				counters[0].Add(1)

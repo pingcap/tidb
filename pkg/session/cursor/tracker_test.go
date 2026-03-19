@@ -74,7 +74,7 @@ func TestCursorTrackerConcurrentCreateDelete(t *testing.T) {
 	threadsForEachOperation := 100
 
 	// Concurrently create cursors
-	for i := 0; i < threadsForEachOperation; i++ {
+	for range threadsForEachOperation {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -90,7 +90,7 @@ func TestCursorTrackerConcurrentCreateDelete(t *testing.T) {
 	}
 
 	// Concurrently delete cursors
-	for i := 0; i < threadsForEachOperation; i++ {
+	for range threadsForEachOperation {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

@@ -103,6 +103,8 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		paramsArr[1] = parser.CollationConnection(collation)
 		params = paramsArr[:]
 	}
+
+	warnCountBeforeParse := len(vars.StmtCtx.GetWarnings())
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
 		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
@@ -116,6 +118,16 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 	}
 	if err != nil {
+		if !vars.InRestrictedSQL {
+			vars.StmtCtx.AppendError(err)
+		}
+
+		if e.needReset {
+			// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
+			// Ref https://github.com/pingcap/tidb/issues/59132
+			vars.StmtCtx.SetWarnings(vars.StmtCtx.GetWarnings()[warnCountBeforeParse:])
+		}
+
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
@@ -132,7 +144,7 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		e.Ctx().GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
 		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}

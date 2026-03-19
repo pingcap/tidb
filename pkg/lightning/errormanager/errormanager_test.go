@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"io"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -112,53 +111,6 @@ func (c mockConn) ExecContext(_ context.Context, _ string, _ []driver.NamedValue
 }
 
 func (mockConn) Close() error { return nil }
-
-type mockRows struct {
-	driver.Rows
-	start int64
-	end   int64
-}
-
-func (r *mockRows) Columns() []string {
-	return []string{"id", "raw_handle", "raw_row"}
-}
-
-func (r *mockRows) Close() error { return nil }
-
-func (r *mockRows) Next(dest []driver.Value) error {
-	if r.start >= r.end {
-		return io.EOF
-	}
-	dest[0] = r.start  // id
-	dest[1] = []byte{} // raw_handle
-	dest[2] = []byte{} // raw_row
-	r.start++
-	return nil
-}
-
-func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	expectedQuery := "SELECT id, raw_handle, raw_row.*"
-	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
-		return &mockRows{}, nil
-	}
-	if len(args) != 4 {
-		return &mockRows{}, nil
-	}
-	// args are tableName, start, end, and limit.
-	start := args[1].Value.(int64)
-	if start < 1 {
-		start = 1
-	}
-	end := args[2].Value.(int64)
-	if end > c.totalRows+1 {
-		end = c.totalRows + 1
-	}
-	limit := args[3].Value.(int64)
-	if start+limit < end {
-		end = start + limit
-	}
-	return &mockRows{start: start, end: end}, nil
-}
 
 func TestReplaceConflictOneKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
@@ -298,7 +250,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data2RowValue))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}
@@ -502,7 +454,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 			0, "test", nil, nil, data4RowKey, data4RowValue, 2).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
 	}
@@ -510,7 +462,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data3RowValue))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}

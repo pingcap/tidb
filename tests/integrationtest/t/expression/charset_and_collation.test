@@ -729,16 +729,16 @@ select v from t_bin where v<'b' and id<=3;
 select id from t order by v, id;
 select id from t_bin order by v, id;
 # TestCollateHashAgg
-explain format="brief" select distinct(v) from t_bin;
+explain format="plan_tree" select distinct(v) from t_bin;
 -- sorted_result
 select distinct(v) from t_bin;
-explain format="brief" select distinct(v) from t;
+explain format="plan_tree" select distinct(v) from t;
 -- sorted_result
 select distinct(v) from t;
-explain format="brief" select v, count(*) from t_bin group by v;
+explain format="plan_tree" select v, count(*) from t_bin group by v;
 -- sorted_result
 select v, count(*) from t_bin group by v;
-explain format="brief" select v, count(*) from t group by v;
+explain format="plan_tree" select v, count(*) from t group by v;
 -- sorted_result
 select v, count(*) from t group by v;
 
@@ -770,38 +770,38 @@ create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_gener
 create table t_bin (id int, v varchar(5) CHARACTER SET binary , key(v));
 insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
 insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
-explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t_bin;
+explain format="plan_tree" select /*+ STREAM_AGG() */ distinct(v) from t_bin;
 -- sorted_result
 select /*+ STREAM_AGG() */ distinct(v) from t_bin;
-explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t;
+explain format="plan_tree" select /*+ STREAM_AGG() */ distinct(v) from t;
 -- sorted_result
 select /*+ STREAM_AGG() */ distinct(v) from t;
-explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
+explain format="plan_tree" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
 -- sorted_result
 select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
-explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
+explain format="plan_tree" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
 -- sorted_result
 select /*+ STREAM_AGG() */ v, count(*) from t group by v;
 # TestCollateIndexReader
-explain format="brief" select v from t where v < 'b'  order by v;
+explain format="plan_tree" select v from t where v < 'b'  order by v;
 select v from t where v < 'b' order by v;
-explain format="brief" select v from t where v < 'b' and v > ' ' order by v;
+explain format="plan_tree" select v from t where v < 'b' and v > ' ' order by v;
 select v from t where v < 'b' and v > ' ' order by v;
-explain format="brief" select v from t_bin where v < 'b' order by v;
+explain format="plan_tree" select v from t_bin where v < 'b' order by v;
 select v from t_bin where v < 'b' order by v;
-explain format="brief" select v from t_bin where v < 'b' and v > ' ' order by v;
+explain format="plan_tree" select v from t_bin where v < 'b' and v > ' ' order by v;
 select v from t_bin where v < 'b' and v > ' ' order by v;
 # TestCollateIndexLookup
-explain format="brief" select id from t use index(v) where v < 'b';
+explain format="plan_tree" select id from t use index(v) where v < 'b';
 -- sorted_result
 select id from t use index(v) where v < 'b';
-explain format="brief" select id from t use index(v) where v < 'b' and v > ' ';
+explain format="plan_tree" select id from t use index(v) where v < 'b' and v > ' ';
 -- sorted_result
 select id from t use index(v) where v < 'b' and v > ' ';
-explain format="brief" select id from t_bin use index(v) where v < 'b';
+explain format="plan_tree" select id from t_bin use index(v) where v < 'b';
 -- sorted_result
 select id from t_bin use index(v) where v < 'b';
-explain format="brief" select id from t_bin use index(v) where v < 'b' and v > ' ';
+explain format="plan_tree" select id from t_bin use index(v) where v < 'b' and v > ' ';
 -- sorted_result
 select id from t_bin use index(v) where v < 'b' and v > ' ';
 

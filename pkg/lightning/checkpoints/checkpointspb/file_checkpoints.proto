@@ -79,4 +79,5 @@ message ChunkCheckpointModel {
     int32 compression = 15;
     string sort_key = 16;
     int64 file_size = 17;
+    int64 real_pos = 18;
 }

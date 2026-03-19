@@ -92,7 +92,7 @@ var _ SlidingWindowAggFunc = &countOriginal4Int{}
 
 func (e *countOriginal4Int) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalInt(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -102,7 +102,7 @@ func (e *countOriginal4Int) Slide(sctx AggFuncUpdateContext, getRow func(uint64)
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -141,7 +141,7 @@ var _ SlidingWindowAggFunc = &countOriginal4Real{}
 
 func (e *countOriginal4Real) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -151,7 +151,7 @@ func (e *countOriginal4Real) Slide(sctx AggFuncUpdateContext, getRow func(uint64
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -190,7 +190,7 @@ var _ SlidingWindowAggFunc = &countOriginal4Decimal{}
 
 func (e *countOriginal4Decimal) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -200,7 +200,7 @@ func (e *countOriginal4Decimal) Slide(sctx AggFuncUpdateContext, getRow func(uin
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -239,7 +239,7 @@ var _ SlidingWindowAggFunc = &countOriginal4Time{}
 
 func (e *countOriginal4Time) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalTime(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -249,7 +249,7 @@ func (e *countOriginal4Time) Slide(sctx AggFuncUpdateContext, getRow func(uint64
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalTime(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -288,7 +288,7 @@ var _ SlidingWindowAggFunc = &countOriginal4Duration{}
 
 func (e *countOriginal4Duration) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalDuration(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -298,7 +298,7 @@ func (e *countOriginal4Duration) Slide(sctx AggFuncUpdateContext, getRow func(ui
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalDuration(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -337,7 +337,7 @@ var _ SlidingWindowAggFunc = &countOriginal4JSON{}
 
 func (e *countOriginal4JSON) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalJSON(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -347,7 +347,7 @@ func (e *countOriginal4JSON) Slide(sctx AggFuncUpdateContext, getRow func(uint64
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalJSON(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -386,7 +386,7 @@ var _ SlidingWindowAggFunc = &countOriginal4VectorFloat32{}
 
 func (e *countOriginal4VectorFloat32) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalVectorFloat32(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -396,7 +396,7 @@ func (e *countOriginal4VectorFloat32) Slide(sctx AggFuncUpdateContext, getRow fu
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalVectorFloat32(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -435,7 +435,7 @@ var _ SlidingWindowAggFunc = &countOriginal4String{}
 
 func (e *countOriginal4String) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		_, isNull, err := e.args[0].EvalString(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -445,7 +445,7 @@ func (e *countOriginal4String) Slide(sctx AggFuncUpdateContext, getRow func(uint
 		}
 		*p--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		_, isNull, err := e.args[0].EvalString(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err

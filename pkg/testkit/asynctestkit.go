@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,7 +97,7 @@ func (tk *AsyncTestKit) ConcurrentRun(
 	contextList := make([]context.Context, concurrent)
 	doneList := make([]context.CancelFunc, concurrent)
 
-	for i := 0; i < concurrent; i++ {
+	for i := range concurrent {
 		w := i
 		channel[w] = make(chan [][]any, 1)
 		contextList[w], doneList[w] = context.WithCancel(context.Background())
@@ -116,7 +116,7 @@ func (tk *AsyncTestKit) ConcurrentRun(
 	}
 
 	defer func() {
-		for i := 0; i < concurrent; i++ {
+		for i := range concurrent {
 			tk.CloseSession(contextList[i])
 		}
 	}()
@@ -125,18 +125,18 @@ func (tk *AsyncTestKit) ConcurrentRun(
 	defer tk.CloseSession(ctx)
 	tk.MustExec(ctx, "use test")
 
-	for j := 0; j < loops; j++ {
+	for j := range loops {
 		data := prepareFunc(ctx, tk, concurrent, j)
-		for i := 0; i < concurrent; i++ {
+		for i := range concurrent {
 			channel[i] <- data[i]
 		}
 	}
 
-	for i := 0; i < concurrent; i++ {
+	for i := range concurrent {
 		close(channel[i])
 	}
 
-	for i := 0; i < concurrent; i++ {
+	for i := range concurrent {
 		<-contextList[i].Done()
 	}
 	checkFunc(ctx, tk)
@@ -222,7 +222,7 @@ func (tk *AsyncTestKit) resultSetToResult(ctx context.Context, rs sqlexec.Record
 	for i := range rows {
 		row := rows[i]
 		resultRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				resultRow[j] = "<nil>"
 			} else {
@@ -241,10 +241,10 @@ type sessionCtxKeyType struct{}
 var sessionKey = sessionCtxKeyType{}
 
 // TryRetrieveSession tries retrieve session from context.
-func TryRetrieveSession(ctx context.Context) sessiontypes.Session {
+func TryRetrieveSession(ctx context.Context) sessionapi.Session {
 	s := ctx.Value(sessionKey)
 	if s == nil {
 		return nil
 	}
-	return s.(sessiontypes.Session)
+	return s.(sessionapi.Session)
 }

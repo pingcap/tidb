@@ -190,11 +190,6 @@ func (s *ScalarSubQueryExpr) Decorrelate(*expression.Schema) expression.Expressi
 	return s
 }
 
-// resolveIndices implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndices(*expression.Schema) error {
-	return nil
-}
-
 // ResolveIndices implements the Expression interface.
 func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Expression, error) {
 	return s, nil
@@ -203,11 +198,6 @@ func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Ex
 // ResolveIndicesByVirtualExpr implements the Expression interface.
 func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ expression.EvalContext, _ *expression.Schema) (expression.Expression, bool) {
 	return s, false
-}
-
-// resolveIndicesByVirtualExpr implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ expression.EvalContext, _ *expression.Schema) bool {
-	return false
 }
 
 // RemapColumn implements the Expression interface.
@@ -330,7 +320,7 @@ func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
 	for i, id := range ssctx.outputColIDs {
 		fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
 		if i+1 != len(ssctx.outputColIDs) {
-			fmt.Fprintf(builder, ",")
+			fmt.Fprintf(builder, ", ")
 		}
 	}
 	return builder.String()

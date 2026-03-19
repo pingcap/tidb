@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -77,26 +79,27 @@ var workloadTables = []repositoryTable{
 			DB_VER JSON NULL COMMENT 'Versions of TiDB, TiKV, PD at the moment',
 			WR_VER int unsigned NULL COMMENT 'Version to identify the compatibility of workload schema between releases.',
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
-			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
+			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, mysql.WorkloadSchema, histSnapshotsTable),
 		"",
 	},
-	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
 
-	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_TRX", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "MEMORY_USAGE", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "DEADLOCKS", samplingTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "PROCESSLIST", samplingTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "TIDB_TRX", samplingTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "MEMORY_USAGE", samplingTable, "", "", "", ""},
+	{metadef.InformationSchemaName.O, "DEADLOCKS", samplingTable, "", "", "", ""},
 
-	{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
+	// TODO: These tables are excluded for now, because reading from them adds unnecessary load to the PD.
+	//{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
 	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS_HISTORY", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
 }
 
 type sessionPool interface {
@@ -121,17 +124,26 @@ type worker struct {
 	samplingTicker   *time.Ticker
 	snapshotInterval int32
 	snapshotTicker   *time.Ticker
-	snapshotChan     chan struct{}
 	retentionDays    int32
 }
 
 var workerCtx = worker{}
 
-func takeSnapshot() error {
-	if workerCtx.snapshotChan == nil {
-		return errors.New("Workload repository is not enabled yet")
+func takeSnapshot(ctx context.Context) error {
+	workerCtx.Lock()
+	defer workerCtx.Unlock()
+
+	if !workerCtx.enabled {
+		return errWorkloadNotStarted.GenWithStackByArgs()
 	}
-	workerCtx.snapshotChan <- struct{}{}
+
+	snapID, err := workerCtx.takeSnapshot(ctx)
+	if err != nil {
+		logutil.BgLogger().Info("workload repository manual snapshot failed", zap.String("owner", workerCtx.instanceID), zap.NamedError("err", err))
+		return errCouldNotStartSnapshot.GenWithStackByArgs()
+	}
+
+	logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))
 	return nil
 }
 
@@ -246,7 +258,7 @@ func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...
 
 func execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
 	var errs [5]error
-	for i := 0; i < len(errs); i++ {
+	for i := range errs {
 		res, err := runQuery(ctx, sctx, sql, args...)
 		if err == nil {
 			return res, nil
@@ -297,7 +309,6 @@ func (w *worker) startRepository(ctx context.Context) func() {
 	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
-		w.owner = w.newOwner(ownerKey, promptKey)
 		if err := w.owner.CampaignOwner(); err != nil {
 			logutil.BgLogger().Error("repository could not campaign for owner", zap.NamedError("err", err))
 		}
@@ -359,8 +370,8 @@ func (w *worker) start() error {
 		return errUnsupportedEtcdRequired.GenWithStackByArgs()
 	}
 
+	w.owner = w.newOwner(ownerKey, promptKey)
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
-	w.snapshotChan = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -388,7 +399,6 @@ func (w *worker) stop() {
 	}
 
 	w.cancel = nil
-	w.snapshotChan = nil
 }
 
 // setRepositoryDest will change the dest of workload snapshot.

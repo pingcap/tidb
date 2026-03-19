@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -24,12 +25,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func getBackendConfig(t *testing.T) BackendConfig {
@@ -40,7 +45,7 @@ func getBackendConfig(t *testing.T) BackendConfig {
 		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv"),
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{},
-		WorkerConcurrency:           8,
+		WorkerConcurrency:           toAtomic(8),
 		LocalWriterMemCacheSize:     config.DefaultLocalWriterMemCacheSize,
 		CheckpointEnabled:           false,
 	}
@@ -107,10 +112,39 @@ func TestEngineManager(t *testing.T) {
 
 func TestGetExternalEngineKVStatistics(t *testing.T) {
 	em := &engineManager{
-		externalEngine: map[uuid.UUID]common.Engine{},
+		externalEngine: map[uuid.UUID]engineapi.Engine{},
 	}
 	// non existent uuid
 	size, count := em.getExternalEngineKVStatistics(uuid.New())
 	require.Zero(t, size)
 	require.Zero(t, count)
+}
+
+func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	storeHelper := mocklocal.NewMockStoreHelper(ctrl)
+
+	observedCore, observedLogs := observer.New(zapcore.DebugLevel)
+	backendConfig := getBackendConfig(t)
+	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	engineID := uuid.New()
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
+	require.NoError(t, em.openEngine(ctx, &backend.EngineConfig{}, engineID))
+
+	engineVal, ok := em.engines.Load(engineID)
+	require.True(t, ok)
+	engineVal.(*Engine).ingestErr.Set(errors.New("injected finishWrite error"))
+
+	em.cleanupAllLocalEngines(ctx)
+	require.Empty(t, em.engineFileSizes())
+
+	logEntries := observedLogs.FilterMessage("cleanup all local engines failed").All()
+	require.Len(t, logEntries, 1)
+	require.Contains(t, logEntries[0].ContextMap()["error"], "injected finishWrite error")
+
+	em.close()
 }

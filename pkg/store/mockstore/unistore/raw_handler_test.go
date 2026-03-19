@@ -29,9 +29,9 @@ func TestRawHandler(t *testing.T) {
 	ctx := context.Background()
 	keys := make([][]byte, 10)
 	vals := make([][]byte, 10)
-	for i := 0; i < 10; i++ {
-		keys[i] = []byte(fmt.Sprintf("key%d", i))
-		vals[i] = []byte(fmt.Sprintf("val%d", i))
+	for i := range 10 {
+		keys[i] = fmt.Appendf(nil, "key%d", i)
+		vals[i] = fmt.Appendf(nil, "val%d", i)
 	}
 	putResp, _ := h.RawPut(ctx, &kvrpcpb.RawPutRequest{Key: keys[0], Value: vals[0]})
 	require.NotNil(t, putResp)

@@ -21,7 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cznic/mathutil"
+	"modernc.org/mathutil"
 )
 
 const (

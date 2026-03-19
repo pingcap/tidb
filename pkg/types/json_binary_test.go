@@ -457,7 +457,7 @@ func TestGetKeys(t *testing.T) {
 
 	b := strings.Builder{}
 	b.WriteString("{\"")
-	for i := 0; i < 65536; i++ {
+	for range 65536 {
 		b.WriteByte('a')
 	}
 	b.WriteString("\": 1}")
@@ -812,7 +812,7 @@ func FuzzJSONExtract(f *testing.F) {
 			}
 			if bj.TypeCode == JSONTypeCodeObject {
 				count := bj.GetElemCount()
-				for i := 0; i < count; i++ {
+				for i := range count {
 					key := string(bj.objectGetKey(i))
 					if strings.ContainsRune(key, utf8.RuneError) {
 						t.Skip()

@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -546,6 +548,9 @@ func TestDMLWithAddForeignKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_1pc='OFF';")
+	if kerneltype.IsNextGen() {
+		t.Skip("The test requires disabling MDL. Skip it until it is rewritten")
+	}
 	tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
 	tk.MustExec("set global tidb_enable_async_commit='ON'")
 
@@ -626,4 +631,148 @@ func TestLockKeysInDML(t *testing.T) {
 	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func TestSelectForUpdateWriteConflict(t *testing.T) {
+	// Arrange
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t (id int primary key, val int)")
+	tk1.MustExec("insert into t values (1, 100)")
+
+	// Act
+	// T1 uses "select for update" to lock key (creates lock-type mutation)
+	tk1.MustExec("begin optimistic")
+	tk1.MustQuery("select * from t where id = 1 for update")
+
+	// T2 starts optimistic transaction and tries to modify the same key
+	tk2.MustExec("begin optimistic")
+	tk2.MustExec("update t set val = 200 where id = 1")
+
+	// T1 commits (commits the lock-type mutation from select for update)
+	tk1.MustExec("commit")
+
+	// T2 tries to prewrite and should get write conflict
+	t2err := tk2.ExecToErr("commit")
+
+	// Assert
+	require.Error(t, t2err)
+	require.Contains(t, t2err.Error(), "Write conflict")
+	tk1.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 100"))
+}
+
+func TestIssue62775(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testForSetup := func(createTable string, prepare string, query string, expectedData [][]any) {
+		tk.MustExec(createTable)
+		defer tk.MustExec("drop table if exists t")
+		tk.MustExec(prepare)
+
+		s, err := session.CreateSession4Test(store)
+		// Simulate session initializations of GC worker
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+		s.GetSessionVars().CommonGlobalLoaded = true
+		s.GetSessionVars().InRestrictedSQL = true
+		require.NoError(t, err)
+		// The problem occurs in internal session.
+		s.SetConnectionID(0)
+		_, err = s.ExecuteInternal(ctx, "use test")
+		require.NoError(t, err)
+
+		require.Equal(t, uint64(0), s.GetSessionVars().LastCommitTS)
+
+		recordSet, err := s.ExecuteInternal(ctx, query)
+		require.NoError(t, err)
+		require.NotNil(t, recordSet)
+		rs := tk.ResultSetToResultWithCtx(ctx, recordSet, "failed to drain record set after query")
+		rs.Check(expectedData)
+
+		// Check the transaction is readonly, which can be inferred by commitTS == 0.
+		require.Equal(t, uint64(0), s.GetSessionVars().LastCommitTS)
+
+		// Verify that the LastCommitTS works for internal transaction, preventing the possibility that LastCommitTS
+		// is not set and thus causes the previous check false-negative.
+		_, err = s.ExecuteInternal(ctx, `update t set v = v + 1`)
+		require.NoError(t, err)
+		require.NotEqual(t, uint64(0), s.GetSessionVars().LastCommitTS)
+	}
+
+	// The following sub-cases covers the combination of:
+	// * Where clause:
+	//   * int PK (PKIsHandle == true)
+	//   * varchar PK, clustered (PKIsHandle == false; IsCommonHandle == ture)
+	//   * varchar PK, non-clustered
+	//   * Scan
+	// * Query:
+	//   * Columns without parentheses
+	//   * Columns with parentheses (affects the expression type)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10)`,
+		`select v from t where id = 1 for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key clustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select v from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key nonclustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select v from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10), (2, 20)`,
+		`select v from t for update`,
+		testkit.Rows("10", "20"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10)`,
+		`select (v) from t where id = 1 for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key clustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select (v) from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key nonclustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select (v) from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10), (2, 20)`,
+		`select (v) from t for update`,
+		testkit.Rows("10", "20"),
+	)
 }

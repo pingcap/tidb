@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -395,18 +396,19 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), errno.ErrPrivilegeCheckFail)
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
-	// detect modify system table
+	if kerneltype.IsClassic() {
+		// detect modify system table
+		nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		tk.MustExec("truncate table mysql.stats_meta")
+		errorMsg := fmt.Sprintf("[ddl:-1]Detected modified system table during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
+		tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
+	}
+	// update tidb_server_version
 	nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
-	tk.MustExec("truncate table mysql.stats_meta")
-	errorMsg := fmt.Sprintf("[ddl:-1]Detected modified system table during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
-	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
-
-	// update tidb_server_version
-	nowTS, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	require.NoError(t, err)
 	tk.MustExec("update mysql.tidb set VARIABLE_VALUE=VARIABLE_VALUE+1 where VARIABLE_NAME='tidb_server_version'")
-	errorMsg = fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
+	errorMsg := fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
 	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
@@ -676,12 +678,12 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		idx := i
 		wg.Run(func() {
 			tkit := testkit.NewTestKit(t, store)
 			tkit.MustExec("use many_tables")
-			for j := 0; j < 70; j++ {
+			for j := range 70 {
 				tkit.MustExec(fmt.Sprintf("create table t_%d_%d (a int)", idx, j))
 			}
 		})
@@ -740,12 +742,12 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 
 	var wg sync.WaitGroup
 	dbPerWorker := 10
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk2 := testkit.NewTestKit(t, store)
-			for j := 0; j < dbPerWorker; j++ {
+			for j := range dbPerWorker {
 				dbName := fmt.Sprintf("db_%d", i*dbPerWorker+j)
 				tk2.MustExec(fmt.Sprintf("create database %s", dbName))
 			}

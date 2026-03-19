@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -48,7 +50,7 @@ func TestInterruptedDuringSort(t *testing.T) {
 	sz := 1024
 
 	chk := chunk.NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 		chk.AppendInt64(1, int64(i))
 		chk.AppendInt64(2, int64(i))
@@ -56,10 +58,10 @@ func TestInterruptedDuringSort(t *testing.T) {
 		chk.AppendInt64(4, int64(i))
 	}
 
-	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */)
+	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */, "")
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
-	for i := 0; i < 10240; i++ {
+	for range 10240 {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}
@@ -80,6 +82,14 @@ func TestInterruptedDuringSort(t *testing.T) {
 }
 
 func TestInterruptedDuringSpilling(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
+	defer util.CheckNoLeakFiles(t, testFuncName)
+
 	rootTracker := memory.NewTracker(-1, -1)
 	rootTracker.IsRootTrackerOfSess = true
 	rootTracker.Killer = &sqlkiller.SQLKiller{}
@@ -99,7 +109,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	sz := 1024
 
 	chk := chunk.NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 		chk.AppendInt64(1, int64(i))
 		chk.AppendInt64(2, int64(i))
@@ -107,10 +117,10 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 		chk.AppendInt64(4, int64(i))
 	}
 
-	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */)
+	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */, testFuncName)
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
-	for i := 0; i < 10240; i++ {
+	for range 10240 {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}

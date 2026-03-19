@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -68,14 +70,16 @@ type schemaIDName struct {
 	tomb          bool
 }
 
-func (si *schemaItem) Name() string {
-	return si.dbInfo.Name.L
+type referredForeignKeyItem struct {
+	schemaVersion  int64
+	dbName         string
+	tableName      string
+	referredFKInfo []*model.ReferredFKInfo
+	tomb           bool
 }
 
-// versionAndTimestamp is the tuple of schema version and timestamp.
-type versionAndTimestamp struct {
-	schemaVersion int64
-	timestamp     uint64
+func (si *schemaItem) Name() string {
+	return si.dbInfo.Name.L
 }
 
 // btreeSet updates the btree.
@@ -83,7 +87,7 @@ type versionAndTimestamp struct {
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
 	succ := false
 	for !succ {
-		var t *btree.BTreeG[T] = ptr.Load()
+		var t = ptr.Load()
 		t2 := t.Clone()
 		t2.ReplaceOrInsert(item)
 		succ = ptr.CompareAndSwap(t, t2)
@@ -118,13 +122,10 @@ type Data struct {
 	// Stores only id, name and schemaVersion in memory.
 	schemaID2Name atomic.Pointer[btree.BTreeG[schemaIDName]]
 
-	tableCache *Sieve[tableCacheKey, table.Table]
+	// referredForeignKeys records all table's ReferredFKInfo.
+	referredForeignKeys atomic.Pointer[btree.BTreeG[*referredForeignKeyItem]]
 
-	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
-	mu struct {
-		sync.RWMutex
-		versionTimestamps []versionAndTimestamp
-	}
+	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// For information_schema/metrics_schema/performance_schema etc
 	specials sync.Map
@@ -138,7 +139,7 @@ type Data struct {
 	// We observe the pattern that list table API always come with filter.
 	// All model.TableInfo with special attributes are here, currently the special attributes including:
 	//     TTLInfo, TiFlashReplica
-	// PlacementPolicyRef, Partition might be added later, and also ForeignKeys, TableLock etc
+	// PlacementPolicyRef, Partition might be added later, and also TableLock etc
 	tableInfoResident atomic.Pointer[btree.BTreeG[tableInfoItem]]
 
 	// the minimum ts of the recent used infoschema
@@ -160,41 +161,6 @@ type partitionItem struct {
 	tomb          bool
 }
 
-func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
-	isd.mu.RLock()
-	defer isd.mu.RUnlock()
-	return isd.getVersionByTSNoLock(ts)
-}
-
-func (isd *Data) getVersionByTSNoLock(ts uint64) (int64, bool) {
-	// search one by one instead of binary search, because the timestamp of a schema could be 0
-	// this is ok because the size of h.tableCache is small (currently set to 16)
-	// moreover, the most likely hit element in the array is the first one in steady mode
-	// thus it may have better performance than binary search
-	for i, vt := range isd.mu.versionTimestamps {
-		if vt.timestamp == 0 || ts < vt.timestamp {
-			// is.timestamp == 0 means the schema ts is unknown, so we can't use it, then just skip it.
-			// ts < is.timestamp means the schema is newer than ts, so we can't use it too, just skip it to find the older one.
-			continue
-		}
-		// ts >= is.timestamp must be true after the above condition.
-		if i == 0 {
-			// the first element is the latest schema, so we can return it directly.
-			return vt.schemaVersion, true
-		}
-		if isd.mu.versionTimestamps[i-1].schemaVersion == vt.schemaVersion+1 && isd.mu.versionTimestamps[i-1].timestamp > ts {
-			// This first condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
-			// but current(cache[i]) schema-version is not 9, then current schema is not suitable for ts.
-			// The second condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
-			return vt.schemaVersion, true
-		}
-		// current schema is not suitable for ts, then break the loop to avoid the unnecessary search.
-		break
-	}
-
-	return 0, false
-}
-
 type tableCacheKey struct {
 	tableID       int64
 	schemaVersion int64
@@ -214,6 +180,7 @@ func NewData() *Data {
 	ret.pid2tid.Store(btree.NewG[partitionItem](btreeDegree, comparePartitionItem))
 	ret.tableInfoResident.Store(btree.NewG[tableInfoItem](btreeDegree, compareTableInfoItem))
 	ret.tableCache.SetStatusHook(newSieveStatusHookImpl())
+	ret.referredForeignKeys.Store(btree.NewG[*referredForeignKeyItem](btreeDegree, compareReferredForeignKeyItem))
 	return ret
 }
 
@@ -276,16 +243,139 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	btreeSet(&isd.schemaID2Name, schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
 }
 
-// GCOldVersion compacts btree nodes by removing items older than schema version.
-// exported for testing
-func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
-	maxv, ok := isd.byName.Load().Max()
-	if !ok {
-		return 0, 0
+type referredForeignKeysHelper struct {
+	start           referredForeignKeyItem
+	schemaVersion   int64
+	referredFKInfos []*model.ReferredFKInfo
+}
+
+func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
+	if item.dbName != h.start.dbName || item.tableName != h.start.tableName {
+		return false
 	}
 
-	var total int64
-	var deletes []*tableItem
+	if item.schemaVersion <= h.schemaVersion {
+		if !item.tomb { // If the item is a tomb record, all the foreign keys are deleted.
+			h.referredFKInfos = item.referredFKInfo
+		}
+		return false
+	}
+	return true
+}
+
+func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVersion int64) []*model.ReferredFKInfo {
+	helper := referredForeignKeysHelper{
+		start:           referredForeignKeyItem{dbName: schema, tableName: table, schemaVersion: math.MaxInt64},
+		schemaVersion:   schemaMetaVersion,
+		referredFKInfos: make([]*model.ReferredFKInfo, 0),
+	}
+	isd.referredForeignKeys.Load().DescendLessOrEqual(&helper.start, helper.onItem)
+	return helper.referredFKInfos
+}
+
+// hasForeignKeyReference checks if a specific foreign key reference already exists
+func (isd *Data) hasForeignKeyReference(refs []*model.ReferredFKInfo, schema, table, fkName ast.CIStr) bool {
+	for _, ref := range refs {
+		if ref.ChildSchema.L == schema.L &&
+			ref.ChildTable.L == table.L &&
+			ref.ChildFKName.L == fkName.L {
+			return true
+		}
+	}
+	return false
+}
+
+func (isd *Data) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+
+		// Get current foreign key references for the table
+		refSchema, refTable := fk.RefSchema.L, fk.RefTable.L
+		existingRefs := isd.getTableReferredForeignKeys(fk.RefSchema.L, fk.RefTable.L, schemaMetaVersion)
+
+		// Skip if this specific foreign key reference already exists
+		if isd.hasForeignKeyReference(existingRefs, schema, tbInfo.Name, fk.Name) {
+			continue
+		}
+
+		// Create a new array with existing refs + new reference
+		newRefs := make([]*model.ReferredFKInfo, 0, len(existingRefs)+1)
+		newRefs = append(newRefs, existingRefs...)
+		newRefs = append(newRefs, &model.ReferredFKInfo{
+			Cols:        fk.RefCols,
+			ChildSchema: schema,
+			ChildTable:  tbInfo.Name,
+			ChildFKName: fk.Name,
+		})
+		sort.Slice(newRefs, func(i, j int) bool {
+			if newRefs[i].ChildSchema.L != newRefs[j].ChildSchema.L {
+				return newRefs[i].ChildSchema.L < newRefs[j].ChildSchema.L
+			}
+			if newRefs[i].ChildTable.L != newRefs[j].ChildTable.L {
+				return newRefs[i].ChildTable.L < newRefs[j].ChildTable.L
+			}
+			return newRefs[i].ChildFKName.L < newRefs[j].ChildFKName.L
+		})
+		btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
+			dbName:         refSchema,
+			tableName:      refTable,
+			schemaVersion:  schemaMetaVersion,
+			referredFKInfo: newRefs,
+		})
+	}
+}
+
+func (isd *Data) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+
+		// Get current foreign key references for the table
+		refSchema, refTable := fk.RefSchema.L, fk.RefTable.L
+		existingRefs := isd.getTableReferredForeignKeys(refSchema, refTable, schemaMetaVersion)
+
+		// Skip if this specific foreign key reference doesn't exist
+		if !isd.hasForeignKeyReference(existingRefs, schema, tbInfo.Name, fk.Name) {
+			continue
+		}
+
+		// Delete the reference
+		if len(existingRefs) == 1 {
+			// If this is the only reference, mark the whole item as deleted
+			btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
+				dbName:         refSchema,
+				tableName:      refTable,
+				schemaVersion:  schemaMetaVersion,
+				tomb:           true,
+				referredFKInfo: nil,
+			})
+		} else {
+			// If there are multiple references, create new array excluding this one
+			// clone existingRefs to avoid modifying the original slice
+			tmpRefs := append([]*model.ReferredFKInfo(nil), existingRefs...)
+			newRefs := slices.DeleteFunc(tmpRefs, func(ref *model.ReferredFKInfo) bool {
+				return ref.ChildSchema.L == schema.L &&
+					ref.ChildTable.L == tbInfo.Name.L &&
+					ref.ChildFKName.L == fk.Name.L
+			})
+
+			btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
+				dbName:         refSchema,
+				tableName:      refTable,
+				schemaVersion:  schemaMetaVersion,
+				tomb:           false,
+				referredFKInfo: newRefs,
+			})
+		}
+	}
+}
+
+// gcCollectTableItem returns up to maxItems old tableItem versions for GC.
+func gcCollectTableItem(bt *btree.BTreeG[*tableItem], cutVer int64, maxItems int) []*tableItem {
+	var dels []*tableItem
 	var prev *tableItem
 	// Example:
 	// gcOldVersion to v4
@@ -296,30 +386,77 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 	//	db2 tbl2 v0    <- delete, because v0 < v4
 	//	db1 tbl3 v4
 	//	...
-	// So the rule can be simplify to "remove all items whose (version < schemaVersion && previous item is same table)"
-	isd.byName.Load().DescendLessOrEqual(maxv, func(item *tableItem) bool {
-		total++
-		if item.schemaVersion < schemaVersion {
-			if prev != nil && prev.dbName == item.dbName && prev.tableName == item.tableName {
-				// find one!
-				deletes = append(deletes, item)
-				// Don't do too much work in one batch!
-				if len(deletes) > 1024 {
-					return false
-				}
+	// So the rule can be simplify to "remove all items whose (version < cutVer && previous item is same table && previous
+	// item is also < cutVer)". This keeps the pivot record (latest version < cutVer) for every table name, which is still
+	// needed to serve requests whose schemaVersion is in [cutVer, next_change_of_the_table).
+	bt.Descend(func(item *tableItem) bool {
+		if item.schemaVersion < cutVer &&
+			prev != nil &&
+			prev.dbName.L == item.dbName.L &&
+			prev.tableName.L == item.tableName.L &&
+			prev.schemaVersion < cutVer {
+			dels = append(dels, item)
+			if len(dels) >= maxItems {
+				return false
 			}
 		}
 		prev = item
 		return true
 	})
+	return dels
+}
 
+// gcCollectReferredForeignKeyItem returns up to maxItems old referredForeignKeyItem versions for GC.
+func gcCollectReferredForeignKeyItem(bt *btree.BTreeG[*referredForeignKeyItem], cutVer int64, maxItems int) []*referredForeignKeyItem {
+	var dels []*referredForeignKeyItem
+	var prev *referredForeignKeyItem
+	bt.Descend(func(item *referredForeignKeyItem) bool {
+		if item.schemaVersion < cutVer &&
+			prev != nil &&
+			prev.dbName == item.dbName &&
+			prev.tableName == item.tableName &&
+			prev.schemaVersion < cutVer {
+			dels = append(dels, item)
+			if len(dels) >= maxItems {
+				return false
+			}
+		}
+		prev = item
+		return true
+	})
+	return dels
+}
+
+// gcOldFKVersion performs GC of old referredForeignKeyItem entries up to maxItems.
+func (isd *Data) gcOldFKVersion(schemaVersion int64) int {
+	rfOld := isd.referredForeignKeys.Load()
+	rfNew := rfOld.Clone()
+	rfDels := gcCollectReferredForeignKeyItem(rfOld, schemaVersion, 1024)
+	for _, fk := range rfDels {
+		rfNew.Delete(fk)
+	}
+	if !isd.referredForeignKeys.CompareAndSwap(rfOld, rfNew) {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() referredForeignKeys gc conflict")
+	}
+	return len(rfDels)
+}
+
+// GCOldVersion compacts btree nodes by removing items older than schema version.
+// exported for testing
+func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
+	if isd.byName.Load().Len() == 0 {
+		return 0, 0
+	}
+
+	// collect and remove old tableItems
+	dels := gcCollectTableItem(isd.byName.Load(), schemaVersion, 1024)
 	byNameOld := isd.byName.Load()
 	byNameNew := byNameOld.Clone()
 	byIDOld := isd.byID.Load()
 	byIDNew := byIDOld.Clone()
-	for _, item := range deletes {
-		byNameNew.Delete(item)
-		byIDNew.Delete(item)
+	for _, ti := range dels {
+		byNameNew.Delete(ti)
+		byIDNew.Delete(ti)
 	}
 	succ1 := isd.byID.CompareAndSwap(byIDOld, byIDNew)
 	var succ2 bool
@@ -327,11 +464,14 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 		succ2 = isd.byName.CompareAndSwap(byNameOld, byNameNew)
 	}
 	if !succ1 || !succ2 {
-		logutil.BgLogger().Info("infoschema v2 GCOldVersion() writes conflict, leave it to the next time.",
-			zap.Bool("byID success", succ1),
-			zap.Bool("byName success", succ2))
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() writes conflict",
+			zap.Bool("byID", succ1), zap.Bool("byName", succ2))
 	}
-	return len(deletes), total
+
+	// collect and remove old referredForeignKeyItems
+	_ = isd.gcOldFKVersion(schemaVersion)
+
+	return len(dels), int64(isd.byName.Load().Len())
 }
 
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
@@ -346,6 +486,7 @@ func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetSchemaID2NameBeforeFullLoad(&isd.schemaID2Name, schemaVersion)
 
 	resetPID2TIDBeforeFullLoad(&isd.pid2tid, schemaVersion)
+	resetFKBeforeFullLoad(&isd.referredForeignKeys, schemaVersion)
 }
 
 func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], schemaVersion int64) {
@@ -355,10 +496,7 @@ func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sche
 		return
 	}
 
-	batchSize := 1000
-	if bt.Len() < batchSize {
-		batchSize = bt.Len()
-	}
+	batchSize := min(bt.Len(), 1000)
 	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
@@ -394,10 +532,7 @@ func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sc
 		return
 	}
 
-	batchSize := 1000
-	if bt.Len() < batchSize {
-		batchSize = bt.Len()
-	}
+	batchSize := min(bt.Len(), 1000)
 	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
@@ -510,10 +645,7 @@ func resetPID2TIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[partitionItem]]
 		return
 	}
 
-	batchSize := 1000
-	if bt.Len() < batchSize {
-		batchSize = bt.Len()
-	}
+	batchSize := min(bt.Len(), 1000)
 	items := make([]partitionItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
@@ -537,6 +669,33 @@ func resetPID2TIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[partitionItem]]
 			})
 		}
 		items = items[:0]
+	}
+}
+
+func resetFKBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*referredForeignKeyItem]], schemaVersion int64) {
+	bt := ptr.Load()
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]*referredForeignKeyItem, 0, bt.Len())
+	items = append(items, pivot)
+	bt.DescendLessOrEqual(pivot, func(item *referredForeignKeyItem) bool {
+		if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			return true
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		btreeSet(ptr, &referredForeignKeyItem{
+			dbName:         item.dbName,
+			tableName:      item.tableName,
+			schemaVersion:  schemaVersion,
+			tomb:           true,
+			referredFKInfo: nil,
+		})
 	}
 }
 
@@ -616,11 +775,20 @@ func compareSchemaByID(a, b schemaIDName) bool {
 	return a.schemaVersion < b.schemaVersion
 }
 
+func compareReferredForeignKeyItem(a, b *referredForeignKeyItem) bool {
+	if a.dbName != b.dbName {
+		return a.dbName < b.dbName
+	}
+	if a.tableName != b.tableName {
+		return a.tableName < b.tableName
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
 var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
 	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
-	r           autoid.Requirement
 	factory     func() (pools.Resource, error)
 	ts          uint64
 	*Data
@@ -629,9 +797,8 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: newInfoSchema(),
+		infoSchema: newInfoSchema(r),
 		Data:       infoData,
-		r:          r,
 		factory:    factory,
 	}
 }
@@ -701,7 +868,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return nil, false
 	}
 
-	if isTableVirtual(id) {
+	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
 			val, ok = schTbls.tables[itm.tableName.L]
@@ -734,17 +901,14 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
-func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
-	if !tableIDIsValid(tableID) {
-		return
-	}
-
+// TableItemByID implements the InfoSchema interface.
+// It only contains memory operations, no worries about accessing the storage.
+func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	itm, ok := is.searchTableItemByID(tableID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-
-	return itm.dbName, true
+	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
 }
 
 // TableItem is exported from tableItem.
@@ -790,7 +954,7 @@ func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
 		return false
 	}
 
-	if isTableVirtual(id) {
+	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
 			_, ok = schTbls.tables[itm.tableName.L]
@@ -806,9 +970,7 @@ func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
 
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
-	return dbName == util.InformationSchemaName.L ||
-		dbName == util.PerformanceSchemaName.L ||
-		dbName == util.MetricSchemaName.L
+	return metadef.IsMemDB(dbName)
 }
 
 // EvictTable is exported for testing only.
@@ -1106,9 +1268,7 @@ func (is *infoschemaV2) SchemaExists(schema ast.CIStr) bool {
 	return ok
 }
 
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	var ok bool
-	var pi partitionItem
+func (is *infoschemaV2) searchPartitionItemByPartitionID(partitionID int64) (pi partitionItem, ok bool) {
 	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
 		func(item partitionItem) bool {
 			if item.partitionID != partitionID {
@@ -1119,12 +1279,37 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 				return true
 			}
 			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
 				pi = item
+				ok = !item.tomb
 				return false
 			}
 			return true
-		})
+		},
+	)
+	return pi, ok
+}
+
+// TableItemByPartitionID implements InfoSchema.TableItemByPartitionID.
+// It returns the lightweight meta info, no worries about access the storage.
+func (is *infoschemaV2) TableItemByPartitionID(partitionID int64) (TableItem, bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
+	if !ok {
+		return TableItem{}, false
+	}
+	return is.TableItemByID(pi.tableID)
+}
+
+// TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
+func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
+	if !ok {
+		return
+	}
+	return pi.tableID, true
+}
+
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
 		return nil, nil, nil
 	}
@@ -1144,7 +1329,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 
 	partInfo := tbl.Meta().GetPartitionInfo()
 	var def *model.PartitionDefinition
-	for i := 0; i < len(partInfo.Definitions); i++ {
+	for i := range partInfo.Definitions {
 		pdef := &partInfo.Definitions[i]
 		if pdef.ID == partitionID {
 			def = pdef
@@ -1161,7 +1346,7 @@ func (is *infoschemaV2) TableExists(schema, table ast.CIStr) bool {
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
-	if isTableVirtual(id) {
+	if autoid.IsMemSchemaID(id) {
 		var st *schemaTables
 		is.Data.specials.Range(func(key, value any) bool {
 			tmp := value.(*schemaTables)
@@ -1199,6 +1384,12 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return nil, false
 	}
 	return is.SchemaByName(name)
+}
+
+// GetTableReferredForeignKeys implements InfoSchema.GetTableReferredForeignKeys
+func (is *infoschemaV2) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	is.keepAlive()
+	return is.Data.getTableReferredForeignKeys(schema, table, is.infoSchema.schemaMetaVersion)
 }
 
 func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
@@ -1259,13 +1450,6 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 }
 
 var loadTableSF = &singleflight.Group{}
-
-func isTableVirtual(id int64) bool {
-	// some kind of magic number...
-	// we use special ids for tables in INFORMATION_SCHEMA/PERFORMANCE_SCHEMA/METRICS_SCHEMA
-	// See meta/autoid/autoid.go for those definitions.
-	return (id & autoid.SystemSchemaIDFlag) > 0
-}
 
 // IsV2 tells whether an InfoSchema is v2 or not.
 func IsV2(is InfoSchema) (bool, *infoschemaV2) {
@@ -1457,6 +1641,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
+	b.infoschemaV2.Data.deleteReferredForeignKeys(dbInfo.Name, tblInfo, diff.Version)
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
@@ -1487,7 +1672,8 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m meta.Reader, diff *mode
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.Charset = di.Charset
 	newDBInfo.Collate = di.Collate
 	b.infoschemaV2.deleteDB(di, diff.Version)
@@ -1506,7 +1692,8 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m meta.Reader, diff *model
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
 	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)

@@ -26,7 +26,6 @@ package parser
 
 import (
 	// needed to connect to MySQL
-
 	dbsql "database/sql"
 	gio "io"
 	"os"

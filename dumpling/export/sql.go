@@ -621,11 +621,7 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 }
 
 // GetPrimaryKeyAndColumnTypes gets all primary columns and their types in ordinal order
-func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) ([]string, []string, error) {
-	var (
-		colNames, colTypes []string
-		err                error
-	)
+func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (colNames, colTypes []string, err error) {
 	colNames, err = GetPrimaryKeyColumns(tctx, conn, meta.DatabaseName(), meta.TableName())
 	if err != nil {
 		return nil, nil, err
@@ -1115,7 +1111,7 @@ func buildCompareClause(buf *bytes.Buffer, quotaCols []string, bound []string, c
 		if i > 0 {
 			buf.WriteString("or(")
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			buf.WriteString(quotaCols[j])
 			buf.WriteByte(equal)
 			buf.WriteString(bound[j])
@@ -1168,7 +1164,7 @@ func buildBetweenClause(buf *bytes.Buffer, quotaCols []string, low []string, up 
 			buf.WriteString("false")
 			return
 		}
-		for i := 0; i < commonLen; i++ {
+		for i := range commonLen {
 			if i > 0 {
 				buf.WriteString(" and ")
 			}

@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "cascades_suite")
+	testDataMap.LoadTestSuiteData("testdata", "cascades_template", true)
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -50,4 +51,8 @@ func TestMain(m *testing.M) {
 
 func GetCascadesSuiteData() testdata.TestData {
 	return testDataMap["cascades_suite"]
+}
+
+func GetCascadesTemplateData() testdata.TestData {
+	return testDataMap["cascades_template"]
 }

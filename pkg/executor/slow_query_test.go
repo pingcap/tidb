@@ -30,15 +30,18 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,13 +62,14 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
 	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +142,7 @@ func TestParseSlowLogFile(t *testing.T) {
 # Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 70724
+# Mem_arbitration: 23333
 # Disk_max: 65536
 # Plan_from_cache: true
 # Plan_from_binding: true
@@ -157,6 +162,8 @@ func TestParseSlowLogFile(t *testing.T) {
 # Time_queued_by_rc: 0.05
 # Tidb_cpu_time: 0.01
 # Tikv_cpu_time: 0.021
+# Storage_from_kv: true
+# Storage_from_mpp: true
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -181,9 +188,9 @@ select * from t;`
 	expectRecordString := `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,alias123,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -204,9 +211,9 @@ select * from t;`
 	expectRecordString = `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,alias123,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -258,6 +265,23 @@ select * from t;
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
 	require.Equal(t, warnings[0].Err.Error(), "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
+
+	// issue 39940
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# DB: a: b
+# Index_names: [t:i: a]
+# Succ: true
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	value, _ := rows[0][41].ToString()
+	require.Equal(t, value, "a: b")
+	value, _ = rows[0][42].ToString()
+	require.Equal(t, value, "[t:i: a]")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
@@ -380,7 +404,7 @@ select 7;`
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName3
 	})
-	for k := 0; k < 2; k++ {
+	for k := range 2 {
 		// k = 0 for normal files
 		// k = 1 for compressed files
 		var fileNames []string
@@ -685,7 +709,7 @@ select 9;`
 					"select 5;",
 					"# Time: 2020-02-16T18:00:01.000000+08:00",
 					"select 4;",
-					"# Time: 2020-02-16T18:00:01.000000+08:00",
+					"# Time: 2020-02-15T20:00:05.000000+08:00",
 					"select 3;"},
 			},
 		},
@@ -696,7 +720,7 @@ select 9;`
 			logs: [][]string{
 				{"# Time: 2020-04-15T19:00:05.299063744+08:00",
 					"select 9;",
-					"Time: 2020-04-15T18:00:05.299063744+08:00",
+					"# Time: 2020-04-15T18:00:05.299063744+08:00",
 					"select 8;",
 					"# Time: 2020-02-17T18:00:05.000000+08:00",
 					"select 7;",
@@ -727,25 +751,120 @@ select 9;`
 		err = retriever.initialize(context.Background(), sctx)
 		require.NoError(t, err)
 		comment := fmt.Sprintf("case id: %v", i)
-		if len(retriever.files) > 0 {
-			reader := bufio.NewReader(retriever.files[0].file)
-			offset := &offset{length: 0, offset: 0}
-			rows, err := retriever.getBatchLogForReversedScan(context.Background(), reader, offset, 3)
-			require.NoError(t, err)
-			for _, row := range rows {
-				for j, log := range row {
-					require.Equal(t, log, cas.logs[0][j], comment)
-				}
-			}
-		}
+		scanner := newSlowLogReverseScanner(retriever, sctx)
+		maxBlocks := len(cas.logs[0]) / 2
+		got, err := scanner.nextBatch(context.Background(), uint64(maxBlocks))
+		require.NoError(t, err)
+		require.Equal(t, cas.logs[0], got, comment)
 		require.NoError(t, retriever.close())
 	}
+}
+
+func TestSlowQueryRetrieverReversedScanWithLimit(t *testing.T) {
+	fileName := "tidb-slow-limit-reverse-scan.log"
+	slowLog := `# Time: 2020-02-15T18:00:01.000000+08:00
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+select 2;
+# Time: 2020-02-15T20:00:05.000000+08:00
+select 3;
+# Time: 2020-02-15T21:00:05.000000+08:00
+select 4;
+# Time: 2020-02-15T22:00:05.000000+08:00
+select 5;`
+	prepareLogs(t, []string{slowLog}, []string{fileName})
+	defer removeFiles([]string{fileName})
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
+	sctx.GetSessionVars().SlowQueryFile = fileName
+
+	retriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	retriever.extractor = &plannercore.SlowQueryExtractor{Desc: true}
+	retriever.limit = 2
+
+	timeColIdx := -1
+	for idx, col := range retriever.outputCols {
+		if col.Name.O == variable.SlowLogTimeStr {
+			timeColIdx = idx
+			break
+		}
+	}
+	require.GreaterOrEqual(t, timeColIdx, 0)
+
+	DashboardSlowLogReadBlockCnt4Test = 0
+	ctx := context.Background()
+	allRows := make([][]types.Datum, 0, retriever.limit)
+	for {
+		rows, err := retriever.retrieve(ctx, sctx)
+		require.NoError(t, err)
+		if len(rows) == 0 {
+			break
+		}
+		allRows = append(allRows, rows...)
+	}
+	require.Len(t, allRows, 2)
+	require.EqualValues(t, 2, DashboardSlowLogReadBlockCnt4Test)
+
+	t0, err := allRows[0][timeColIdx].ToString()
+	require.NoError(t, err)
+	t1, err := allRows[1][timeColIdx].ToString()
+	require.NoError(t, err)
+	require.Equal(t, "2020-02-15 22:00:05.000000", t0)
+	require.Equal(t, "2020-02-15 21:00:05.000000", t1)
+	require.NoError(t, retriever.close())
+}
+
+func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
+	data := infoschema.NewData()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
+	require.NoError(t, err)
+	is := newISBuilder.Build(math.MaxUint64)
+	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.ClusterTableSlowLog))
+	require.NoError(t, err)
+
+	pbCols := util.ColumnsToProto(tbl.Meta().Columns, tbl.Meta().PKIsHandle, false, false)
+	executors := []*tipb.Executor{
+		{
+			Tp: tipb.ExecType_TypeTableScan,
+			TblScan: &tipb.TableScan{
+				TableId: tbl.Meta().ID,
+				Columns: pbCols,
+				Desc:    true,
+			},
+		},
+		{
+			Tp: tipb.ExecType_TypeLimit,
+			Limit: &tipb.Limit{
+				Limit: 2,
+			},
+		},
+	}
+
+	sctx := mock.NewContext()
+	physicalPlan, err := plannercore.NewPBPlanBuilder(sctx, is, nil).Build(executors)
+	require.NoError(t, err)
+
+	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
+	executor := execBuilder.Build(physicalPlan)
+	limitExec, ok := executor.(*LimitExec)
+	require.True(t, ok)
+	memTableReader, ok := limitExec.AllChildren()[0].(*MemTableReaderExec)
+	require.True(t, ok)
+	retriever, ok := memTableReader.retriever.(*slowQueryRetriever)
+	require.True(t, ok)
+	require.Equal(t, uint64(2), retriever.limit)
 }
 
 func TestCancelParseSlowLog(t *testing.T) {
 	fileName := "tidb-slow-2020-02-14T19-04-05.01.log"
 	slowLog := `# Time: 2019-04-28T15:24:04.309074+08:00
-select * from t;`
+	select * from t;`
 	prepareLogs(t, []string{slowLog}, []string{fileName})
 	defer func() {
 		removeFiles([]string{fileName})
@@ -827,11 +946,11 @@ func TestIssue54324(t *testing.T) {
 	defer os.Remove(f.Name()) // clean up
 
 	w := bufio.NewWriter(f)
-	for i := 0; i < 8191; i++ {
+	for range 8191 {
 		w.WriteByte('x')
 	}
 	w.WriteByte('\n')
-	for i := 0; i < 4096; i++ {
+	for range 4096 {
 		w.WriteByte('a')
 	}
 	require.NoError(t, w.Flush())

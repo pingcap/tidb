@@ -27,8 +27,10 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +69,7 @@ func TestGroupDelete(t *testing.T) {
 }
 
 func TestGroupDeleteAll(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -97,13 +99,13 @@ func TestGroupExists(t *testing.T) {
 }
 
 func TestGroupFingerPrint(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	p := parser.New()
 	stmt1, err := p.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
 	require.NoError(t, err)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	ctx := plannercore.MockContext()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -158,7 +160,7 @@ func TestGroupFingerPrint(t *testing.T) {
 }
 
 func TestGroupGetFirstElem(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -192,7 +194,7 @@ func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return 
 func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 0 }
 
 func TestGetInsertGroupImpl(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	g := NewGroupWithSchema(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0)), expression.NewSchema())
 	defer func() {
 		do := domain.GetDomain(ctx)
@@ -201,7 +203,7 @@ func TestGetInsertGroupImpl(t *testing.T) {
 	emptyProp := &property.PhysicalProperty{}
 	require.Nil(t, g.GetImpl(emptyProp))
 
-	impl := &fakeImpl{plan: &plannercore.PhysicalLimit{}}
+	impl := &fakeImpl{plan: &physicalop.PhysicalLimit{}}
 	g.InsertImpl(emptyProp, impl)
 	require.Equal(t, impl, g.GetImpl(emptyProp))
 
@@ -210,7 +212,7 @@ func TestGetInsertGroupImpl(t *testing.T) {
 }
 
 func TestFirstElemAfterDelete(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -229,14 +231,14 @@ func TestFirstElemAfterDelete(t *testing.T) {
 }
 
 func TestBuildKeyInfo(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	// case 1: primary key has constant constraint

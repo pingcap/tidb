@@ -70,10 +70,7 @@ func MergeGlobalStatsTopNByConcurrency(
 	}
 	tasks := make([]*TopnStatsMergeTask, 0)
 	for start := 0; start < len(wrapper.AllTopN); {
-		end := start + mergeBatchSize
-		if end > len(wrapper.AllTopN) {
-			end = len(wrapper.AllTopN)
-		}
+		end := min(start+mergeBatchSize, len(wrapper.AllTopN))
 		task := NewTopnStatsMergeTask(start, end)
 		tasks = append(tasks, task)
 		start = end
@@ -83,7 +80,7 @@ func MergeGlobalStatsTopNByConcurrency(
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
 	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
-	for i := 0; i < mergeConcurrency; i++ {
+	for range mergeConcurrency {
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
@@ -172,7 +169,7 @@ func MergePartTopN2GlobalTopN(
 			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
-			for j := 0; j < partNum; j++ {
+			for j := range partNum {
 				if err := killer.HandleSignal(); err != nil {
 					return nil, nil, nil, err
 				}

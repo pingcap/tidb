@@ -258,7 +258,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
-			snapshotHandle, err = us.handleCols.BuildHandle(row)
+			snapshotHandle, err = us.handleCols.BuildHandle(us.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -296,6 +296,13 @@ type compareExec struct {
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex []int
 	desc      bool
+	// needExtraSorting means if an extra sorting is needed to satisfy the keepOrder requirement.
+	// In the simplest case, we only need to return data in the order of the original kv ranges to satisfy it.
+	// However, in some new and more complex cases, the required order is not the same as the order of the kv ranges.
+	// For example, when we require keepOrder on a partitioned table, or in the PropMatchedNeedMergeSort case decided by
+	// the planner, the corresponding executor use an extra merge sort to satisfy the order requirement. In such cases,
+	// for UnionScan, we need to do an extra sorting to satisfy the order requirement.
+	needExtraSorting bool
 	// handleCols is the handle's position of the below scan plan.
 	handleCols plannerutil.HandleCols
 }
@@ -317,7 +324,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 		}
 		return cmp, nil
 	}
-	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
+	cmp, err = ce.handleCols.Compare(a, b, ce.collators, sctx.TypeCtx())
 	if ce.desc {
 		return -cmp, err
 	}

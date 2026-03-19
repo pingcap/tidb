@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
@@ -34,8 +35,8 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 
 	tk := testkit.NewTestKit(t, store)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockNewBackendContext",
-		func(job *model.Job, cpMgr *ingest.CheckpointManager, mockBackendCtx *ingest.BackendCtx) {
-			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpMgr)
+		func(job *model.Job, cpOp ingest.CheckpointOperator, mockBackendCtx *ingest.BackendCtx) {
+			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpOp)
 		})
 	ingest.LitInitialized = true
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
@@ -59,6 +60,10 @@ func CheckIngestLeakageForTest(exitCode int) {
 		}
 		if len(leakObj) > 0 {
 			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
+			os.Exit(1)
+		}
+		if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
+			fmt.Fprintf(os.Stderr, "add index metrics leakage: %v\n", registeredJob)
 			os.Exit(1)
 		}
 	}

@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -269,6 +270,23 @@ type Expression interface {
 	StringerWithCtx
 }
 
+var expressionSlices = zeropool.New[[]Expression](
+	func() []Expression {
+		return make([]Expression, 0, 4)
+	})
+
+// GetExpressionSlices gets a slice of Expression from pool.
+func GetExpressionSlices(size int) []Expression {
+	result := expressionSlices.Get()
+	return slices.Grow(result, size)
+}
+
+// PutExpressionSlices puts a slice of Expression back to pool.
+func PutExpressionSlices(exprs []Expression) {
+	exprs = exprs[:0]
+	expressionSlices.Put(exprs)
+}
+
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
@@ -298,8 +316,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
 	return len(cols) > 0
 }
 
@@ -399,7 +416,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
-	for i := 0; i < n; i++ {
+	for range n {
 		selected = append(selected, false)
 		nulls = append(nulls, false)
 	}
@@ -407,7 +424,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	sel := allocSelSlice(n)
 	defer deallocateSelSlice(sel)
 	sel = sel[:0]
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sel = append(sel, i)
 	}
 	input.SetSel(sel)
@@ -821,7 +838,7 @@ func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression 
 }
 
 func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
-	var ret []Expression
+	ret := make([]Expression, 0, len(conditions.GetArgs()))
 	for _, arg := range conditions.GetArgs() {
 		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == funcName {
 			ret = append(ret, extractBinaryOpItems(sf, funcName)...)
@@ -885,6 +902,7 @@ type VarAssignment struct {
 	Expr        Expression
 	IsDefault   bool
 	IsGlobal    bool
+	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
 }
@@ -919,23 +937,25 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+// Set the skip cache to false when the caller will not change the logical plan tree.
+// it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
+	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
 		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return res, err
 	}
-	return evaluateExprWithNull(ctx, schema, expr)
+	return evaluateExprWithNull(ctx, schema, expr, skipPlanCacheCheck)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			res, err := EvaluateExprWithNull(ctx, schema, arg)
+			res, err := EvaluateExprWithNull(ctx, schema, arg, skipPlanCache)
 			if err != nil {
 				return nil, err
 			}

@@ -63,7 +63,7 @@ type DDLExec struct {
 func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.Ctx())
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
+	checker := domain.NewSchemaChecker(dom.GetSchemaValidator(), e.is.SchemaMetaVersion(), nil, true)
 	txn, err1 := e.Ctx().Txn(true)
 	if err1 != nil {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
@@ -120,6 +120,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			}
 			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
+				// TODO: investigate why this does not work instead:
+				//s.Tables = slices.Delete(s.Tables, tbIdx, tbIdx+1)
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}
@@ -151,7 +153,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 
 	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Store(false)
 		e.Ctx().GetSessionVars().StmtCtx.DDLJobID = 0
 	}()
 
@@ -229,8 +231,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
 		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
-		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
-			!e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue {
+		isDDLJobInQueue := e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load()
+		if (isDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) || !isDDLJobInQueue {
 			return e.toErr(err)
 		}
 		return err
@@ -354,7 +356,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
-		return errors.New("Drop 'mysql' database is forbidden")
+		return dbterror.ErrForbiddenDDL.FastGenByArgs("Drop 'mysql' database")
 	}
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)

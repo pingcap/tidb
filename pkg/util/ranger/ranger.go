@@ -163,10 +163,9 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	}
 	casted, err := point.value.ConvertTo(sctx.TypeCtx, newTp)
 	if err != nil {
-		if sctx.InPreparedPlanBuilding {
-			// skip plan cache in this case for safety.
-			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
-		}
+		// skip plan cache in this case for safety.
+		sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
+
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
@@ -413,7 +412,7 @@ func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, new
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, tableRange bool,
-	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	colLen int, rangeMaxSize int64) (ranges Ranges, _, _ []expression.Expression, err error) {
 	rb := builder{sctx: sctx}
 	newTp := newFieldType(tp)
 	rangePoints := getFullRange()
@@ -425,9 +424,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 		}
 	}
 	var (
-		ranges        Ranges
 		rangeFallback bool
-		err           error
 	)
 	newTp = convertStringFTToBinaryCollate(newTp)
 	if tableRange {
@@ -458,7 +455,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
 func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType,
-	rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	rangeMaxSize int64) (_ Ranges, _, _ []expression.Expression, _ error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
 }
 
@@ -469,28 +466,25 @@ func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.R
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
 func BuildColumnRange(conds []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, colLen int,
-	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	rangeMemQuota int64) (_ Ranges, _, _ []expression.Expression, _ error) {
 	if len(conds) == 0 {
 		return FullRange(), nil, nil, nil
 	}
 	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota)
 }
 
-func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds []expression.Expression) (ranges Ranges, _, _ []expression.Expression, err error) {
 	rb := builder{sctx: d.sctx}
 	var (
-		ranges        Ranges
 		rangeFallback bool
-		err           error
 	)
 	for i := range eqAndInCount {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], newTp[i], d.lengths[i], d.convertToSortKey)
+		point := rb.build(accessConds[i], d.newTpSlice[i], d.lengths[i], d.convertToSortKey)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := newTp[i]
+		tmpNewTp := d.newTpSlice[i]
 		if d.convertToSortKey {
 			tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
 		}
@@ -510,11 +504,11 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
-		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
+		collator := collate.GetCollator(d.newTpSlice[eqAndInCount].GetCollate())
 		if d.convertToSortKey {
 			collator = collate.GetCollator(charset.CollationBin)
 		}
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], d.convertToSortKey), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], d.newTpSlice[eqAndInCount], d.lengths[eqAndInCount], d.convertToSortKey), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -522,9 +516,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	var tmpNewTp *types.FieldType
 	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
 		if d.convertToSortKey {
-			tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+			tmpNewTp = convertStringFTToBinaryCollate(d.newTpSlice[eqAndInCount])
 		} else {
-			tmpNewTp = newTp[eqAndInCount]
+			tmpNewTp = d.newTpSlice[eqAndInCount]
 		}
 	}
 	if eqAndInCount == 0 {
@@ -555,9 +549,8 @@ func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	ranges, newAccessConds, remainedConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
+func (d *rangeDetacher) buildCNFIndexRange(eqAndInCount int, accessConds []expression.Expression) (ranges Ranges, newAccessConds, remainedConds []expression.Expression, err error) {
+	ranges, newAccessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(eqAndInCount, accessConds)
 	if err != nil {
 		return nil, nil, nil, err
 	}

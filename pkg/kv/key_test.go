@@ -16,7 +16,9 @@ package kv_test
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -235,6 +237,35 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 2, cnt)
 }
 
+func TestCommonHandlesFitIntHandleRange(t *testing.T) {
+	minIntHandle := IntHandle(math.MinInt64)
+	t.Logf("min int handle: %s\n", hex.EncodeToString(minIntHandle.Encoded()))
+	maxIntHandle := IntHandle(math.MaxInt64)
+	t.Logf("max int handle: %s\n", hex.EncodeToString(maxIntHandle.Encoded()))
+
+	testCases := []struct {
+		datums []types.Datum
+	}{
+		{[]types.Datum{types.NewIntDatum(101), types.NewStringDatum("abc")}},
+		{[]types.Datum{types.NewStringDatum("abc"), types.NewIntDatum(101)}},
+		{[]types.Datum{types.NewIntDatum(-101), types.NewStringDatum("abc")}},
+		{[]types.Datum{types.NewIntDatum(math.MinInt64), types.NewIntDatum(math.MaxInt64)}},
+		{[]types.Datum{types.NewBytesDatum([]byte{0xFF, 0xFF})}},
+		{[]types.Datum{types.NewBytesDatum([]byte{0x00, 0x00})}},
+		{[]types.Datum{types.NewBinaryLiteralDatum([]byte{0xFF, 0xFF})}},
+	}
+
+	for _, tc := range testCases {
+		encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, tc.datums...)
+		require.NoError(t, err)
+		ch, err := NewCommonHandle(encoded)
+		require.NoError(t, err)
+		t.Logf("common handle: %s\n", hex.EncodeToString(ch.Encoded()))
+		require.True(t, bytes.Compare(minIntHandle.Encoded(), ch.Encoded()) < 0)
+		require.True(t, bytes.Compare(maxIntHandle.Encoded(), ch.Encoded()) > 0)
+	}
+}
+
 func TestHandleMapWithPartialHandle(t *testing.T) {
 	m := NewHandleMap()
 	ph1 := NewPartitionHandle(1, IntHandle(1))
@@ -381,10 +412,10 @@ var inputs = []struct {
 func memAwareIntMap(size int, handles []Handle) int {
 	var x int
 	m := NewMemAwareHandleMap[int]()
-	for j := 0; j < size; j++ {
+	for j := range size {
 		m.Set(handles[j], j)
 	}
-	for j := 0; j < size; j++ {
+	for j := range size {
 		x, _ = m.Get(handles[j])
 	}
 	return x
@@ -393,11 +424,11 @@ func memAwareIntMap(size int, handles []Handle) int {
 func nativeIntMap(size int, handles []Handle) int {
 	var x int
 	m := make(map[Handle]int)
-	for j := 0; j < size; j++ {
+	for j := range size {
 		m[handles[j]] = j
 	}
 
-	for j := 0; j < size; j++ {
+	for j := range size {
 		x = m[handles[j]]
 	}
 	return x
@@ -407,7 +438,7 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
-		for i := 0; i < s.input; i++ {
+		for i := range s.input {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
@@ -429,7 +460,7 @@ func BenchmarkNativeHandleMap(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
-		for i := 0; i < s.input; i++ {
+		for i := range s.input {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {

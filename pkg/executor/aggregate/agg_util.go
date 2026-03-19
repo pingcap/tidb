@@ -90,7 +90,7 @@ func closeBaseExecutor(b *exec.BaseExecutor) {
 func recoveryHashAgg(output chan *AfFinalResult, r any) {
 	err := util.GetRecoverError(r)
 	output <- &AfFinalResult{err: err}
-	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
+	logutil.BgLogger().Warn("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func getGroupKeyMemUsage(groupKey [][]byte) int64 {
@@ -106,7 +106,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
 	avlGroupKeyLen := min(len(groupKey), numRows)
-	for i := 0; i < avlGroupKeyLen; i++ {
+	for i := range avlGroupKeyLen {
 		groupKey[i] = groupKey[i][:0]
 	}
 	for i := avlGroupKeyLen; i < numRows; i++ {

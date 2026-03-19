@@ -15,7 +15,8 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -54,7 +55,7 @@ type StreamKVInfo struct {
 
 // StreamBackupSearch is used for searching key from log data files
 type StreamBackupSearch struct {
-	storage    storage.ExternalStorage
+	storage    storeapi.Storage
 	comparator Comparator
 	searchKey  []byte // hex string
 	startTs    uint64
@@ -63,7 +64,7 @@ type StreamBackupSearch struct {
 
 // NewStreamBackupSearch creates an instance of StreamBackupSearch
 func NewStreamBackupSearch(
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	comparator Comparator,
 	searchKey []byte,
 ) *StreamBackupSearch {
@@ -87,7 +88,7 @@ func (s *StreamBackupSearch) SetEndTs(endTs uint64) {
 }
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	opt := &storeapi.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	pool := util.NewWorkerPool(64, "read backup meta")
 	eg, egCtx := errgroup.WithContext(ctx)
 	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
@@ -193,9 +194,9 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	writeCFEntries := make(map[string]*StreamKVInfo, 64)
 
 	for entry := range entriesCh {
-		if entry.CFName == WriteCF {
+		if entry.CFName == consts.WriteCF {
 			writeCFEntries[entry.EncodedKey] = entry
-		} else if entry.CFName == DefaultCF {
+		} else if entry.CFName == consts.DefaultCF {
 			defaultCFEntries[entry.EncodedKey] = entry
 		}
 	}
@@ -241,7 +242,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 			return errors.Annotatef(err, "decode raw key error, file: %s", dataFile.Path)
 		}
 
-		if dataFile.Cf == WriteCF {
+		if dataFile.Cf == consts.WriteCF {
 			rawWriteCFValue := new(RawWriteCFValue)
 			if err := rawWriteCFValue.ParseFrom(v); err != nil {
 				return errors.Annotatef(err, "parse raw write cf value error, file: %s", dataFile.Path)
@@ -262,7 +263,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 				ShortValue: valueStr,
 			}
 			ch <- kvInfo
-		} else if dataFile.Cf == DefaultCF {
+		} else if dataFile.Cf == consts.DefaultCF {
 			kvInfo := &StreamKVInfo{
 				CFName:     dataFile.Cf,
 				StartTs:    ts,

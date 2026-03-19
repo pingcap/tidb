@@ -72,7 +72,7 @@ func connectTiDB(port int) (db *sql.DB, err error) {
 	sleepTime := 250 * time.Millisecond
 	startTime := time.Now()
 	maxRetry := 10
-	for i := 0; i < maxRetry; i++ {
+	for i := range maxRetry {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",

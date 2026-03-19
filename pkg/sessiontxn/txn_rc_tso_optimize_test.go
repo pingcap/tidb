@@ -179,7 +179,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	sqlSelectID2, _, _, _ := tk.Session().PrepareStmt("select id1*2 from t1 where id1 = ? for update union select id1*2 from t2 where id1 = ? for update")
 	sqlSelectID3, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update union select * from t2 where id1 = ?")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("begin pessimistic")
 
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID1, expression.Args2Expressions4Test(1, 2))
@@ -204,7 +204,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	// Join->SelectLock->PoinGet
 	sqlSelectID4, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 JOIN t2 ON t1.id1 = t2.id1 WHERE t1.id1 = ? FOR UPDATE")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID4, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	// BatchPointGet
 	sqlSelectID6, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 WHERE id1 = ? OR id1 = ? FOR UPDATE")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID6, expression.Args2Expressions4Test(1, 2))
 		require.NoError(t, err)
@@ -258,7 +258,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	sqlSelectID8, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 JOIN (SELECT * FROM t2 WHERE id1 = ? FOR UPDATE ) tt2 ON t1.id1 = tt2.id1")
 	sqlSelectID9, _, _, _ := tk.Session().PrepareStmt("SELECT (SELECT id1 * 2 FROM t1 WHERE id1 = ? FOR UPDATE)+id1 FROM t2")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID7, expression.Args2Expressions4Test(10))
 		require.NoError(t, err)
@@ -283,7 +283,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	sqlUpdateID1, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 = ?")
 	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("UPDATE t2 SET id1 = id1 + 100 WHERE id1 = ?")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID1, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	// SelectLock has PointGet and other plans
 	sqlUpdateID3, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ?)")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID3, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
@@ -317,7 +317,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	// PointUpdate doesn't make tso request
 	sqlUpdateID4, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 =  (SELECT id1 FROM t2 WHERE id1 = ?)")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID4, expression.Args2Expressions4Test(11))
 		require.NoError(t, err)
@@ -334,7 +334,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	sqlDeleteID2, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 > ?")
 	sqlDeleteID3, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ?)")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 1; i++ {
+	for range 1 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID1, expression.Args2Expressions4Test(3))
 		require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	sqlInsertID3, _, _, _ := tk.Session().PrepareStmt("INSERT INTO t1 VALUES(?,5,5) ON DUPLICATE KEY UPDATE id2 = id2 + 100")
 	sqlInsertID4, _, _, _ := tk.Session().PrepareStmt("INSERT INTO t1 VALUES(8,?,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, expression.Args2Expressions4Test(10))
 		require.NoError(t, err)
@@ -382,7 +382,7 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	sqlReplaceIntot1, _, _, _ := tk.Session().PrepareStmt("REPLACE INTO t1 VALUES(1, ?, ?)")
 	sqlReplaceIntot2, _, _, _ := tk.Session().PrepareStmt("REPLACE INTO t1 VALUES(?, ?, 20)")
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tk.MustExec("begin pessimistic")
 		val := i * 11
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlReplaceIntot1, expression.Args2Expressions4Test(val, val))
@@ -478,13 +478,6 @@ func getAllTsoCounter(sctx sessionctx.Context) (any, any, any) {
 	return countTsoRequest, countTsoUseConstant, countWaitTsoOracle
 }
 
-func assertAllTsoCounter(t *testing.T,
-	assertPair []uint64) {
-	for i := 0; i < len(assertPair); i += 2 {
-		require.Equal(t, assertPair[i], assertPair[i+1])
-	}
-}
-
 func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/tsoUseConstantFuture", "return"))
@@ -520,7 +513,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 	// union statements makes disableAdviseWarmup false,
 	// use constant tso when all sub queries of unions are point-lock-read.
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("select * from t1 where id1 = 1 for update union select * from t2 where id1 = 2 for update")
 		tk.MustExec("select id1*2 from t1 where id1 = 1 for update union select id1*2 from t2 where id1 = 2 for update")
@@ -534,7 +527,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// Join->SelectLock->PoinGet
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("SELECT * FROM t1 JOIN t2 ON t1.id1 = t2.id1 WHERE t1.id1 = 1 FOR UPDATE")
 		tk.MustExec("commit")
@@ -560,7 +553,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// BatchPointGet
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("SELECT * FROM t1 WHERE id1 = 1 OR id1 = 2 FOR UPDATE")
 		tk.MustExec("commit")
@@ -572,7 +565,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// Subquery has SelectLock + PointGet
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("SELECT * FROM t1 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = 1 FOR UPDATE)")
 		tk.MustExec("SELECT * FROM t1 JOIN (SELECT * FROM t2 WHERE id1 = 1 FOR UPDATE ) tt2 ON t1.id1 = tt2.id1")
@@ -586,7 +579,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// PointUpdate Index and Non-index
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("UPDATE t1 set id2 = id2 + 100 WHERE id1 = 1")
 		tk.MustExec("UPDATE t2 SET id1 = id1 + 100 WHERE id1 = 1")
@@ -599,7 +592,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// SelectLock has PointGet and other plans
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("UPDATE t1 set id2 = id2 + 100 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = 1)")
 		tk.MustExec("commit")
@@ -612,7 +605,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 	// PointUpdate with singlerow subquery. singlerow subquery makes tso wait
 	// PointUpdate doesn't make tso request
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("UPDATE t1 set id2 = id2 + 100 WHERE id1 =  (SELECT id1 FROM t2 WHERE id1 = 10)")
 		tk.MustExec("commit")
@@ -624,7 +617,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// insert with select
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 1; i++ {
+	for range 1 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("INSERT INTO t1 VALUES(4,4,4)")
 		tk.MustExec("INSERT INTO t1 SELECT * FROM t2 WHERE id1 = 11")
@@ -637,7 +630,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// delete
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 1; i++ {
+	for range 1 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("DELETE FROM t1 WHERE id1 = 3")
 		tk.MustExec("DELETE FROM t1 WHERE id1 > 4")
@@ -651,7 +644,7 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	// insert on duplicate key
 	resetAllTsoCounter(sctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("INSERT INTO t1 VALUES(10,5,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
 		tk.MustExec("INSERT INTO t1 VALUES(10,5,5) ON DUPLICATE KEY UPDATE id2 = id2 + 100")

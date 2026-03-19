@@ -483,6 +483,11 @@
               "$$hashKey": "object:321",
               "alias": "tiflash_mpp",
               "color": "#8F3BB8"
+            } ,
+            {
+              "$$hashKey": "object:145",
+              "alias": "Backoff",
+              "color": "#FF7383"
             }
           ],
           "spaceLength": 10,
@@ -520,6 +525,14 @@
               "interval": "",
               "legendFormat": "tiflash_mpp",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_tikvclient_backoff_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "Backoff",
+              "refId": "D"
             }
           ],
           "thresholds": [],
@@ -2211,7 +2224,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}} {{resource_group}}",
               "refId": "A",
               "step": 30
             },

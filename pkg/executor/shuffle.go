@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
@@ -97,6 +99,8 @@ type ShuffleExec struct {
 
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
+
+	allSourceAndWorkerExitForTest atomic.Bool
 }
 
 type shuffleOutput struct {
@@ -168,6 +172,15 @@ func (e *ShuffleExec) Close() error {
 	if e.finishCh != nil {
 		close(e.finishCh)
 	}
+
+	if e.outputCh != nil {
+		channel.Clear(e.outputCh)
+	}
+
+	if intest.InTest && !e.allSourceAndWorkerExitForTest.Load() && e.prepared {
+		panic("there are still some running sources or workers")
+	}
+
 	for _, w := range e.workers {
 		for _, r := range w.receivers {
 			if r.inputCh != nil {
@@ -179,9 +192,7 @@ func (e *ShuffleExec) Close() error {
 			firstErr = err
 		}
 	}
-	if e.outputCh != nil {
-		channel.Clear(e.outputCh)
-	}
+
 	e.executed = false
 
 	if e.RuntimeStats() != nil {
@@ -205,7 +216,9 @@ func (e *ShuffleExec) Close() error {
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 	waitGroup := &sync.WaitGroup{}
-	waitGroup.Add(len(e.workers) + len(e.dataSources))
+	num := len(e.workers) + len(e.dataSources)
+	waitGroup.Add(num)
+	e.allSourceAndWorkerExitForTest.Store(false)
 	// create a goroutine for each dataSource to fetch and split data
 	for i := range e.dataSources {
 		go e.fetchDataAndSplit(ctx, i, waitGroup)
@@ -220,6 +233,7 @@ func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 
 func (e *ShuffleExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
+	e.allSourceAndWorkerExitForTest.Store(true)
 	close(e.outputCh)
 }
 
@@ -258,7 +272,7 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func recoveryShuffleExec(output chan *shuffleOutput, r any) {
 	err := util.GetRecoverError(r)
 	output <- &shuffleOutput{err: util.GetRecoverError(r)}
-	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
+	logutil.BgLogger().Warn("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int, waitGroup *sync.WaitGroup) {
@@ -302,7 +316,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 			return
 		}
 		numRows := chk.NumRows()
-		for i := 0; i < numRows; i++ {
+		for i := range numRows {
 			workerIdx := workerIndices[i]
 			w := e.workers[workerIdx]
 
@@ -441,7 +455,7 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	}
 	workerIndices = workerIndices[:0]
 	numRows := input.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
 	}
 	return workerIndices, nil

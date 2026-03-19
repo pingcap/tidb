@@ -25,20 +25,23 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	dcontext "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
@@ -49,7 +52,9 @@ import (
 )
 
 var (
-	errQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+	telemetryBatchedQueryTaskCnt     = metrics.TelemetryBatchedQueryTaskCnt
+	telemetryStoreBatchedCnt         = metrics.TelemetryStoreBatchedCnt
+	telemetryStoreBatchedFallbackCnt = metrics.TelemetryStoreBatchedFallbackCnt
 )
 
 var (
@@ -64,6 +69,27 @@ type SelectResult interface {
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
 	Next(context.Context, *chunk.Chunk) error
+	// IntoIter converts the SelectResult into an iterator.
+	IntoIter([][]*types.FieldType) (SelectResultIter, error)
+	// Close closes the iterator.
+	Close() error
+}
+
+// SelectResultRow indicates the row returned by the SelectResultIter
+type SelectResultRow struct {
+	// `ChannelIndex` indicates the index where this row locates.
+	// When ChannelIndex < len(IntermediateChannels), it means this row is from intermediate result.
+	// Otherwise, if ChannelIndex == len(IntermediateChannels), it means this row is from final result.
+	ChannelIndex int
+	// Row is the actual data of this row.
+	chunk.Row
+}
+
+// SelectResultIter is an iterator that is used to iterate the rows from SelectResult.
+type SelectResultIter interface {
+	// Next returns the next row.
+	// If the iterator is drained, the `SelectResultRow.IsEmpty()` returns true.
+	Next(ctx context.Context) (SelectResultRow, error)
 	// Close closes the iterator.
 	Close() error
 }
@@ -215,6 +241,10 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 	return nil
 }
 
+func (*sortedSelectResults) IntoIter(_ [][]*types.FieldType) (SelectResultIter, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (ssr *sortedSelectResults) Close() (err error) {
 	for i, sr := range ssr.selectResult {
 		err = sr.Close()
@@ -268,6 +298,10 @@ func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
+func (*serialSelectResults) IntoIter(_ [][]*types.FieldType) (SelectResultIter, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (ssr *serialSelectResults) Close() (err error) {
 	for _, r := range ssr.selectResults {
 		if rerr := r.Close(); rerr != nil {
@@ -281,9 +315,10 @@ type selectResult struct {
 	label string
 	resp  kv.Response
 
-	rowLen     int
-	fieldTypes []*types.FieldType
-	ctx        *dcontext.DistSQLContext
+	rowLen                  int
+	fieldTypes              []*types.FieldType
+	intermediateOutputTypes [][]*types.FieldType
+	ctx                     *dcontext.DistSQLContext
 
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
@@ -308,9 +343,44 @@ type selectResult struct {
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
+
+	iter *selectResultIter
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
+	return r.fetchRespWithIntermediateResults(ctx, nil)
+}
+
+func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
+	defer func() {
+		if r.stats != nil {
+			// Ignore internal sql.
+			if !r.ctx.InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
+				ratio := r.stats.calcCacheHit()
+				if ratio >= 1 {
+					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+				}
+				if ratio >= 0.8 {
+					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
+				}
+				if ratio >= 0.4 {
+					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				}
+				if ratio >= 0.2 {
+					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+				}
+				if ratio >= 0.1 {
+					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+				}
+				if ratio >= 0.01 {
+					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+				}
+				if ratio >= 0 {
+					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
+				}
+			}
+		}
+	}()
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -344,12 +414,23 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		respSize := int64(r.selectResp.Size())
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
 		if err := r.selectResp.Error; err != nil {
 			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
+
+		if len(r.selectResp.IntermediateOutputs) != len(intermediateOutputTypes) {
+			return errors.Errorf(
+				"The length of intermediate output types %d mismatches the length of got intermediate outputs %d."+
+					" If a response contains intermediate outputs, you should use the SelectResultIter to read the data.",
+				len(intermediateOutputTypes), len(r.selectResp.IntermediateOutputs),
+			)
+		}
+		r.intermediateOutputTypes = intermediateOutputTypes
+
 		if err = r.ctx.SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
@@ -363,7 +444,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
+				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime(), false); err != nil {
 					return err
 				}
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
@@ -372,11 +453,25 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
+
+		if intermediate := r.selectResp.IntermediateOutputs; len(intermediate) > 0 {
+			for _, output := range intermediate {
+				if len(output.Chunks) != 0 {
+					// some intermediate output contains data,
+					// we should return the response even if the main output is empty.
+					return nil
+				}
+			}
+		}
 	}
 	return nil
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if r.iter != nil {
+		return errors.New("selectResult is invalid after IntoIter()")
+	}
+
 	chk.Reset()
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 		err := r.fetchResp(ctx)
@@ -401,6 +496,13 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Errorf("unsupported encode type:%v", encodeType)
 }
 
+func (r *selectResult) IntoIter(intermediateFieldTypes [][]*types.FieldType) (SelectResultIter, error) {
+	if r.iter != nil {
+		return nil, errors.New("selectResult is invalid after IntoIter()")
+	}
+	return newSelectResultIter(r, intermediateFieldTypes), nil
+}
+
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
@@ -408,6 +510,10 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 			failpoint.Return(nil, errors.New("mockNextRawError"))
 		}
 	})
+
+	if r.iter != nil {
+		return nil, errors.New("selectResult is invalid after IntoIter()")
+	}
 
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
@@ -497,15 +603,19 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
 }
 
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration, forUnconsumedStats bool) (err error) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
 	}
-	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
-		readKeys := copStats.ScanDetail.ProcessedKeys
+	if (copStats.ScanDetail != nil && copStats.ScanDetail.ProcessedKeys > 0) || copStats.TimeDetail.KvReadWallTime > 0 {
+		var readKeys int64
+		var readSize float64
+		if copStats.ScanDetail != nil {
+			readKeys = copStats.ScanDetail.ProcessedKeys
+			readSize = float64(copStats.ScanDetail.ProcessedKeysSize)
+		}
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
-		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
@@ -543,17 +653,27 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
+		// report MPP cross AZ network traffic bytes to resource control manager.
+		interZoneBytes := r.ctx.RuntimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats.GetInterZoneTrafficBytes()
+		if interZoneBytes > 0 {
+			consumption := &rmpb.Consumption{
+				ReadCrossAzTrafficBytes: interZoneBytes,
+			}
+			if r.ctx.RUConsumptionReporter != nil {
+				r.ctx.RUConsumptionReporter.ReportConsumption(r.ctx.ResourceGroupName, consumption)
+			}
+		}
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
 			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
 			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
 			// not trigger an error log in this case.
-			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
-				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+			if !forUnconsumedStats && !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
 					zap.Int("expected", len(r.copPlanIDs)),
 					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 			}
@@ -567,7 +687,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, &copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
@@ -580,7 +700,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	decoder := codec.NewDecoder(chk, r.ctx.Location)
 	for !chk.IsFull() && len(rowsData) > 0 {
-		for i := 0; i < r.rowLen; i++ {
+		for i := range r.rowLen {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return err
@@ -599,6 +719,13 @@ func (r *selectResult) memConsume(bytes int64) {
 
 // Close closes selectResult.
 func (r *selectResult) Close() error {
+	if r.iter != nil {
+		return errors.New("selectResult is invalid after IntoIter()")
+	}
+	return r.close()
+}
+
+func (r *selectResult) close() error {
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
@@ -608,7 +735,7 @@ func (r *selectResult) Close() error {
 		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
 			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
 			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 			}
 		}
@@ -620,12 +747,209 @@ func (r *selectResult) Close() error {
 				batched, fallback := ci.GetStoreBatchInfo()
 				if batched != 0 || fallback != 0 {
 					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
+					telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
+					telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
+					telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
 				}
 			}
+			r.stats.fetchRspDuration = r.fetchDuration
 			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
 	}
 	return r.resp.Close()
+}
+
+type selRespChannelIter struct {
+	channel    int
+	loc        *time.Location
+	rowLen     int
+	fieldTypes []*types.FieldType
+	encodeType tipb.EncodeType
+	chkData    []tipb.Chunk
+
+	// reserveChkSize indicates the reserved size for each chunk. (Only for default encoding)
+	reserveChkSize int
+	// curChkIdx indicates the index of the current chunk in chkData read currently.
+	curChkIdx int
+	// chk buffers the rows read from the current response
+	chk *chunk.Chunk
+	// offset indicates the read offset in iter.chk
+	chkOffset int
+}
+
+func newSelRespChannelIter(result *selectResult, channel int) (*selRespChannelIter, error) {
+	intest.Assert(result != nil && result.selectResp != nil && len(result.selectResp.IntermediateOutputs) == len(result.intermediateOutputTypes))
+
+	var rowLen int
+	var fieldTypes []*types.FieldType
+	var encodeType tipb.EncodeType
+	var chkData []tipb.Chunk
+	intermediateOutputs := result.selectResp.IntermediateOutputs
+	if intermediateOutputsLen := len(intermediateOutputs); channel < intermediateOutputsLen {
+		fieldTypes = result.intermediateOutputTypes[channel]
+		rowLen = len(fieldTypes)
+		encodeType = intermediateOutputs[channel].GetEncodeType()
+		chkData = intermediateOutputs[channel].GetChunks()
+	} else if channel == intermediateOutputsLen {
+		rowLen = result.rowLen
+		fieldTypes = result.fieldTypes
+		encodeType = result.selectResp.GetEncodeType()
+		chkData = result.selectResp.GetChunks()
+	} else {
+		return nil, errors.Errorf(
+			"invalid channel %d for selectResp with %d intermediate outputs",
+			channel, intermediateOutputsLen,
+		)
+	}
+
+	return &selRespChannelIter{
+		channel:        channel,
+		loc:            result.ctx.Location,
+		rowLen:         rowLen,
+		fieldTypes:     fieldTypes,
+		encodeType:     encodeType,
+		chkData:        chkData,
+		reserveChkSize: vardef.DefInitChunkSize,
+	}, nil
+}
+
+func (iter *selRespChannelIter) Channel() int {
+	return iter.channel
+}
+
+func (iter *selRespChannelIter) Next() (SelectResultRow, error) {
+	if iter.chk != nil && iter.chkOffset < iter.chk.NumRows() {
+		iter.chkOffset++
+		return SelectResultRow{
+			ChannelIndex: iter.channel,
+			Row:          iter.chk.GetRow(iter.chkOffset - 1),
+		}, nil
+	}
+
+	if err := iter.nextChunk(); err != nil || iter.chk == nil {
+		return SelectResultRow{}, err
+	}
+
+	iter.chkOffset = 1
+	return SelectResultRow{
+		ChannelIndex: iter.channel,
+		Row:          iter.chk.GetRow(0),
+	}, nil
+}
+
+func (iter *selRespChannelIter) nextChunk() error {
+	iter.chk = nil
+	for iter.curChkIdx < len(iter.chkData) {
+		curData := &iter.chkData[iter.curChkIdx]
+		if len(curData.RowsData) == 0 {
+			iter.curChkIdx++
+			continue
+		}
+
+		switch iter.encodeType {
+		case tipb.EncodeType_TypeDefault:
+			var err error
+			newChk, leftRowsData, err := iter.fillChunkFromDefault(iter.chk, curData.RowsData)
+			if err != nil {
+				return err
+			}
+			iter.chk = newChk
+			curData.RowsData = leftRowsData
+			if newChk.NumRows() < newChk.RequiredRows() {
+				continue
+			}
+		case tipb.EncodeType_TypeChunk:
+			iter.chk = chunk.NewChunkWithCapacity(iter.fieldTypes, 0)
+			chunk.NewDecoder(iter.chk, iter.fieldTypes).Reset(curData.RowsData)
+			curData.RowsData = nil
+		default:
+			return errors.Errorf("unsupported encode type: %v", iter.encodeType)
+		}
+
+		if iter.chk.NumRows() > 0 {
+			break
+		}
+	}
+	return nil
+}
+
+func (iter *selRespChannelIter) fillChunkFromDefault(chk *chunk.Chunk, rowsData []byte) (*chunk.Chunk, []byte, error) {
+	if chk == nil {
+		chk = chunk.NewChunkWithCapacity(iter.fieldTypes, iter.reserveChkSize)
+	}
+	decoder := codec.NewDecoder(chk, iter.loc)
+	for len(rowsData) > 0 && chk.NumRows() < chk.RequiredRows() {
+		for i := range iter.rowLen {
+			var err error
+			rowsData, err = decoder.DecodeOne(rowsData, i, iter.fieldTypes[i])
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return chk, rowsData, nil
+}
+
+type selectResultIter struct {
+	result                  *selectResult
+	channels                []*selRespChannelIter
+	intermediateOutputTypes [][]*types.FieldType
+}
+
+func newSelectResultIter(result *selectResult, intermediateOutputTypes [][]*types.FieldType) *selectResultIter {
+	intest.Assert(result != nil && result.iter == nil)
+	result.iter = &selectResultIter{
+		result:                  result,
+		intermediateOutputTypes: intermediateOutputTypes,
+	}
+	return result.iter
+}
+
+// Next implements the SelectResultIter interface.
+func (iter *selectResultIter) Next(ctx context.Context) (SelectResultRow, error) {
+	for {
+		if r := iter.result; r.selectResp == nil {
+			if err := r.fetchRespWithIntermediateResults(ctx, iter.intermediateOutputTypes); err != nil {
+				return SelectResultRow{}, err
+			}
+
+			if r.selectResp == nil {
+				return SelectResultRow{}, nil
+			}
+
+			if iter.channels == nil {
+				iter.channels = make([]*selRespChannelIter, 0, len(iter.intermediateOutputTypes)+1)
+			}
+
+			for i := 0; i <= len(iter.intermediateOutputTypes); i++ {
+				ch, err := newSelRespChannelIter(r, i)
+				if err != nil {
+					return SelectResultRow{}, err
+				}
+				iter.channels = append(iter.channels, ch)
+			}
+		}
+
+		for len(iter.channels) > 0 {
+			// here we read the channel in reverse order to make sure the "more complete" data should be read first.
+			// For example, if a cop-request contains IndexLookUp, we should read the final rows first (with the biggest channel index),
+			// and then read the index rows (with smaller channel index) that have not been looked up.
+			lastPos := len(iter.channels) - 1
+			channel := iter.channels[lastPos]
+			row, err := channel.Next()
+			if err != nil || !row.IsEmpty() {
+				return row, err
+			}
+			iter.channels = iter.channels[:lastPos]
+		}
+
+		iter.result.selectResp = nil
+	}
+}
+
+// Close implements the SelectResultIter interface.
+func (iter *selectResultIter) Close() error {
+	return iter.result.close()
 }
 
 // CopRuntimeStats is an interface uses to check whether the result has cop runtime stats.
@@ -647,11 +971,16 @@ type selectResultRuntimeStats struct {
 	storeBatchedNum         uint64
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
+	fetchRspDuration        time.Duration
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	procKeys := execdetails.Int64(0)
+	if copStats.ScanDetail != nil {
+		procKeys = execdetails.Int64(copStats.ScanDetail.ProcessedKeys)
+	}
+	s.procKeys.Add(procKeys)
 	if len(copStats.BackoffSleep) > 0 {
 		if s.backoffSleep == nil {
 			s.backoffSleep = make(map[string]time.Duration)
@@ -686,6 +1015,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedNum:         s.storeBatchedNum,
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
+		fetchRspDuration:        s.fetchRspDuration,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -727,6 +1057,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedNum += other.storeBatchedNum
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
+	s.fetchRspDuration += other.fetchRspDuration
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -789,6 +1120,10 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(strconv.FormatInt(int64(s.storeBatchedFallbackNum), 10))
 		}
 		buf.WriteString("}")
+		if s.fetchRspDuration > 0 {
+			buf.WriteString(", fetch_resp_duration: ")
+			buf.WriteString(execdetails.FormatDuration(s.fetchRspDuration))
+		}
 	}
 
 	rpcStatsStr := reqStat.String()

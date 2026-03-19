@@ -20,6 +20,7 @@ package schematracker
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -425,7 +426,7 @@ func (d *SchemaTracker) createIndex(
 		indexName,
 		false,
 		unique,
-		false,
+		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -557,7 +558,7 @@ func (d *SchemaTracker) dropColumn(_ sessionctx.Context, ti ast.Ident, spec *ast
 			continue
 		}
 
-		idx.Columns = append(idx.Columns[:i], idx.Columns[i+1:]...)
+		idx.Columns = slices.Delete(idx.Columns, i, i+1)
 		if len(idx.Columns) == 0 {
 			continue
 		}
@@ -717,21 +718,13 @@ func (d *SchemaTracker) handleModifyColumn(
 	tblInfo.AutoRandomBits = args.NewShardBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
-	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), newColInfo, oldCol)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = newColInfo.SetOriginDefaultValue(originDefVal); err != nil {
-		return errors.Trace(err)
-	}
-
 	// replace old column and its related index column in-place.
 	newColInfo.ID = ddl.AllocateColumnID(tblInfo)
 	newColInfo.Offset = oldCol.Offset
 	tblInfo.Columns[oldCol.Offset] = newColInfo
 	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 	for _, info := range indexesToChange {
-		ddl.SetIdxColNameOffset(info.IndexInfo.Columns[info.Offset], newColInfo)
+		ddl.UpdateIndexCol(info.IndexInfo.Columns[info.Offset], newColInfo)
 	}
 
 	destOffset, err := ddl.LocateOffsetToMove(newColInfo.Offset, spec.Position, tblInfo)
@@ -815,13 +808,7 @@ func (d *SchemaTracker) dropTablePartitions(_ sessionctx.Context, ident ast.Iden
 
 	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions)-len(partNames))
 	for _, def := range tblInfo.Partition.Definitions {
-		found := false
-		for _, partName := range partNames {
-			if def.Name.L == partName {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(partNames, def.Name.L)
 		if !found {
 			newDefs = append(newDefs, def)
 		}
@@ -870,7 +857,7 @@ func (d *SchemaTracker) createPrimaryKey(
 		indexName,
 		true,
 		true,
-		false,
+		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -1118,6 +1105,11 @@ func (*SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpIn
 	return nil
 }
 
+// AlterTableMode implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *model.AlterTableModeArgs) error {
+	return nil
+}
+
 // CleanupTableLock implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CleanupTableLock(_ sessionctx.Context, _ []*ast.TableName) error {
 	return nil
@@ -1190,5 +1182,10 @@ func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema 
 
 // CreatePlacementPolicyWithInfo implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
+	return nil
+}
+
+// RefreshMeta implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
 	return nil
 }

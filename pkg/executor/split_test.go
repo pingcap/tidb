@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,7 +115,8 @@ func TestSplitIndex(t *testing.T) {
 		{1000, 9},
 	}
 
-	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	index, err := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	require.NoError(t, err)
 	for _, ca := range cases {
 		// test for minInt64 handle
 		sc := ctx.GetSessionVars().StmtCtx
@@ -255,9 +257,9 @@ func TestSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 10
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 10
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
 	// region1: [-inf ~ 10)
@@ -385,15 +387,14 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 3
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 3
 	ctx := mock.NewContext()
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   buildHandleColsForSplit(sc, tbInfo),
+		handleCols:   buildHandleColsForSplit(tbInfo),
 		lower:        types.MakeDatums(1, 0),
 		upper:        types.MakeDatums(1, 100),
 		num:          10,
@@ -427,8 +428,9 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}
 
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, ca := range cases {
-		h, err := e.handleCols.BuildHandleByDatums(ca.value)
+		h, err := e.handleCols.BuildHandleByDatums(sc, ca.value)
 		require.NoError(t, err)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		require.NoError(t, err)

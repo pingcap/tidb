@@ -274,14 +274,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 	case <-a.ioWorkerExitWhenErrChan:
 		return nil
 	default:
-		for i := 0; i < a.globalStats.Num; i++ {
+		for i := range a.globalStats.Num {
 			// Update the global NDV.
-			globalStatsNDV := a.globalStats.Fms[i].NDV()
-			if globalStatsNDV > a.globalStats.Count {
-				globalStatsNDV = a.globalStats.Count
-			}
+			globalStatsNDV := min(a.globalStats.Fms[i].NDV(), a.globalStats.Count)
 			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
-			a.globalStats.Fms[i].DestroyAndPutToPool()
+			a.globalStats.Fms[i] = nil // Release for GC.
 		}
 	}
 	err = a.dealCMSketch()
@@ -316,6 +313,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
+	// FIXME: The analyze version used during async global stats merge can diverge from
+	// the stats version eventually persisted for the same global stats.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return util.CallWithSCtx(a.statsHandle.SPool(),
@@ -346,7 +345,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
-	for i := 0; i < a.globalStats.Num; i++ {
+	for i := range a.globalStats.Num {
 		// load fmsketch from tikv
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
@@ -375,7 +374,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
 	failpoint.Inject("PanicInIOWorker", nil)
-	for i := 0; i < a.globalStats.Num; i++ {
+	for i := range a.globalStats.Num {
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
 				histID:      a.histIDs[i],
@@ -408,7 +407,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			failpoint.Return(errors.New("ErrorSameTime returned error"))
 		}
 	})
-	for i := 0; i < a.globalStats.Num; i++ {
+	for i := range a.globalStats.Num {
 		hists := make([]*statistics.Histogram, 0, a.partitionNum)
 		topn := make([]*statistics.TopN, 0, a.partitionNum)
 		for _, partitionID := range a.partitionIDs {
@@ -430,6 +429,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			hists = append(hists, h)
 			topn = append(topn, t)
 		}
+		// This only happens when there are no records for the histogram and TopN in the system tables.
+		// It may be due to the DDL event not having been processed yet (resulting in no histogram), and the table being empty (resulting in no TopNs).
+		if len(hists) == 0 && len(topn) == 0 {
+			continue
+		}
 		select {
 		case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
 			NewStatsWrapper(hists, topn), i,
@@ -439,6 +443,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			return nil
 		}
 	}
+
 	return nil
 }
 
@@ -524,10 +529,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			for j := range (*globalHg).Buckets {
-				(*globalHg).Buckets[j].NDV = 0
+			if *globalHg != nil {
+				for j := range (*globalHg).Buckets {
+					(*globalHg).Buckets[j].NDV = 0
+				}
+				(*globalHg).NDV = a.globalStatsNDV[item.idx]
 			}
-			(*globalHg).NDV = a.globalStatsNDV[item.idx]
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}

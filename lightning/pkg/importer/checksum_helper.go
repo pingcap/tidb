@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -47,9 +48,9 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 		backoffWeight, err := common.GetBackoffWeightFromDB(ctx, rc.db)
 		// only set backoff weight when it's smaller than default value
 		if err == nil && backoffWeight >= local.DefaultBackoffWeight {
-			log.FromContext(ctx).Info("get tidb_backoff_weight", zap.Int("backoff_weight", backoffWeight))
+			logutil.Logger(ctx).Info("get tidb_backoff_weight", zap.Int("backoff_weight", backoffWeight))
 		} else {
-			log.FromContext(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", local.DefaultBackoffWeight))
+			logutil.Logger(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", local.DefaultBackoffWeight))
 			backoffWeight = local.DefaultBackoffWeight
 		}
 
@@ -70,7 +71,7 @@ func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*local.R
 		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
 	}
 
-	task := log.FromContext(ctx).With(zap.String("table", table.Name)).Begin(zap.InfoLevel, "remote checksum")
+	task := log.Wrap(logutil.Logger(ctx).With(zap.String("table", table.Name))).Begin(zap.InfoLevel, "remote checksum")
 
 	cs, err := manager.Checksum(ctx, table)
 	dur := task.End(zap.ErrorLevel, err)

@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -542,6 +544,9 @@ func TestWriteLocal(t *testing.T) {
 }
 
 func TestLockTables(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -864,4 +869,71 @@ func TestCreateConstraintForTable(t *testing.T) {
 	rs, err := tk.Exec("SHOW TABLES FROM test2 LIKE 't1'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
+}
+
+func TestCreateTableHandleAutoIDOnce(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	count := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", func() {
+		count++
+	})
+
+	tk.MustExec("create table t1(id int) AUTO_INCREMENT 1000")
+
+	// For normal DDL, rebase should be called only once.
+	require.Equal(t, 1, count)
+	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
+	require.Equal(t, "1000", rs[0][3])
+}
+
+func TestCreateTableWithBR(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockBRStartMode", "return(true)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	count := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", func() {
+		count++
+	})
+
+	tblInfo := &model.TableInfo{
+		ID:   42043,
+		Name: ast.NewCIStr("t1"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+		State:     model.StatePublic,
+		AutoIncID: 1000,
+	}
+
+	involvingRef := []model.InvolvingSchemaInfo{{
+		Database: "test",
+		Table:    "t1",
+		Mode:     model.SharedInvolving,
+	}}
+
+	// Mock BR scenario, rebase should be called twice.
+	count = 0
+	se := tk.Session()
+	se.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(
+		se, ast.NewCIStr("test"), tblInfo, involvingRef,
+		ddl.WithOnExist(ddl.OnExistError)))
+
+	// For BR execution, rebase should be called twice. And this won't affect the rebase result.
+	require.Equal(t, 2, count)
+	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
+	require.Equal(t, "1000", rs[0][3])
 }

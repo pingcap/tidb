@@ -20,7 +20,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -57,7 +59,7 @@ func TestTableSampleBasic(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a BIGINT PRIMARY KEY AUTO_RANDOM(3), b int auto_increment, key(b)) pre_split_regions=8;")
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		tk.MustExec("insert into t values();")
 	}
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("8"))
@@ -73,7 +75,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
@@ -82,7 +84,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 	tk.MustQuery("select a from t tablesample regions() where a = 0;").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t2 (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t2 values (?);", i)
 	}
 	rows = tk.MustQuery("select * from t tablesample regions(), t2 tablesample regions();").Rows()
@@ -123,7 +125,7 @@ func TestMaxChunkSize(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	tk.Session().GetSessionVars().MaxChunkSize = 1
@@ -132,12 +134,15 @@ func TestMaxChunkSize(t *testing.T) {
 }
 
 func TestKeyspaceSample(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Keyspace is not supported in classic mode")
+	}
 	// Build an exist keyspace.
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
 	keyspaceMeta.Id = 2
-	keyspaceMeta.Name = "test_ks_name2"
+	keyspaceMeta.Name = keyspace.System
 
-	opts := mockstore.WithKeyspaceMeta(&keyspaceMeta)
+	opts := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta)
 	store := testkit.CreateMockStore(t, opts)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
@@ -147,9 +152,9 @@ func TestKeyspaceSample(t *testing.T) {
 	// Build another exist keyspace.
 	keyspaceMeta02 := keyspacepb.KeyspaceMeta{}
 	keyspaceMeta02.Id = 3
-	keyspaceMeta02.Name = "test_ks_name3"
+	keyspaceMeta02.Name = keyspace.System
 
-	opts02 := mockstore.WithKeyspaceMeta(&keyspaceMeta02)
+	opts02 := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta02)
 	store02 := testkit.CreateMockStore(t, opts02)
 
 	tk02 := createSampleTestkit(t, store02)

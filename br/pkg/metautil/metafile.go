@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -57,11 +57,6 @@ const (
 	// MetaV2 represents the new version of backupmeta.
 	MetaV2
 )
-
-// PitrIDMapsFilename is filename that used to save id maps in pitr.
-func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
-	return fmt.Sprintf("%s/pitr_id_map.cluster_id:%d.restored_ts:%d", "pitr_id_maps", clusterID, restoreTS)
-}
 
 // Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
@@ -105,7 +100,7 @@ func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherI
 // Notice: the function `output` should be thread safe.
 func walkLeafMetaFile(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	file *backuppb.MetaFile,
 	cipher *backuppb.CipherInfo,
 	output func(*backuppb.MetaFile)) error {
@@ -155,20 +150,22 @@ func walkLeafMetaFile(
 
 // Table wraps the schema and files of a table.
 type Table struct {
-	DB               *model.DBInfo
-	Info             *model.TableInfo
-	Crc64Xor         uint64
-	TotalKvs         uint64
-	TotalBytes       uint64
-	Files            []*backuppb.File
-	TiFlashReplicas  int
-	Stats            *util.JSONTable
-	StatsFileIndexes []*backuppb.StatsFileIndex
+	DB                          *model.DBInfo
+	Info                        *model.TableInfo
+	Crc64Xor                    uint64
+	TotalKvs                    uint64
+	TotalBytes                  uint64
+	FilesOfPhysicals            map[int64][]*backuppb.File
+	TiFlashReplicas             int
+	Stats                       *util.JSONTable
+	StatsFileIndexes            []*backuppb.StatsFileIndex
+	IsMergeOptionAllowed        bool
+	PartitionMergeOptionAllowed map[string]bool
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
 type MetaReader struct {
-	storage    storage.ExternalStorage
+	storage    storeapi.Storage
 	backupMeta *backuppb.BackupMeta
 	cipher     *backuppb.CipherInfo
 }
@@ -176,7 +173,7 @@ type MetaReader struct {
 // NewMetaReader creates MetaReader.
 func NewMetaReader(
 	backupMeta *backuppb.BackupMeta,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
@@ -238,6 +235,26 @@ func ArchiveSize(files []*backuppb.File) uint64 {
 	return total
 }
 
+// ArchiveTablesSize return the size of archive tables
+func ArchiveTablesSize(tables []*Table) uint64 {
+	totalSize := uint64(0)
+	for _, table := range tables {
+		totalSize += ArchiveTableSize(table)
+	}
+	return totalSize
+}
+
+// ArchiveTableSize return the size of archive table
+func ArchiveTableSize(table *Table) uint64 {
+	totalSize := uint64(0)
+	for _, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			totalSize += file.GetSize_()
+		}
+	}
+	return totalSize
+}
+
 type ChecksumStats struct {
 	Crc64Xor   uint64
 	TotalKvs   uint64
@@ -252,12 +269,14 @@ func (stats ChecksumStats) ChecksumExists() bool {
 }
 
 // CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
-func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+func (table *Table) CalculateChecksumStatsOnFiles() ChecksumStats {
 	var stats ChecksumStats
-	for _, file := range files {
-		stats.Crc64Xor ^= file.Crc64Xor
-		stats.TotalKvs += file.TotalKvs
-		stats.TotalBytes += file.TotalBytes
+	for _, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			stats.Crc64Xor ^= file.Crc64Xor
+			stats.TotalKvs += file.TotalKvs
+			stats.TotalBytes += file.TotalBytes
+		}
 	}
 	return stats
 }
@@ -419,11 +438,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				if !ok {
 					break generateFileMapDone
 				}
-				tableID := tablecodec.DecodeTableID(file.GetStartKey())
-				if tableID == 0 {
+				physicalID := tablecodec.DecodeTableID(file.GetStartKey())
+				if physicalID == 0 {
 					log.Panic("tableID must not equal to 0", logutil.File(file))
 				}
-				fileMap[tableID] = append(fileMap[tableID], file)
+				fileMap[physicalID] = append(fileMap[physicalID], file)
 			}
 		}
 	}
@@ -435,14 +454,14 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			table := item.(*Table)
 			if table.Info != nil {
 				if fileMap != nil {
-					if files, ok := fileMap[table.Info.ID]; ok {
-						table.Files = append(table.Files, files...)
+					if files, ok := fileMap[table.Info.ID]; ok && len(files) > 0 {
+						table.FilesOfPhysicals[table.Info.ID] = files
 					}
 					if table.Info.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range table.Info.Partition.Definitions {
-							if files, ok := fileMap[p.ID]; ok {
-								table.Files = append(table.Files, files...)
+							if files, ok := fileMap[p.ID]; ok && len(files) > 0 {
+								table.FilesOfPhysicals[p.ID] = files
 							}
 						}
 					}
@@ -492,15 +511,23 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		statsFileIndexes = s.StatsIndex
 	}
 
+	var partitionMergeOptionAllowed map[string]bool
+	if s.PartitionMergeOptionAllowed != nil {
+		partitionMergeOptionAllowed = s.PartitionMergeOptionAllowed
+	}
+
 	return &Table{
-		DB:               dbInfo,
-		Info:             tableInfo,
-		Crc64Xor:         s.Crc64Xor,
-		TotalKvs:         s.TotalKvs,
-		TotalBytes:       s.TotalBytes,
-		TiFlashReplicas:  int(s.TiflashReplicas),
-		Stats:            stats,
-		StatsFileIndexes: statsFileIndexes,
+		DB:                          dbInfo,
+		Info:                        tableInfo,
+		Crc64Xor:                    s.Crc64Xor,
+		TotalKvs:                    s.TotalKvs,
+		TotalBytes:                  s.TotalBytes,
+		FilesOfPhysicals:            make(map[int64][]*backuppb.File),
+		TiFlashReplicas:             int(s.TiflashReplicas),
+		Stats:                       stats,
+		StatsFileIndexes:            statsFileIndexes,
+		IsMergeOptionAllowed:        s.IsMergeOptionAllowed,
+		PartitionMergeOptionAllowed: partitionMergeOptionAllowed,
 	}, nil
 }
 
@@ -626,7 +653,7 @@ func (f *sizedMetaFile) append(file any, op AppendOp) bool {
 
 // MetaWriter represents wraps a writer, and the MetaWriter should be compatible with old version of backupmeta.
 type MetaWriter struct {
-	storage           storage.ExternalStorage
+	storage           storeapi.Storage
 	metafileSizeLimit int
 	// a flag to control whether we generate v1 or v2 meta.
 	useV2Meta  bool
@@ -661,7 +688,7 @@ type MetaWriter struct {
 
 // NewMetaWriter creates MetaWriter.
 func NewMetaWriter(
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	metafileSizeLimit int,
 	useV2Meta bool,
 	metaFileName string,
@@ -785,7 +812,7 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	return nil
 }
 
-// FlushBackupMeta flush the `backupMeta` to `ExternalStorage`
+// FlushBackupMeta flush the `backupMeta` to `Storage`
 func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	// Set schema version
 	if writer.useV2Meta {

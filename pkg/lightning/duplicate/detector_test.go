@@ -44,16 +44,16 @@ func TestDetector(t *testing.T) {
 		numAdders = 10
 	)
 
-	var keys [][]byte
+	keys := make([][]byte, 0, numKeys)
 	rng := rand.New(rand.NewSource(0))
-	for i := 0; i < numKeys; i++ {
+	for range numKeys {
 		var key [8]byte
 		binary.BigEndian.PutUint64(key[:], uint64(rng.Intn(numKeys)))
 		keys = append(keys, key[:])
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < numAdders; i++ {
+	for i := range numAdders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

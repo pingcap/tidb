@@ -22,7 +22,7 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/golangci/golangci-lint/pkg/result"
+	"github.com/golangci/golangci-lint/v2/pkg/result"
 	"github.com/golangci/gosec"
 	"github.com/golangci/gosec/rules"
 	"github.com/pingcap/tidb/build/linter/util"

@@ -19,7 +19,7 @@ $ cd ../tidb
 $ make build_lightning
 ```
 
-Notice TiDB-Lightning supports building with Go version `Go >= 1.16`
+Notice TiDB-Lightning supports building with Go version `Go >= 1.23`
 
 When TiDB-Lightning is built successfully, you can find binary in the `bin` directory.
 

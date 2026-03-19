@@ -5,6 +5,7 @@ package main
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -26,9 +27,8 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
-	overrideDefaultBackupConfigIfNeeded(&cfg, command)
 
-	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.TLS, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -59,6 +59,8 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
+	restore := setTiDBGlueDBFilter(gluetidb.FilterLoadSysDBs)
+	defer restore()
 	if err := task.RunBackup(ctx, tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to backup", zap.Error(err))
 		return errors.Trace(err)
@@ -121,9 +123,6 @@ func NewBackupCommand() *cobra.Command {
 			task.LogArguments(c)
 			// Do not run stat worker in BR.
 			session.DisableStats4Test()
-
-			// Do not run ddl worker in BR.
-			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 
 			summary.SetUnit(summary.BackupUnit)
 			return nil
@@ -216,11 +215,4 @@ func newTxnBackupCommand() *cobra.Command {
 
 	task.DefineTxnBackupFlags(command)
 	return command
-}
-
-func overrideDefaultBackupConfigIfNeeded(config *task.BackupConfig, cmd *cobra.Command) {
-	// override only if flag not set by user
-	if !cmd.Flags().Changed(task.FlagChecksum) {
-		config.Checksum = false
-	}
 }

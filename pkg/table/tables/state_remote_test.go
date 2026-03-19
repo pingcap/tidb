@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -28,7 +28,7 @@ import (
 )
 
 // initRow add a new record into the cached table meta lock table.
-func initRow(ctx context.Context, exec sessiontypes.Session, tid int) error {
+func initRow(ctx context.Context, exec sessionapi.Session, tid int) error {
 	_, err := exec.ExecuteInternal(ctx, "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", tid)
 	return err
 }

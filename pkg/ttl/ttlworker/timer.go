@@ -207,7 +207,7 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 				return
 			}
 
-			logger.Error("GetTimerByID failed", zap.Error(err))
+			logger.Warn("GetTimerByID failed", zap.Error(err))
 			continue
 		}
 
@@ -218,7 +218,7 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 
 		job, err := t.adapter.GetJob(t.ctx, data.TableID, data.PhysicalID, eventID)
 		if err != nil {
-			logger.Error("GetJob error", zap.Error(err))
+			logger.Warn("GetJob error", zap.Error(err))
 			continue
 		}
 
@@ -244,7 +244,7 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 		}
 
 		if err = t.cli.CloseTimerEvent(t.ctx, timerID, eventID, timerapi.WithSetWatermark(eventStart), timerapi.WithSetSummaryData(summaryData)); err != nil {
-			logger.Error("CloseTimerEvent error", zap.Error(err))
+			logger.Warn("CloseTimerEvent error", zap.Error(err))
 			continue
 		}
 

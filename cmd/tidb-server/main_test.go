@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -56,6 +57,15 @@ func TestSetGlobalVars(t *testing.T) {
 	require.Equal(t, "1073741824", variable.GetSysVar(vardef.TiDBMemQuotaQuery).Value)
 	require.NotEqual(t, "test", variable.GetSysVar(vardef.Version).Value)
 
+	// test setInstanceVar
+	require.False(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.InstancePlanCacheMaxMemSize = "444"
+	})
+	setGlobalVars()
+	require.Equal(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).Value, "444")
+	require.True(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
 		conf.ServerVersion = "test"
@@ -81,4 +91,46 @@ func TestSetGlobalVars(t *testing.T) {
 	if hostname, err := os.Hostname(); err == nil {
 		require.Equal(t, variable.GetSysVar(vardef.Hostname).Value, hostname)
 	}
+}
+
+func TestSetVersionByConfigInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	cfg := config.GetGlobalConfig()
+	originCfgEdition := cfg.TiDBEdition
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TiDBEdition = originCfgEdition
+		})
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiDBEdition = "Starter"
+	})
+	require.ErrorContains(t, initVersions(config.GetGlobalConfig()), "are not allowed to set in nextgen kernel")
+}
+
+func TestSetVersionByConfigInvalidNextGenReleaseVersion(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	originReleaseVersion := mysql.TiDBReleaseVersion
+	t.Cleanup(func() {
+		mysql.TiDBReleaseVersion = originReleaseVersion
+	})
+
+	mysql.TiDBReleaseVersion = "v26.13.1"
+	err := initVersions(config.GetGlobalConfig())
+	require.ErrorContains(t, err, "invalid tidb release version for nextgen kernel")
+}
+
+func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	require.NoError(t, initVersions(config.GetGlobalConfig()))
+	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
+	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
 }

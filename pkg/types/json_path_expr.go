@@ -546,7 +546,7 @@ func isEcmascriptIdentifier(s string) bool {
 		return false
 	}
 
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := rune(s[i])
 
 		// accept Latin1 letter

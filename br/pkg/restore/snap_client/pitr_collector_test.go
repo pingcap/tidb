@@ -5,21 +5,24 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
-func tmp(t *testing.T) *storage.LocalStorage {
+func tmp(t *testing.T) *objstore.LocalStorage {
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 	s.IgnoreEnoentForDelete = true
 	return s
@@ -33,16 +36,26 @@ type pitrCollectorT struct {
 	cx      context.Context
 }
 
-func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
+func (p pitrCollectorT) MustStartRestoreBatch(fs restore.BatchBackupFileSet) func() error {
+	cb, err := p.StartRestoreBatch(fs)
+	require.NoError(p.t, err)
+	return cb
+}
+
+func (p pitrCollectorT) StartRestoreBatch(fs restore.BatchBackupFileSet) (func() error, error) {
 	for _, b := range fs {
 		for _, file := range b.SSTFiles {
-			require.NoError(p.t, p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")))
+			if err := p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	res, err := p.coll.onBatch(p.cx, fs)
-	require.NoError(p.t, err)
-	return res
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (p pitrCollectorT) Done() {
@@ -82,9 +95,7 @@ func (p *pitrCollectorT) Reopen() {
 	}
 	p.success.Store(false)
 	p.coll = newColl
-
-	p.coll.resetCommitting()
-	p.coll.goPersister()
+	p.coll.init()
 }
 
 func (p pitrCollectorT) RequireCopied(extBk backuppb.IngestedSSTs, files ...string) {
@@ -129,8 +140,7 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 		return tsoCnt.Add(1), nil
 	}
 	coll.restoreSuccess = restoreSuccess.Load
-	coll.goPersister()
-	coll.resetCommitting()
+	coll.init()
 
 	return pitrCollectorT{
 		t:       t,
@@ -179,7 +189,8 @@ func TestCollAFile(t *testing.T) {
 	coll := newPiTRCollForTest(t)
 	batch := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("foo.txt")))}
 
-	require.NoError(t, coll.RestoreAFile(batch)())
+	complete := coll.MustStartRestoreBatch(batch)
+	require.NoError(t, complete())
 	coll.MarkSuccess()
 	coll.Done()
 
@@ -200,7 +211,8 @@ func TestCollManyFileAndRewriteRules(t *testing.T) {
 		backupFileSet(withFile(nameFile("quux.txt")), withRewriteRule(remap(3, 21))),
 	}
 
-	require.NoError(t, coll.RestoreAFile(batch)())
+	complete := coll.MustStartRestoreBatch(batch)
+	require.NoError(t, complete())
 	coll.MarkSuccess()
 	coll.Done()
 
@@ -221,7 +233,8 @@ func TestReopen(t *testing.T) {
 	batch2 := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("baz.txt")), withRewriteRule(remap(2, 20)))}
 	batch3 := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("quux.txt")), withRewriteRule(remap(3, 21)))}
 
-	require.NoError(t, coll.RestoreAFile(batch1)())
+	complete := coll.MustStartRestoreBatch(batch1)
+	require.NoError(t, complete())
 	coll.Done()
 	exts := coll.ExtFullBkups()
 	require.Len(t, exts, 1)
@@ -232,7 +245,8 @@ func TestReopen(t *testing.T) {
 	require.Equal(t, coll.coll.restoreUUID[:], e.BackupUuid)
 
 	coll.Reopen()
-	require.NoError(t, coll.RestoreAFile(batch2)())
+	complete = coll.MustStartRestoreBatch(batch2)
+	require.NoError(t, complete())
 	exts = coll.ExtFullBkups()
 	require.Len(t, exts, 2)
 	e = exts[1]
@@ -243,7 +257,8 @@ func TestReopen(t *testing.T) {
 	coll.coll.writerRoutine.close()
 
 	coll.Reopen()
-	require.NoError(t, coll.RestoreAFile(batch3)())
+	complete = coll.MustStartRestoreBatch(batch3)
+	require.NoError(t, complete())
 	coll.MarkSuccess()
 	coll.Done()
 	exts = coll.ExtFullBkups()
@@ -267,5 +282,64 @@ func TestConflict(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, cb())
 
+	coll.Done()
+}
+
+func TestConcurrency(t *testing.T) {
+	coll := newPiTRCollForTest(t)
+	coll.coll.setConcurrency(2)
+
+	cnt := int64(0)
+	fence := make(chan struct{})
+	fenceOnce := sync.Once{}
+	closeFence := func() { fenceOnce.Do(func() { close(fence) }) }
+
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst", func() {
+		atomic.AddInt64(&cnt, 1)
+		<-fence
+	}))
+
+	type result struct {
+		complete func() error
+		err      error
+	}
+	const tasks = 10
+	results := make(chan result, tasks)
+	wg := sync.WaitGroup{}
+	wg.Add(tasks)
+
+	t.Cleanup(func() {
+		closeFence()
+		wg.Wait()
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst"))
+	})
+
+	for i := range tasks {
+		batch := restore.BatchBackupFileSet{
+			backupFileSet(withFile(nameFile(fmt.Sprintf("foo%02d.txt", i)))),
+		}
+
+		go func() {
+			defer wg.Done()
+			complete, err := coll.StartRestoreBatch(batch)
+			results <- result{complete: complete, err: err}
+		}()
+	}
+
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt64(&cnt) == 2
+	}, time.Second, 10*time.Millisecond)
+	closeFence()
+	wg.Wait()
+
+	cbs := make([]func() error, 0, tasks)
+	for i := 0; i < tasks; i++ {
+		res := <-results
+		require.NoError(t, res.err)
+		cbs = append(cbs, res.complete)
+	}
+	for _, cb := range cbs {
+		require.NoError(t, cb())
+	}
 	coll.Done()
 }

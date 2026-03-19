@@ -148,7 +148,7 @@ func (s *etcdSyncer) IsUpgradingState() bool {
 func (*etcdSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
 	var err error
 	var resp *clientv3.GetResponse
-	for i := 0; i < retryCnt; i++ {
+	for range retryCnt {
 		select {
 		case <-ctx.Done():
 			err = errors.Trace(ctx.Err())

@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,11 +36,14 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -115,7 +119,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.enterNewTxnType = tp
-	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	p.infoSchema = p.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -129,7 +133,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
 	sessVars.TxnCtxMu.Unlock()
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		sessVars.TxnCtx.EnableMDL = true
 	}
 
@@ -269,6 +273,12 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 	return txn.StartTS(), nil
 }
 
+// TODO: replace usePresetStartTS with a new method StartTSFromPD to make it clear that
+// the timestamp is not allocated by TSO.
+func (p *baseTxnContextProvider) usePresetStartTS() bool {
+	return p.constStartTS != 0 || p.sctx.GetSessionVars().SnapshotTS != 0
+}
+
 // ActivateTxn activates the transaction and set the relevant context variables.
 func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
@@ -286,6 +296,14 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	txnFuture := p.sctx.GetPreparedTxnFuture()
+
+	// Inject delay before TSO wait for testing maxExecutionTime
+	failpoint.Inject("injectTSOWaitDelay", func(val failpoint.Value) {
+		if delayMs, ok := val.(int); ok {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+	})
+
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
@@ -303,6 +321,17 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
+	}
+
+	// verify start_ts is later than any previous commit_ts in the session
+	if !p.usePresetStartTS() && sessVars.LastCommitTS > 0 && sessVars.LastCommitTS > sessVars.TxnCtx.StartTS {
+		logutil.BgLogger().Error("check session lastCommitTS failed",
+			zap.Uint64("lastCommitTS", sessVars.LastCommitTS),
+			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
+			zap.String("sql", redact.String(sessVars.EnableRedactLog, sessVars.StmtCtx.OriginalSQL)),
+		)
+		return nil, fmt.Errorf("txn start_ts:%d is before session last_commit_ts:%d",
+			sessVars.TxnCtx.StartTS, sessVars.LastCommitTS)
 	}
 
 	txn.SetVars(sessVars.KVVars)
@@ -426,23 +455,18 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
+
+	var snapshot kv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		return txn.GetSnapshot(), nil
+		snapshot = txn.GetSnapshot()
+	} else {
+		snapshot = internal.GetSnapshotWithTS(
+			p.sctx,
+			snapshotTS,
+			temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+		)
 	}
-
-	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(
-		p.sctx,
-		snapshotTS,
-		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
-	)
-
-	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() &&
-		!sessVars.StmtCtx.RCCheckTS &&
-		!sessVars.RcWriteCheckTS {
-		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
-	}
+	snapshot.SetOption(kv.ReplicaRead, p.sctx.GetSessionVars().GetReplicaRead())
 
 	return snapshot, nil
 }
@@ -569,10 +593,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
-	needCheckSchema := true
+	needCheckSchemaByDelta := true
 	// Set this option for 2 phase commit to validate schema lease.
 	if sessVars.TxnCtx != nil {
-		needCheckSchema = !sessVars.TxnCtx.EnableMDL
+		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
@@ -581,10 +605,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	txn.SetOption(
 		kv.SchemaChecker,
 		domain.NewSchemaChecker(
-			domain.GetDomain(p.sctx),
+			p.sctx.GetSchemaValidator(),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,
-			needCheckSchema,
+			needCheckSchemaByDelta,
 		),
 	)
 
@@ -614,6 +638,21 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	if commitTSChecker != nil {
 		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
 	}
+
+	// Optimization:
+	// If an auto-commit optimistic transaction can retry in pessimistic mode,
+	// do not resolve locks when prewrite.
+	// 1. safety: The locks can be resolved later when it retries in pessimistic mode.
+	// 2. benefit: In high-contention scenarios, pessimistic transactions perform better.
+	prewriteEncounterLockPolicy := transaction.TryResolvePolicy
+	if sessVars.TxnCtx.CouldRetry &&
+		sessVars.IsAutocommit() &&
+		!sessVars.InTxn() &&
+		!sessVars.TxnCtx.IsPessimistic {
+		prewriteEncounterLockPolicy = transaction.NoResolvePolicy
+	}
+	txn.SetOption(kv.PrewriteEncounterLockPolicy, prewriteEncounterLockPolicy)
+
 	return nil
 }
 

@@ -15,9 +15,11 @@
 package stmtstats
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
 )
 
@@ -30,13 +32,30 @@ var _ StatementObserver = &StatementStats{}
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnExecutionBegin should be called before statement execution.
-	OnExecutionBegin(sqlDigest, planDigest []byte)
+	OnExecutionBegin(sqlDigest, planDigest []byte, info *ExecBeginInfo)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	// WARNING: Currently Only call StatementObserver API when TopSQL is enabled,
-	// there is no guarantee that both OnExecutionBegin and OnExecutionFinished will be called for a SQL,
-	// such as TopSQL is enabled during a SQL execution.
-	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
+	// WARNING: StatementObserver callbacks are used by both TopSQL and TopRU
+	// collection paths, and begin/finish are not guaranteed to be paired for
+	// every statement across TopSQL/TopRU toggle windows.
+	OnExecutionFinished(sqlDigest, planDigest []byte, info *ExecFinishInfo)
+}
+
+// ExecBeginInfo carries optional execution-begin context for extensible stats collection.
+type ExecBeginInfo struct {
+	Ctx            context.Context
+	User           string
+	InNetworkBytes uint64
+	TopRUEnabled   bool
+}
+
+// ExecFinishInfo carries optional execution-finish context for extensible stats collection.
+type ExecFinishInfo struct {
+	RUDetails       *util.RUDetails
+	User            string
+	OutNetworkBytes uint64
+	ExecDuration    time.Duration
+	TopRUEnabled    bool
 }
 
 // StatementStats is a counter used locally in each session.
@@ -46,33 +65,74 @@ type StatementObserver interface {
 type StatementStats struct {
 	data     StatementStatsMap
 	finished *atomic.Bool
-	mu       sync.Mutex
+	// RU tracking fields for TopRU (separate from TopSQL stmtstats).
+	finishedRUBuffer RUIncrementMap // Completed SQL RU deltas drained by aggregator ticks.
+	// execCtx tracks the currently active SQL execution in this session.
+	// TiDB session execution is serialized, so at most one active context is kept.
+	execCtx *ExecutionContext
+	mu      sync.Mutex
 }
 
 // CreateStatementStats try to create and register an StatementStats.
 func CreateStatementStats() *StatementStats {
 	stats := &StatementStats{
-		data:     StatementStatsMap{},
-		finished: atomic.NewBool(false),
+		data:             StatementStatsMap{},
+		finished:         atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{},
 	}
 	globalAggregator.register(stats)
 	return stats
 }
 
 // OnExecutionBegin implements StatementObserver.OnExecutionBegin.
-func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, info *ExecBeginInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
 	item.ExecCount++
+	if info != nil {
+		item.NetworkInBytes += info.InNetworkBytes
+		if info.TopRUEnabled {
+			s.addRUOnBeginLocked(info.Ctx, info.User, sqlDigest, planDigest)
+		}
+	}
 	// Count more data here.
 }
 
+func (s *StatementStats) addRUOnBeginLocked(ctx context.Context, user string, sqlDigest, planDigest []byte) {
+	key := RUKey{
+		User:       user,
+		SQLDigest:  BinaryDigest(sqlDigest),
+		PlanDigest: BinaryDigest(planDigest),
+	}
+	// Cache RUDetails at begin time to avoid per-tick context.Value() lookups.
+	var ruDetails *util.RUDetails
+	if ctx != nil {
+		if raw := ctx.Value(util.RUDetailsCtxKey); raw != nil {
+			ruDetails, _ = raw.(*util.RUDetails)
+		}
+	}
+	// Replace stale execution context defensively.
+	s.execCtx = &ExecutionContext{
+		RUDetails: ruDetails,
+		Key:       key,
+	}
+	// ExecCount is begin-based, aligned with TopSQL semantics.
+	incr := s.getOrCreateRUIncrementLocked(key)
+	incr.ExecCount++
+}
+
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
-	ns := execDuration.Nanoseconds()
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info *ExecFinishInfo) {
+	if info == nil {
+		return
+	}
+	ns := info.ExecDuration.Nanoseconds()
 	if ns < 0 {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.clearRUExecCtxLocked()
 		return
 	}
 
@@ -82,7 +142,91 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
+	item.NetworkOutBytes += info.OutNetworkBytes
+	if info.TopRUEnabled {
+		s.addRUOnFinishLocked(info.User, sqlDigest, planDigest, info.RUDetails, info.ExecDuration)
+	} else {
+		s.clearRUExecCtxLocked()
+	}
 	// Count more data here.
+}
+
+func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest []byte, ru *util.RUDetails, execDuration time.Duration) {
+	if s.execCtx == nil {
+		// No matching begin was recorded, so delta cannot be computed correctly.
+		return
+	}
+	key := RUKey{
+		User:       user,
+		SQLDigest:  BinaryDigest(sqlDigest),
+		PlanDigest: BinaryDigest(planDigest),
+	}
+	if s.execCtx.Key != key {
+		// A newer execution has replaced the active context.
+		return
+	}
+	defer s.clearRUExecCtxLocked()
+	if ru == nil {
+		return
+	}
+
+	currentTotalRU := ru.RRU() + ru.WRU()
+	if currentTotalRU <= 0 {
+		return
+	}
+
+	lastTotalRU := s.execCtx.LastRUTotal
+	s.execCtx.LastRUTotal = currentTotalRU
+	deltaRU := currentTotalRU - lastTotalRU
+	if deltaRU <= 0 {
+		// Counter reset or the value was already sampled.
+		// Expected behavior: when no new RU is observed, do not add ExecDuration.
+		return
+	}
+	incr := s.getOrCreateRUIncrementLocked(key)
+	incr.TotalRU += deltaRU
+	incr.ExecDuration += uint64(execDuration.Nanoseconds())
+}
+
+func (s *StatementStats) getOrCreateRUIncrementLocked(key RUKey) *RUIncrement {
+	incr, ok := s.finishedRUBuffer[key]
+	if !ok {
+		incr = &RUIncrement{}
+		s.finishedRUBuffer[key] = incr
+	}
+	return incr
+}
+
+func (s *StatementStats) clearRUExecCtxLocked() {
+	s.execCtx = nil
+}
+
+// ClearRUExecContext discards the active RU execution context without touching
+// accumulated stmtstats or finished RU increments.
+func (s *StatementStats) ClearRUExecContext() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clearRUExecCtxLocked()
+}
+
+func (s *StatementStats) sampleActiveRUDeltaLocked(result RUIncrementMap) RUIncrementMap {
+	if s.execCtx == nil || s.execCtx.RUDetails == nil {
+		return result
+	}
+
+	currentTotalRU := s.execCtx.RUDetails.RRU() + s.execCtx.RUDetails.WRU()
+	deltaRU := currentTotalRU - s.execCtx.LastRUTotal
+	if deltaRU > 0 {
+		incr, ok := result[s.execCtx.Key]
+		if !ok {
+			incr = &RUIncrement{}
+			result[s.execCtx.Key] = incr
+		}
+		incr.TotalRU += deltaRU
+	}
+	// Keep LastRUTotal in sync even when delta <= 0 (e.g. counter reset).
+	s.execCtx.LastRUTotal = currentTotalRU
+	return result
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
@@ -90,7 +234,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
 func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []byte) *StatementStatsItem {
-	key := SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
+	key := newSQLPlanDigest(sqlDigest, planDigest)
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()
@@ -132,6 +276,17 @@ func (s *StatementStats) Finished() bool {
 	return s.finished.Load()
 }
 
+// MergeRUInto drains finishedRUBuffer and returns accumulated RU increments.
+// In-flight RU is sampled in the same call.
+func (s *StatementStats) MergeRUInto() RUIncrementMap {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result := s.finishedRUBuffer
+	s.finishedRUBuffer = RUIncrementMap{}
+	return s.sampleActiveRUDeltaLocked(result)
+}
+
 // BinaryDigest is converted from parser.Digest.Bytes(), and the purpose
 // is to be used as the key of the map.
 type BinaryDigest string
@@ -141,6 +296,13 @@ type BinaryDigest string
 type SQLPlanDigest struct {
 	SQLDigest  BinaryDigest
 	PlanDigest BinaryDigest
+}
+
+func newSQLPlanDigest(sqlDigest, planDigest []byte) SQLPlanDigest {
+	return SQLPlanDigest{
+		SQLDigest:  BinaryDigest(sqlDigest),
+		PlanDigest: BinaryDigest(planDigest),
+	}
 }
 
 // StatementStatsMap is the local data type of StatementStats.
@@ -182,6 +344,10 @@ type StatementStatsItem struct {
 	// DurationCount represents the number of SQL executions specially
 	// used to calculate SQLDuration.
 	DurationCount uint64
+	// NetworkInBytes represents the total number of network input bytes from client.
+	NetworkInBytes uint64
+	// NetworkOutBytes represents the total number of network input bytes to client.
+	NetworkOutBytes uint64
 }
 
 // NewStatementStatsItem creates an empty StatementStatsItem.
@@ -205,6 +371,8 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	i.ExecCount += other.ExecCount
 	i.SumDurationNs += other.SumDurationNs
 	i.DurationCount += other.DurationCount
+	i.NetworkInBytes += other.NetworkInBytes
+	i.NetworkOutBytes += other.NetworkOutBytes
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 

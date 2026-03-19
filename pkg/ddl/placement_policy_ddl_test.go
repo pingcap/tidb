@@ -57,10 +57,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.Execu
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, false))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
-	policyInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
-	policyInfo.State = model.StateNone
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -125,7 +122,8 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t4.State = model.StatePublic
 	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t4)
 
-	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := infoschema.NewBuilder(dom, schemaCacheSize, nil, infoschema.NewData(), schemaCacheSize > 0)
 	err = builder.InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},

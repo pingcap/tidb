@@ -69,6 +69,7 @@ func simplifyAndCheckBinaryPlan(t *testing.T, pb *tipb.ExplainData) {
 		}
 	}
 }
+
 func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 	// Prepare the slow log
 	originCfg := config.GetGlobalConfig()
@@ -76,6 +77,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
@@ -83,59 +85,58 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	// If we don't set this, it will be false sometimes and the cost in the result will be different.
-	tk.MustExec("set @@tidb_enable_chunk_rpc=true")
-	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
-	tk.MustExec("set tidb_slow_log_threshold=0;")
-	defer func() {
-		tk.MustExec("set tidb_slow_log_threshold=300;")
-	}()
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		// If we don't set this, it will be false sometimes and the cost in the result will be different.
+		testKit.MustExec("set @@tidb_enable_chunk_rpc=true")
+		testKit.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+		testKit.MustExec("set tidb_slow_log_threshold=0;")
+		defer func() {
+			testKit.MustExec("set tidb_slow_log_threshold=300;")
+		}()
 
-	var input []string
-	var output []struct {
-		SQL        string
-		BinaryPlan *tipb.ExplainData
-	}
-	planSuiteData := GetBinaryPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
+		var input []string
+		var output []struct {
+			SQL        string
+			BinaryPlan *tipb.ExplainData
+		}
+		planSuiteData := GetBinaryPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
-	for i, test := range input {
-		comment := fmt.Sprintf("case:%v sql:%s", i, test)
-		if len(test) < 7 || test[:7] != "explain" {
-			tk.MustExec(test)
+		for i, test := range input {
+			comment := fmt.Sprintf("case:%v sql:%s", i, test)
+			if len(test) < 7 || test[:7] != "explain" {
+				testKit.MustExec(test)
+				testdata.OnRecord(func() {
+					output[i].SQL = test
+					output[i].BinaryPlan = nil
+				})
+				continue
+			}
+			result := testdata.ConvertRowsToStrings(testKit.MustQuery(test).Rows())
+			require.Equal(t, len(result), 1, comment)
+			s := result[0]
+
+			// assert that the binary plan in the slow log is the same as the result in the EXPLAIN statement
+			slowLogResult := testdata.ConvertRowsToStrings(testKit.MustQuery("select binary_plan from information_schema.slow_query " +
+				`where query = "` + test + `;" ` +
+				"order by time desc limit 1").Rows())
+			require.Lenf(t, slowLogResult, 1, comment)
+			require.Equal(t, s, slowLogResult[0], comment)
+
+			b, err := base64.StdEncoding.DecodeString(s)
+			require.NoError(t, err)
+			b, err = snappy.Decode(nil, b)
+			require.NoError(t, err)
+			binary := &tipb.ExplainData{}
+			err = binary.Unmarshal(b)
+			require.NoError(t, err)
 			testdata.OnRecord(func() {
 				output[i].SQL = test
-				output[i].BinaryPlan = nil
+				output[i].BinaryPlan = binary
 			})
-			continue
+			simplifyAndCheckBinaryPlan(t, binary)
+			require.Equal(t, output[i].BinaryPlan, binary, comment)
 		}
-		result := testdata.ConvertRowsToStrings(tk.MustQuery(test).Rows())
-		require.Equal(t, len(result), 1, comment)
-		s := result[0]
-
-		// assert that the binary plan in the slow log is the same as the result in the EXPLAIN statement
-		slowLogResult := testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.slow_query " +
-			`where query = "` + test + `;" ` +
-			"order by time desc limit 1").Rows())
-		require.Lenf(t, slowLogResult, 1, comment)
-		require.Equal(t, s, slowLogResult[0], comment)
-
-		b, err := base64.StdEncoding.DecodeString(s)
-		require.NoError(t, err)
-		b, err = snappy.Decode(nil, b)
-		require.NoError(t, err)
-		binary := &tipb.ExplainData{}
-		err = binary.Unmarshal(b)
-		require.NoError(t, err)
-		testdata.OnRecord(func() {
-			output[i].SQL = test
-			output[i].BinaryPlan = binary
-		})
-		simplifyAndCheckBinaryPlan(t, binary)
-		require.Equal(t, output[i].BinaryPlan, binary, comment)
-	}
+	})
 }

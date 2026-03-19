@@ -59,7 +59,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		// All hooks are running inside a READ mutex `d.mu()`, we need to lock for the variable's modification.
 		adminCommandMutex.Lock()
 		defer adminCommandMutex.Unlock()
-		if testddlutil.TestMatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
+		if testddlutil.MatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
 			stmtCase.isJobPausable &&
 			!isPaused {
 			jobID = job.ID
@@ -232,7 +232,7 @@ func TestPauseAndResumeIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
@@ -303,7 +303,7 @@ func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
@@ -395,7 +395,7 @@ func TestPauseJobDependency(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		// Will stuck because the job is paused.
-		errModCol = tk.ExecToErr("alter table t modify column b tinyint;")
+		errModCol = tk.ExecToErr("alter table t modify column b varchar(16);")
 	}()
 	go func() {
 		defer wg.Done()

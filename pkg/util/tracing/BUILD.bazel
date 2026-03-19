@@ -9,8 +9,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/tracing",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/util/intest",
         "@com_github_opentracing_basictracer_go//:basictracer-go",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_tikv_client_go_v2//trace",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -20,7 +24,6 @@ go_test(
     srcs = [
         "main_test.go",
         "noop_bench_test.go",
-        "opt_trace_test.go",
         "util_test.go",
     ],
     embed = [":tracing"],

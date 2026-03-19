@@ -18,10 +18,11 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
-	"strings"
+	"slices"
 	"sync"
 	"time"
 
@@ -35,14 +36,21 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -100,7 +108,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange common.Range
+	keyRange engineapi.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -108,7 +116,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      common.IngestData
+	ingestData      engineapi.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Common
@@ -121,11 +129,25 @@ type regionJob struct {
 	injected []injectedBehaviour
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "regionJob", "regionJob", nil
+}
+
 type tikvWriteResult struct {
-	sstMeta           []*sst.SSTMeta
+	// means there is no data inside this job
+	emptyJob          bool
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
+
+	// below fields are for OP generation store engine.
+	// this field might be modified in-place to remove SSTs that are ingested successfully.
+	sstMeta []*sst.SSTMeta
+
+	// below fields are for cloud generation store engine.
+	// the filename of the written sst file by tikv-worker.
+	nextGenWriteResp *ingestcli.WriteResponse
 }
 
 type injectedBehaviour struct {
@@ -139,13 +161,12 @@ type injectedWriteBehaviour struct {
 }
 
 type injectedIngestBehaviour struct {
-	nextStage jobStageTp
-	err       error
+	err error
 }
 
 func newRegionJob(
 	region *split.RegionInfo,
-	data common.IngestData,
+	data engineapi.IngestData,
 	jobStart []byte,
 	jobEnd []byte,
 	regionSplitSize int64,
@@ -161,7 +182,7 @@ func newRegionJob(
 		zap.Binary("regionEnd", region.Region.GetEndKey()),
 		zap.Reflect("peers", region.Region.GetPeers()))
 	return &regionJob{
-		keyRange:        common.Range{Start: jobStart, End: jobEnd},
+		keyRange:        engineapi.Range{Start: jobStart, End: jobEnd},
 		region:          region,
 		stage:           regionScanned,
 		ingestData:      data,
@@ -180,8 +201,8 @@ func newRegionJob(
 // - sortedRegions can cover sortedJobRanges
 func newRegionJobs(
 	sortedRegions []*split.RegionInfo,
-	data common.IngestData,
-	sortedJobRanges []common.Range,
+	data engineapi.IngestData,
+	sortedJobRanges []engineapi.Range,
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
@@ -292,29 +313,6 @@ func (j *regionJob) done(wg *sync.WaitGroup) {
 	}
 }
 
-// writeToTiKV writes the data to TiKV and mark this job as wrote stage.
-// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
-// if any underlying logic has error, writeToTiKV will return an error.
-// we don't need to do cleanup for the pairs written to tikv if encounters an error,
-// tikv will take the responsibility to do so.
-// TODO: let client-go provide a high-level write interface.
-func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
-	err := local.doWrite(ctx, j)
-	if err == nil {
-		return nil
-	}
-	if !common.IsRetryableError(err) {
-		return err
-	}
-	// currently only one case will restart write
-	if strings.Contains(err.Error(), "RequestTooNew") {
-		j.convertStageTo(regionScanned)
-		return err
-	}
-	j.convertStageTo(needRescan)
-	return err
-}
-
 func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst.WriteRequest {
 	return &sst.WriteRequest{
 		Chunk: &sst.WriteRequest_Meta{
@@ -330,25 +328,44 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 	}
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
-	if j.stage != regionScanned {
-		return nil
-	}
-
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
-		j.writeResult = front.write.result
 		err := front.write.err
 		if err == nil {
 			j.convertStageTo(wrote)
 		}
-		failpoint.Return(err)
+		failpoint.Return(front.write.result, err)
 	})
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
+	timeout := 15 * time.Minute
+	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
+
+	// A defer function to handle all DeadlineExceeded errors that may occur
+	// during the write operation using this context with 15 minutes timeout.
+	// When the error is "context deadline exceeded", we will check if the cause
+	// is common.ErrWriteTooSlow and return the common.ErrWriteTooSlow instead so
+	// our caller would be able to retry this doWrite operation. By doing this
+	// defer we are hoping to handle all DeadlineExceeded error during this
+	// write, either from gRPC stream or write limiter WaitN operation.
+	wctx := ctx
+	defer func() {
+		if err == nil {
+			return
+		}
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+				tidblogutil.Logger(ctx).Info("Experiencing a wait timeout while writing to tikv",
+					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
+					zap.Int("limit-size", local.writeLimiter.Limit()))
+				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
+			}
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -361,16 +378,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if firstKey == nil {
-		j.convertStageTo(ingested)
-		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
+		tidblogutil.Logger(ctx).Debug("keys within region is empty, skip doIngest",
 			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("regionStart", region.StartKey),
 			logutil.Key("end", j.keyRange.End),
 			logutil.Key("regionEnd", region.EndKey))
-		return nil
+		return &tikvWriteResult{emptyJob: true}, nil
 	}
 
 	firstKey = codec.EncodeBytes([]byte{}, firstKey)
@@ -416,22 +432,22 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
-			return annotateErr(err, peer, "when create client")
+			return nil, annotateErr(err, peer, "when create client")
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return annotateErr(err, peer, "when open write stream")
+			return nil, annotateErr(err, peer, "when open write stream")
 		}
 
 		failpoint.Inject("mockWritePeerErr", func() {
 			err = errors.Errorf("mock write peer error")
-			failpoint.Return(annotateErr(err, peer, "when open write stream"))
+			failpoint.Return(nil, annotateErr(err, peer, "when open write stream"))
 		})
 
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
-			return annotateErr(err, peer, "when send meta")
+			return nil, annotateErr(err, peer, "when send meta")
 		}
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
@@ -449,7 +465,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return true
 	}, "TS used in import should in [now-1d, now+1h], but got %d", dataCommitTS)
 	if dataCommitTS == 0 {
-		return errors.New("data commitTS is 0")
+		return nil, errors.New("data commitTS is 0")
 	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
@@ -469,6 +485,19 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
+	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
+	wcancel := func() {}
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		var innerTimeout time.Duration
+		// GO_FAILPOINTS action supplies the duration in
+		ms, _ := val.(int)
+		innerTimeout = time.Duration(ms) * time.Millisecond
+		tidblogutil.Logger(ctx).Info("Injecting a timeout to write context.")
+		wctx, wcancel = context.WithTimeoutCause(
+			ctx, innerTimeout, common.ErrWriteTooSlow)
+	})
+	defer wcancel()
+
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -479,7 +508,25 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		}
 
 		for i := range clients {
-			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
+			// original ctx would be used when failpoint is not enabled
+			// that new context would be used when failpoint is enabled
+			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
+			if err != nil {
+				// We expect to encounter two types of errors here:
+				// 1. context.DeadlineExceeded — occurs when the calculated delay is
+				//    less than the remaining time in the context, but the context
+				//    expires while sleeping.
+				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail
+				//    path triggered when the delay already exceeds the remaining
+				//    time for context before sleeping.
+				//
+				// Unfortunately, we cannot precisely control when the context will
+				// expire, so both scenarios are valid and expected.
+				// Fortunately, the "rate: Wait" error is already treated as
+				// retryable, so we only need to explicitly handle
+				// context.DeadlineExceeded here.
+				// We rely on the defer function at the top of doWrite to handle it
+				// for us in general.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
@@ -491,8 +538,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
+
+		if local.collector != nil {
+			local.collector.Processed(size, int64(count))
+		}
+
 		failpoint.Inject("afterFlushKVs", func() {
-			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
+			tidblogutil.Logger(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
 		})
 		return nil
 	}
@@ -523,7 +575,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 		if size >= kvBatchSize {
 			if err := flushKVs(); err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			count = 0
 			size = 0
@@ -532,8 +584,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
-				remainingStartKey = append([]byte{}, iter.Key()...)
-				log.FromContext(ctx).Info("write to tikv partial finish",
+				remainingStartKey = slices.Clone(iter.Key())
+				tidblogutil.Logger(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
 					logutil.Key("startKey", j.keyRange.Start),
@@ -548,12 +600,12 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	}
 
 	if iter.Error() != nil {
-		return errors.Trace(iter.Error())
+		return nil, errors.Trace(iter.Error())
 	}
 
 	if count > 0 {
 		if err := flushKVs(); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		count = 0
 		size = 0
@@ -564,34 +616,35 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
-			return annotateErr(closeErr, allPeers[i], "when close write stream")
+			return nil, annotateErr(closeErr, allPeers[i], "when close write stream")
 		}
 		if resp.Error != nil {
-			return annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
+			return nil, annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
 		}
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
-			log.FromContext(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+			tidblogutil.Logger(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
 		}
 	}
 
 	failpoint.Inject("NoLeader", func() {
-		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		tidblogutil.Logger(ctx).Warn("enter failpoint NoLeader")
 		leaderPeerMetas = nil
 	})
 
-	// if there is not leader currently, we don't forward the stage to wrote and let caller
+	// if there is no leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
-		log.FromContext(ctx).Warn("write to tikv no leader",
+		tidblogutil.Logger(ctx).Warn("write to tikv no leader",
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
+		return nil, errors.Annotatef(errdef.ErrNoLeader.GenWithStackByArgs(region.Id),
+			"write to tikv with no leader returned, expected leader id %d", leaderID)
 	}
 
 	takeTime := time.Since(begin)
-	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
+	tidblogutil.Logger(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Stringer("takeTime", takeTime))
@@ -599,35 +652,25 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
 	}
 
-	j.writeResult = &tikvWriteResult{
+	return &tikvWriteResult{
 		sstMeta:           leaderPeerMetas,
 		count:             totalCount,
 		totalBytes:        totalSize,
 		remainingStartKey: remainingStartKey,
-	}
-	j.convertStageTo(wrote)
-	return nil
+	}, nil
 }
 
 // ingest tries to finish the regionJob.
-// if any ingest logic has error, ingest may retry sometimes to resolve it and finally
-// set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
 func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
-	if j.stage != wrote {
-		return nil
-	}
-
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
-		j.convertStageTo(front.ingest.nextStage)
 		failpoint.Return(front.ingest.err)
 	})
 
 	if len(j.writeResult.sstMeta) == 0 {
-		j.convertStageTo(ingested)
 		return nil
 	}
 
@@ -640,42 +683,30 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 		}()
 	}
 
-	for retry := 0; retry < maxRetryTimes; retry++ {
+	var lastRetriedErr error
+	for retry := range maxRetryTimes {
 		resp, err := local.doIngest(ctx, j)
-		if err == nil && resp.GetError() == nil {
-			j.convertStageTo(ingested)
-			return nil
-		}
+		err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
 				return err
 			}
-			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+			tidblogutil.Logger(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
-				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
-			j.lastRetryableErr = err
+				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
+				zap.Int("retry", retry))
+			lastRetriedErr = err
 			continue
 		}
-		canContinue, err := j.convertStageOnIngestError(resp)
-		if common.IsContextCanceledError(err) {
-			return err
-		}
-		if !canContinue {
-			log.FromContext(ctx).Warn("meet error and handle the job later",
-				zap.Stringer("job stage", j.stage),
-				logutil.ShortError(j.lastRetryableErr),
-				j.region.ToZapFields(),
-				logutil.Key("start", j.keyRange.Start),
-				logutil.Key("end", j.keyRange.End))
+		if resp.GetError() == nil {
 			return nil
 		}
-		log.FromContext(ctx).Warn("meet error and will doIngest region again",
-			logutil.ShortError(j.lastRetryableErr),
-			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.Start),
-			logutil.Key("end", j.keyRange.End))
+		return ingestcli.NewIngestAPIError(resp.GetError(), func(regions []*metapb.Region) *split.RegionInfo {
+			return extractRegionFromErr(j, regions)
+		})
 	}
-	return nil
+	return lastRetriedErr
 }
 
 func (local *Backend) checkWriteStall(
@@ -704,13 +735,31 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("diskFullOnIngest", func() {
+		failpoint.Return(&sst.IngestResponse{
+			Error: &errorpb.Error{
+				Message: "propose failed: tikv disk full, cmd diskFullOpt={:?}, leader diskUsage={:?}",
+				DiskFull: &errorpb.DiskFull{
+					StoreId: []uint64{1},
+				},
+			},
+		}, nil)
+	})
 	failpoint.Inject("doIngestFailed", func() {
 		failpoint.Return(nil, errors.New("injected error"))
 	})
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
-	if shouldCheckWriteStall {
+
+	var limiter *ingestLimiter
+	if x := local.ingestLimiter.Load(); x != nil {
+		limiter = x
+	} else {
+		limiter = &ingestLimiter{}
+	}
+
+	if shouldCheckWriteStall && limiter.NoLimit() {
 		writeStall, resp, err := local.checkWriteStall(ctx, j.region)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -723,14 +772,16 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	batch := 1
 	if supportMultiIngest {
 		batch = len(j.writeResult.sstMeta)
+		batch = min(batch, limiter.Burst())
 	}
 
 	var resp *sst.IngestResponse
 	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
 		end := min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
+		weight := uint(len(ingestMetas))
 
-		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
+		tidblogutil.Logger(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
 		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 			// only inject the error once
@@ -778,6 +829,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
+		err = limiter.Acquire(leader.StoreId, weight)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if supportMultiIngest {
 			req := &sst.MultiIngestRequest{
 				Context: reqCtx,
@@ -791,7 +846,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
-		if resp.GetError() != nil || err != nil {
+		limiter.Release(leader.StoreId, weight)
+		if err != nil || resp.GetError() != nil {
 			// remove finished sstMetas
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
@@ -810,94 +866,61 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-// convertStageOnIngestError will try to fix the error contained in ingest response.
-// Return (_, error) when another error occurred.
-// Return (true, nil) when the job can retry ingesting immediately.
-// Return (false, nil) when the job should be put back to queue.
-func (j *regionJob) convertStageOnIngestError(
-	resp *sst.IngestResponse,
-) (bool, error) {
-	if resp.GetError() == nil {
-		return true, nil
+func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *split.RegionInfo {
+	// unlike classic kernel, nextgen cannot return the full current region infos
+	// for the range of the region which is used for ingest, it can only return
+	// region info of the same region ID.
+	if kerneltype.IsNextGen() || len(currentRegions) == 0 {
+		return nil
 	}
 
-	var newRegion *split.RegionInfo
-	switch errPb := resp.GetError(); {
-	case errPb.NotLeader != nil:
-		j.lastRetryableErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
-
-		// meet a problem that the region leader+peer are all updated but the return
-		// error is only "NotLeader", we should update the whole region info.
-		j.convertStageTo(needRescan)
-		return false, nil
-	case errPb.EpochNotMatch != nil:
-		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
-
-		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
-			var currentRegion *metapb.Region
-			for _, r := range currentRegions {
-				if insideRegion(r, j.writeResult.sstMeta) {
-					currentRegion = r
-					break
-				}
-			}
-			if currentRegion != nil {
-				var newLeader *metapb.Peer
-				for _, p := range currentRegion.Peers {
-					if p.GetStoreId() == j.region.Leader.GetStoreId() {
-						newLeader = p
-						break
-					}
-				}
-				if newLeader != nil {
-					newRegion = &split.RegionInfo{
-						Leader: newLeader,
-						Region: currentRegion,
-					}
-				}
-			}
+	intest.Assert(len(job.writeResult.sstMeta) > 0)
+	var currentRegion *metapb.Region
+	for _, r := range currentRegions {
+		// nextgen doesn't have job.writeResult.sstMeta, be careful when modify it
+		// when nextgen can return correct current region infos.
+		if insideRegion(r, job.writeResult.sstMeta) {
+			currentRegion = r
+			break
 		}
-		if newRegion != nil {
-			j.region = newRegion
-			j.convertStageTo(regionScanned)
-			return false, nil
-		}
-		j.convertStageTo(needRescan)
-		return false, nil
-	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		j.lastRetryableErr = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
-
-		j.convertStageTo(needRescan)
-		return false, nil
-	case errPb.ServerIsBusy != nil:
-		j.lastRetryableErr = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
-
-		return false, nil
-	case errPb.RegionNotFound != nil:
-		j.lastRetryableErr = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
-
-		j.convertStageTo(needRescan)
-		return false, nil
-	case errPb.ReadIndexNotReady != nil:
-		j.lastRetryableErr = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
-
-		// this error happens when this region is splitting, the error might be:
-		//   read index not ready, reason can not read index due to split, region 64037
-		// we have paused schedule, but it's temporary,
-		// if next request takes a long time, there's chance schedule is enabled again
-		// or on key range border, another engine sharing this region tries to split this
-		// region may cause this error too.
-		j.convertStageTo(needRescan)
-		return false, nil
-	case errPb.DiskFull != nil:
-		j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
-
-		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
-	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
-	j.convertStageTo(regionScanned)
-	return false, nil
+	if currentRegion != nil {
+		var newLeader *metapb.Peer
+		for _, p := range currentRegion.Peers {
+			if p.GetStoreId() == job.region.Leader.GetStoreId() {
+				newLeader = p
+				break
+			}
+		}
+		if newLeader != nil {
+			return &split.RegionInfo{
+				Leader: newLeader,
+				Region: currentRegion,
+			}
+		}
+	}
+	return nil
+}
+
+// the input error must be an retryable error
+func getNextStageOnIngestError(err error) (*split.RegionInfo, jobStageTp) {
+	var theErr *ingestcli.IngestAPIError
+	if goerrors.As(err, &theErr) {
+		switch {
+		case goerrors.Is(theErr.Err, errdef.ErrKVIngestFailed):
+			return nil, regionScanned
+		case goerrors.Is(theErr.Err, errdef.ErrKVServerIsBusy):
+			return nil, wrote
+		default:
+			if theErr.NewRegion != nil {
+				return theErr.NewRegion, regionScanned
+			}
+			return nil, needRescan
+		}
+	}
+	// we failed to call Ingest or MultiIngest on some retryable errors, such as
+	// network errors
+	return nil, wrote
 }
 
 type regionJobRetryHeap []*regionJob
@@ -953,6 +976,85 @@ type regionJobRetryer struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type dispatcher struct {
+	workerCtx context.Context
+
+	jobFromWorkerCh chan *regionJob
+	jobWg           *sync.WaitGroup
+
+	retryer *regionJobRetryer
+}
+
+func newDispatcher(
+	workerCtx context.Context,
+	jobFromWorkerCh chan *regionJob,
+	jobWg *sync.WaitGroup,
+	retryer *regionJobRetryer,
+) *dispatcher {
+	return &dispatcher{
+		workerCtx:       workerCtx,
+		jobFromWorkerCh: jobFromWorkerCh,
+		jobWg:           jobWg,
+		retryer:         retryer,
+	}
+}
+
+func (d *dispatcher) run() error {
+	var (
+		job *regionJob
+		ok  bool
+	)
+	for {
+		select {
+		case <-d.workerCtx.Done():
+			return nil
+		case job, ok = <-d.jobFromWorkerCh:
+		}
+		if !ok {
+			d.retryer.close()
+			return nil
+		}
+		switch job.stage {
+		case regionScanned, wrote:
+			job.retryCount++
+			if job.retryCount > MaxWriteAndIngestRetryTimes {
+				job.done(d.jobWg)
+				lastErr := job.lastRetryableErr
+				intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
+				if lastErr == nil {
+					lastErr = errors.New("retry limit exceeded")
+					tidblogutil.Logger(d.workerCtx).Error(
+						"lastRetryableErr should not be nil",
+						logutil.Key("startKey", job.keyRange.Start),
+						logutil.Key("endKey", job.keyRange.End),
+						zap.Stringer("stage", job.stage),
+						zap.Error(lastErr))
+				}
+				return lastErr
+			}
+			// max retry backoff time: 2+4+8+16+30*26=810s
+			sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
+			job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
+			tidblogutil.Logger(d.workerCtx).Info("put job back to jobCh to retry later",
+				logutil.Key("startKey", job.keyRange.Start),
+				logutil.Key("endKey", job.keyRange.End),
+				zap.Stringer("stage", job.stage),
+				zap.Int("retryCount", job.retryCount),
+				zap.Time("waitUntil", job.waitUntil),
+				log.ShortError(job.lastRetryableErr),
+			)
+			if !d.retryer.push(job) {
+				// retryer is closed by worker error
+				job.done(d.jobWg)
+			}
+		case ingested:
+			job.done(d.jobWg)
+		case needRescan:
+			panic("should not reach here")
+		}
+	}
 }
 
 // newRegionJobRetryer creates a regionJobRetryer. regionJobRetryer.run is
@@ -1170,7 +1272,7 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 		}
 
 		remainJobCnt := b.jobLen()
-		for i := 0; i < remainJobCnt; i++ {
+		for range remainJobCnt {
 			j := b.pickJob()
 			if j == nil {
 				// j can be nil if it's executed after the jobs.Store of runReadToWorkerCh

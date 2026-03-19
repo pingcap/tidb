@@ -34,7 +34,7 @@ import (
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
 func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
-	sctx.GetSessionVars().StmtCtx.SetStaleTSOProvider(func() (uint64, error) {
+	sctx.GetSessionVars().StmtCtx.SetStaleTSOProviderIfNotExist(func() (uint64, error) {
 		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
 			return uint64(val.(int)), nil
 		})
@@ -53,7 +53,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 	}
 
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
-	// We need at least the millionsecond here, so set fsp to 3.
+	// We need at least the millisecond here, so set fsp to 3.
 	toTypeTimestamp.SetDecimal(3)
 	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), toTypeTimestamp)
 	if err != nil {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
@@ -52,7 +53,7 @@ type dbMetaMgrBuilder struct {
 func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	exec := common.SQLWithRetry{
 		DB:           b.db,
-		Logger:       log.FromContext(ctx),
+		Logger:       log.Wrap(logutil.Logger(ctx)),
 		HideQueryLog: redact.NeedRedact(),
 	}
 	metaDBSQL := common.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", b.schema)
@@ -316,14 +317,14 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 	// TODO: the retry logic is duplicate with code in local.writeAndIngestByRanges, should encapsulate it later.
 	// max retry backoff time: 2+4+8+16+30*26=810s
 	backOffTime := time.Second
-	for i := 0; i < maxRetryOnStatusConflict; i++ {
+	for i := range maxRetryOnStatusConflict {
 		err = doAllocTableRowIDsFn()
 		if err == nil || !strings.Contains(err.Error(), tableChecksumingMsg) {
 			break
 		}
 		// we only retry if it's tableChecksuming error, it happens during parallel import.
 		// for detail see https://docs.pingcap.com/tidb/stable/tidb-lightning-distributed-import
-		log.FromContext(ctx).Warn("target table is doing checksum, will try again",
+		logutil.Logger(ctx).Warn("target table is doing checksum, will try again",
 			zap.Int("retry time", i+1), log.ShortError(err))
 		backOffTime *= 2
 		if backOffTime > maxBackoffTime {
@@ -372,10 +373,10 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 		ck := verify.MakeKVChecksum(baseTotalBytes, baseTotalKvs, baseChecksum)
 		checksum = &ck
 	}
-	log.FromContext(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
+	logutil.Logger(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
 		zap.Int64("startRowID", myStartRowID), zap.Int64("endRowID", myEndRowID))
 	if checksum != nil {
-		log.FromContext(ctx).Info("checksum base", zap.Any("checksum", checksum))
+		logutil.Logger(ctx).Info("checksum base", zap.Any("checksum", checksum))
 	}
 	return checksum, myStartRowID, nil
 }
@@ -505,7 +506,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
-	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
+	logutil.Logger(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("otherHasDupe", otherHasDupe), zap.Bool("needRemoteDupe", needRemoteDupe),
 		zap.String("new_status", newStatus.String()))
 	return
@@ -524,7 +525,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tableName string) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	query := fmt.Sprintf("DELETE FROM %s", metaTable)
 	var args []any
@@ -627,7 +628,7 @@ type storedCfgs struct {
 func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := common.SprintfWithIdentifiers(`
@@ -641,7 +642,7 @@ func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSou
 func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	exist := false
@@ -684,7 +685,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     conn,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -755,7 +756,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     conn,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -841,7 +842,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			// try to rollback the stopped schedulers
 			cancelFunc := m.pd.MakeUndoFunctionByConfig(pausedCfg.RestoreCfg)
 			if err1 := cancelFunc(ctx); err1 != nil {
-				log.FromContext(ctx).Warn("undo remove schedulers failed", zap.Error(err1))
+				logutil.Logger(ctx).Warn("undo remove schedulers failed", zap.Error(err1))
 			}
 			return errors.Trace(err)
 		}
@@ -895,7 +896,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     conn,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -943,7 +944,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 				allFinished = false
 				// check if other task still running
 				if state == taskStateNormal {
-					log.FromContext(ctx).Info("unfinished task found", zap.Int64("task_id", taskID),
+					logutil.Logger(ctx).Info("unfinished task found", zap.Int64("task_id", taskID),
 						zap.Stringer("status", status))
 					switchBack = false
 				}
@@ -976,7 +977,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 
 		return nil
 	})
-	log.FromContext(ctx).Info("check all task finish status", zap.Bool("task_finished", finished),
+	logutil.Logger(ctx).Info("check all task finish status", zap.Bool("task_finished", finished),
 		zap.Bool("all_finished", allFinished), zap.Bool("switch_back", switchBack))
 
 	return switchBack, allFinished, err
@@ -985,7 +986,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := common.SprintfWithIdentifiers("DROP TABLE %s.%s;", m.schemaName, m.tableName)
@@ -998,7 +999,7 @@ func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 func (m *dbTaskMetaMgr) CleanupTask(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	stmt := common.SprintfWithIdentifiers("DELETE FROM %s.%s WHERE task_id = ?;", m.schemaName, m.tableName)
 	err := exec.Exec(ctx, "clean up task", stmt, m.taskID)
@@ -1010,7 +1011,7 @@ func (m *dbTaskMetaMgr) Close() {
 }
 
 func (m *dbTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
-	return MaybeCleanupAllMetas(ctx, log.FromContext(ctx), m.session, m.schemaName, true)
+	return MaybeCleanupAllMetas(ctx, log.Wrap(logutil.Logger(ctx)), m.session, m.schemaName, true)
 }
 
 // MaybeCleanupAllMetas remove the meta schema if there is no unfinished tables

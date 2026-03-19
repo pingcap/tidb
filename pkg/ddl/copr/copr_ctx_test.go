@@ -29,9 +29,9 @@ import (
 )
 
 func TestNewCopContextSingleIndex(t *testing.T) {
-	var mockColInfos []*model.ColumnInfo
 	colCnt := 6
-	for i := 0; i < colCnt; i++ {
+	mockColInfos := make([]*model.ColumnInfo, 0, colCnt)
+	for i := range colCnt {
 		mockColInfos = append(mockColInfos, &model.ColumnInfo{
 			ID:        int64(i),
 			Offset:    i,
@@ -109,7 +109,6 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		sctx := mock.NewContext()
 		copCtx, err := NewCopContextSingleIndex(
 			sctx.GetExprCtx(),
-			sctx.GetDistSQLCtx(),
 			sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 			mockTableInfo, mockIdxInfo, "",
 		)

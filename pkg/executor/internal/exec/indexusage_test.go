@@ -234,7 +234,7 @@ func TestIndexUsageReporterWithRealData(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -305,7 +305,7 @@ partition p3 values less than MAXVALUE)`)
 		}
 	}
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 	tk.MustExec("analyze table t")
@@ -376,7 +376,7 @@ partition p3 values less than MAXVALUE)`)
 		}
 	}
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -422,7 +422,7 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -438,7 +438,7 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 	tk.MustExec("set tidb_enable_collect_execution_info='OFF'")
 	tk.MustQuery("select id_1 from t where id_1 >= 30")
 	tk.RefreshSession()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		require.Equal(t, uint64(1), dom.StatsHandle().GetIndexUsage(tableID, idx1ID).QueryTotal)
 		time.Sleep(time.Millisecond * 100)
 	}
@@ -459,7 +459,7 @@ func TestIndexUsageReporterWithClusterIndex(t *testing.T) {
 		extraIdxID int64
 	}
 	testTableInfos := []testTableInfo{}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%d", i)))
 		require.NoError(t, err)
 		tableID := table.Meta().ID
@@ -475,8 +475,8 @@ func TestIndexUsageReporterWithClusterIndex(t *testing.T) {
 		testTableInfos = append(testTableInfos, testTableInfo{tableID, pkID, extraIdxID})
 	}
 
-	for i := 0; i < 4; i++ {
-		for val := 0; val < 100; val++ {
+	for i := range 4 {
+		for val := range 100 {
 			tk.MustExec(fmt.Sprintf("insert into t%d values (?, ?)", i), val, val)
 		}
 		tk.MustExec(fmt.Sprintf("analyze table t%d", i))

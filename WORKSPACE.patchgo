@@ -16,12 +16,13 @@ versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "c8035e8ae248b56040a65ad3f0b7434712e2037e5dfdcebfe97576e620422709",
+    sha256 = "9d72f7b8904128afb98d46bbef82ad7223ec9ff3718d419afb355fddd9f9484a",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.44.0/rules_go-v0.44.0.zip",
-        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.44.0/rules_go-v0.44.0.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.44.0/rules_go-v0.44.0.zip",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.44.0/rules_go-v0.44.0.zip",
+        "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "http://ats.apps.svc/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "https://github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
     ],
 )
 
@@ -76,12 +77,12 @@ gazelle_dependencies()
 
 http_archive(
     name = "com_google_protobuf",
-    sha256 = "bc3dbf1f09dba1b2eb3f2f70352ee97b9049066c9040ce0c9b67fb3294e91e4b",
-    strip_prefix = "protobuf-3.15.5",
+    integrity = "sha256-zl0At4RQoMpAC/NgrADA1ZnMIl8EnZhqJ+mk45bFqEo=",
+    strip_prefix = "protobuf-29.0-rc2",
     # latest, as of 2021-03-08
     urls = [
-        "https://github.com/protocolbuffers/protobuf/archive/v3.15.5.tar.gz",
-        "https://mirror.bazel.build/github.com/protocolbuffers/protobuf/archive/v3.15.5.tar.gz",
+        "https://github.com/protocolbuffers/protobuf/archive/v29.0-rc2.tar.gz",
+        "https://mirror.bazel.build/github.com/protocolbuffers/protobuf/archive/v29.0-rc2.tar.gz",
     ],
 )
 
@@ -108,3 +109,15 @@ http_archive(
             "https://github.com/bazelbuild/java_tools/releases/download/java_v11.9/java_tools_linux-v11.9.zip",
     ],
 )
+
+http_archive(
+    name = "rules_proto",
+    sha256 = "303e86e722a520f6f326a50b41cfc16b98fe6d1955ce46642a5b7a67c11c0f5d",
+    strip_prefix = "rules_proto-6.0.0",
+    url = "https://github.com/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
+)
+
+load("@rules_proto//proto:repositories.bzl", "rules_proto_dependencies")
+rules_proto_dependencies()
+load("@rules_proto//proto:toolchains.bzl", "rules_proto_toolchains")
+rules_proto_toolchains()

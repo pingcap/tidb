@@ -47,11 +47,6 @@ func NewOptionalVal[T any](val T) (o OptionalVal[T]) {
 func (*OptionalVal[T]) optionalVal() {}
 
 // Present indicates whether the field value is set.
-func (o *OptionalVal[T]) internalPresent() bool {
-	return o.present
-}
-
-// Present indicates whether the field value is set.
 func (o *OptionalVal[T]) Present() bool {
 	return o.present
 }
@@ -75,7 +70,7 @@ func (o *OptionalVal[T]) Clear() {
 func iterOptionalFields(v reflect.Value, excludes []unsafe.Pointer, fn func(name string, val optionalVal) bool) {
 	tp := v.Type()
 loop:
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		fieldVal := v.Field(i).Addr()
 		optVal, ok := fieldVal.Interface().(optionalVal)
 		if !ok {

@@ -17,14 +17,11 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -75,15 +72,18 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
 	// condition related with grouping column shouldn't be pushed down through it.
 	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
 	// 		1. agg function related filters. (these condition is always above aggregate)
 	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
 	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return append(remained, predicates...), child
+	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(remained, predicates...), child, nil
 }
 
 // PruneColumns implement the base.LogicalPlan.<2nd> interface.
@@ -92,7 +92,7 @@ func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, op
 // the level projection expressions construction is left to the last logical optimize rule)
 //
 // so when do the rule_column_pruning here, we just prune the schema is enough.
-func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
 	// distinct GroupByCol must be used by aggregate above, to make sure this, append DistinctGroupByCol again.
 	parentUsedCols = append(parentUsedCols, p.DistinctGroupByCol...)
@@ -101,14 +101,13 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
+			p.SetOutputNames(slices.Delete(p.OutputNames(), i, i+1))
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
 	// Underlying still need to keep the distinct group by columns and parent used columns.
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -136,11 +135,6 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(p, prop)
-}
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (p *LogicalExpand) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -391,4 +385,11 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 	// found it in meta that: column 'a' is in grouping set {a,b,c}, {a,b},  {a}, and its correspondent mapping grouping ids is about
 	// {0,1,2}. This grouping id set is returned back as this grouping function's specified meta when rewriting the grouping function,
 	// and the evaluating logic is quite simple as IN compare.
+}
+
+// BuildKeyInfo implements base.LogicalPlan interface.
+func (*LogicalExpand) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
+	// since LogicalExpand is a logical operator which will split the rows out, duplicated rows may exist in the output.
+	selfSchema.SetKeys(nil)
+	selfSchema.SetUniqueKeys(nil)
 }

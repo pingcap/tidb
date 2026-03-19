@@ -80,7 +80,7 @@ func TestAfterDetachSessionCanExecute(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	tk.MustExec("create table t (a int)")
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 
@@ -97,7 +97,7 @@ func TestAfterDetachSessionCanExecute(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			if stop.Load() {
 				return
 			}
@@ -114,7 +114,7 @@ func TestAfterDetachSessionCanExecute(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
 			expectedSelect++
 		}
@@ -130,7 +130,7 @@ func TestDetachWithParam(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	tk.MustExec("create table t (a int primary key)")
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 
@@ -147,7 +147,7 @@ func TestDetachWithParam(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			if stop.Load() {
 				return
 			}
@@ -164,7 +164,7 @@ func TestDetachWithParam(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
 			expectedSelect++
 		}
@@ -180,7 +180,7 @@ func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	tk.MustExec("create table t (a int, b int, c int, key idx_a_b (a,b), key idx_b (b))")
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
 	}
 
@@ -201,7 +201,7 @@ func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(1))
 			expectedSelect++
@@ -225,7 +225,7 @@ func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
 			expectedSelect++
 		}
@@ -239,7 +239,7 @@ func TestDetachSelection(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	tk.MustExec("create table t (a int, b int, c int, key idx_a_b (a,b), key idx_b (b))")
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
 	}
 
@@ -259,7 +259,7 @@ func TestDetachSelection(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(1))
 			expectedSelect++
@@ -291,7 +291,7 @@ func TestDetachSelection(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
 			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(1))
 			expectedSelect++
@@ -317,7 +317,7 @@ func TestDetachProjection(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	tk.MustExec("create table t (a int, b int, c int, key idx_a_b (a,b), key idx_b (b))")
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
 	}
 
@@ -337,7 +337,7 @@ func TestDetachProjection(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(2*expectedSelect), chk.GetRow(i).GetInt64(0))
 			expectedSelect++
 		}
@@ -382,7 +382,7 @@ func TestDetachProjection(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, float64(2*expectedSelect+11), chk.GetRow(i).GetFloat64(0))
 			require.Equal(t, int64(360000), chk.GetRow(i).GetInt64(1))
 			expectedSelect++
@@ -409,7 +409,7 @@ func TestDetachProjection(t *testing.T) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			require.Equal(t, int64(2*expectedSelect), chk.GetRow(i).GetInt64(0))
 			expectedSelect++
 		}

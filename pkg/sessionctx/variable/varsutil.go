@@ -287,7 +287,7 @@ func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue stri
 	if total := memory.GetMemTotalIgnoreErr(); total != 0 {
 		perc, str := parsePercentage(normalizedValue)
 		if perc != 0 {
-			intVal := total / 100 * perc
+			intVal := total * perc / 100
 			return intVal, str, nil
 		}
 	}

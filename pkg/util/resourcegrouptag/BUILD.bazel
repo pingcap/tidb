@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/resourcegrouptag",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser",
         "//pkg/tablecodec/rowindexcodec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
@@ -26,7 +25,6 @@ go_test(
     embed = [":resourcegrouptag"],
     flaky = True,
     deps = [
-        "//pkg/parser",
         "//pkg/testkit/testsetup",
         "//pkg/util/hack",
         "@com_github_pingcap_kvproto//pkg/coprocessor",

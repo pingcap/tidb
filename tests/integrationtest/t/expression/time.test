@@ -37,7 +37,7 @@ select dayname("1962-03-01")^7;
 drop table if exists t;
 create table t (a bigint primary key, b timestamp);
 insert into t values (1, "2019-04-29 11:56:12");
-explain format = 'brief' select * from t where b = (select max(b) from t);
+explain format = 'plan_tree' select * from t where b = (select max(b) from t);
 select * from t where b = (select max(b) from t);
 
 # TestDateTimeAddReal
@@ -98,6 +98,7 @@ insert t values (20010101100000.123456, 20110707101112.123456);
 select * from t;
 
 # TestDateAddForNonExistingTimestamp
+-- enable_warnings
 set time_zone = 'CET';
 drop table if exists t;
 create table t(ts timestamp);
@@ -110,6 +111,7 @@ set time_zone = 'Europe/Amsterdam';
 insert into t values('2022-03-27 02:30:00');
 select date_add(ts, interval 1 hour) from t order by ts;
 set time_zone = default;
+-- disable_warnings
 
 # TestTimestampAddWithFractionalSecond
 drop table if exists t;

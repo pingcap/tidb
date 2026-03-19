@@ -16,6 +16,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
+        "//pkg/planner/extstore",
         "//pkg/server/handler",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle",
@@ -38,12 +39,11 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-        "optimize_trace_test.go",
         "plan_replayer_test.go",
         "statistics_handler_test.go",
     ],
     flaky = True,
-    shard_count = 8,
+    shard_count = 10,
     deps = [
         ":optimizor",
         "//pkg/config",

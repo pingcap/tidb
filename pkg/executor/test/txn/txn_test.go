@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -609,7 +610,7 @@ func TestSavepointInBigTxn(t *testing.T) {
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("insert into t values (-1, -1)")
 	tk1.MustExec("savepoint s1")
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		update := fmt.Sprintf("delete from t where id = %v", i)
 		tk1.MustExec(update)
 	}
@@ -622,7 +623,7 @@ func TestSavepointInBigTxn(t *testing.T) {
 	// Test for many savepoint in 1 txn.
 	tk1.MustExec("truncate table t")
 	tk1.MustExec("begin pessimistic")
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
 		tk1.MustExec(insert)
 		tk1.MustExec(fmt.Sprintf("savepoint s%v", i))
@@ -674,6 +675,9 @@ func TestSavepointWithCacheTable(t *testing.T) {
 }
 
 func TestColumnNotMatchError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
@@ -767,7 +771,7 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, k int,c varchar(255), unique index idx(id))")
 	tk.MustExec("insert into t (k,c) values (1,'abcdefg');")
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		tk.MustExec("insert into t (k,c) select k,c from t;")
 	}
 	tk.MustExec("update t set k= id, c = id")

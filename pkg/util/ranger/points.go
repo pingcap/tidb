@@ -18,7 +18,7 @@ import (
 	"cmp"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -79,55 +79,40 @@ func (rp *point) Clone(value types.Datum) *point {
 	}
 }
 
-type pointSorter struct {
-	err      error
-	collator collate.Collator
-	tc       types.Context
-	points   []*point
-}
-
-func (r *pointSorter) Len() int {
-	return len(r.points)
-}
-
-func (r *pointSorter) Less(i, j int) bool {
-	a := r.points[i]
-	b := r.points[j]
-	less, err := rangePointLess(r.tc, a, b, r.collator)
-	if err != nil {
-		r.err = err
-	}
-	return less
-}
-
-func rangePointLess(tc types.Context, a, b *point, collator collate.Collator) (bool, error) {
+func rangePointCmp(tc types.Context, a, b *point, collator collate.Collator) (int, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
-		return rangePointEnumLess(a, b)
+		return rangePointEnumCmp(a, b)
 	}
 	cmp, err := a.value.Compare(tc, &b.value, collator)
 	if cmp != 0 {
-		return cmp < 0, nil
+		return cmp, nil
 	}
-	return rangePointEqualValueLess(a, b), errors.Trace(err)
+	return rangePointEqualValueCmp(a, b), errors.Trace(err)
 }
 
-func rangePointEnumLess(a, b *point) (bool, error) {
+func rangePointEnumCmp(a, b *point) (int, error) {
 	cmp := cmp.Compare(a.value.GetInt64(), b.value.GetInt64())
 	if cmp != 0 {
-		return cmp < 0, nil
+		return cmp, nil
 	}
-	return rangePointEqualValueLess(a, b), nil
+	return rangePointEqualValueCmp(a, b), nil
 }
 
-func rangePointEqualValueLess(a, b *point) bool {
+func rangePointEqualValueCmp(a, b *point) int {
+	var result bool
 	if a.start && b.start {
-		return !a.excl && b.excl
+		result = !a.excl && b.excl
 	} else if a.start {
-		return !a.excl && !b.excl
+		result = !a.excl && !b.excl
 	} else if b.start {
-		return a.excl || b.excl
+		result = a.excl || b.excl
+	} else {
+		result = a.excl && !b.excl
 	}
-	return a.excl && !b.excl
+	if result {
+		return -1
+	}
+	return 0
 }
 
 func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
@@ -172,10 +157,6 @@ func pointConvertToSortKey(
 	}
 
 	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
-}
-
-func (r *pointSorter) Swap(i, j int) {
-	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
 
 /*
@@ -713,11 +694,11 @@ func (r *builder) buildFromIn(
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, tc: tc, collator: collate.GetCollator(colCollate)}
-	sort.Sort(&sorter)
-	if sorter.err != nil {
-		r.err = sorter.err
-	}
+	collator := collate.GetCollator(colCollate)
+	slices.SortFunc(rangePoints, func(a, b *point) (cmpare int) {
+		cmpare, r.err = rangePointCmp(tc, a, b, collator)
+		return cmpare
+	})
 	// check and remove duplicates
 	curPos, frontPos := 0, 0
 	for frontPos < len(rangePoints) {
@@ -873,7 +854,7 @@ func (r *builder) newBuildFromPatternLike(
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	sortKeyWithoutTrim := append([]byte{}, sortKeyPointWithoutTrim.value.GetBytes()...)
+	sortKeyWithoutTrim := slices.Clone(sortKeyPointWithoutTrim.value.GetBytes())
 	endPoint := &point{value: types.MaxValueDatum(), excl: true}
 	for i := len(sortKeyWithoutTrim) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
@@ -1030,12 +1011,12 @@ func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point
 	i, j := 0, 0
 	tc := r.sctx.TypeCtx
 	for i < len(a) && j < len(b) {
-		less, err := rangePointLess(tc, a[i], b[j], collator)
+		less, err := rangePointCmp(tc, a[i], b[j], collator)
 		if err != nil {
 			r.err = err
 			return nil
 		}
-		if less {
+		if less < 0 {
 			ret = append(ret, a[i])
 			i++
 		} else {

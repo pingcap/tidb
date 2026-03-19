@@ -120,7 +120,7 @@ func TestRunServer(t *testing.T) {
 	require.Regexp(t, "^invalid task configuration:", data["error"])
 	require.NoError(t, resp.Body.Close())
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		resp, err = http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
 			[mydumper]
 			data-source-dir = 'file://demo-path-%d'
@@ -139,7 +139,7 @@ func TestRunServer(t *testing.T) {
 		case taskCfg := <-s.taskCfgCh:
 			require.Equal(t, "test.invalid", taskCfg.TiDB.Host)
 			require.Equal(t, fmt.Sprintf("file://demo-path-%d", i), taskCfg.Mydumper.SourceDir)
-			require.Equal(t, "/", taskCfg.Mydumper.CSV.Separator)
+			require.Equal(t, "/", taskCfg.Mydumper.CSV.FieldsTerminatedBy)
 		case <-time.After(5 * time.Second):
 			t.Fatalf("task is not queued after 5 seconds (i = %d)", i)
 		}

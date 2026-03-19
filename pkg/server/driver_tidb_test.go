@@ -95,4 +95,48 @@ func TestConvertColumnInfo(t *testing.T) {
 	}
 	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, uint32(4), colInfo.ColumnLength)
+
+	// Test unspecified length
+	for _, tp := range []byte{
+		mysql.TypeBit,
+		mysql.TypeTiny,
+		mysql.TypeShort,
+		mysql.TypeLong,
+		mysql.TypeLonglong,
+		mysql.TypeFloat,
+		mysql.TypeDouble,
+		mysql.TypeNewDecimal,
+		mysql.TypeDuration,
+		mysql.TypeDate,
+		mysql.TypeTimestamp,
+		mysql.TypeDatetime,
+		mysql.TypeYear,
+		mysql.TypeString,
+		mysql.TypeVarchar,
+		mysql.TypeVarString,
+		mysql.TypeTinyBlob,
+		mysql.TypeBlob,
+		mysql.TypeMediumBlob,
+		mysql.TypeLongBlob,
+		mysql.TypeJSON,
+	} {
+		ftb = types.NewFieldTypeBuilder()
+		ftb.SetType(tp).SetFlen(types.UnspecifiedLength)
+		resultField = resolve.ResultField{
+			Column: &model.ColumnInfo{
+				Name:      ast.NewCIStr("a"),
+				ID:        0,
+				Offset:    0,
+				FieldType: ftb.Build(),
+				Comment:   "column a is the first column in table dual",
+			},
+			ColumnAsName: ast.NewCIStr("a"),
+			TableAsName:  ast.NewCIStr("dual"),
+			DBName:       ast.NewCIStr("test"),
+		}
+		colInfo = column.ConvertColumnInfo(&resultField)
+		expectedLen, _ := mysql.GetDefaultFieldLengthAndDecimal(tp)
+		require.Equal(t, colInfo.ColumnLength, uint32(expectedLen))
+		require.NotZero(t, colInfo.ColumnLength)
+	}
 }

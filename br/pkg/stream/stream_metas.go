@@ -28,8 +28,10 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -46,6 +48,7 @@ const (
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
 	lockPrefix        = "v1/LOCK"
+	appendLockPrefix  = "v1/APPEND_LOCK"
 
 	SupportedMigVersion = pb.MigrationVersion_M2
 )
@@ -95,7 +98,7 @@ func (ms *StreamMetadataSet) TEST_GetMetadataInfos() map[string]*MetadataInfo {
 // from transaction committed before that TS.
 func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	until uint64,
 ) (uint64, error) {
 	metadataMap := struct {
@@ -106,48 +109,51 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	metadataMap.metas = make(map[string]*MetadataInfo)
 	// `shiftUntilTS` must be less than `until`
 	metadataMap.shiftUntilTS = until
-	err := FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
-		m, err := ms.Helper.ParseToMetadataHard(raw)
-		if err != nil {
-			return err
-		}
-		// If the meta file contains only files with ts grater than `until`, when the file is from
-		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
-		//            than it, which should not be considered.
-		// `Write`: it should trivially not be considered.
-		if m.MinTs <= until {
-			// record these meta-information for statistics and filtering
-			fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
-			for _, group := range m.FileGroups {
-				var kvCount int64 = 0
-				for _, file := range group.DataFilesInfo {
-					kvCount += file.NumberOfEntries
+	err := FastUnmarshalMetaData(ctx, s,
+		0,
+		until,
+		ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := ms.Helper.ParseToMetadataHard(raw)
+			if err != nil {
+				return err
+			}
+			// If the meta file contains only files with ts grater than `until`, when the file is from
+			// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
+			//            than it, which should not be considered.
+			// `Write`: it should trivially not be considered.
+			if m.MinTs <= until {
+				// record these meta-information for statistics and filtering
+				fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
+				for _, group := range m.FileGroups {
+					var kvCount int64 = 0
+					for _, file := range group.DataFilesInfo {
+						kvCount += file.NumberOfEntries
+					}
+					fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
+						MaxTS:   group.MaxTs,
+						Length:  group.Length,
+						KVCount: kvCount,
+					})
 				}
-				fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
-					MaxTS:   group.MaxTs,
-					Length:  group.Length,
-					KVCount: kvCount,
-				})
+				metadataMap.Lock()
+				metadataMap.metas[path] = &MetadataInfo{
+					MinTS:          m.MinTs,
+					FileGroupInfos: fileGroupInfos,
+				}
+				metadataMap.Unlock()
 			}
-			metadataMap.Lock()
-			metadataMap.metas[path] = &MetadataInfo{
-				MinTS:          m.MinTs,
-				FileGroupInfos: fileGroupInfos,
+			// filter out the metadatas whose ts-range is overlap with [until, +inf)
+			// and calculate their minimum begin-default-ts
+			ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
+			if ok {
+				metadataMap.Lock()
+				if ts < metadataMap.shiftUntilTS {
+					metadataMap.shiftUntilTS = ts
+				}
+				metadataMap.Unlock()
 			}
-			metadataMap.Unlock()
-		}
-		// filter out the metadatas whose ts-range is overlap with [until, +inf)
-		// and calculate their minimum begin-default-ts
-		ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
-		if ok {
-			metadataMap.Lock()
-			if ts < metadataMap.shiftUntilTS {
-				metadataMap.shiftUntilTS = ts
-			}
-			metadataMap.Unlock()
-		}
-		return nil
-	})
+			return nil
+		})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -159,17 +165,15 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 }
 
 // LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storeapi.Storage) error {
 	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
 	return err
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *FileGroupInfo) (shouldBreak bool)) {
 	for _, m := range ms.metadataInfos {
-		for _, d := range m.FileGroupInfos {
-			if f(d) {
-				return
-			}
+		if slices.ContainsFunc(m.FileGroupInfos, f) {
+			return
 		}
 	}
 }
@@ -206,7 +210,7 @@ func (hook updateFnHook) DeletedAFileForTruncating(count int) {
 func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
-	st storage.ExternalStorage,
+	st storeapi.Storage,
 	// num = deleted files
 	updateFn func(num int64),
 ) ([]string, error) {
@@ -216,8 +220,8 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
 
-	if bst, ok := hst.ExternalStorage.(*storage.Batched); ok {
-		effs, err := storage.SaveJSONEffectsToTmp(bst.ReadOnlyEffects())
+	if bst, ok := hst.Storage.(*objstore.Batched); ok {
+		effs, err := objstore.SaveJSONEffectsToTmp(bst.ReadOnlyEffects())
 		if err != nil {
 			log.Warn("failed to save effects", logutil.ShortError(err))
 		} else {
@@ -239,7 +243,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	return notDeleted, nil
 }
 
-func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
+func truncateAndWrite(ctx context.Context, s storeapi.Storage, path string, data []byte) error {
 	// Performance hack: the `Write` implementation would truncate the file if it exists.
 	if err := s.WriteFile(ctx, path, data); err != nil {
 		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
@@ -257,7 +261,7 @@ const (
 // which means logs before this TS would probably be deleted or incomplete.
 func GetTSFromFile(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	filename string,
 ) (uint64, error) {
 	exists, err := s.FileExists(ctx, filename)
@@ -283,7 +287,7 @@ func GetTSFromFile(
 // which means logs before this TS would probably be deleted or incomplete.
 func SetTSToFile(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	safepoint uint64,
 	filename string,
 ) error {
@@ -302,7 +306,7 @@ func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bo
 
 	for _, ds := range m.FileGroups {
 		for _, d := range ds.DataFilesInfo {
-			if d.Cf == DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			if d.Cf == consts.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {
@@ -458,12 +462,12 @@ func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration
 	cx.addMigration(mig)
 }
 
-// MigrationExt is an extension to the `ExternalStorage` type.
+// MigrationExt is an extension to the `Storage` type.
 // This added some support methods for the "migration" system of log backup.
 //
-// Migrations are idempontent batch modifications (adding a compaction, delete a file, etc..) to the backup files.
+// Migrations are idempotent batch modifications (adding a compaction, delete a file, etc..) to the backup files.
 // You may check the protocol buffer message `Migration` for more details.
-// Idempontence is important for migrations, as they may be executed multi times due to retry or racing.
+// Idempotence is important for migrations, as they may be executed multiple times due to retry or racing.
 //
 // The encoded migrations will be put in a folder in the external storage,
 // they are ordered by a series number.
@@ -471,7 +475,7 @@ func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration
 // Not all migrations can be applied to the storage then removed from the migration.
 // Small "additions" will be inlined into the migration, for example, a `Compaction`.
 // Small "deletions" will also be delayed, for example, deleting a span in a file.
-// Such operations will be save to a special migration, the first migration, named "BASE".
+// Such operations will be saved to a special migration, the first migration, named "BASE".
 //
 // A simple list of migrations (loaded by `Load()`):
 /*
@@ -481,7 +485,7 @@ layers = {
   { sn = 2, content = [ compaction, deleteFiles, ... ] },
 */
 type MigrationExt struct {
-	s      storage.ExternalStorage
+	s      storeapi.Storage
 	prefix string
 	// The hooks used for tracking the execution.
 	// See the `Hooks` type for more details.
@@ -590,8 +594,8 @@ func (NoHooks) StartHandlingMetaEdits([]*pb.MetaEdit)                           
 func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                      {}
 func (NoHooks) HandingMetaEditDone()                                               {}
 
-// MigrateionExtnsion installs the extension methods to an `ExternalStorage`.
-func MigrationExtension(s storage.ExternalStorage) MigrationExt {
+// MigrationExtension installs the extension methods to an `Storage`.
+func MigrationExtension(s storeapi.Storage) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
@@ -599,7 +603,7 @@ func MigrationExtension(s storage.ExternalStorage) MigrationExt {
 	}
 }
 
-// Merge merges two migrations.
+// MergeMigrations merges two migrations.
 // The merged migration contains all operations from the two arguments.
 func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out := NewMigration()
@@ -647,8 +651,8 @@ type Migrations struct {
 }
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
-func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (storage.RemoteLock, error) {
-	return storage.LockWith(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint)
+func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (objstore.RemoteLock, error) {
+	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -695,10 +699,10 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 		o(&cfg)
 	}
 
-	opt := &storage.WalkOption{
+	opt := &storeapi.WalkOption{
 		SubDir: m.prefix,
 	}
-	items := storage.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
+	items := objstore.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
 		t.Path = name
 		var err error
 		t.SeqNum, err = migIdOf(path.Base(name))
@@ -750,22 +754,47 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 	return result, nil
 }
 
-func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
+func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 	batchSelf := MigrationExt{
-		s:      storage.Batch(m.s),
+		s:      objstore.Batch(m.s),
 		prefix: m.prefix,
 		Hooks:  m.Hooks,
 	}
 	f(batchSelf)
-	return batchSelf.s.(*storage.Batched).ReadOnlyEffects()
+	return batchSelf.s.(*objstore.Batched).ReadOnlyEffects()
+}
+
+// lockForAppend implements two-phase locking for append migration operations:
+// 1. Acquire read lock on main path (allows coexistence with restore)
+// 2. Acquire write lock on append path (prevents concurrent appends)
+func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
+	readLock, appendLock objstore.RemoteLock, err error) {
+	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
+	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
+	if err != nil {
+		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
+			"failed to acquire read lock for append operation")
+	}
+
+	// Phase 2: Acquire write lock on append path to prevent concurrent appends
+	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)")
+	if err != nil {
+		// If append lock fails, release the read lock
+		readLock.UnlockOnCleanUp(ctx)
+		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err, "failed to acquire append lock")
+	}
+
+	return readLock, appendLock, nil
 }
 
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
-	lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+	log.Info("appending migration, trying to acquire two-phase lock")
+	readLock, appendLock, err := m.lockForAppend(ctx, "AppendMigration")
 	if err != nil {
 		return 0, err
 	}
-	defer lock.UnlockOnCleanUp(ctx)
+	defer readLock.UnlockOnCleanUp(ctx)
+	defer appendLock.UnlockOnCleanUp(ctx)
 
 	migs, err := m.Load(ctx)
 	if err != nil {
@@ -854,7 +883,8 @@ func MMOptAppendPhantomMigration(migs ...pb.Migration) MergeAndMigrateToOpt {
 }
 
 // MergeAndMigrateTo will merge the migrations from BASE until the specified SN, then migrate to it.
-// Finally it writes the new BASE and remove stale migrations from the storage.
+// Finally, it writes the new BASE and remove stale migrations from the storage.
+// It's used by Stream Truncation.
 func (m MigrationExt) MergeAndMigrateTo(
 	ctx context.Context,
 	targetSpec int,
@@ -866,7 +896,8 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	if !config.skipLockingInTest {
-		lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+		lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, lockPrefix,
+			"StreamTruncation: MergeMigration")
 		if err != nil {
 			result.MigratedTo = MigratedTo{
 				Warnings: []error{
@@ -937,7 +968,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	for _, mig := range result.Source {
-		// Perhaps a phanom migration.
+		// Perhaps a phantom migration.
 		if len(mig.Path) > 0 {
 			err = m.s.DeleteFile(ctx, mig.Path)
 			if err != nil {
@@ -977,7 +1008,7 @@ func MTMaybeSkipTruncateLog(cond bool) migrateToOpt {
 
 // migrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
-// to the new BASE, which can be retryed then.
+// to the new BASE, which can be retried then.
 func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...migrateToOpt) MigratedTo {
 	opt := migToOpt{}
 	for _, o := range opts {
@@ -1143,7 +1174,14 @@ func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, m
 					medit.DeleteLogicalFiles[idx].Spans,
 					dfi.RangeOffset,
 					func(s *pb.Span, u uint64) int {
-						return int(s.Offset - u)
+						// Use comparison instead of subtraction to avoid uint64 underflow
+						// and int overflow issues
+						if s.Offset < u {
+							return -1
+						} else if s.Offset > u {
+							return 1
+						}
+						return 0
 					})
 				if ok && medit.DeleteLogicalFiles[idx].Spans[received].Length != dfi.RangeLength {
 					err = errors.Annotatef(
@@ -1296,7 +1334,7 @@ func (ebs IngestedSSTsGroup) GroupTS() uint64 {
 
 func LoadIngestedSSTs(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	paths []string,
 ) iter.TryNextor[IngestedSSTsGroup] {
 	fullBackupDirIter := iter.FromSlice(paths)
@@ -1357,7 +1395,7 @@ func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]
 	return res, nil
 }
 
-func readIngestedSSTs(ctx context.Context, name string, s storage.ExternalStorage) (*pb.IngestedSSTs, error) {
+func readIngestedSSTs(ctx context.Context, name string, s storeapi.Storage) (*pb.IngestedSSTs, error) {
 	reader, err := s.ReadFile(ctx, name)
 	if err != nil {
 		return nil, err
@@ -1371,7 +1409,7 @@ func readIngestedSSTs(ctx context.Context, name string, s storage.ExternalStorag
 }
 
 func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out []string, err error) {
-	err = m.s.WalkDir(ctx, &storage.WalkOption{SubDir: prefix}, func(path string, size int64) error {
+	err = m.s.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(path string, size int64) error {
 		out = append(out, path)
 		return nil
 	})
@@ -1461,7 +1499,7 @@ func (m MigrationExt) doTruncateLogs(
 // hookedStorage is a wrapper over the external storage,
 // which triggers the `BeforeDoWriteBack` hook when putting a metadata.
 type hookedStorage struct {
-	storage.ExternalStorage
+	storeapi.Storage
 	metaSet *StreamMetadataSet
 }
 
@@ -1479,23 +1517,23 @@ func (h hookedStorage) WriteFile(ctx context.Context, name string, data []byte) 
 		}
 	}
 
-	return h.ExternalStorage.WriteFile(ctx, name, data)
+	return h.Storage.WriteFile(ctx, name, data)
 }
 
 func (h hookedStorage) DeleteFile(ctx context.Context, name string) error {
 	if strings.HasSuffix(name, metaSuffix) && h.metaSet.BeforeDoWriteBack != nil {
 		h.metaSet.BeforeDoWriteBack(name, new(pb.Metadata))
 	}
-	return h.ExternalStorage.DeleteFile(ctx, name)
+	return h.Storage.DeleteFile(ctx, name)
 }
 
-func (ms *StreamMetadataSet) hook(s storage.ExternalStorage) hookedStorage {
+func (ms *StreamMetadataSet) hook(s storeapi.Storage) hookedStorage {
 	hooked := hookedStorage{
-		ExternalStorage: s,
-		metaSet:         ms,
+		Storage: s,
+		metaSet: ms,
 	}
 	if ms.DryRun {
-		hooked.ExternalStorage = storage.Batch(hooked.ExternalStorage)
+		hooked.Storage = objstore.Batch(hooked.Storage)
 	}
 	return hooked
 }
@@ -1668,12 +1706,4 @@ func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
 
 func nameOf(mig *pb.Migration, sn int) string {
 	return fmt.Sprintf("%08d_%016X.mgrt", sn, hashMigration(mig))
-}
-
-func isEmptyMigration(mig *pb.Migration) bool {
-	return len(mig.Compactions) == 0 &&
-		len(mig.EditMeta) == 0 &&
-		len(mig.IngestedSstPaths) == 0 &&
-		len(mig.DestructPrefix) == 0 &&
-		mig.TruncatedTo == 0
 }

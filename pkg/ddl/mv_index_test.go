@@ -34,7 +34,7 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 32;")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sb.WriteString(fmt.Sprintf("(%d, '[%d, %d, %d]')", i, i+1, i+2, i+3))
 		if i != 99 {
 			sb.WriteString(",")

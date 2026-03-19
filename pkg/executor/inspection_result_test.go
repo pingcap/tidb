@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -179,7 +179,7 @@ func TestInspectionResult(t *testing.T) {
 	}
 }
 
-func parseTime(t *testing.T, se sessiontypes.Session, str string) types.Time {
+func parseTime(t *testing.T, se sessionapi.Session, str string) types.Time {
 	time, err := types.ParseTime(se.GetSessionVars().StmtCtx.TypeCtx(), str, mysql.TypeDatetime, types.MaxFsp)
 	require.NoError(t, err)
 	return time

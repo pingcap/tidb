@@ -3,10 +3,12 @@
 package logutil
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"testing"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -222,6 +224,44 @@ func (m zapSSTMetasMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 	return nil
 }
 
+// Describes the overall range of the SST metas and their size.
+func BriefSSTMetas(key string, sstMetas []*import_sstpb.SSTMeta) zap.Field {
+	var (
+		startKey, endKey []byte
+		total            int
+		totalSize        uint64
+		totalKv          uint64
+		totalKvSize      uint64
+	)
+
+	for _, meta := range sstMetas {
+		if total == 0 {
+			startKey = meta.GetRange().GetStart()
+			endKey = meta.GetRange().GetEnd()
+		}
+		if bytes.Compare(meta.GetRange().GetStart(), startKey) < 0 {
+			startKey = meta.GetRange().GetStart()
+		}
+		// NOTE: SST meta shouldn't has an empty end key?
+		if bytes.Compare(meta.GetRange().GetEnd(), endKey) > 0 {
+			endKey = meta.GetRange().GetEnd()
+		}
+		totalSize += meta.GetLength()
+		totalKv += meta.GetTotalKvs()
+		totalKvSize += meta.GetTotalBytes()
+		total++
+	}
+	return zap.Object(key, zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+		enc.AddInt("total", total)
+		enc.AddString("startKey", redact.Key(startKey))
+		enc.AddString("endKey", redact.Key(endKey))
+		enc.AddUint64("totalSize", totalSize)
+		enc.AddUint64("totalKvs", totalKv)
+		enc.AddUint64("totalKvSize", totalKvSize)
+		return nil
+	}))
+}
+
 // SSTMetas make the zap fields for SST metas.
 func SSTMetas(sstMetas []*import_sstpb.SSTMeta) zap.Field {
 	return zap.Array("sstMetas", zapSSTMetasMarshaler(sstMetas))
@@ -379,4 +419,15 @@ func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
 		mal.AddFloat64("total", hist.GetSampleSum())
 		return nil
 	})
+}
+
+// OverrideLevel temporary sets level to the global logger.
+//
+// Don't use this in parallel test cases.
+func OverrideLevelForTest(t *testing.T, lvl zapcore.Level) {
+	t.Helper()
+
+	oldLvl := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(oldLvl) })
+	log.SetLevel(lvl)
 }

@@ -30,6 +30,9 @@ func TestNormalize(t *testing.T) {
 	}{
 		// Generic normalization rules
 		{"select _utf8mb4'123'", "select (_charset) ?"},
+		{"select * from b where id in (_utf8mb4'123')", "select * from `b` where `id` in ( (_charset) ? )"},
+		{"select * from b where id in (_utf8mb4'123', _binary'34')", "select * from `b` where `id` in ( ... )"},
+		{"select * from b where id in (_utf8mb4'123', _binary'34', _binary'56')", "select * from `b` where `id` in ( ... )"},
 		{"SELECT 1", "select ?"},
 		{"select null", "select ?"},
 		{"select \\N", "select ?"},

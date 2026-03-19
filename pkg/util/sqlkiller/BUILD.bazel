@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",

@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // PushDownSequenceSolver is used to push down sequence.
@@ -32,7 +31,7 @@ func (*PushDownSequenceSolver) Name() string {
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (pdss *PushDownSequenceSolver) Optimize(_ context.Context, lp base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (pdss *PushDownSequenceSolver) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return pdss.recursiveOptimize(nil, lp), planChanged, nil
 }

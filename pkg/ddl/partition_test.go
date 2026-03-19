@@ -124,8 +124,7 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTe
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -147,8 +146,7 @@ func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorF
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -273,4 +271,15 @@ func TestUpdateDuringAddColumn(t *testing.T) {
 	tk.MustExec("alter table t1 add column c3 bigint default 9")
 
 	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("8 1 9", "8 2 9"))
+}
+
+func TestExchangePartitionMultiColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a1 int(11) not null,a2 int(11) not null,a3 date default null, primary key (`a1`,`a2`)) partition by range columns(`a1`,`a2`)(partition `p10` values less than (10,10),partition `p20` values less than (20,20),partition `pmax` values less than (maxvalue,maxvalue))")
+	tk.MustExec(`insert into t values(5,10,null),(10,4,null)`)
+	tk.MustExec("CREATE TABLE t_np (a1 int(11) not null,a2 int(11) not null,a3 date default null, primary key (`a1`,`a2`))")
+	tk.MustExec(`insert into t_np values(10,4,null),(4,10,null)`)
+	tk.MustExec(`alter table t exchange partition p10 with table t_np`)
 }

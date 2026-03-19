@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -20,6 +19,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -101,7 +101,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
-	err = client.Init(g, mgr.GetStorage())
+	err = client.InitConnections(g, mgr.GetStorage())
 	defer client.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -112,7 +112,8 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, cfg.StartKey, cfg.EndKey); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, cfg.StartKey, cfg.EndKey,
+		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
 

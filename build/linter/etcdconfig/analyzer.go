@@ -88,6 +88,7 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	return nil, nil
 }
+
 func init() {
 	util.SkipAnalyzerByConfig(Analyzer)
 }

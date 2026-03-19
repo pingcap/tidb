@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +34,7 @@ type mockLogicalJoin struct {
 	logicalop.LogicalSchemaProducer
 	involvedNodeSet int
 	statsMap        map[int]*property.StatsInfo
-	JoinType        logicalop.JoinType
+	JoinType        base.JoinType
 }
 
 func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
@@ -50,8 +51,8 @@ func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], false, nil
 }
 
-func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
-	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
+func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType base.JoinType) base.LogicalPlan {
+	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType base.JoinType) base.LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
 		retJoin.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 		retJoin.statsMap = statsMap
@@ -164,7 +165,7 @@ func planToString(plan base.LogicalPlan) string {
 func TestDPReorderTPCHQ5(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -203,7 +204,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		baseSingleGroupJoinOrderSolver: baseGroupSolver,
 		newJoin:                        newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroups, nil)
+	result, err := solver.solve(joinGroups)
 	require.NoError(t, err)
 
 	expected := "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}"
@@ -213,7 +214,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 func TestDPReorderAllCartesian(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -231,7 +232,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroup, nil)
+	result, err := solver.solve(joinGroup)
 	require.NoError(t, err)
 
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"

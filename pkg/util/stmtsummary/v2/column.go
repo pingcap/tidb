@@ -104,6 +104,8 @@ const (
 	BackoffTypesStr                            = "BACKOFF_TYPES"
 	AvgMemStr                                  = "AVG_MEM"
 	MaxMemStr                                  = "MAX_MEM"
+	AvgMemArbitrationStr                       = "AVG_MEM_ARBITRATION"
+	MaxMemArbitrationStr                       = "MAX_MEM_ARBITRATION"
 	AvgDiskStr                                 = "AVG_DISK"
 	MaxDiskStr                                 = "MAX_DISK"
 	AvgKvTimeStr                               = "AVG_KV_TIME"
@@ -129,6 +131,8 @@ const (
 	PlanDigestStr                              = "PLAN_DIGEST"
 	PlanStr                                    = "PLAN"
 	BinaryPlan                                 = "BINARY_PLAN"
+	BindingDigestStr                           = "BINDING_DIGEST"
+	BindingDigestTextStr                       = "BINDING_DIGEST_TEXT"
 	Charset                                    = "CHARSET"
 	Collation                                  = "COLLATION"
 	PlanHint                                   = "PLAN_HINT"
@@ -147,6 +151,8 @@ const (
 	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
 	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
 	SumUnpackedBytesReceiveTiFlashCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_CROSS_ZONE"
+	StorageKVStr                               = "STORAGE_KV"
+	StorageMPPStr                              = "STORAGE_MPP"
 )
 
 type columnInfo interface {
@@ -185,6 +191,12 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	DigestTextStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.NormalizedSQL
+	},
+	BindingDigestStr: func(_ columnInfo, record *StmtRecord) any {
+		return convertEmptyToNil(record.BindingDigest)
+	},
+	BindingDigestTextStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.BindingSQL
 	},
 	TableNamesStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.TableNames)
@@ -386,6 +398,12 @@ var columnFactoryMap = map[string]columnFactory{
 	MaxMemStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxMem
 	},
+	AvgMemArbitrationStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgSumFloat(record.SumMemArbitration, record.ExecCount)
+	},
+	MaxMemArbitrationStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.MaxMemArbitration
+	},
 	AvgDiskStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumDisk, record.ExecCount)
 	},
@@ -529,6 +547,12 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	SumUnpackedBytesReceiveTiFlashCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.UnpackedBytesReceivedTiFlashCrossZone
+	},
+	StorageKVStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.StorageKV
+	},
+	StorageMPPStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.StorageMPP
 	},
 }
 

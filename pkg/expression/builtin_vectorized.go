@@ -40,12 +40,13 @@ type localColumnPool struct {
 	sync.Pool
 }
 
+var columnTempl = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+
 func newLocalColumnPool() *localColumnPool {
-	newColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 	return &localColumnPool{
 		sync.Pool{
 			New: func() any {
-				return newColumn.CopyConstruct(nil)
+				return columnTempl.CopyConstruct(nil)
 			},
 		},
 	}
@@ -86,7 +87,7 @@ func vecEvalIntByRows(ctx EvalContext, sig builtinFunc, input *chunk.Chunk, resu
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res, isNull, err := sig.evalInt(ctx, input.GetRow(i))
 		if err != nil {
 			return err
@@ -101,7 +102,7 @@ func vecEvalIntByRows(ctx EvalContext, sig builtinFunc, input *chunk.Chunk, resu
 func vecEvalStringByRows(sig builtinFunc, ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res, isNull, err := sig.evalString(ctx, input.GetRow(i))
 		if err != nil {
 			return err

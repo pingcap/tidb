@@ -16,15 +16,20 @@ package external
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -42,7 +47,7 @@ var (
 // data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
-	storageReader storage.ExternalFileReader
+	storageReader objectio.Reader
 
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       [][]byte
@@ -52,7 +57,7 @@ type byteReader struct {
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
-		store           storage.ExternalStorage
+		store           storeapi.Storage
 		filename        string
 		concurrency     int
 		bufSizePerConc  int
@@ -64,21 +69,21 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger *zap.Logger
+	logger               *zap.Logger
+	mergeSortReadCounter prometheus.Counter
 }
 
 func openStoreReaderAndSeek(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	name string,
 	initFileOffset uint64,
 	prefetchSize int,
-) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{PrefetchSize: prefetchSize})
-	if err != nil {
-		return nil, err
-	}
-	_, err = storageReader.Seek(int64(initFileOffset), io.SeekStart)
+) (objectio.Reader, error) {
+	storageReader, err := store.Open(ctx, name, &storeapi.ReaderOption{
+		StartOffset:  aws.Int64(int64(initFileOffset)),
+		PrefetchSize: prefetchSize,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +95,7 @@ func openStoreReaderAndSeek(
 // concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
-	storageReader storage.ExternalFileReader,
+	storageReader objectio.Reader,
 	bufSize int,
 ) (r *byteReader, err error) {
 	defer func() {
@@ -106,11 +111,12 @@ func newByteReader(
 	}
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
+	// When the storage reader is open, a GET request has been made.
 	return r, r.reload()
 }
 
 func (r *byteReader) enableConcurrentRead(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	filename string,
 	concurrency int,
 	bufSizePerConc int,
@@ -157,7 +163,7 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 		return err
 	}
 	err := r.reload()
-	if err != nil && err == io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		// ignore EOF error, let readNBytes handle it
 		return nil
 	}
@@ -228,16 +234,12 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	hasRead := readLen > 0
 	for n > 0 {
 		err := r.reload()
-		switch err {
-		case nil:
-		case io.EOF:
-			// EOF is only allowed when we have not read any data
-			if hasRead {
-				return nil, io.ErrUnexpectedEOF
+		if err != nil {
+			if goerrors.Is(err, io.EOF) && hasRead {
+				// EOF is only allowed when we have not read any data
+				return nil, errors.Annotatef(io.ErrUnexpectedEOF, "file: %s", r.concurrentReader.filename)
 			}
-			return nil, err
-		default:
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		readLen, bs = r.next(n)
 		hasRead = hasRead || readLen > 0
@@ -276,6 +278,15 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
+	if r.mergeSortReadCounter != nil {
+		defer func() {
+			sz := 0
+			for _, b := range r.curBuf {
+				sz += len(b)
+			}
+			r.mergeSortReadCounter.Add(float64(sz))
+		}()
+	}
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible
@@ -298,27 +309,36 @@ func (r *byteReader) reload() error {
 		r.curBufOffset = 0
 		return nil
 	}
+
+	return util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, r.readFromStorageReader)
+}
+
+func (r *byteReader) readFromStorageReader() (retryable bool, err error) {
 	// when not using concurrentReader, len(curBuf) == 1
-	n, err := io.ReadFull(r.storageReader, r.curBuf[0][0:])
+	n, err := io.ReadFull(r.storageReader, r.curBuf[0])
 	if err != nil {
-		switch err {
-		case io.EOF:
+		switch {
+		case goerrors.Is(err, io.EOF):
 			// move curBufIdx so following read will also find EOF
 			r.curBufIdx = len(r.curBuf)
-			return err
-		case io.ErrUnexpectedEOF:
+			return false, err
+		case goerrors.Is(err, io.ErrUnexpectedEOF):
+			if n == 0 {
+				r.logger.Warn("encounter (0, ErrUnexpectedEOF) during during read, retry it")
+				return true, err
+			}
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
-		case context.Canceled:
-			return err
+		case goerrors.Is(err, context.Canceled):
+			return false, err
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))
-			return err
+			return false, err
 		}
 	}
 	r.curBufIdx = 0
 	r.curBufOffset = 0
-	return nil
+	return false, nil
 }
 
 func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {

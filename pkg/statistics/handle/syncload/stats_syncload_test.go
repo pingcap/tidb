@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
@@ -33,44 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("create table t1(a int)")
-	h := dom.StatsHandle()
-	h.SetLease(1)
-
-	// no item would be loaded
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems", `return(0)`))
-	tk.MustQuery("trace plan select * from t where a > 10")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
-	tk.MustExec("analyze table t1 all columns")
-	// one column would be loaded
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems", `return(1)`))
-	tk.MustQuery("trace plan select * from t1 where a > 10")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
-}
-
-func TestSyncLoadSkipAnalyzSkipColumnItems(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(`id` bigint(20) NOT NULL AUTO_INCREMENT,content text,PRIMARY KEY (`id`))")
-	h := dom.StatsHandle()
-	h.SetLease(1)
-
-	tk.MustExec("analyze table t")
-	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'") // text is not default.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/handleOneItemTaskPanic", `panic`))
-	tk.MustQuery("trace plan select * from t where content ='ab'")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/handleOneItemTaskPanic"))
-}
 
 func TestConcurrentLoadHist(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -94,7 +55,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col := stat.GetCol(tableInfo.Columns[0].ID)
 	require.True(t, col == nil || col.Histogram.Len()+col.TopN.Num() == 0)
 	col = stat.GetCol(tableInfo.Columns[2].ID)
@@ -108,7 +69,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
 	topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
 	require.Greater(t, hg.Len()+topn.Num(), 0)
@@ -137,7 +98,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// TODO: They may need to be empty. Depending on how we operate newly analyzed tables.
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[0].ID))
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
@@ -155,7 +116,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Error(t, rs)
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
 	require.NotNil(t, stat.GetCol(tableInfo.Columns[2].ID))
 	require.Equal(t, 0, hg.Len()+topn.Num())
@@ -214,7 +175,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 		// no stats at beginning
-		stat := h.GetTableStats(tableInfo)
+		stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		c := stat.GetCol(tableInfo.Columns[2].ID)
 		require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
@@ -226,7 +187,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		exitCh := make(chan struct{})
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
+		task1, err1 := h.HandleOneTask(nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -253,7 +214,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
-		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		task3, err3 := h.HandleOneTask(task1, exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -269,7 +230,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 			require.Equal(t, neededColumns[0].TableItemID, rs1.Val.(stmtctx.StatsLoadResult).Item)
 		}
 
-		stat = h.GetTableStats(tableInfo)
+		stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
 		topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
 		require.Greater(t, hg.Len()+topn.Num(), 0)
@@ -315,7 +276,7 @@ func TestRetry(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 	// no stats at beginning
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	c := stat.GetCol(tableInfo.Columns[2].ID)
 	require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
@@ -331,8 +292,8 @@ func TestRetry(t *testing.T) {
 		err1  error
 	)
 
-	for i := 0; i < syncload.RetryCount; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	for range syncload.RetryCount {
+		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -342,7 +303,7 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	result, err1 := h.HandleOneTask(task1, exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -352,8 +313,8 @@ func TestRetry(t *testing.T) {
 		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
 	task1.Retry = 0
-	for i := 0; i < syncload.RetryCount*5; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	for range syncload.RetryCount * 5 {
+		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {

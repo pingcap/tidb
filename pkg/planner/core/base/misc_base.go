@@ -16,6 +16,7 @@ package base
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
@@ -67,4 +68,41 @@ type MemTablePredicateExtractor interface {
 	Extract(PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
 	// ExplainInfo give the basic desc of this mem extractor, `p` indicates a PhysicalPlan here.
 	ExplainInfo(p PhysicalPlan) string
+}
+
+// MemTableRowLimitHintSetter is an optional interface for memtable predicate extractors.
+//
+// The input limit is a hint for early-exit optimizations (e.g. stop scanning after enough rows are produced).
+// It must NOT change query semantics by itself.
+type MemTableRowLimitHintSetter interface {
+	SetRowLimitHint(limit uint64)
+}
+
+// MemTableDescHintSetter is an optional interface for memtable predicate extractors.
+//
+// The input desc is a hint that the executor is expected to produce rows in descending order (if supported).
+// It must NOT change query semantics by itself.
+type MemTableDescHintSetter interface {
+	SetDesc(desc bool)
+}
+
+// DataAccesser is a plan that means it can access underlying data.
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
+// ExplainInfo = AccessObject + OperatorInfo
+type DataAccesser interface {
+	// AccessObject return plan's `table`, `partition` and `index`.
+	AccessObject() AccessObject
+
+	// OperatorInfo return other operator information to be explained.
+	OperatorInfo(normalized bool) string
+}
+
+// PartitionAccesser is a plan that can access partitioned data.
+type PartitionAccesser interface {
+	AccessObject(PlanContext) AccessObject
+}
+
+// PartitionTable is for those tables which implement partition.
+type PartitionTable interface {
+	PartitionExpr() *tables.PartitionExpr
 }

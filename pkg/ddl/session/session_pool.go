@@ -21,11 +21,14 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 // Pool is used to new Session.
@@ -34,11 +37,11 @@ type Pool struct {
 		sync.Mutex
 		closed bool
 	}
-	resPool *pools.ResourcePool
+	resPool util.SessionPool
 }
 
 // NewSessionPool creates a new Session pool.
-func NewSessionPool(resPool *pools.ResourcePool) *Pool {
+func NewSessionPool(resPool util.SessionPool) *Pool {
 	intest.AssertNotNil(resPool)
 	return &Pool{resPool: resPool}
 }
@@ -66,6 +69,7 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	ctx.GetSessionVars().StmtCtx.SetTimeZone(ctx.GetSessionVars().Location())
+	ctx.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	infosync.StoreInternalSession(ctx)
 	return ctx, nil
 }
@@ -79,8 +83,43 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 		return txn == nil || !txn.Valid()
 	})
 	ctx.RollbackTxn(context.Background())
+	ctx.GetSessionVars().ClearDiskFullOpt()
 	sg.resPool.Put(ctx.(pools.Resource))
 	infosync.DeleteInternalSession(ctx)
+}
+
+// Destroy discards the sessionCtx and returns the pool slot.
+// It is used when the session should not be reused.
+func (sg *Pool) Destroy(ctx sessionctx.Context) {
+	intest.AssertNotNil(ctx)
+	intest.AssertFunc(func() bool {
+		txn, _ := ctx.Txn(false)
+		return txn == nil || !txn.Valid()
+	})
+	ctx.RollbackTxn(context.Background())
+	ctx.GetSessionVars().ClearDiskFullOpt()
+	infosync.DeleteInternalSession(ctx)
+
+	// Destroy behavior depends on the underlying pool implementation.
+	switch p := sg.resPool.(type) {
+	case util.DestroyableSessionPool:
+		p.Destroy(ctx.(pools.Resource))
+		return
+	case *pools.ResourcePool:
+		// *pools.ResourcePool requires a Put for every Get. Put(nil) returns the slot
+		// and causes a new resource to be created next time.
+		ctx.(pools.Resource).Close()
+		p.Put(nil)
+		return
+	default:
+		// Fallback: avoid putting a closed resource back.
+		// The underlying pool implementation may return the same resource later.
+		logutil.DDLLogger().Warn("session pool doesn't support Destroy, fall back to Put",
+			zap.String("poolType", fmt.Sprintf("%T", sg.resPool)),
+		)
+		sg.resPool.Put(ctx.(pools.Resource))
+		intest.Assert(false, "unsupported session pool type for Destroy: %T", sg.resPool)
+	}
 }
 
 // Close clean up the Pool.

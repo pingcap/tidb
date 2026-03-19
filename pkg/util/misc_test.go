@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
@@ -116,7 +117,7 @@ func TestBasicFuncSyntaxWarn(t *testing.T) {
 func TestBasicFuncProcessInfo(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	sc.MemTracker = memory.NewTracker(-1, -1)
-	pi := ProcessInfo{
+	pi := sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "test",
 		Host:    "www",

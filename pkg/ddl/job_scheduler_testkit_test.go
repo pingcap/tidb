@@ -159,7 +159,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 		}
 	}
 
-	for i := 0; i < len(ids)-1; i++ {
+	for i := range len(ids) - 1 {
 		for j := i + 1; j < len(ids); j++ {
 			if have(ids[i], ids[j]) {
 				all(ids[i], ids[j])

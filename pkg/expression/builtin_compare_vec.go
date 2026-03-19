@@ -41,7 +41,7 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 			return err
 		}
 		result.MergeNulls(buf)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -76,7 +76,7 @@ func (b *builtinLeastDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Ch
 		}
 
 		result.MergeNulls(buf)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -111,7 +111,7 @@ func (b *builtinLeastIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		}
 
 		result.MergeNulls(buf)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -147,7 +147,7 @@ func (b *builtinGreatestIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 
 		result.MergeNulls(buf)
 		v := buf.Int64s()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -218,7 +218,7 @@ func (b *builtinLeastRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 
 		result.MergeNulls(buf)
 		v := buf.Float64s()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -260,7 +260,7 @@ func (b *builtinLeastStringSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 		if err := b.args[j].VecEvalString(ctx, input, arg); err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
 				continue
@@ -404,7 +404,7 @@ func (b *builtinNullEQIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
 		if isNull0 && isNull1 {
@@ -467,7 +467,7 @@ func (b *builtinIntervalRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	res := result.Int64s()
 	var idx int
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			res[i] = -1
 			continue
@@ -551,7 +551,7 @@ func (b *builtinLTIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 
 func vecResOfLT(res []int64) {
 	n := len(res)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if res[i] < 0 {
 			res[i] = 1
 		} else {
@@ -562,7 +562,7 @@ func vecResOfLT(res []int64) {
 
 func vecResOfNE(res []int64) {
 	n := len(res)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if res[i] != 0 {
 			res[i] = 1
 		} else {
@@ -573,7 +573,7 @@ func vecResOfNE(res []int64) {
 
 func vecResOfEQ(res []int64) {
 	n := len(res)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if res[i] == 0 {
 			res[i] = 1
 		} else {
@@ -584,7 +584,7 @@ func vecResOfEQ(res []int64) {
 
 func vecResOfLE(res []int64) {
 	n := len(res)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if res[i] <= 0 {
 			res[i] = 1
 		} else {
@@ -595,7 +595,7 @@ func vecResOfLE(res []int64) {
 
 func vecResOfGT(res []int64) {
 	n := len(res)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if res[i] > 0 {
 			res[i] = 1
 		} else {
@@ -606,7 +606,7 @@ func vecResOfGT(res []int64) {
 
 func vecResOfGE(res []int64) {
 	n := len(res)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if res[i] >= 0 {
 			res[i] = 1
 		} else {
@@ -640,11 +640,11 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input
 	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
 	dstNullMap := make([]bool, n)
 
-	for j := 0; j < len(b.args); j++ {
+	for j := range b.args {
 		if err := b.args[j].VecEvalString(ctx, input, result); err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if dstNullMap[i] = dstNullMap[i] || result.IsNull(i); dstNullMap[i] {
 				continue
 			}
@@ -664,7 +664,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input
 
 	// Aggregate the NULL and String value into result
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if dstNullMap[i] {
 			result.AppendNull()
 		} else {
@@ -697,7 +697,7 @@ func (b *builtinGreatestRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 
 		result.MergeNulls(buf)
 		v := buf.Float64s()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -720,11 +720,11 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input *c
 	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
 	dstNullMap := make([]bool, n)
 
-	for j := 0; j < len(b.args); j++ {
+	for j := range b.args {
 		if err := b.args[j].VecEvalString(ctx, input, result); err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if dstNullMap[i] = dstNullMap[i] || result.IsNull(i); dstNullMap[i] {
 				continue
 			}
@@ -744,7 +744,7 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input *c
 
 	// Aggregate the NULL and String value into result
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if dstNullMap[i] {
 			result.AppendNull()
 		} else {
@@ -783,7 +783,7 @@ func (b *builtinGreatestStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 		if err := b.args[j].VecEvalString(ctx, input, arg); err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
 				continue
@@ -819,14 +819,14 @@ func (b *builtinGreatestTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 	defer b.bufAllocator.put(buf)
 
 	result.ResizeTime(n, false)
-	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+	for argIdx := range b.args {
 		if err := b.args[argIdx].VecEvalTime(ctx, input, buf); err != nil {
 			return err
 		}
 		result.MergeNulls(buf)
 		resTimes := result.Times()
 		argTimes := buf.Times()
-		for rowIdx := 0; rowIdx < n; rowIdx++ {
+		for rowIdx := range n {
 			if result.IsNull(rowIdx) {
 				continue
 			}
@@ -837,7 +837,7 @@ func (b *builtinGreatestTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 	}
 	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	for rowIdx := 0; rowIdx < n; rowIdx++ {
+	for rowIdx := range n {
 		resTimes := result.Times()
 		resTimes[rowIdx], err = resTimes[rowIdx].Convert(tc, resTimeTp)
 		if err != nil {
@@ -860,14 +860,14 @@ func (b *builtinLeastTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, r
 	defer b.bufAllocator.put(buf)
 
 	result.ResizeTime(n, false)
-	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+	for argIdx := range b.args {
 		if err := b.args[argIdx].VecEvalTime(ctx, input, buf); err != nil {
 			return err
 		}
 		result.MergeNulls(buf)
 		resTimes := result.Times()
 		argTimes := buf.Times()
-		for rowIdx := 0; rowIdx < n; rowIdx++ {
+		for rowIdx := range n {
 			if result.IsNull(rowIdx) {
 				continue
 			}
@@ -878,7 +878,7 @@ func (b *builtinLeastTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, r
 	}
 	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	for rowIdx := 0; rowIdx < n; rowIdx++ {
+	for rowIdx := range n {
 		resTimes := result.Times()
 		resTimes[rowIdx], err = resTimes[rowIdx].Convert(tc, resTimeTp)
 		if err != nil {
@@ -901,14 +901,14 @@ func (b *builtinGreatestDurationSig) vecEvalDuration(ctx EvalContext, input *chu
 	defer b.bufAllocator.put(buf)
 
 	result.ResizeGoDuration(n, false)
-	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+	for argIdx := range b.args {
 		if err := b.args[argIdx].VecEvalDuration(ctx, input, buf); err != nil {
 			return err
 		}
 		result.MergeNulls(buf)
 		resDurations := result.GoDurations()
 		argDurations := buf.GoDurations()
-		for rowIdx := 0; rowIdx < n; rowIdx++ {
+		for rowIdx := range n {
 			if result.IsNull(rowIdx) {
 				continue
 			}
@@ -933,14 +933,14 @@ func (b *builtinLeastDurationSig) vecEvalDuration(ctx EvalContext, input *chunk.
 	defer b.bufAllocator.put(buf)
 
 	result.ResizeGoDuration(n, false)
-	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+	for argIdx := range b.args {
 		if err := b.args[argIdx].VecEvalDuration(ctx, input, buf); err != nil {
 			return err
 		}
 		result.MergeNulls(buf)
 		resDurations := result.GoDurations()
 		argDurations := buf.GoDurations()
-		for rowIdx := 0; rowIdx < n; rowIdx++ {
+		for rowIdx := range n {
 			if result.IsNull(rowIdx) {
 				continue
 			}

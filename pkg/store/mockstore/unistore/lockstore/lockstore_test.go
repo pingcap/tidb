@@ -62,7 +62,7 @@ func insertMemStore(ls *MemStore, prefix, valPrefix string, n int) *MemStore {
 func checkMemStore(t *testing.T, ls *MemStore, prefix, valPrefix string, n int) {
 	perms := rand.Perm(n)
 	for _, v := range perms {
-		key := []byte(fmt.Sprintf(keyFormat, prefix, v))
+		key := fmt.Appendf(nil, keyFormat, prefix, v)
 		val := ls.Get(key, nil)
 		require.True(t, bytes.Equal(val[:len(valPrefix)], []byte(valPrefix)))
 		require.True(t, bytes.Equal(key, val[len(valPrefix):]))
@@ -72,7 +72,7 @@ func checkMemStore(t *testing.T, ls *MemStore, prefix, valPrefix string, n int) 
 func deleteMemStore(t *testing.T, ls *MemStore, prefix string, n int) {
 	perms := rand.Perm(n)
 	for _, v := range perms {
-		key := []byte(fmt.Sprintf(keyFormat, prefix, v))
+		key := fmt.Appendf(nil, keyFormat, prefix, v)
 		require.True(t, ls.Delete(key))
 	}
 }
@@ -83,7 +83,7 @@ func TestIterator(t *testing.T) {
 	ls := NewMemStore(1 << 10)
 	hint := new(Hint)
 	for i := 10; i < 1000; i += 10 {
-		key := []byte(fmt.Sprintf(keyFormat, "ls", i))
+		key := fmt.Appendf(nil, keyFormat, "ls", i)
 		ls.PutWithHint(key, bytes.Repeat(key, 10), hint)
 	}
 	require.Len(t, ls.getArena().blocks, 33)
@@ -120,12 +120,12 @@ func TestIterator(t *testing.T) {
 
 func checkKey(t *testing.T, it *Iterator, n int) {
 	require.True(t, it.Valid())
-	require.True(t, bytes.Equal(it.Key(), []byte(fmt.Sprintf(keyFormat, "ls", n))))
+	require.True(t, bytes.Equal(it.Key(), fmt.Appendf(nil, keyFormat, "ls", n)))
 	require.True(t, bytes.Equal(it.Value(), bytes.Repeat(it.Key(), 10)))
 }
 
 func numToKey(n int) []byte {
-	return []byte(fmt.Sprintf(keyFormat, "ls", n))
+	return fmt.Appendf(nil, keyFormat, "ls", n)
 }
 
 func TestReplace(t *testing.T) {
@@ -141,7 +141,7 @@ func TestReplace(t *testing.T) {
 func TestMemStoreConcurrent(t *testing.T) {
 	keyRange := 10
 	concurrentKeys := make([][]byte, keyRange)
-	for i := 0; i < keyRange; i++ {
+	for i := range keyRange {
 		concurrentKeys[i] = numToKey(i)
 	}
 
@@ -151,7 +151,7 @@ func TestMemStoreConcurrent(t *testing.T) {
 	closeCh := make(chan bool)
 	wg := new(sync.WaitGroup)
 	wg.Add(keyRange)
-	for i := 0; i < keyRange; i++ {
+	for i := range keyRange {
 		go runReader(ls, &lock, closeCh, i, wg)
 	}
 	ran := rand.New(rand.NewSource(time.Now().Unix()))
@@ -211,7 +211,7 @@ func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int, wg *s
 func BenchmarkMemStoreDeleteInsertGet(b *testing.B) {
 	ls := NewMemStore(1 << 23)
 	keys := make([][]byte, 10000)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		keys[i] = numToKey(i)
 		ls.Put(keys[i], keys[i])
 	}
@@ -229,7 +229,7 @@ func BenchmarkMemStoreDeleteInsertGet(b *testing.B) {
 func BenchmarkMemStoreIterate(b *testing.B) {
 	ls := NewMemStore(1 << 23)
 	keys := make([][]byte, 10000)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		keys[i] = numToKey(i)
 		ls.Put(keys[i], keys[i])
 	}
@@ -248,7 +248,7 @@ func BenchmarkPutWithHint(b *testing.B) {
 	numKeys := 100000
 	keys := make([][]byte, numKeys)
 	hint := new(Hint)
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		keys[i] = numToKey(i)
 	}
 	b.ResetTimer()
@@ -262,7 +262,7 @@ func BenchmarkPut(b *testing.B) {
 	ls := NewMemStore(1 << 20)
 	numKeys := 100000
 	keys := make([][]byte, numKeys)
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		keys[i] = numToKey(i)
 	}
 	b.ResetTimer()

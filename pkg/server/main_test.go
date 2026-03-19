@@ -54,7 +54,6 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintf(os.Stderr, "server: the global config has been changed.\n")
 		_, _ = fmt.Fprintf(os.Stderr, "default: %#v\nglobal: %#v", defaultConfig, globalConfig)
 	}
-	testDataMap.LoadTestSuiteData("testdata", "optimizer_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),

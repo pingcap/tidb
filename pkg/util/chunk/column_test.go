@@ -332,7 +332,7 @@ func TestJSONColumn(t *testing.T) {
 	col := chk.Column(0)
 	for i := range 1024 {
 		j := new(types.BinaryJSON)
-		err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i)))
+		err := j.UnmarshalJSON(fmt.Appendf(nil, `{"%v":%v}`, i, i))
 		require.NoError(t, err)
 		col.AppendJSON(*j)
 	}
@@ -669,10 +669,7 @@ func TestSetNulls(t *testing.T) {
 	for range 100 {
 		begin := rand.Intn(1024)
 		l := rand.Intn(37)
-		end := begin + l
-		if end > 1024 {
-			end = 1024
-		}
+		end := min(begin+l, 1024)
 		for i := begin; i < end; i++ {
 			nullMap[i] = struct{}{}
 		}
@@ -732,8 +729,8 @@ func TestGetRaw(t *testing.T) {
 	it = NewIterator4Chunk(chk)
 	i = 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		require.Equal(t, []byte(fmt.Sprint(i)), row.GetRaw(0))
-		require.Equal(t, []byte(fmt.Sprint(i)), col.GetRaw(i))
+		require.Equal(t, fmt.Append(nil, i), row.GetRaw(0))
+		require.Equal(t, fmt.Append(nil, i), col.GetRaw(i))
 		i++
 	}
 }
@@ -796,6 +793,59 @@ func TestResize(t *testing.T) {
 		var time types.Time
 		require.Equal(t, time, col.Times()[i])
 	}
+}
+
+func TestReserve(t *testing.T) {
+	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+	require.Equal(t, 0, cap(col.data))
+	require.Equal(t, 1, cap(col.offsets))
+	require.Equal(t, 0, cap(col.nullBitmap))
+	col.Reserve(10, 10, 10)
+	require.GreaterOrEqual(t, cap(col.data)-len(col.data), 10)
+	require.GreaterOrEqual(t, cap(col.offsets)-len(col.offsets), 11)
+	require.GreaterOrEqual(t, cap(col.nullBitmap)-len(col.nullBitmap), 10)
+
+	col.data = append(col.data, 12)
+	col.data = append(col.data, 24)
+	col.data = append(col.data, 35)
+	col.data = append(col.data, 56)
+	col.data = append(col.data, 78)
+
+	col.offsets = append(col.offsets, 10)
+	col.offsets = append(col.offsets, 20)
+	col.offsets = append(col.offsets, 50)
+	col.offsets = append(col.offsets, 66)
+	col.offsets = append(col.offsets, 99)
+
+	col.nullBitmap = append(col.nullBitmap, 1)
+	col.nullBitmap = append(col.nullBitmap, 0)
+	col.nullBitmap = append(col.nullBitmap, 1)
+	col.nullBitmap = append(col.nullBitmap, 0)
+	col.nullBitmap = append(col.nullBitmap, 1)
+
+	col.Reserve(100, 100, 100)
+	require.GreaterOrEqual(t, cap(col.data)-len(col.data), 105)
+	require.GreaterOrEqual(t, cap(col.offsets)-len(col.offsets), 106)
+	require.GreaterOrEqual(t, cap(col.nullBitmap)-len(col.nullBitmap), 105)
+
+	require.Equal(t, 12, int(col.data[0]))
+	require.Equal(t, 24, int(col.data[1]))
+	require.Equal(t, 35, int(col.data[2]))
+	require.Equal(t, 56, int(col.data[3]))
+	require.Equal(t, 78, int(col.data[4]))
+
+	require.Equal(t, 0, int(col.offsets[0]))
+	require.Equal(t, 10, int(col.offsets[1]))
+	require.Equal(t, 20, int(col.offsets[2]))
+	require.Equal(t, 50, int(col.offsets[3]))
+	require.Equal(t, 66, int(col.offsets[4]))
+	require.Equal(t, 99, int(col.offsets[5]))
+
+	require.Equal(t, 1, int(col.nullBitmap[0]))
+	require.Equal(t, 0, int(col.nullBitmap[1]))
+	require.Equal(t, 1, int(col.nullBitmap[2]))
+	require.Equal(t, 0, int(col.nullBitmap[3]))
+	require.Equal(t, 1, int(col.nullBitmap[4]))
 }
 
 func BenchmarkDurationRow(b *testing.B) {

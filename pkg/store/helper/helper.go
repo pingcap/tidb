@@ -32,12 +32,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -67,7 +69,7 @@ type Storage interface {
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
-	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	UpdateTxnSafePointCache(txnSafePoint uint64, now time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
@@ -78,6 +80,8 @@ type Storage interface {
 	GetPDHTTPClient() pd.Client
 	GetOption(any) (any, bool)
 	SetOption(any, any)
+	GetClusterID() uint64
+	GetKeyspace() string
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -520,7 +524,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.String("key", redact.Key(key)), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
@@ -669,7 +673,7 @@ func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 // FilterMemDBs filters memory databases in the input schemas.
 func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
-		if util.IsMemDB(dbInfo.Name.L) {
+		if metadef.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
 		schemas = append(schemas, dbInfo)
@@ -684,7 +688,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.
 	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
-	for i := 0; i < len(regionsInfo.Regions); i++ {
+	for i := range regionsInfo.Regions {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 

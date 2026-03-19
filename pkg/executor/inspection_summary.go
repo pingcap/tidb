@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 )
 
 type inspectionSummaryRetriever struct {
@@ -452,10 +452,10 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 			var sql string
 			if len(cols) > 0 {
 				sql = fmt.Sprintf("select avg(value),min(value),max(value),`%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
-					strings.Join(cols, "`,`"), util.MetricSchemaName.L, name, cond)
+					strings.Join(cols, "`,`"), metadef.MetricSchemaName.L, name, cond)
 			} else {
 				sql = fmt.Sprintf("select avg(value),min(value),max(value) from `%s`.`%s` %s",
-					util.MetricSchemaName.L, name, cond)
+					metadef.MetricSchemaName.L, name, cond)
 			}
 			exec := sctx.GetRestrictedSQLExecutor()
 			rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)

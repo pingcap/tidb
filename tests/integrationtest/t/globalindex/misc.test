@@ -67,11 +67,11 @@ PARTITION BY RANGE (c) (
 );
 insert into test_t1 values (1,1,1);
 
-explain format='brief' select * from test_t1 where a = 1;
+explain format='plan_tree' select * from test_t1 where a = 1;
 select * from test_t1 where a = 1;
 
 analyze table test_t1;
-explain format='brief' select * from test_t1 where a = 1;
+explain format='plan_tree' select * from test_t1 where a = 1;
 select * from test_t1 where a = 1;
 
 
@@ -98,7 +98,7 @@ select * from t where a = 'bbc';
 select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
 --replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid1)/
-explain format = 'brief' select a from t partition (p1) order by a;
+explain format = 'plan_tree' select a from t partition (p1) order by a;
 
 drop table if exists t;
 ## Test for stored generated column with global index
@@ -121,7 +121,7 @@ select * from t where a = 'bbc';
 select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
 --replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid1)/
-explain format = 'brief' select a from t partition (p1) order by a;
+explain format = 'plan_tree' select a from t partition (p1) order by a;
 
 ## Test syntax
 drop table if exists t;

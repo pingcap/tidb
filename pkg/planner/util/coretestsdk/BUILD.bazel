@@ -2,7 +2,24 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "coretestsdk",
-    srcs = ["testkit.go"],
+    srcs = [
+        "mock.go",
+        "testkit.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/util/coretestsdk",
     visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/base",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/types",
+        "//pkg/util/mock",
+    ],
 )

@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/kv"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -24,6 +25,23 @@ import (
 )
 
 type RegionFunc func(ctx context.Context, r *split.RegionInfo) RPCResult
+
+// RangeCtlEventListener defines the interface for handling events during range operations
+type RangeCtlEventListener interface {
+	OnRequestRegion(ctx context.Context, region *split.RegionInfo)
+	OnRetryRegion(ctx context.Context, region *split.RegionInfo, err error)
+	OnRetryRange(ctx context.Context, err error)
+	OnRegionSuccess(ctx context.Context, region *split.RegionInfo)
+}
+
+// RangeCtlNopListener is a no-op implementation of EventListener
+type RangeCtlNopListener struct{}
+
+func (n *RangeCtlNopListener) OnRequestRegion(ctx context.Context, region *split.RegionInfo) {}
+func (n *RangeCtlNopListener) OnRetryRegion(ctx context.Context, region *split.RegionInfo, err error) {
+}
+func (n *RangeCtlNopListener) OnRetryRange(ctx context.Context, err error)                   {}
+func (n *RangeCtlNopListener) OnRegionSuccess(ctx context.Context, region *split.RegionInfo) {}
 
 // RangeController manages the execution of operations over a range of regions.
 // It provides functionality to scan regions within a specified key range and
@@ -33,8 +51,36 @@ type RangeController struct {
 	end        []byte
 	metaClient split.SplitClient
 
-	errors error
-	rs     *utils.RetryState
+	errors   error
+	rs       *utils.RetryState
+	listener RangeCtlEventListener
+}
+
+type RangeCtlMetricListener struct {
+	RequestRegion prometheus.Counter
+	RetryRegion   prometheus.Counter
+	RetryRange    prometheus.Counter
+	RegionSuccess prometheus.Counter
+}
+
+// OnRequestRegion implements EventListener interface
+func (m *RangeCtlMetricListener) OnRequestRegion(ctx context.Context, region *split.RegionInfo) {
+	m.RequestRegion.Inc()
+}
+
+// OnRetryRegion implements EventListener interface
+func (m *RangeCtlMetricListener) OnRetryRegion(ctx context.Context, region *split.RegionInfo, err error) {
+	m.RetryRegion.Inc()
+}
+
+// OnRetryRange implements EventListener interface
+func (m *RangeCtlMetricListener) OnRetryRange(ctx context.Context, err error) {
+	m.RetryRange.Inc()
+}
+
+// OnRegionSuccess implements EventListener interface
+func (m *RangeCtlMetricListener) OnRegionSuccess(ctx context.Context, region *split.RegionInfo) {
+	m.RegionSuccess.Inc()
 }
 
 // CreateRangeController creates a controller that cloud be used to scan regions in a range and
@@ -53,7 +99,13 @@ func CreateRangeController(start, end []byte, metaClient split.SplitClient, retr
 		end:        end,
 		metaClient: metaClient,
 		rs:         retryStatus,
+		listener:   &RangeCtlNopListener{},
 	}
+}
+
+// SetEventListener sets the event listener for the range controller
+func (o *RangeController) SetEventListener(listener RangeCtlEventListener) {
+	o.listener = listener
 }
 
 func (o *RangeController) onError(_ context.Context, result RPCResult, region *split.RegionInfo) {
@@ -141,8 +193,9 @@ func (o *RangeController) ApplyFuncToRange(ctx context.Context, f RegionFunc) er
 	if errScanRegion != nil {
 		return errors.Trace(errScanRegion)
 	}
-
 	for _, region := range regionInfos {
+		o.listener.OnRequestRegion(adjustedCtx, region)
+
 		cont, err := o.applyFuncToRegion(adjustedCtx, f, region)
 		if err != nil {
 			return err
@@ -170,17 +223,21 @@ func (o *RangeController) applyFuncToRegion(ctx context.Context, f RegionFunc, r
 		case StrategyFromThisRegion:
 			logutil.CL(ctx).Warn("retry for region", logutil.Region(region.Region), logutil.ShortError(&result))
 			if !o.handleRegionError(ctx, result, region) {
+				o.listener.OnRetryRange(ctx, &result)
 				return false, o.ApplyFuncToRange(ctx, f)
 			}
+			o.listener.OnRetryRegion(ctx, region, &result)
 			return o.applyFuncToRegion(ctx, f, region)
 		case StrategyFromStart:
 			logutil.CL(ctx).Warn("retry for execution over regions", logutil.ShortError(&result))
+			o.listener.OnRetryRange(ctx, &result)
 			// TODO: make a backoffer considering more about the error info,
 			//       instead of ingore the result and retry.
 			time.Sleep(o.rs.ExponentialBackoff())
 			return false, o.ApplyFuncToRange(ctx, f)
 		}
 	}
+	o.listener.OnRegionSuccess(ctx, region)
 	return true, nil
 }
 

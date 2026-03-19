@@ -13,6 +13,7 @@ go_test(
     timeout = "short",
     srcs = ["errors_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":errors",
         "@com_github_pingcap_errors//:errors",

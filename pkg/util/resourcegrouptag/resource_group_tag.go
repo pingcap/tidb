@@ -18,31 +18,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/tablecodec/rowindexcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
-
-// EncodeResourceGroupTag encodes sql digest and plan digest into resource group tag.
-func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest, label tipb.ResourceGroupTagLabel) []byte {
-	if sqlDigest == nil && planDigest == nil {
-		return nil
-	}
-
-	tag := &tipb.ResourceGroupTag{Label: &label}
-	if sqlDigest != nil {
-		tag.SqlDigest = sqlDigest.Bytes()
-	}
-	if planDigest != nil {
-		tag.PlanDigest = planDigest.Bytes()
-	}
-	b, err := tag.Marshal()
-	if err != nil {
-		return nil
-	}
-	return b
-}
 
 // DecodeResourceGroupTag decodes a resource group tag and return the sql digest.
 func DecodeResourceGroupTag(data []byte) (sqlDigest []byte, err error) {

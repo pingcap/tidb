@@ -9,22 +9,28 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	DefaultMaxConcurrentCopy = 1024
 )
 
 type persistCall struct {
@@ -136,9 +142,9 @@ type pitrCollector struct {
 	// Immutable state.
 
 	// taskStorage is the log backup storage.
-	taskStorage storage.ExternalStorage
+	taskStorage storeapi.Storage
 	// restoreStorage is where the running restoration from.
-	restoreStorage storage.ExternalStorage
+	restoreStorage storeapi.Storage
 	// name is a human-friendly identity to this restoration.
 	// When restart from a checkpoint, a new name will be generated.
 	name string
@@ -147,12 +153,15 @@ type pitrCollector struct {
 	// restoreUUID is the identity of this restoration.
 	// This will be kept among restarting from checkpoints.
 	restoreUUID uuid.UUID
+	// maxCopyConcurrency is the maximum number of concurrent copy operations.
+	maxCopyConcurrency int
 
 	// Mutable state.
 	ingestedSSTMeta     ingestedSSTsMeta
 	ingestedSSTMetaLock sync.Mutex
 	putMigOnce          sync.Once
 	writerRoutine       persisterHandle
+	concControl         *util.WorkerPool
 
 	// Delegates.
 
@@ -242,7 +251,7 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 
 		for _, file := range fileSet.SSTFiles {
 			fileCount += 1
-			eg.Go(func() error {
+			c.concControl.ApplyOnErrorGroup(eg, func() error {
 				if err := c.putSST(ectx, file); err != nil {
 					return errors.Annotatef(err, "failed to put sst %s", file.GetName())
 				}
@@ -250,7 +259,7 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 			})
 		}
 		for _, hint := range fileSet.RewriteRules.TableIDRemapHint {
-			eg.Go(func() error {
+			c.concControl.ApplyOnErrorGroup(eg, func() error {
 				if err := c.putRewriteRule(ectx, hint.Origin, hint.Rewritten); err != nil {
 					return errors.Annotatef(err, "failed to put rewrite rule of %v", fileSet.RewriteRules)
 				}
@@ -304,15 +313,16 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	}
 
 	begin := time.Now()
+	failpoint.InjectCall("put-sst")
 
 	f = util.ProtoV1Clone(f)
 	out := c.sstPath(f.Name)
 
-	copier, ok := c.taskStorage.(storage.Copier)
+	copier, ok := c.taskStorage.(storeapi.Copier)
 	if !ok {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "storage %T does not support copying", c.taskStorage)
 	}
-	spec := storage.CopySpec{
+	spec := storeapi.CopySpec{
 		From: f.GetName(),
 		To:   out,
 	}
@@ -440,6 +450,21 @@ func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
 	return ts, c.persistExtraBackupMeta(ctx)
 }
 
+func (c *pitrCollector) init() {
+	maxConc := c.maxCopyConcurrency
+	if maxConc <= 0 {
+		maxConc = DefaultMaxConcurrentCopy
+	}
+
+	c.setConcurrency(maxConc)
+	c.goPersister()
+	c.resetCommitting()
+}
+
+func (c *pitrCollector) setConcurrency(maxConc int) {
+	c.concControl = util.NewWorkerPool(uint(maxConc), "copy-sst")
+}
+
 func (c *pitrCollector) resetCommitting() {
 	c.ingestedSSTMeta = ingestedSSTsMeta{
 		rewrites: map[int64]int64{},
@@ -454,6 +479,18 @@ type PiTRCollDep struct {
 	PDCli   pd.Client
 	EtcdCli *clientv3.Client
 	Storage *pb.StorageBackend
+
+	maxCopyConcurrency int
+}
+
+func (deps *PiTRCollDep) LoadMaxCopyConcurrency(ctx context.Context, maxConcPerTiKV uint) error {
+	stores, err := deps.PDCli.GetAllStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	deps.maxCopyConcurrency = int(maxConcPerTiKV) * len(stores)
+	log.Info("Load max copy concurrency", zap.Int("maxCopyConcurrency", deps.maxCopyConcurrency), zap.Int("stores", len(stores)))
+	return nil
 }
 
 // newPiTRColl creates a new PiTR collector.
@@ -476,10 +513,11 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 
 	coll := &pitrCollector{
-		enabled: true,
+		enabled:            true,
+		maxCopyConcurrency: deps.maxCopyConcurrency,
 	}
 
-	strg, err := storage.Create(ctx, ts[0].Info.Storage, false)
+	strg, err := objstore.Create(ctx, ts[0].Info.Storage, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -497,13 +535,12 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 	coll.name = fmt.Sprintf("backup-%016X", t)
 
-	restoreStrg, err := storage.Create(ctx, deps.Storage, false)
+	restoreStrg, err := objstore.Create(ctx, deps.Storage, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	coll.restoreStorage = restoreStrg
 	coll.restoreSuccess = summary.Succeed
-	coll.goPersister()
-	coll.resetCommitting()
+	coll.init()
 	return coll, nil
 }

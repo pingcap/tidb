@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -30,127 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
-
-func TestTxnScopeConstraint(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop placement policy if exists p1")
-		tk.MustExec("drop placement policy if exists p2")
-	}()
-
-	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
-	tk.MustExec("create placement policy p2 follower_constraints='[+zone=sh]'")
-	tk.MustExec(`create table t1 (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11),
-	PARTITION p2 VALUES LESS THAN (16),
-	PARTITION p3 VALUES LESS THAN (21)
-);`)
-
-	is := dom.InfoSchema()
-
-	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-	for _, def := range partDefs {
-		if def.Name.String() == "p0" {
-			tk.MustExec("alter table t1 partition p0 placement policy p1")
-		} else if def.Name.String() == "p2" {
-			tk.MustExec("alter table t1 partition p2 placement policy p2")
-		}
-	}
-
-	testCases := []struct {
-		name              string
-		sql               string
-		txnScope          string
-		zone              string
-		disableAutoCommit bool
-		err               error
-	}{
-		{
-			name:     "Insert into PARTITION p0 with global txnScope",
-			sql:      "insert into t1 (c) values (1)",
-			txnScope: "global",
-			zone:     "",
-			err:      nil,
-		},
-		{
-			name:     "insert into PARTITION p0 with wrong txnScope",
-			sql:      "insert into t1 (c) values (1)",
-			txnScope: "local",
-			zone:     "bj",
-			err:      fmt.Errorf(".*out of txn_scope.*"),
-		},
-		{
-			name:     "insert into PARTITION p1 with local txnScope",
-			sql:      "insert into t1 (c) values (10)",
-			txnScope: "local",
-			zone:     "bj",
-			err:      fmt.Errorf(".*doesn't have placement policies with txn_scope.*"),
-		},
-		{
-			name:     "insert into PARTITION p1 with global txnScope",
-			sql:      "insert into t1 (c) values (10)",
-			txnScope: "global",
-			err:      nil,
-		},
-		{
-			name:     "insert into PARTITION p2 with local txnScope",
-			sql:      "insert into t1 (c) values (15)",
-			txnScope: "local",
-			zone:     "bj",
-			err:      fmt.Errorf(".*leader placement policy is not defined.*"),
-		},
-		{
-			name:     "insert into PARTITION p2 with global txnScope",
-			sql:      "insert into t1 (c) values (15)",
-			txnScope: "global",
-			zone:     "",
-			err:      nil,
-		},
-		{
-			name:              "insert into PARTITION p0 with wrong txnScope and autocommit off",
-			sql:               "insert into t1 (c) values (1)",
-			txnScope:          "local",
-			zone:              "bj",
-			disableAutoCommit: true,
-			err:               fmt.Errorf(".*out of txn_scope.*"),
-		},
-	}
-
-	for _, testcase := range testCases {
-		failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone))
-		tk.MustExec("use test")
-		tk.MustExec("set global tidb_enable_local_txn = on;")
-		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
-		if testcase.disableAutoCommit {
-			tk.MustExec("set @@autocommit = 0")
-			tk.MustExec("begin")
-			tk.MustExec(testcase.sql)
-			err = tk.ExecToErr("commit")
-		} else {
-			err = tk.ExecToErr(testcase.sql)
-		}
-		if testcase.err == nil {
-			require.NoError(t, err)
-		} else {
-			require.Error(t, err)
-			require.Regexp(t, testcase.err.Error(), err.Error())
-		}
-		tk.MustExec("set global tidb_enable_local_txn = off;")
-		failpoint.Disable("tikvclient/injectTxnScope")
-	}
-}
 
 func TestCreateSchemaWithPlacement(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)

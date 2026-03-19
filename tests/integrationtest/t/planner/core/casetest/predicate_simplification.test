@@ -1,35 +1,35 @@
 # TestRemoveRedundantPredicates
 drop table if exists t;
 create table t(a int, f int);
-explain format = 'brief' select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition;
-explain format = 'brief' select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition;
-explain format = 'brief' select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =;
-explain format = 'brief' select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>;
-explain format = 'brief' select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =;
-explain format = 'brief' select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.;
-explain format = 'brief' select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins;
-explain format = 'brief' select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet;
-explain format = 'brief' select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet;
-explain format = 'brief' select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet;
+explain format='plan_tree' select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition;
+explain format='plan_tree' select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition;
+explain format='plan_tree' select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =;
+explain format='plan_tree' select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>;
+explain format='plan_tree' select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =;
+explain format='plan_tree' select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.;
+explain format='plan_tree' select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins;
+explain format='plan_tree' select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet;
+explain format='plan_tree' select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet;
+explain format='plan_tree' select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet;
 
 # TestInListAndNotEqualSimplification
 drop table if exists t;
 create table t(a int, f int);
 drop table if exists ts;
 create table ts(a char(10), f char(10));
-explain format = 'brief' select f from t use index() where f <> 1 and f in (1,2,3) -- Simple case;
-explain format = 'brief' select f from t use index() where f <> 4 and f in (1,2,3) -- No intersection but <> is redundant;
-explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 2 -- Simple case with different order. Test case for issue 39676;
-explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 2 -- Multiple <> values. All are in inlist;
-explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 2 and f <> 99 -- Multiple <> values. Some are in inlist;
-explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 5 and f <> 33  -- Multiple <> values. None are in inlist;
-explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist;
-explain format = 'brief' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
-explain format = 'brief' select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.;
-explain format = 'brief' select f from ts use index() where f <> '1' and f in ('1','2','3') -- Simple case with string type;
-explain format = 'brief' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
-explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
-explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
+explain format='plan_tree' select f from t use index() where f <> 1 and f in (1,2,3) -- Simple case;
+explain format='plan_tree' select f from t use index() where f <> 4 and f in (1,2,3) -- No intersection but <> is redundant;
+explain format='plan_tree' select f from t use index() where f in (1,2,3) and f <> 2 -- Simple case with different order. Test case for issue 39676;
+explain format='plan_tree' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 2 -- Multiple <> values. All are in inlist;
+explain format='plan_tree' select f from t use index() where f in (1,2,3) and f <> 2 and f <> 99 -- Multiple <> values. Some are in inlist;
+explain format='plan_tree' select f from t use index() where f in (1,2,3) and f <> 5 and f <> 33  -- Multiple <> values. None are in inlist;
+explain format='plan_tree' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist;
+explain format='plan_tree' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
+explain format='plan_tree' select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.;
+explain format='plan_tree' select f from ts use index() where f <> '1' and f in ('1','2','3') -- Simple case with string type;
+explain format='plan_tree' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
+explain format='plan_tree' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
+explain format='plan_tree' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
 
 # Test OR simplification start
 
@@ -61,7 +61,7 @@ CREATE TABLE `it` (
   KEY `f` (`a`,`pk`)
 );
 
-explain format='brief' SELECT
+explain format='plan_tree' SELECT
   dt.*
 FROM
   it
@@ -82,7 +82,7 @@ LIMIT
   240;
 
 
-explain  format='brief' SELECT * FROM
+explain format='plan_tree' SELECT * FROM
  (
 SELECT
   dt.*
@@ -102,25 +102,25 @@ LIMIT
 
 drop table if exists t1;
 create table t1 (a1 int, b1 int, c1 char(2));
-explain format='brief' select * from t1 where b1=1 and (b1>1 or b1 < 1);
-explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 < 1);
-explain format='brief' select * from t1 where (b1=1 or a1 < 1) and a1=1;
-explain format='brief' select * from t1 where a1 is null and (b1 = 1 or a1 > 5);
-explain format='brief' select * from t1 where a1 is not null and (b1 = 1 or a1 > 5);
+explain format='plan_tree' select * from t1 where b1=1 and (b1>1 or b1 < 1);
+explain format='plan_tree' select * from t1 where a1=1 and (b1=1 or a1 < 1);
+explain format='plan_tree' select * from t1 where (b1=1 or a1 < 1) and a1=1;
+explain format='plan_tree' select * from t1 where a1 is null and (b1 = 1 or a1 > 5);
+explain format='plan_tree' select * from t1 where a1 is not null and (b1 = 1 or a1 > 5);
 # negative tests
-explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 <= 1);
-explain format='brief' select * from t1 where c1=1 and (b1=1 or c1 < 1);
+explain format='plan_tree' select * from t1 where a1=1 and (b1=1 or a1 <= 1);
+explain format='plan_tree' select * from t1 where c1=1 and (b1=1 or c1 < 1);
 
 drop table if exists t1;
 drop table if exists t2;
 CREATE TABLE t1 (code varchar(10)) charset utf8mb4;
 CREATE TABLE t2 (id varchar(10) ) charset utf8mb4;
-EXPLAIN format='brief' SELECT * FROM t1 INNER JOIN t2 ON code=id WHERE id='a12' AND (LENGTH(code)=5 OR code < 'a00');
+explain format='plan_tree' SELECT * FROM t1 INNER JOIN t2 ON code=id WHERE id='a12' AND (LENGTH(code)=5 OR code < 'a00');
 
 drop table if exists t;
 CREATE TABLE t (a int , b int);
-explain format='brief' select a from t where (a between 2 and 1 or a < 1) and b < 1;
-explain format='brief' select a from t where (a between 0 and 2 or a < 2) and b < 1;
+explain format='plan_tree' select a from t where (a between 2 and 1 or a < 1) and b < 1;
+explain format='plan_tree' select a from t where (a between 0 and 2 or a < 2) and b < 1;
 
 drop table if exists IDT_MC21780;
 CREATE TABLE IDT_MC21780 (
@@ -129,9 +129,9 @@ COL2 timestamp NULL DEFAULT NULL,
 COL3 timestamp NULL DEFAULT NULL
 );
 
-explain
+explain format='plan_tree'
 select* from IDT_MC21780 t1 where t1.col1 < "1976-09-09 20:21:11" and t1.col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
-explain
+explain format='plan_tree'
 select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1
          where t1. col1 < "1976-09-09 20:21:11"
                and t2. col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
@@ -150,97 +150,97 @@ create table t2 (a2 int, b2 int);
 
 INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5),  (NULL, 6, 7),  (8, 9, NULL),  (10, 11, 12);
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR b1 > 10;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 AND b1 > 10;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR b1 > 10;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
 
 # short-circuit subquery
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1
 WHERE
 (1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
 ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1
 WHERE
 (1 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
 ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1
 WHERE
 (0 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
 ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
 
 # short-circuit subquery and NO_DECORRELATE
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 )) ;
 
-explain format=brief
+explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 ))
 ;
 
 # complex short circuit
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) OR (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) AND (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) AND (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) OR (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) OR (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) AND (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
 
-EXPLAIN format=brief
+explain format='plan_tree'
 select * from t1 where a1 = 100 and (b1<=200 or a1<=200);
 
 # verify results
@@ -286,26 +286,60 @@ SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
 # Test removing redundant branches from OR list
 drop table if exists t1;
 create table t1 (a int, b decimal(65,30), c int);
-explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
-explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
-explain format=brief select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
-explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
-explain format=brief select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
-explain format=brief select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
-explain format=brief select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
-explain format=brief select * from t1 where (@a:=@a+1) or (@a:=@a+1);
+explain format='plan_tree' select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
+explain format='plan_tree' select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
+explain format='plan_tree' select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
+explain format='plan_tree' select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format='plan_tree' select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format='plan_tree' select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
+explain format='plan_tree' select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
+explain format='plan_tree' select * from t1 where (@a:=@a+1) or (@a:=@a+1);
 
 drop table if exists t2;
 create table t2 (a datetime(6), b timestamp(6), index ia(a), index iab(a,b));
-explain format=brief select * from t2 where a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00';
-explain format=brief select * from t2 where (a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00') and (b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00');
+explain format='plan_tree' select * from t2 where a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00';
+explain format='plan_tree' select * from t2 where (a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00') and (b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00');
 
 drop table if exists t3;
 create table t3 (a varchar(10) collate utf8mb4_general_ci, b varchar(10) collate utf8mb4_bin, index ia(a), index ib(b));
-explain format=brief select * from t3 where a = 'a' or a = 'a' or a = 'A';
-explain format=brief select * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
-explain format=brief select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
+explain format='plan_tree' select * from t3 where a = 'a' or a = 'a' or a = 'A';
+explain format='plan_tree' select * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
+explain format='plan_tree' select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
 
 drop table if exists t4;
 create table t4(a int, b int, c int, d int, index iab(a,b), index iac(a,c), index iad(a,d));
-explain format=brief select /*+ use_index_merge(t4) */ * from t4 where a = 1 and (b = 2 or c = 4 or b = 12 or c = 5 or d = 6 or c = 4 or c = 5 or d = 6);
+explain format='plan_tree' select /*+ use_index_merge(t4) */ * from t4 where a = 1 and (b = 2 or c = 4 or b = 12 or c = 5 or d = 6 or c = 4 or c = 5 or d = 6);
+
+drop table if exists t5, t6;
+create table t5 (c0 int, c1 int);
+create table t6 (c0 int, c1 int);
+explain format='plan_tree'  select * from t5 join t6 on t5.c0 = t6.c0
+	where t5.c1 = null or t5.c1 > 0 and t6.c1 > 0;
+
+CREATE TABLE `t910beff5` (
+`col_40` tinyint unsigned DEFAULT '95',
+`col_41` tinytext COLLATE gbk_bin NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
+INSERT INTO `t910beff5` VALUES(7,'CWHObI8-!amnYA'),(1,'g+!OHa@OTdsA2#JN'),(249,'cwx!P4xaX)U'),(118,'mlDJX^n+'),(0,'EOZ9*QUsH%qi)%'),(183,'9*Lzmwg%pxy'),(139,'!ME5dBDrOG5'),(127,'BNb8SajqZ'),(209,'IWS^j'),(68,'U9v99'),(187,'dE*Zzjz#0&'),(10,'iC'),(87,'jIgUfpWzE9#oQhn&#&'),(4,'BLmM2'),(153,'(BG(8nIFNyE$%i'),(51,'EDhm)%Fie~qReM');
+SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
+explain format='plan_tree' SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
+
+CREATE TABLE t43fc4f8a (
+  col_48 date NOT NULL DEFAULT '1991-09-25',
+  col_49 smallint unsigned NOT NULL DEFAULT '14803',
+  col_50 char(87) COLLATE utf8mb4_unicode_ci DEFAULT 'GhnCJw~(RZ!i#ZxgC',
+  col_51 date DEFAULT NULL,
+  UNIQUE KEY idx_7 (col_51)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY LIST COLUMNS(col_51)
+(PARTITION p0 VALUES IN ('1970-09-10','1982-04-21','1990-08-27','1990-10-22','1996-02-27','2018-06-05','2027-05-18'),
+ PARTITION p1 VALUES IN ('1972-01-21','1974-11-21','1994-02-23','1996-11-08','2000-04-05','2000-09-01','2005-12-17','2014-09-24','2016-12-01','2024-07-27','2025-02-14','2029-06-22','2036-04-30'));
+
+CREATE TABLE tlcf30036b (
+  col_71 varbinary(257) NOT NULL,
+  col_72 timestamp NULL DEFAULT NULL,
+  col_73 time NOT NULL,
+  PRIMARY KEY (col_71(2)) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY idx_14 (col_72,col_71) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+explain format='plan_tree' select /*+ NO_HASH_JOIN( t43fc4f8a , st_57 */ avg( distinct  st_57.r1 ) as r0 from t43fc4f8a , ( select  /*+ use_index( tlcf30036b ) */ /*+ agg_to_cop()  */  elt(2, tlcf30036b.col_72 , tlcf30036b.col_72 ) as r0 , bit_or( tlcf30036b.col_71 ) as r1 from tlcf30036b where IsNull( tlcf30036b.col_71 ) and not( tlcf30036b.col_72 in ( '1980-08-05' ,'2033-10-20' ,'2030-06-22' ,'1972-04-20' ) ) group by tlcf30036b.col_72  having tlcf30036b.col_72 in ( '2004-03-24' ,'2006-02-04' ,'1993-06-20' ,null ) and not( tlcf30036b.col_72 < '2026-03-29' ) order by r0,r1 ) st_57 where st_57.r1 in ( 13307631398032338238 ,10696905560280898882 ,5314440087685082217 ,17229250596274672311 ) group by t43fc4f8a.col_51,t43fc4f8a.col_49  having t43fc4f8a.col_49 <=> 11261 order by r0 limit 562300838;

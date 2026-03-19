@@ -18,9 +18,9 @@ import (
 	"context"
 	"io"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -30,7 +30,7 @@ type concurrentFileReader struct {
 	concurrency    int
 	readBufferSize int
 
-	storage storage.ExternalStorage
+	storage storeapi.Storage
 	name    string
 
 	offset   int64
@@ -40,7 +40,7 @@ type concurrentFileReader struct {
 // newConcurrentFileReader creates a new concurrentFileReader.
 func newConcurrentFileReader(
 	ctx context.Context,
-	st storage.ExternalStorage,
+	st storeapi.Storage,
 	name string,
 	offset int64,
 	fileSize int64,
@@ -66,7 +66,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 
 	ret := make([][]byte, 0, r.concurrency)
 	eg := errgroup.Group{}
-	for i := 0; i < r.concurrency; i++ {
+	for i := range r.concurrency {
 		if r.offset >= r.fileSize {
 			break
 		}
@@ -79,7 +79,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		offset := r.offset
 		r.offset += int64(end)
 		eg.Go(func() error {
-			_, err := storage.ReadDataInRange(
+			_, err := objstore.ReadDataInRange(
 				r.ctx,
 				r.storage,
 				r.name,
@@ -87,13 +87,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 				buf,
 			)
 			if err != nil {
-				log.FromContext(r.ctx).Error(
-					"concurrent read meet error",
-					zap.Int64("offset", offset),
-					zap.Int("readSize", len(buf)),
-					zap.Error(err),
-				)
-				return err
+				return errors.Annotatef(err, "offset: %d, readSize: %d", offset, len(buf))
 			}
 			return nil
 		})

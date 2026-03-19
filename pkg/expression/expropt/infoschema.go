@@ -44,8 +44,8 @@ func (InfoSchemaPropReader) GetSessionInfoSchema(ctx exprctx.EvalContext) (infos
 	return p(false), nil
 }
 
-// GetDomainInfoSchema return domain information schema.
-func (InfoSchemaPropReader) GetDomainInfoSchema(ctx exprctx.EvalContext) (infoschema.MetaOnlyInfoSchema, error) {
+// GetLatestInfoSchema return domain information schema.
+func (InfoSchemaPropReader) GetLatestInfoSchema(ctx exprctx.EvalContext) (infoschema.MetaOnlyInfoSchema, error) {
 	p, err := getPropProvider[InfoSchemaPropProvider](ctx, exprctx.OptPropInfoSchema)
 	if err != nil {
 		return nil, err

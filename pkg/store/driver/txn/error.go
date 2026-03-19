@@ -105,7 +105,7 @@ func ExtractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 			str = str[:col.Length]
 		}
 		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) || types.IsTypeBit(&tblInfo.Columns[col.Offset].FieldType) {
-			str = util.FmtNonASCIIPrintableCharToHex(str)
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
 		}
 		valueStr = append(valueStr, str)
 	}
@@ -145,7 +145,7 @@ func ExtractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 			return genKeyExistsError(name, key.String(), err)
 		}
 		if types.IsBinaryStr(colInfo[i].Ft) || types.IsTypeBit(colInfo[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str)
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
 		}
 		valueStr = append(valueStr, str)
 	}

@@ -36,6 +36,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -107,6 +108,7 @@ type fakeCluster struct {
 	onGetClient               func(uint64) error
 	onClearCache              func(uint64) error
 	serviceGCSafePoint        uint64
+	serviceGCSafePointSet     bool
 	serviceGCSafePointDeleted bool
 	currentTS                 uint64
 }
@@ -278,6 +280,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
+	f.serviceGCSafePointSet = true
 	return at, nil
 }
 
@@ -540,7 +543,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		s := new(fakeStore)
 		s.id = c.idAlloc()
 		s.regions = map[uint64]*region{}
@@ -555,7 +558,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 			enabled: simEnabled,
 		},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if i < len(stores) {
 			stores[i].regions[initialRegion.id] = initialRegion
 		}
@@ -676,7 +679,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -732,7 +735,7 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 	return nil
 }
 
-func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
+func (t *testEnv) PauseTask(ctx context.Context, taskName string, _ ...streamhelper.PauseTaskOption) error {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventPause,
 		Name: taskName,
@@ -781,14 +784,14 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
 	t.taskCh <- tsk
 }
 
-func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.maxTs != maxVersion {
@@ -879,14 +882,14 @@ func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limi
 	return result, nil
 }
 
-func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (p *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),
 	}, nil
 }
 
-func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
+func (p *mockPDClient) GetAllStores(ctx context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	// only used for GetRegionCache once in resolve lock
 	return []*metapb.Store{
 		{
@@ -898,6 +901,10 @@ func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOpt
 
 func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
+}
+
+func (p *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return p
 }
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {

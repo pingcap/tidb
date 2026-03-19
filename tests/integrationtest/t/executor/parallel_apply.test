@@ -81,6 +81,7 @@ insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4
 delete from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;
 --sorted_result
 select * from t;
+explain format = 'brief' delete from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;
 
 ## insert
 drop table if exists t;

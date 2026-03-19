@@ -16,11 +16,14 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
+
+const unlimitedRURate = uint64(math.MaxInt32)
 
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
@@ -49,6 +52,14 @@ type ResourceGroupSettings struct {
 	BurstLimit       int64                            `json:"burst_limit"`
 	Runaway          *ResourceGroupRunawaySettings    `json:"runaway"`
 	Background       *ResourceGroupBackgroundSettings `json:"background"`
+}
+
+// GetBurstLimitAdjusted returns the burst limit of the resource group after adjustment.
+func (p *ResourceGroupSettings) GetBurstLimitAdjusted() int64 {
+	if p.RURate == unlimitedRURate {
+		return -1
+	}
+	return p.BurstLimit
 }
 
 // NewResourceGroupSettings creates a new ResourceGroupSettings.
@@ -82,9 +93,14 @@ func (p *ResourceGroupSettings) String() string {
 	if len(p.IOWriteBandwidth) > 0 {
 		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth, separatorFn)
 	}
-	// Once burst limit is negative, meaning allow burst with unlimit.
-	if p.BurstLimit < 0 {
-		writeSettingItemToBuilder(sb, "BURSTABLE", separatorFn)
+	// If BurstLimit is -2, it means the resource group is burstable.
+	// If BurstLimit is -1, it means the resource group is unlimited.
+	switch p.BurstLimit {
+	case -2:
+		writeSettingItemToBuilder(sb, "BURSTABLE(MODERATED)", separatorFn)
+	case -1:
+		writeSettingItemToBuilder(sb, "BURSTABLE(UNLIMITED)", separatorFn)
+	default:
 	}
 	if p.Runaway != nil {
 		fmt.Fprintf(sb, ", QUERY_LIMIT=(")
@@ -145,7 +161,10 @@ func (p *ResourceGroupSettings) String() string {
 // Adjust adjusts the resource group settings.
 func (p *ResourceGroupSettings) Adjust() {
 	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec except burstable.
-	if p.BurstLimit >= 0 {
+	// Note: If BurstLimit is -2, it means the resource group is burstable.
+	// If BurstLimit is -1, it means the resource group is unlimited.
+	// If ru_per_sec is set to math.MaxInt32, it means the resource group is unlimited and we should not change BurstLimit.
+	if p.RURate != unlimitedRURate && p.BurstLimit >= 0 {
 		p.BurstLimit = int64(p.RURate)
 	}
 }

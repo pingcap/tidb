@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	dialTimeout     = 30 * time.Second
-	resetRetryTimes = 3
+	defaultDialTimeout = 30 * time.Second
+	resetRetryTimes    = 3
 )
 
 // Pool is a lazy pool of gRPC channels.
@@ -95,6 +95,8 @@ type StoreManager struct {
 	}
 	keepalive keepalive.ClientParameters
 	tlsConf   *tls.Config
+
+	DialTimeout time.Duration
 }
 
 func (mgr *StoreManager) GetKeepalive() keepalive.ClientParameters {
@@ -112,6 +114,13 @@ func NewStoreManager(pdCli pd.Client, kl keepalive.ClientParameters, tlsConf *tl
 		keepalive: kl,
 		tlsConf:   tlsConf,
 	}
+}
+
+func (mgr *StoreManager) getDialTimeout() time.Duration {
+	if mgr.DialTimeout > 0 {
+		return mgr.DialTimeout
+	}
+	return defaultDialTimeout
 }
 
 func (mgr *StoreManager) PDClient() pd.Client {
@@ -141,7 +150,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if mgr.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(mgr.tlsConf))
 	}
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	ctx, cancel := context.WithTimeout(ctx, mgr.getDialTimeout())
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = time.Second * 3
 	addr := store.GetPeerAddress()
@@ -224,7 +233,7 @@ func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) 
 	mgr.grpcClis.mu.Lock()
 	defer mgr.grpcClis.mu.Unlock()
 
-	for retry := 0; retry < resetRetryTimes; retry++ {
+	for retry := range resetRetryTimes {
 		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
 		if err != nil {
 			log.Warn("failed to reset grpc connection, retry it",

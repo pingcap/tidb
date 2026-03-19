@@ -218,7 +218,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	metaChan := make(chan StoreMeta, 1024)
 	defer close(metaChan)
 
-	for i := 0; i < totalStores; i++ {
+	for i := range totalStores {
 		storeId := recovery.allStores[i].GetId()
 		storeAddr := recovery.allStores[i].GetAddress()
 
@@ -258,7 +258,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		})
 	}
 
-	for i := 0; i < totalStores; i++ {
+	for i := range totalStores {
 		select {
 		case <-ectx.Done(): // err or cancel, eg.wait will catch the error
 			break

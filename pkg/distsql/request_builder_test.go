@@ -177,7 +177,7 @@ func TestTableRangesToKVRanges(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xd, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 		},
 	}
-	for i := 0; i < len(expect); i++ {
+	for i := range expect {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -721,7 +721,7 @@ func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < len(actual); i++ {
+	for i := range actual {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -742,7 +742,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
 		},
 	}
-	for i := 0; i < len(actual.FirstPartitionRange()); i++ {
+	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
 	}
 }
@@ -778,6 +778,48 @@ func TestScanLimitConcurrency(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)
 			require.Equal(t, actual.LimitSize, tt.limit)
+		})
+	}
+}
+
+func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	for _, tt := range []struct {
+		name        string
+		limit       uint64
+		concurrency int
+	}{
+		{"1", 1, 1},
+		{"1000000", 1000000, dctx.DistSQLConcurrency},
+	} {
+		indexLookUpIndex := uint32(3)
+		t.Run(tt.name, func(t *testing.T) {
+			executors := []*tipb.Executor{
+				{
+					Tp:      tipb.ExecType_TypeIndexScan,
+					IdxScan: &tipb.IndexScan{},
+				},
+				{
+					Tp:        tipb.ExecType_TypeLimit,
+					Limit:     &tipb.Limit{Limit: tt.limit},
+					ParentIdx: &indexLookUpIndex,
+				},
+				{
+					Tp:      tipb.ExecType_TypeTableScan,
+					TblScan: &tipb.TableScan{},
+				},
+				{
+					Tp:          tipb.ExecType_TypeIndexLookUp,
+					IndexLookup: &tipb.IndexLookUp{},
+				},
+			}
+			dag := &tipb.DAGRequest{Executors: executors}
+			actual, err := (&RequestBuilder{}).
+				SetDAGRequest(dag).
+				SetFromSessionVars(dctx).
+				Build()
+			require.NoError(t, err)
+			require.Equal(t, tt.concurrency, actual.Concurrency)
 		})
 	}
 }
@@ -884,7 +926,7 @@ func TestRequestBuilderHandle(t *testing.T) {
 	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
 		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
-	resourceTagBuilder := kv.NewResourceGroupTagBuilder()
+	resourceTagBuilder := kv.NewResourceGroupTagBuilder(nil)
 	tableID := int64(15)
 	actual, err := (&RequestBuilder{}).SetTableHandles(tableID, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).

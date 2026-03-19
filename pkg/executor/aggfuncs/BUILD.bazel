@@ -95,6 +95,7 @@ go_test(
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",

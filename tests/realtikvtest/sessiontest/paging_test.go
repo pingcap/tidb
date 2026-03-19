@@ -42,9 +42,9 @@ func TestPagingActRowsAndProcessKeys(t *testing.T) {
 	session.MustExec("create table t(a int,b int,c int,index idx(a,b), primary key(a));")
 	// prepare data, insert 10w record
 	// [0, 999999]
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql := "insert into t value"
-		for j := 0; j < 1000; j++ {
+		for j := range 1000 {
 			if j != 0 {
 				sql += ","
 			}

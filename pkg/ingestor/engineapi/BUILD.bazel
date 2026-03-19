@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "engineapi",
+    srcs = [
+        "engine.go",
+        "ingest_data.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ingestor/engineapi",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/lightning/membuf"],
+)

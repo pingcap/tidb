@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "infoschema_test",
+    timeout = "short",
+    srcs = [
+        "infoschema_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 20,
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/domain/infosync",
+        "//pkg/keyspace",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

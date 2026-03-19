@@ -111,7 +111,7 @@ func randGen(ctx context.Context, client *txnkv.Client, startKey, endKey []byte,
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			for k := 0; k < numBatch; k++ {
+			for range numBatch {
 				select {
 				case <-ctx.Done():
 					return
@@ -120,7 +120,7 @@ func randGen(ctx context.Context, client *txnkv.Client, startKey, endKey []byte,
 					if err != nil {
 						errCh <- errors.Trace(err)
 					}
-					for j := 0; j < batchSize; j++ {
+					for range batchSize {
 						key := randKey(startKey, endKey, i)
 						// append index to avoid write conflict
 						key = appendIndex(key, i)
@@ -173,7 +173,7 @@ Retry:
 		upperUnbounded := false
 		lowerUnbounded := false
 
-		for i := 0; i < maxLen; i++ {
+		for i := range maxLen {
 			upperBound := 256
 			if !upperUnbounded {
 				if i >= len(endKey) {
@@ -223,7 +223,7 @@ func appendIndex(key []byte, i int) []byte {
 //nolint:gosec
 func randValue() []byte {
 	result := make([]byte, 0, 512)
-	for i := 0; i < 512; i++ {
+	for i := range 512 {
 		value := rand.Intn(257)
 		if value == 256 {
 			if i > 0 {

@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -421,7 +422,7 @@ func TestParamList(t *testing.T) {
 	ctx := NewEvalContext(
 		WithParamList(paramList),
 	)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -430,7 +431,7 @@ func TestParamList(t *testing.T) {
 	// after reset the paramList and append new one, the value is still persisted
 	paramList.Reset()
 	paramList.Append(types.NewDatum(4))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -559,7 +560,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-			val:   "on",
+			val:   "ON",
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
@@ -611,7 +612,13 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		if sysVar.field != "" {
 			varsRelatedFields = append(varsRelatedFields, sysVar.field)
 		}
-		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		sv := variable.GetSysVar(sysVar.name)
+		require.NotNil(t, sv)
+		if sv.HasSessionScope() && !sv.InternalSessionVariable {
+			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		} else if sv.HasGlobalScope() {
+			require.NoError(t, sv.SetGlobalFromHook(context.TODO(), sessionVars, sysVar.val, false))
+		}
 	}
 
 	defaultEvalCtx := NewEvalContext()

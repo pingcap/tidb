@@ -57,11 +57,11 @@ func batchRawPut(value []byte) {
 	wg := sync.WaitGroup{}
 	base := *dataCnt / *workerCnt
 	wg.Add(*workerCnt)
-	for i := 0; i < *workerCnt; i++ {
+	for i := range *workerCnt {
 		go func(i int) {
 			defer wg.Done()
 
-			for j := 0; j < base; j++ {
+			for j := range base {
 				k := base*i + j
 				key := fmt.Sprintf("key_%d", k)
 				err = cli.Put(ctx, []byte(key), value)

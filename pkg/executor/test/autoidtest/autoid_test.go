@@ -579,7 +579,7 @@ func TestIssue52622(t *testing.T) {
 	tk.MustQuery(`select @@auto_increment_increment;`).Check(testkit.Rows("66"))
 	tk.MustQuery(`select @@auto_increment_offset;`).Check(testkit.Rows("9527"))
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		createTableSQL := "create table issue52622 (id int primary key auto_increment, k int)"
 		if i == 0 {
 			createTableSQL = createTableSQL + " AUTO_ID_CACHE 1"

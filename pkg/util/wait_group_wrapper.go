@@ -175,7 +175,7 @@ func (w *WaitGroupWrapper) RunWithLog(exec func()) {
 		defer w.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				logutil.BgLogger().Error("panic in wait group", zap.Any("recover", r), zap.Stack("stack"))
+				logutil.BgLogger().Error("panic in the wait group", zap.Any("recover", r), zap.Stack("stack"))
 			}
 		}()
 		exec()
@@ -193,6 +193,9 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r any)) {
 			r := recover()
 			if recoverFn != nil {
 				recoverFn(r)
+			}
+			if r != nil {
+				logutil.BgLogger().Error("panic in the wait group", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			w.Done()
 		}()
@@ -253,7 +256,7 @@ func (g *ErrorGroupWithRecover) Go(fn func() error) {
 	g.Group.Go(func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r), zap.Stack("stack"))
+				logutil.BgLogger().Error("panic in the error group", zap.Any("recover", r), zap.Stack("stack"))
 				err = GetRecoverError(r)
 			}
 		}()

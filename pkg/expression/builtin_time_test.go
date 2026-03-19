@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
@@ -1525,7 +1527,7 @@ func TestSysDate(t *testing.T) {
 		require.NoError(t, err)
 		last = time.Now()
 		times := output.Times()
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.GreaterOrEqual(t, times[i].String(), last.Format(types.TimeFormat))
 		}
 
@@ -1540,7 +1542,7 @@ func TestSysDate(t *testing.T) {
 		startTm := time.Now().In(loc)
 		err = vecEvalType(ctx, baseFunc, types.ETDatetime, input, output)
 		require.NoError(t, err)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.GreaterOrEqual(t, times[i].String(), startTm.Format(types.TimeFormat))
 		}
 	}
@@ -3644,6 +3646,27 @@ func TestGetIntervalFromDecimal(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, interval)
 	}
+}
+
+func TestStrDatetimeAddDurationFreezesWarningArg(t *testing.T) {
+	var warnings []error
+	typeCtx := types.NewContext(types.StrictFlags, time.UTC, contextutil.NewFuncWarnAppenderForTest(func(level string, err error) {
+		require.Equal(t, contextutil.WarnLevelWarning, level)
+		warnings = append(warnings, err)
+	}))
+
+	buf := []byte("abc")
+	input := string(hack.String(buf))
+	_, isNull, err := strDatetimeAddDuration(typeCtx, input, types.Duration{})
+	require.NoError(t, err)
+	require.True(t, isNull)
+	require.Len(t, warnings, 1)
+
+	before := warnings[0].Error()
+	copy(buf, "xyz")
+	after := warnings[0].Error()
+	require.Equal(t, before, after)
+	require.Contains(t, before, "abc")
 }
 
 func TestCurrentTso(t *testing.T) {

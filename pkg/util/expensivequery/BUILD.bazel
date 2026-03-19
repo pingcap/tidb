@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle/util",
         "//pkg/util",

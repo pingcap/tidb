@@ -57,7 +57,7 @@ func TestLogKVConvertFailed(t *testing.T) {
 		Logger: log.L(),
 	})
 	var newString strings.Builder
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		newString.WriteString("test_test_test_test_")
 	}
 	newDatum := types.NewStringDatum(newString.String())
@@ -73,4 +73,9 @@ func TestLogKVConvertFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, 500, len(string(content)))
 	require.NotContains(t, content, "exceeds maximum file size")
+}
+
+func TestDatumToValueStringForCastError(t *testing.T) {
+	require.Equal(t, "\"hello\"", datumToValueStringForCastError(types.NewStringDatum("hello")))
+	require.Equal(t, "0x000102", datumToValueStringForCastError(types.NewBytesDatum([]byte{0x00, 0x01, 0x02})))
 }

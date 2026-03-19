@@ -121,13 +121,13 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver i
 	return ver, errors.Trace(err)
 }
 
-func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
+func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (dbInfo *model.DBInfo, tblInfo *model.TableInfo, _, _ *model.ConstraintInfo, err error) {
 	schemaID := job.SchemaID
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err = t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}

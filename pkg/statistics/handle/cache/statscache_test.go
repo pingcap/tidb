@@ -18,6 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
+	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,4 +71,128 @@ func TestCacheOfBatchUpdate(t *testing.T) {
 	require.Len(t, cached.toDelete, 0)
 	require.Len(t, markedAsDeleted, 4)
 	require.Equal(t, int64(9), markedAsDeleted[3])
+}
+
+func TestUpdateStatsHealthyMetrics(t *testing.T) {
+	resetHealthyGauges()
+	defer resetHealthyGauges()
+
+	fakeAnalyzeVersion := uint64(3959837493728947298)
+	tableHasnotAnalyzed := newMockTable(t, 0, false, 2000, 1000, 0)              // never analyzed -> bucket [0,50)
+	tableLowHealthy := newMockTable(t, 1, false, 2000, 1100, fakeAnalyzeVersion) // healthy = 44 -> bucket [0,50)
+	tableMidHealthy := newMockTable(t, 2, false, 2000, 920, fakeAnalyzeVersion)  // healthy = 54 -> bucket [50,55)
+	tableHighHealthy := newMockTable(t, 3, false, 2000, 200, fakeAnalyzeVersion) // healthy = 90 -> bucket [80,100)
+	tablePerfect := newMockTable(t, 4, false, 2000, 0, fakeAnalyzeVersion)       // healthy = 100 -> bucket [100,100]
+	tablePseudo := newMockTable(t, 5, true, 10000, 0, 0)                         // pseudo -> pseudo
+	// NOTE: Tables with fewer than 1,000 rows that have been analyzed should still fall into the correct bucket.
+	tableSmallTable := newMockTable(t, 6, false, 800, 500, fakeAnalyzeVersion) // healthy = 37.5 -> bucket [0,50)
+	tableHasnotAnalyzedAndSmall := newMockTable(t, 7, false, 800, 500, 0)      // never analyzed and small table -> unneeded analyze
+
+	cacheImpl := &StatsCacheImpl{}
+	cacheImpl.Store(&StatsCache{
+		c: newMockStatsCacheInner(tableHasnotAnalyzed, tableLowHealthy, tableMidHealthy, tableHighHealthy, tablePerfect, tablePseudo, tableSmallTable, tableHasnotAnalyzedAndSmall),
+	})
+
+	cacheImpl.UpdateStatsHealthyMetrics()
+
+	require.Len(t, handle_metrics.StatsHealthyGauges, handle_metrics.StatsHealthyBucketCount)
+	expected := []struct {
+		label string
+		value float64
+	}{
+		{label: "[0,50)", value: 3},
+		{label: "[50,55)", value: 1},
+		{label: "[55,60)", value: 0},
+		{label: "[60,70)", value: 0},
+		{label: "[70,80)", value: 0},
+		{label: "[80,100)", value: 1},
+		{label: "[100,100]", value: 1},
+		{label: "[0,100]", value: 8},
+		{label: "unneeded analyze", value: 1},
+		{label: "pseudo", value: 1},
+	}
+	for idx, gauge := range handle_metrics.StatsHealthyGauges {
+		cfg := handle_metrics.HealthyBucketConfigs[idx]
+		require.Equal(t, expected[idx].label, cfg.Label)
+		require.Equal(t, expected[idx].value, promtestutils.ToFloat64(gauge))
+	}
+}
+
+func newMockTable(t *testing.T, physicalID int64, pseudo bool, realtimeCount, modifyCount int64, analyzeVersion uint64) *statistics.Table {
+	hist := statistics.NewHistColl(physicalID, realtimeCount, modifyCount, 0, 0)
+	table := &statistics.Table{
+		HistColl:              *hist,
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+		LastAnalyzeVersion:    analyzeVersion,
+	}
+	table.Pseudo = pseudo
+	return table
+}
+
+func resetHealthyGauges() {
+	for _, gauge := range handle_metrics.StatsHealthyGauges {
+		gauge.Set(0)
+	}
+}
+
+type mockStatsCacheInner struct {
+	items map[int64]*statistics.Table
+}
+
+func newMockStatsCacheInner(tables ...*statistics.Table) internal.StatsCacheInner {
+	m := &mockStatsCacheInner{
+		items: make(map[int64]*statistics.Table, len(tables)),
+	}
+	for _, tbl := range tables {
+		if tbl == nil {
+			continue
+		}
+		id := tbl.PhysicalID
+		m.items[id] = tbl
+	}
+	return m
+}
+
+func (m *mockStatsCacheInner) Values() []*statistics.Table {
+	values := make([]*statistics.Table, 0, len(m.items))
+	for _, tbl := range m.items {
+		values = append(values, tbl)
+	}
+	return values
+}
+
+func (m *mockStatsCacheInner) Get(id int64) (*statistics.Table, bool) {
+	panic("not implemented")
+}
+
+func (m *mockStatsCacheInner) Put(id int64, tbl *statistics.Table) bool {
+	panic("not implemented")
+}
+
+func (m *mockStatsCacheInner) Del(id int64) {
+	panic("not implemented")
+}
+
+func (m *mockStatsCacheInner) Cost() int64 {
+	panic("not implemented")
+}
+
+func (m *mockStatsCacheInner) Len() int {
+	panic("not implemented")
+}
+
+func (m *mockStatsCacheInner) Copy() internal.StatsCacheInner {
+	panic("not implemented")
+}
+
+func (*mockStatsCacheInner) SetCapacity(int64) {
+	panic("not implemented")
+}
+
+func (*mockStatsCacheInner) Close() {
+	panic("not implemented")
+}
+
+func (*mockStatsCacheInner) TriggerEvict() {
+	panic("not implemented")
 }

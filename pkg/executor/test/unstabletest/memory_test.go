@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -54,7 +55,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tracker3.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()

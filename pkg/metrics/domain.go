@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -54,7 +55,7 @@ var (
 
 // InitDomainMetrics initializes domain metrics.
 func InitDomainMetrics() {
-	LeaseExpireTime = NewGauge(
+	LeaseExpireTime = metricscommon.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -62,7 +63,7 @@ func InitDomainMetrics() {
 			Help:      "When the last time the lease is expired, it is in seconds",
 		})
 
-	LoadSchemaCounter = NewCounterVec(
+	LoadSchemaCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -70,7 +71,7 @@ func InitDomainMetrics() {
 			Help:      "Counter of load schema",
 		}, []string{LblType})
 
-	LoadSchemaDuration = NewHistogramVec(
+	LoadSchemaDuration = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -79,7 +80,7 @@ func InitDomainMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblAction})
 
-	InfoCacheCounters = NewCounterVec(
+	InfoCacheCounters = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -87,7 +88,7 @@ func InitDomainMetrics() {
 			Help:      "Counters of infoCache: get/hit.",
 		}, []string{LblAction, LblType})
 
-	LoadPrivilegeCounter = NewCounterVec(
+	LoadPrivilegeCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -95,7 +96,7 @@ func InitDomainMetrics() {
 			Help:      "Counter of load privilege",
 		}, []string{LblType})
 
-	LoadSysVarCacheCounter = NewCounterVec(
+	LoadSysVarCacheCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -103,7 +104,7 @@ func InitDomainMetrics() {
 			Help:      "Counter of load sysvar cache",
 		}, []string{LblType})
 
-	HandleSchemaValidate = NewCounterVec(
+	HandleSchemaValidate = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",

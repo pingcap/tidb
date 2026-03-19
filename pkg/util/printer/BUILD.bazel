@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/parser/mysql",
         "//pkg/util/israce",
         "//pkg/util/logutil",
@@ -25,8 +26,13 @@ go_test(
     embed = [":printer"],
     flaky = True,
     deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/parser/mysql",
         "//pkg/testkit/testsetup",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

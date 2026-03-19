@@ -17,6 +17,8 @@ func TestInfo(t *testing.T) {
 	require.Regexp(t, "^Git Branch", lines[2])
 	require.Regexp(t, "^Go Version", lines[3])
 	require.Regexp(t, "^UTC Build Time", lines[4])
+	require.Regexp(t, "^Race Enabled", lines[5])
+	require.Regexp(t, "^Kernel Type", lines[6])
 }
 
 func TestLogInfo(*testing.T) {

@@ -40,9 +40,6 @@ const (
 	ListData TypeFlag = 'l'
 )
 
-// Make linter happy, since encodeHashMetaKey is unused in this repo.
-var _ = (&TxStructure{}).encodeHashMetaKey
-
 // EncodeStringDataKey will encode string key.
 func (t *TxStructure) EncodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
@@ -81,8 +78,8 @@ func (t *TxStructure) decodeStringDataKey(ek kv.Key) ([]byte, error) {
 	return key, errors.Trace(err)
 }
 
-// nolint:unused
-func (t *TxStructure) encodeHashMetaKey(key []byte) kv.Key {
+// EncodeHashMetaKey exports for tests. It's used in version v5.1 and earlier.
+func (t *TxStructure) EncodeHashMetaKey(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+codec.EncodedBytesLength(len(key))+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
@@ -102,13 +99,8 @@ func (t *TxStructure) EncodeHashDataKey(key []byte, field []byte) kv.Key {
 	return t.encodeHashDataKey(key, field)
 }
 
-func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
-	var (
-		key   []byte
-		field []byte
-		err   error
-		tp    uint64
-	)
+func (t *TxStructure) decodeHashDataKey(ek kv.Key) (key, field []byte, err error) {
+	var tp uint64
 
 	if !bytes.HasPrefix(ek, t.prefix) {
 		return nil, nil, errors.New("invalid encoded hash data key prefix")

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -59,18 +60,6 @@ var pdScheduleKey = []string{
 const (
 	flashbackMaxBackoff = 1800000         // 1800s
 	flashbackTimeout    = 3 * time.Minute // 3min
-)
-
-const (
-	pdScheduleArgsOffset = 1 + iota
-	gcEnabledOffset
-	autoAnalyzeOffset
-	readOnlyOffset
-	totalLockedRegionsOffset
-	startTSOffset
-	commitTSOffset
-	ttlJobEnableOffSet
-	keyRangesOffset
 )
 
 func closePDSchedule(ctx context.Context) error {
@@ -155,6 +144,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 }
 
 func getGlobalSysVarAsBool(sess sessionctx.Context, name string) (bool, error) {
+	//nolint:forbidigo
 	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -168,6 +158,7 @@ func setGlobalSysVarFromBool(ctx context.Context, sess sessionctx.Context, name 
 		sv = vardef.Off
 	}
 
+	//nolint:forbidigo
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, name, sv)
 }
 
@@ -247,7 +238,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 	}
 
 	// Check is there a DDL task at flashbackTS.
-	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
+	sql = fmt.Sprintf("select count(*) from mysql.tidb_ddl_job as of timestamp '%s'", flashbackTSString)
 	rows, err = sess.NewSession(se).Execute(ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
@@ -320,7 +311,7 @@ func getTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	// Add all other key ranges.
 	keyRanges = append(keyRanges, kv.KeyRange{
 		StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[len(nonFlashbackTableIDs)-1] + 1),
-		EndKey:   tablecodec.EncodeTablePrefix(meta.MaxGlobalID),
+		EndKey:   tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID),
 	})
 
 	return keyRanges
@@ -374,7 +365,7 @@ func mergeContinuousKeyRanges(schemaKeyRanges []keyRangeMayExclude) []kv.KeyRang
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
 func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	schemas := is.AllSchemas()
 
 	// get snapshot schema IDs.
@@ -444,7 +435,7 @@ func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashba
 			return nil, errors.Trace(err2)
 		}
 		for _, table := range tbls {
-			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
+			if !table.IsBaseTable() || table.ID > metadef.MaxUserGlobalID {
 				continue
 			}
 			nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, table.ID, nonFlashbackTableIDs)

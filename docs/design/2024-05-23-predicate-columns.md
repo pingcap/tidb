@@ -1,6 +1,6 @@
 # Analyze Predicate Columns
 
-- Author(s): [Rustin Liu](http://github.com/hi-rustin)
+- Author(s): [Poe Liu](http://github.com/0xPoe)
 - Discussion PR: <https://github.com/pingcap/tidb/pull/53511>
 - Tracking Issue: <https://github.com/pingcap/tidb/issues/53567>
 

@@ -34,7 +34,7 @@ func sizeOf(v reflect.Value, cache map[uintptr]bool) int {
 	switch v.Kind() {
 	case reflect.Array:
 		sum := 0
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			s := sizeOf(v.Index(i), cache)
 			if s < 0 {
 				return -1
@@ -49,7 +49,7 @@ func sizeOf(v reflect.Value, cache map[uintptr]bool) int {
 		}
 		cache[v.Pointer()] = true
 		sum := 0
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			s := sizeOf(v.Index(i), cache)
 			if s < 0 {
 				return -1

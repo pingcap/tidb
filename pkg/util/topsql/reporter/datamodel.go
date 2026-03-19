@@ -86,12 +86,14 @@ func zeroTsItem() tsItem {
 // toProto converts the tsItem to the corresponding protobuf representation.
 func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
 	return &tipb.TopSQLRecordItem{
-		TimestampSec:      i.timestamp,
-		CpuTimeMs:         i.cpuTimeMs,
-		StmtExecCount:     i.stmtStats.ExecCount,
-		StmtKvExecCount:   i.stmtStats.KvStatsItem.KvExecCount,
-		StmtDurationSumNs: i.stmtStats.SumDurationNs,
-		StmtDurationCount: i.stmtStats.DurationCount,
+		TimestampSec:        i.timestamp,
+		CpuTimeMs:           i.cpuTimeMs,
+		StmtExecCount:       i.stmtStats.ExecCount,
+		StmtKvExecCount:     i.stmtStats.KvStatsItem.KvExecCount,
+		StmtDurationSumNs:   i.stmtStats.SumDurationNs,
+		StmtDurationCount:   i.stmtStats.DurationCount,
+		StmtNetworkInBytes:  i.stmtStats.NetworkInBytes,
+		StmtNetworkOutBytes: i.stmtStats.NetworkOutBytes,
 		// Convert more indicators here.
 	}
 }
@@ -150,10 +152,7 @@ type record struct {
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
-	listCap := topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load() + 1
-	if listCap > maxTsItemsCapacity {
-		listCap = maxTsItemsCapacity
-	}
+	listCap := min(topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load()+1, maxTsItemsCapacity)
 	return &record{
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
@@ -200,20 +199,25 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [0]
-		//   stmtStats.ExecCount: [?]
-		// stmtStats.KvExecCount: [map{"?": ?}]
-		// stmtStats.DurationSum: [?]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [0]
+		//   stmtStats.ExecCount:     [?]
+		// stmtStats.KvExecCount:     [map{"?": ?}]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.NetworkInBytes:  [?]
+		// stmtStats.NetworkOutBytes: [?]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [123]
-		//   stmtStats.ExecCount: [?]
-		// stmtStats.KvExecCount: [map{"?": ?}]
-		// stmtStats.DurationSum: [?]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [123]
+		//   stmtStats.ExecCount:     [?]
+		// stmtStats.KvExecCount:     [map{"?": ?}]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.NetworkInBytes:  [?]
+		// stmtStats.NetworkOutBytes: [?]
 		//
 		r.tsItems[index].cpuTimeMs += cpuTimeMs
 	} else {
@@ -225,20 +229,24 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: []
 		//     tsItems:
-		//             timestamp: []
-		//             cpuTimeMs: []
-		//   stmtStats.ExecCount: []
-		// stmtStats.KvExecCount: []
-		// stmtStats.DurationSum: []
+		//             timestamp:     []
+		//             cpuTimeMs:     []
+		//   stmtStats.ExecCount:     []
+		// stmtStats.KvExecCount:     []
+		// stmtStats.DurationSum:     []
+		// stmtStats.NetworkInBytes:  []
+		// stmtStats.NetworkOutBytes: []
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [123]
-		//   stmtStats.ExecCount: [0]
-		// stmtStats.KvExecCount: [map{}]
-		// stmtStats.DurationSum: [0]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [123]
+		//   stmtStats.ExecCount:     [0]
+		// stmtStats.KvExecCount:     [map{}]
+		// stmtStats.DurationSum:     [0]
+		// stmtStats.NetworkInBytes:  [0]
+		// stmtStats.NetworkOutBytes: [0]
 		//
 		newItem := zeroTsItem()
 		newItem.timestamp = timestamp
@@ -258,25 +266,29 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 		// corresponding stmtStats has been set to 0 (or other values,
 		// although impossible), so we merge it.
 		//
-		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
-		//
+		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456,
+		//    networkInBytes = 10, networkOutBytes = 20
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [?]
-		//   stmtStats.ExecCount: [0]
-		// stmtStats.KvExecCount: [map{}]
-		// stmtStats.DurationSum: [0]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [?]
+		//   stmtStats.ExecCount:     [0]
+		// stmtStats.KvExecCount:     [map{}]
+		// stmtStats.DurationSum:     [0]
+		// stmtStats.NetworkInBytes:  [0]
+		// stmtStats.NetworkOutBytes: [0]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [?]
-		//   stmtStats.ExecCount: [123]
-		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
-		// stmtStats.DurationSum: [456]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [?]
+		//   stmtStats.ExecCount:     [123]
+		// stmtStats.KvExecCount:     [map{"1.1.1.1:1": 123}]
+		// stmtStats.DurationSum:     [456]
+		// stmtStats.NetworkInBytes:  [10]
+		// stmtStats.NetworkOutBytes: [20]
 		//
 		r.tsItems[index].stmtStats.Merge(&item)
 	} else {
@@ -284,24 +296,29 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 		// Other fields in tsItem except stmtStats will be initialized to 0.
 		//
 		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
+		//    networkInBytes = 10, networkOutBytes = 20
 		//
 		// Before:
 		//     tsIndex: []
 		//     tsItems:
-		//             timestamp: []
-		//             cpuTimeMs: []
-		//   stmtStats.ExecCount: []
-		// stmtStats.KvExecCount: []
-		// stmtStats.DurationSum: []
+		//             timestamp:     []
+		//             cpuTimeMs:     []
+		//   stmtStats.ExecCount:     []
+		// stmtStats.KvExecCount:     []
+		// stmtStats.DurationSum:     []
+		// stmtStats.NetworkInBytes:  []
+		// stmtStats.NetworkOutBytes: []
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [0]
-		//   stmtStats.ExecCount: [123]
-		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
-		// stmtStats.DurationSum: [456]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [0]
+		//   stmtStats.ExecCount:     [123]
+		// stmtStats.KvExecCount:     [map{"1.1.1.1:1": 123}]
+		// stmtStats.DurationSum:     [456]
+		// stmtStats.NetworkInBytes:  [10]
+		// stmtStats.NetworkOutBytes: [20]
 		//
 		newItem := zeroTsItem()
 		newItem.timestamp = timestamp
@@ -380,11 +397,12 @@ func (r *record) rebuildTsIndex() {
 }
 
 // toProto converts the record to the corresponding protobuf representation.
-func (r *record) toProto() tipb.TopSQLRecord {
+func (r *record) toProto(keyspaceName []byte) tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
-		SqlDigest:  r.sqlDigest,
-		PlanDigest: r.planDigest,
-		Items:      r.tsItems.toProto(),
+		KeyspaceName: keyspaceName,
+		SqlDigest:    r.sqlDigest,
+		PlanDigest:   r.planDigest,
+		Items:        r.tsItems.toProto(),
 	}
 }
 
@@ -419,10 +437,10 @@ func (rs records) topN(n int) (top, evicted records) {
 }
 
 // toProto converts the records to the corresponding protobuf representation.
-func (rs records) toProto() []tipb.TopSQLRecord {
+func (rs records) toProto(keyspaceName []byte) []tipb.TopSQLRecord {
 	pb := make([]tipb.TopSQLRecord, 0, len(rs))
 	for _, r := range rs {
-		pb = append(pb, r.toProto())
+		pb = append(pb, r.toProto(keyspaceName))
 	}
 	return pb
 }
@@ -543,7 +561,7 @@ func (c *collecting) getReportRecords() records {
 	for _, v := range c.records {
 		rs = append(rs, *v)
 	}
-	if others != nil && others.totalCPUTimeMs > 0 {
+	if others != nil {
 		rs = append(rs, *others)
 	}
 	return rs
@@ -644,11 +662,12 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 }
 
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
-func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
+func (m *normalizedSQLMap) toProto(keyspaceName []byte) []tipb.SQLMeta {
 	metas := make([]tipb.SQLMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
+			KeyspaceName:  keyspaceName,
 			SqlDigest:     []byte(k.(string)),
 			NormalizedSql: meta.normalizedSQL,
 			IsInternalSql: meta.isInternal,
@@ -708,12 +727,13 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(keyspaceName []byte, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
-			PlanDigest: hack.Slice(k.(string)),
+			KeyspaceName: keyspaceName,
+			PlanDigest:   hack.Slice(k.(string)),
 		}
 
 		var err error

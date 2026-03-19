@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -412,12 +414,12 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 }
 
 func createMockStore(t *testing.T) (store kv.Storage) {
-	session.SetSchemaLease(200 * time.Millisecond)
+	vardef.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
 	var err error
-	store, err = mockstore.NewMockStore()
+	store, err = teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
@@ -442,7 +444,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
@@ -767,16 +769,13 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 func TestCancelJobByErrorCountLimit(t *testing.T) {
 	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
 	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
-	err := util.LoadDDLVars(tk.Session())
+	err := util.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit)
 	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
@@ -787,21 +786,19 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
 	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
-	err := util.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
-	err = tk.ExecToErr("truncate table t")
+	err := tk.ExecToErr("truncate table t")
 	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError")
 	tk.MustExec("truncate table t")
 }
 
@@ -1242,6 +1239,9 @@ func TestGetReverseKey(t *testing.T) {
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
 
 	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",
@@ -1274,4 +1274,39 @@ func TestGetReverseKey(t *testing.T) {
 	startKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(3<<61))
 	endKey = maxKey.Next()
 	checkRet(startKey, endKey, endKey)
+}
+
+func TestForbiddenDDLInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("those forbidden DDLs are only for next-gen")
+	}
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec(`CREATE TABLE IF NOT EXISTS pt (
+		table_id BIGINT(64) NOT NULL,
+		sample_num BIGINT(64) NOT NULL DEFAULT 0,
+		sample_rate DOUBLE NOT NULL DEFAULT -1,
+		buckets BIGINT(64) NOT NULL DEFAULT 0,
+		topn BIGINT(64) NOT NULL DEFAULT -1,
+		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
+		column_ids TEXT(19372),
+		PRIMARY KEY (table_id) CLUSTERED
+	) partition by range(table_id)(partition p0 values less than MAXVALUE);`)
+
+	for _, sql := range []string{
+		`drop database sys`,
+		`drop database mysql`,
+		`drop table mysql.tidb_global_task`,
+		`truncate table mysql.tidb_global_task`,
+		`rename table mysql.tidb_global_task to test.t1`,
+		`rename table test.t to test.t1, mysql.tidb_global_task to test.t2`,
+		`alter table mysql.analyze_options partition by hash(table_id) partitions 8`,
+		`alter table pt exchange partition p0 with table mysql.analyze_options`,
+	} {
+		t.Run(sql, func(t *testing.T) {
+			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
+		})
+	}
 }

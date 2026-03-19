@@ -393,7 +393,7 @@ func (g *ScanQueryGenerator) setStack(key []types.Datum) error {
 	}
 
 	g.stack = g.stack[:len(key)]
-	for i := 0; i < len(key); i++ {
+	for i := range key {
 		g.stack[i] = key[0 : i+1]
 	}
 	return nil

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // CloseFn is the function to release the resource.
@@ -35,7 +36,8 @@ type Store interface {
 		se *sess.Session,
 		ddlJobID int64,
 		multiSchemaChangeID int64,
-		processedBy uint64,
+		oldProcessedBy uint64,
+		newProcessedBy uint64,
 	) error
 	DeleteAndCommit(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
 	// List will start a transaction of given session and read all schema changes
@@ -87,17 +89,28 @@ func (t *tableStore) UpdateProcessed(
 	se *sess.Session,
 	ddlJobID int64,
 	multiSchemaChangeID int64,
-	processedBy uint64,
+	oldProcessedBy uint64,
+	newProcessedBy uint64,
 ) error {
 	sql := fmt.Sprintf(`
 		UPDATE %s.%s
 		SET processed_by_flag = %d
-		WHERE ddl_job_id = %d AND sub_job_id = %d`,
+		WHERE ddl_job_id = %d AND sub_job_id = %d AND processed_by_flag = %d`,
 		t.db, t.table,
-		processedBy,
-		ddlJobID, multiSchemaChangeID)
+		newProcessedBy,
+		ddlJobID, multiSchemaChangeID, oldProcessedBy,
+	)
 	_, err := se.Execute(ctx, sql, "ddl_notifier")
-	return err
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		return errors.Errorf(
+			"failed to update processed_by_flag, maybe the row has been updated by other owner. ddl_job_id: %d, sub_job_id: %d",
+			ddlJobID, multiSchemaChangeID,
+		)
+	}
+	return nil
 }
 
 // DeleteAndCommit implements Store interface.
@@ -158,6 +171,8 @@ type listResult struct {
 
 // Read implements ListResult interface.
 func (r *listResult) Read(changes []*SchemaChange) (int, error) {
+	region := tracing.StartRegion(r.ctx, "listResult.Read")
+	defer region.End()
 	if r.maxReturnedDDLJobID == 0 && r.maxReturnedSubJobID == 0 {
 		err := r.se.Begin(r.ctx)
 		if err != nil {

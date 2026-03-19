@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/server",
@@ -14,8 +15,10 @@ go_library(
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/testenv",
         "//pkg/util/cpuprofile",
         "//pkg/util/topsql/collector/mock",
         "//pkg/util/topsql/state",

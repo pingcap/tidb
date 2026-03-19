@@ -26,7 +26,6 @@ import (
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -45,12 +44,15 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -196,7 +198,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	})
 	exec := common.SQLWithRetry{
 		DB:     g.db,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	var dump int
 	err := exec.QueryRow(ctx, "check table empty",
@@ -265,7 +267,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp
 type PreImportInfoGetterImpl struct {
 	cfg              *config.Config
 	getPreInfoCfg    *ropts.GetPreInfoConfig
-	srcStorage       storage.ExternalStorage
+	srcStorage       storeapi.Storage
 	ioWorkers        *worker.Pool
 	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
@@ -283,7 +285,7 @@ type PreImportInfoGetterImpl struct {
 func NewPreImportInfoGetter(
 	cfg *config.Config,
 	dbMetas []*mydump.MDDatabaseMeta,
-	srcStorage storage.ExternalStorage,
+	srcStorage storeapi.Storage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder encode.EncodingBuilder,
@@ -465,7 +467,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
 		ZStdDecodeConcurrency: 1,
 	})
 	if err != nil {
@@ -489,7 +491,10 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, dataFileMeta.Path)
+		parser, err = mydump.NewParquetParser(
+			ctx, p.srcStorage, reader,
+			dataFileMeta.Path, mydump.ParquetFileMeta{},
+		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -500,7 +505,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	defer parser.Close()
 
 	rows := [][]types.Datum{}
-	for i := 0; i < n; i++ {
+	for range n {
 		err := parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) != io.EOF {
@@ -508,7 +513,10 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 			}
 			break
 		}
-		lastRowDatums := append([]types.Datum{}, parser.LastRow().Row...)
+		lastRowDatums := make([]types.Datum, 0, len(parser.LastRow().Row))
+		for _, d := range parser.LastRow().Row {
+			lastRowDatums = append(lastRowDatums, *d.Clone())
+		}
 		rows = append(rows, lastRowDatums)
 	}
 	return parser.Columns(), rows, nil
@@ -536,7 +544,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 		sourceTotalSize       = int64(0)
 		tableCount            = 0
 		unSortedBigTableCount = 0
-		errMgr                = errormanager.New(nil, p.cfg, log.FromContext(ctx))
+		errMgr                = errormanager.New(nil, p.cfg, log.Wrap(logutil.Logger(ctx)))
 	)
 
 	dbInfos, err := p.GetAllTableStructures(ctx)
@@ -616,7 +624,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
 		ZStdDecodeConcurrency: 1,
 	})
 	if err != nil {
@@ -627,7 +635,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	logger := log.FromContext(ctx).With(zap.String("table", tableMeta.Name))
+	logger := log.Wrap(logutil.Logger(ctx).With(zap.String("table", tableMeta.Name)))
 	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        p.cfg.TiDB.SQLMode,
@@ -659,7 +667,10 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, sampleFile.Path)
+		parser, err = mydump.NewParquetParser(
+			ctx, p.srcStorage, reader,
+			sampleFile.Path, mydump.ParquetFileMeta{},
+		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
@@ -701,7 +712,7 @@ outloop:
 						columnNames,
 						ignoreColsMap,
 						tableInfo,
-						log.FromContext(ctx))
+						log.Wrap(logutil.Logger(ctx)))
 					if err != nil {
 						return 0.0, false, errors.Trace(err)
 					}
@@ -735,7 +746,7 @@ outloop:
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, offset)
 		if encodeErr != nil {
-			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
+			encodeErr = errMgr.RecordTypeError(ctx, log.Wrap(logutil.Logger(ctx)), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
 			if encodeErr != nil {
 				return 0.0, false, errors.Annotatef(encodeErr, "in file at offset %d", offset)
@@ -773,7 +784,7 @@ outloop:
 	if rowSize > 0 && kvSize > rowSize {
 		resultIndexRatio = float64(kvSize) / float64(rowSize)
 	}
-	log.FromContext(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
+	logutil.Logger(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", resultIndexRatio), zap.Bool("IsSourceOrder", isRowOrdered))
 	return resultIndexRatio, isRowOrdered, nil
 }
 

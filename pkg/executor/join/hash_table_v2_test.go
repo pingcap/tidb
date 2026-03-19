@@ -30,15 +30,15 @@ import (
 
 func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *rowTable {
 	ret := &rowTable{}
-	for i := 0; i < segmentCount; i++ {
+	for range segmentCount {
 		// no empty segment is allowed
 		rows := maxRowsPerSeg
 		if !fixedSize {
 			rows = int(rand.Int31n(int32(maxRowsPerSeg)) + 1)
 		}
-		rowSeg := newRowTableSegment(uint(rows))
+		rowSeg := newRowTableSegment()
 		rowSeg.rawData = make([]byte, rows)
-		for j := 0; j < rows; j++ {
+		for j := range rows {
 			rowSeg.rowStartOffset = append(rowSeg.rowStartOffset, uint64(j))
 			rowSeg.validJoinKeyPos = append(rowSeg.validJoinKeyPos, j)
 		}
@@ -78,12 +78,11 @@ func createRowTable(rows int) (*rowTable, uint8, error) {
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	if err != nil {
 		return nil, 0, err
 	}
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	taggedBits := uint8(maxTaggedBits)
 	for _, seg := range hashJoinCtx.hashTableContext.rowTables[0][0].segments {
 		taggedBits = min(taggedBits, seg.taggedBits)
@@ -152,7 +151,7 @@ func TestConcurrentBuild(t *testing.T) {
 	tagHelper := &tagPtrHelper{}
 	tagHelper.init(tagBits)
 	wg := util.WaitGroupWrapper{}
-	for i := 0; i < buildThreads; i++ {
+	for i := range buildThreads {
 		segmentStart := segmentCount / buildThreads * i
 		segmentEnd := segmentCount / buildThreads * (i + 1)
 		if i == buildThreads-1 {
@@ -259,7 +258,7 @@ func TestRowIter(t *testing.T) {
 	for _, partitionNumber := range partitionNumbers {
 		// create row tables
 		rowTables := make([]*rowTable, 0, partitionNumber)
-		for i := 0; i < partitionNumber; i++ {
+		for range partitionNumber {
 			rt := createMockRowTable(1024, 16, false)
 			rowTables = append(rowTables, rt)
 		}
@@ -268,10 +267,10 @@ func TestRowIter(t *testing.T) {
 	}
 	// case with empty row table
 	for _, partitionNumber := range partitionNumbers {
-		for i := 0; i < partitionNumber; i++ {
+		for i := range partitionNumber {
 			// the i-th row table is an empty row table
 			rowTables := make([]*rowTable, 0, partitionNumber)
-			for j := 0; j < partitionNumber; j++ {
+			for j := range partitionNumber {
 				if i == j {
 					rt := createMockRowTable(0, 0, true)
 					rowTables = append(rowTables, rt)

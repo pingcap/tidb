@@ -290,3 +290,12 @@ DROP USER u29268;
 DROP DATABASE IF EXISTS d29268;
 use executor__grant;
 
+drop table if exists t;
+drop user if exists test_user;
+create user test_user;
+create temporary table t(id int);
+-- error 1146
+grant select on t to test_user;
+drop user test_user;
+drop temporary table t;
+

@@ -28,39 +28,36 @@ import (
 )
 
 func TestRowSizeInMPP(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(10), b varchar(20), c varchar(256))")
-	tk.MustExec("insert into t values (space(10), space(20), space(256))")
-	tk.MustExec("analyze table t")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(ast.NewCIStr("test"))
-	require.True(t, exists)
-	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
-	require.NoError(t, err)
-	for _, tblInfo := range tblInfos {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t(a varchar(10), b varchar(20), c varchar(256))")
+		testKit.MustExec("insert into t values (space(10), space(20), space(256))")
+		testKit.MustExec("analyze table t")
+		// Create virtual tiflash replica info.
+		is := dom.InfoSchema()
+		db, exists := is.SchemaByName(ast.NewCIStr("test"))
+		require.True(t, exists)
+		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+		require.NoError(t, err)
+		for _, tblInfo := range tblInfos {
+			if tblInfo.Name.L == "t" {
+				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+					Count:     1,
+					Available: true,
+				}
 			}
 		}
-	}
 
-	tk.MustExec(`set @@tidb_opt_tiflash_concurrency_factor=1`)
-	tk.MustExec(`set @@tidb_allow_mpp=1`)
-	var costs [3]float64
-	for i, col := range []string{"a", "b", "c"} {
-		rs := tk.MustQuery(fmt.Sprintf(`explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ %v from t`, col)).Rows()
-		cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
-		require.NoError(t, err)
-		costs[i] = cost
-	}
-	require.True(t, costs[0] < costs[1] && costs[1] < costs[2]) // rowSize can affect the final cost
+		testKit.MustExec(`set @@tidb_opt_tiflash_concurrency_factor=1`)
+		testKit.MustExec(`set @@tidb_allow_mpp=1`)
+		var costs [3]float64
+		for i, col := range []string{"a", "b", "c"} {
+			rs := testKit.MustQuery(fmt.Sprintf(`explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ %v from t`, col)).Rows()
+			cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
+			require.NoError(t, err)
+			costs[i] = cost
+		}
+		require.True(t, costs[0] < costs[1] && costs[1] < costs[2]) // rowSize can affect the final cost
+	})
 }

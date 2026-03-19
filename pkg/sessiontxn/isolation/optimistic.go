@@ -17,6 +17,7 @@ package isolation
 import (
 	"math"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -46,9 +47,15 @@ func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, c
 	p.getStmtForUpdateTSFunc = p.getTxnStartTS
 }
 
-func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
+func (p *OptimisticTxnContextProvider) onTxnActive(
+	txn kv.Transaction,
+	tp sessiontxn.EnterNewTxnType,
+) {
 	sessVars := p.sctx.GetSessionVars()
-	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
+	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
+		sessVars.TxnCtx.CouldRetry = val.(bool)
+	})
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
@@ -56,8 +63,16 @@ func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiont
 // If the session is already in transaction, enable retry or internal SQL could retry.
 // If not, the transaction could always retry, because it should be auto committed transaction.
 // Anyway the retry limit is 0, the transaction could not retry.
-func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.EnterNewTxnType) bool {
+func isOptimisticTxnRetryable(
+	sessVars *variable.SessionVars,
+	tp sessiontxn.EnterNewTxnType,
+	isPipelined bool,
+) bool {
 	if tp == sessiontxn.EnterNewTxnDefault {
+		return false
+	}
+
+	if isPipelined {
 		return false
 	}
 

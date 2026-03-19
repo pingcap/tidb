@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
@@ -42,7 +42,6 @@ type mockManager struct {
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
 	listener     Listener
-	retireHook   func()
 	campaignDone chan struct{}
 	resignDone   chan struct{}
 }
@@ -80,11 +79,11 @@ func (m *mockManager) ID() string {
 func (m *mockManager) IsOwner() bool {
 	logutil.BgLogger().Debug("owner manager checks owner",
 		zap.String("ownerKey", m.key), zap.String("ID", m.id))
-	return util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
+	return MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
 }
 
 func (m *mockManager) toBeOwner() {
-	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
+	ok := MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
 	if ok {
 		logutil.BgLogger().Info("owner manager gets owner",
 			zap.String("ownerKey", m.key), zap.String("ID", m.id))
@@ -96,7 +95,7 @@ func (m *mockManager) toBeOwner() {
 
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
-	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
+	ok := MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
 	if ok {
 		logutil.BgLogger().Info("owner manager retire owner",
 			zap.String("ownerKey", m.key), zap.String("ID", m.id))
@@ -158,7 +157,7 @@ func (m *mockManager) CampaignOwner(_ ...int) error {
 				//nolint: errcheck
 				timeutil.Sleep(m.ctx, 1*time.Second) // Speed up domain.Close()
 				logutil.BgLogger().Debug("owner manager tick", zap.String("ID", m.id),
-					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
+					zap.String("ownerKey", m.key), zap.String("currentOwner", MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}
 		}
 	}()
@@ -195,7 +194,7 @@ func (m *mockManager) BreakCampaignLoop() {
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 	checkIsOwner := func(m *ownerManager, checkTrue bool) error {
 		// 5s
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			if m.IsOwner() == checkTrue {
 				break
 			}
@@ -220,7 +219,7 @@ func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 		needCheckOwner = true
 	}
 
-	err := util.DeleteKeyFromEtcd(ownerKey, m.etcdCli, 1, keyOpDefaultTimeout)
+	err := etcd.DeleteKeyFromEtcd(ownerKey, m.etcdCli, 1, keyOpDefaultTimeout)
 	if err != nil {
 		return errors.Trace(err)
 	}

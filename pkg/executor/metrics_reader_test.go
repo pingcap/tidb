@@ -20,10 +20,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +33,7 @@ func TestStmtLabel(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		sql := fmt.Sprintf("insert into label values (%d, %d, %d)", i, i, i)
 		tk.MustExec(sql)
 	}
@@ -71,6 +71,6 @@ func TestStmtLabel(t *testing.T) {
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		require.Equal(t, tt.label, ast.GetStmtLabel(stmtNode))
+		require.Equal(t, tt.label, stmtctx.GetStmtLabel(context.Background(), stmtNode))
 	}
 }
