@@ -262,6 +262,16 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 				parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 			}
 		}
+	case *logicalop.LogicalJoin:
+		// The parent join can reference child columns that were pruned from parent.Schema(),
+		// e.g. join predicates over FullSchema columns after join reorder. Keep those
+		// predicate columns visible to child outer-join elimination checks.
+		parentCols = append(parentCols[:0], p.Schema().Columns...)
+		parentCols = append(parentCols, expression.ExtractColumnsFromExpressions(x.LeftConditions, nil)...)
+		parentCols = append(parentCols, expression.ExtractColumnsFromExpressions(x.RightConditions, nil)...)
+		parentCols = append(parentCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+		parentCols = append(parentCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+		parentCols = append(parentCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.NAEQConditions), nil)...)
 	default:
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}

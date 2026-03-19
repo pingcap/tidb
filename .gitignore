@@ -49,6 +49,7 @@ MODULE.bazel.lock
 # Testing / coverage / reports
 # Files generated when testing
 out
+/reports/
 test_coverage
 coverage.out
 coverage.txt
