@@ -262,6 +262,7 @@ This means auto-analyze gradually populates samples partition by partition, whil
 ### Functional Tests
 
 - Global histograms and TopN built from samples have valid NDV, bucket counts, and row counts for both columns and indexes.
+- Compare stats accuracy for a single column across global index, local index, and column stats — column and local index for the same column should produce identical stats; global index for a single column should have similar accuracy.
 - Composite (multi-column) index stats are correctly encoded via the sample path.
 - Save/load round-trip for serialized collectors produces identical results.
 - Progressive pruning allocates budgets proportionally across partitions of varying sizes.
@@ -272,17 +273,20 @@ This means auto-analyze gradually populates samples partition by partition, whil
 
 1. **Large partition count (8,000 partitions)**: Memory stays bounded during sample merge — only one accumulated collector in memory at a time.
 2. **Skewed partition sizes**: Partitions with vastly different row counts (e.g., 1K vs 1M rows) produce proportionally representative global samples.
-3. **Schema change between analyzes**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path.
-4. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
-5. **Empty partitions**: Partitions with zero rows are handled gracefully during merge.
-6. **Gradual transition after upgrade**: Auto-analyze of individual partitions saves samples but falls back to merge-based global stats when other partitions have TopN/histograms but no saved sample data in `mysql.stats_table_data`. A warning is logged. After all partitions have saved sample data, the sample-based path activates.
-7. **All partitions new (no prior stats)**: A freshly created table where no partition has TopN/histograms — sample-based path is used directly since there is nothing to fall back to.
+3. **Schema change between analyzes — add/drop columns**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path (FMSketch length mismatch detected).
+4. **Schema change between analyzes — type changes**: Changing column types while keeping the same column count does not trigger the FMSketch length check. Verify that the sample-based path handles this gracefully (or document the limitation).
+4b. **Schema change between analyzes — add+remove columns**: Dropping one column and adding another (same total count, different columns) also bypasses the FMSketch length check but produces positional mismatches in saved samples. Verify behavior.
+5. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
+6. **Empty partitions**: Partitions with zero rows are handled gracefully — they get a saved sample entry with zero samples and do not force fallback to merge-based global stats.
+7. **Gradual transition after upgrade**: Auto-analyze of individual partitions saves samples but falls back to merge-based global stats when other partitions have TopN/histograms but no saved sample data in `mysql.stats_table_data`. A warning is logged. After all partitions have saved sample data, the sample-based path activates.
+8. **All partitions new (no prior stats)**: A freshly created table where no partition has TopN/histograms — sample-based path is used directly since there is nothing to fall back to.
 
 ### Compatibility Tests
 
 - **Upgrade**: Cluster analyzed with merge-based path upgrades, auto-analyzes one partition — samples are saved, merge-based path used for global stats, warning logged. After full `ANALYZE TABLE`, sample-based path takes over.
-- **Downgrade**: Cluster with saved samples downgrades — merge-based path works, samples ignored.
 - **BR**: Full backup with stats included preserves samples. After restore, incremental rebuild works.
+
+Note: Downgrade is not supported, so no downgrade testing is needed. Saved sample rows in `mysql.stats_table_data` are harmlessly ignored by older versions.
 
 ### Benchmark Tests
 
@@ -295,7 +299,7 @@ A deterministic benchmark compares the sample-based and merge-based paths across
 | tp256CM20MS8kI3R10M | 256 | 20 (8KB strings) | 10M | Large column values |
 | tp8000CI16R30M | 8,000 | 16 int | 30M | Many partitions, simple schema |
 
-Each configuration is tested with full ANALYZE, single-partition ANALYZE, and a ground truth comparison against a non-partitioned clone of the same data.
+Each configuration is tested with full ANALYZE, single-partition ANALYZE, and a ground truth comparison against a non-partitioned clone of the same data. The [analyze-profile](https://github.com/mjonss/tidb-dev-hacks) tool can be used for deterministic test data generation and accuracy comparison.
 
 Measurements: wall-clock duration, CPU time, memory usage, and accuracy (row count, NDV, TopN, histogram bucket count vs ground truth).
 
