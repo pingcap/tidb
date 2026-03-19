@@ -152,11 +152,20 @@ CREATE TABLE mysql.stats_table_data (
 
 Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and per-sample weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
-In addition to the collector itself, the persisted payload should carry one piece of explicit sample-retention metadata:
+In addition to the collector itself, the persisted payload should carry the metadata needed to validate whether the saved samples can be reused safely:
 
 - `minWeight`: the saved retention cutoff, expressed in the same `Weight` priority space as the samples
+- a schema compatibility fingerprint covering the saved sample layout
 
 This `minWeight` should mean "samples with `Weight < minWeight` were not retained in the saved partition sample." For Bernoulli, it is the cutoff implied by the `pruneRate` used when saving the partition, not the least observed saved sample. For A-Res, it is the local top-K cutoff.
+
+The schema compatibility fingerprint should be based on the exact ANALYZE sample layout, not just the table schema version. At minimum it should include:
+
+- the ordered list of analyzed column IDs
+- the ordered list of analyzed index / column-group definitions
+- each sampled column's type and collation-sensitive attributes needed to decode and compare the saved values correctly
+
+Only saved collectors with an exact or explicitly-compatible fingerprint match may participate in incremental rebuild. The default rule should be exact match; compatibility exceptions must be intentionally defined and limited to cases where the saved encoded values remain valid for the current ANALYZE request (for example some widening changes). This avoids positional mismatches when columns are added/dropped/reordered, when one column is dropped and another added with the same total count, or when type/collation changes make the saved encoded values incompatible with the current ANALYZE request.
 
 The per-partition blob size depends on the number of pruned samples (determined by the ~110K total budget distributed proportionally across partitions) and the number and types of analyzed columns. Since the total budget is fixed, total storage is roughly constant regardless of partition count — approximately 10–20 MB for 50 mixed-type columns, distributed across all partitions. Narrower tables or `PREDICATE COLUMNS` analysis produce proportionally less.
 
@@ -198,7 +207,7 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
   7. Persist p5's pruned samples (replacing old entry)
 ```
 
-**Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th column in the original ANALYZE request. On load, the FMSketch array length of the saved collector is compared against the current ANALYZE's collector. If they differ (columns added or dropped), the saved samples are discarded and the partition falls back to merge-based global stats. This check does not detect column type or collation changes with the same column count; a schema fingerprint (column IDs + types) could strengthen this in a future iteration.
+**Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th entry in the original ANALYZE sample layout. On load, TiDB must compare the saved collector's schema compatibility fingerprint against the current ANALYZE request. If the fingerprint does not match exactly, the saved samples are discarded and the partition is treated as having no reusable saved samples for this rebuild. Length-only checks such as comparing FMSketch counts are not sufficient: they miss same-count add+drop changes, reordered analyzed columns, and type/collation changes that keep the same column count but make the saved encoded values incompatible.
 
 **Missing samples**: If any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms, the merge-based path is used for global stats instead (a warning is logged). If no partition has existing TopN/histograms, global stats are built from whatever samples are available. In both cases, the analyzed partition's samples are still saved for future use. To enable the sample-based path for all partitions, run a full `ANALYZE TABLE`.
 
@@ -278,6 +287,7 @@ This means auto-analyze gradually populates samples partition by partition, whil
 - Composite (multi-column) index stats are correctly encoded via the sample path.
 - Save/load round-trip for serialized collectors produces identical results.
 - Save/load round-trip preserves `minWeight` correctly.
+- Save/load round-trip preserves the schema compatibility fingerprint correctly.
 - Progressive pruning allocates budgets proportionally across partitions of varying sizes.
 - Merge order does not affect resulting global stats (within sampling variance).
 - Bernoulli sub-sampling for pruning produces proportionally representative global samples across partitions of different sizes.
@@ -288,9 +298,9 @@ This means auto-analyze gradually populates samples partition by partition, whil
 
 1. **Large partition count (8,000 partitions)**: Memory stays bounded during sample merge — only one accumulated collector in memory at a time.
 2. **Skewed partition sizes**: Partitions with vastly different row counts (e.g., 1K vs 1M rows) produce proportionally representative global samples.
-3. **Schema change between analyzes — add/drop columns**: Adding/dropping columns between a full analyze and a single-partition re-analyze triggers clean fallback to merge-based path (FMSketch length mismatch detected).
-4. **Schema change between analyzes — type changes**: Changing column types while keeping the same column count does not trigger the FMSketch length check. Verify that the sample-based path handles this gracefully (or document the limitation).
-4b. **Schema change between analyzes — add+remove columns**: Dropping one column and adding another (same total count, different columns) also bypasses the FMSketch length check but produces positional mismatches in saved samples. Verify behavior.
+3. **Schema change between analyzes — add/drop columns**: Adding/dropping columns between a full analyze and a single-partition re-analyze causes the schema compatibility fingerprint to mismatch, so saved samples are not reused.
+4. **Schema change between analyzes — type changes**: Changing column types while keeping the same column count causes the schema compatibility fingerprint to mismatch, so saved samples are not reused.
+4b. **Schema change between analyzes — add+remove columns**: Dropping one column and adding another (same total count, different columns) also causes the schema compatibility fingerprint to mismatch, so positional mismatches in saved samples are avoided.
 5. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
 6. **Empty partitions**: Partitions with zero rows are handled gracefully — they get a saved sample entry with zero samples and do not force fallback to merge-based global stats.
 7. **Undersampled saved partition**: Saved samples from a partition were collected at a lower density than the current rebuild target, so `minWeight` shows that eligible rows are missing. Verify warning behavior and the selected policy (continue with saved samples or fallback).
