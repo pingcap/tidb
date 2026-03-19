@@ -61,7 +61,7 @@ For a table with 8,000 partitions, this means that even a single-partition re-an
 
 ### Proposed Solution
 
-Each partition's ANALYZE already produces a sample collector containing random samples. These collectors can be pruned proportionally and concatenated across partitions, and the merged samples can be used to build global histograms and TopN directly — bypassing the lossy histogram merge entirely.
+Each partition's ANALYZE already produces a sample collector containing random samples. These collectors can be pruned or bounded according to the current sample target and then merged across partitions, and the resulting samples can be used to build global histograms and TopN directly — bypassing the lossy histogram merge entirely.
 
 By persisting pruned samples per partition, future single-partition re-analyzes can load saved samples for unchanged partitions from storage and merge them with the fresh partition's samples in memory. This avoids re-scanning unchanged partitions from TiKV.
 
@@ -97,8 +97,8 @@ ANALYZE TABLE t
     1. Scan partition data from TiKV (sampling)
     2. Build partition histogram + TopN from samples
     3. Save partition stats to mysql.stats_* tables
-    4. Prune samples proportionally and persist       ◄── NEW
-    5. Append pruned samples to global accumulator   ◄── NEW
+    4. Prune/retain samples and persist              ◄── NEW
+    5. Merge retained samples into global accumulator ◄── NEW
                               │
                               ▼
   After all partitions complete:
@@ -109,7 +109,7 @@ ANALYZE TABLE t
 
 The key differences:
 
-- **Step 5** appends each partition's pruned samples to a global accumulator. The partition's full collector is discarded after pruning, so memory is bounded by the total budget (~110K samples).
+- **Step 5** merges each partition's retained samples into a global accumulator. The partition's full collector is discarded after pruning/bounding, so memory is bounded by the total budget (~110K samples).
 - **Step 6** builds global stats from actual sample data using the same histogram construction logic as per-partition stats. There is no histogram merging step.
 - **Step 4** persists a pruned copy of each partition's samples to enable future incremental rebuilds.
 
@@ -123,10 +123,10 @@ TiDB V2 stats supports two row-level sampling methods:
 
 Cross-partition merging requires **bounded memory** and **proportional representation**. This design achieves both by treating every retained sample as carrying a comparable priority key in `RowSample.Weight`, where larger values are better. For A-Res, this is the existing reservoir key. For Bernoulli, it is derived from the Bernoulli inclusion value `u` so that smaller `u` maps to larger `Weight`:
 
-1. TiKV collects samples via Bernoulli at the auto-calculated rate, and derives a weight from the same random draw (see below)
-2. After region merge within a partition, the full sample set (~110K) is used to build partition histograms and TopN (unchanged quality)
-3. Samples are pruned by calculating a target priority threshold and keeping only the highest-priority samples (see Progressive Pruning)
-4. Pruned samples are merged across partitions using the same higher-weight-wins rule already used by reservoir sampling
+1. TiKV collects samples using the configured method (Bernoulli or A-Res), and every retained sample carries a comparable priority key in `Weight`
+2. After region merge within a partition, the full sample set is used to build partition histograms and TopN (unchanged quality)
+3. Samples are pruned or bounded according to the current target (see Progressive Pruning)
+4. The retained samples are merged across partitions using the same higher-weight-wins priority semantics
 
 Proportional representation follows naturally from the priority-key distribution (see Progressive Pruning): larger partitions contribute more retained samples because more of their accepted rows compete for the global budget. The accumulator grows to at most the total budget (~110K) — bounded.
 
@@ -150,7 +150,7 @@ CREATE TABLE mysql.stats_table_data (
 );
 ```
 
-Each partition stores one row containing all samples to be persisted for that partition. The serialized blob uses the `tipb.RowSampleCollector` protobuf format — the same structure returned by TiKV during ANALYZE, used by both reservoir and Bernoulli collectors. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and per-sample weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
+Each partition stores one row containing all samples to be persisted for that partition. The serialized blob stored in `mysql.stats_table_data.value` contains the `tipb.RowSampleCollector` protobuf payload together with the metadata needed for reuse. Each sample row contains values only for the columns included in the ANALYZE request (controlled by `ANALYZE TABLE ... ALL COLUMNS`, `PREDICATE COLUMNS`, or `COLUMNS c1, c2, ...`), not all table columns. The collector also includes per-column FMSketches, per-column null counts, per-column total sizes, the total row count, and per-sample weights. `hist_id` is 0 because the blob is partition-scoped — individual columns are extracted from the full-row samples only when building histograms. `REPLACE INTO` overwrites stale samples atomically.
 
 In addition to the collector itself, the persisted payload should carry the metadata needed to validate whether the saved samples can be reused safely:
 
@@ -159,13 +159,13 @@ In addition to the collector itself, the persisted payload should carry the meta
 
 This `minWeight` should mean "samples with `Weight < minWeight` were not retained in the saved partition sample." For Bernoulli, it is the cutoff implied by the `pruneRate` used when saving the partition, not the least observed saved sample. For A-Res, it is the local top-K cutoff.
 
-The schema compatibility fingerprint should be based on the exact ANALYZE sample layout, not just the table schema version. At minimum it should include:
+The schema compatibility fingerprint should be based on the exact ANALYZE sample layout, not just the table schema version. This is a correctness safeguard for saved-sample reuse, not a separate feature goal. It is already stricter than a length-only check and avoids reusing incompatible saved samples. At minimum it should include:
 
 - the ordered list of analyzed column IDs
 - the ordered list of analyzed index / column-group definitions
 - each sampled column's type and collation-sensitive attributes needed to decode and compare the saved values correctly
 
-Only saved collectors with an exact or explicitly-compatible fingerprint match may participate in incremental rebuild. The default rule should be exact match; compatibility exceptions must be intentionally defined and limited to cases where the saved encoded values remain valid for the current ANALYZE request (for example some widening changes). This avoids positional mismatches when columns are added/dropped/reordered, when one column is dropped and another added with the same total count, or when type/collation changes make the saved encoded values incompatible with the current ANALYZE request.
+Only saved collectors with an exact or explicitly-compatible fingerprint match may participate in incremental rebuild. The default rule should be exact match; compatibility exceptions must be intentionally defined and limited to cases where the saved encoded values remain valid for the current ANALYZE request (for example some widening changes). Existing DDL compatibility logic for `MODIFY/CHANGE COLUMN` can be used as a reference when deciding which widenings are safe enough to treat as compatible (for example `checkModifyTypes`, `noReorgDataStrict`, and charset/collation compatibility checks), but the saved-sample fingerprint remains a separate validation mechanism because it is based on ANALYZE sample layout and encoded sample reuse rather than DDL execution semantics. This avoids positional mismatches when columns are added/dropped/reordered, when one column is dropped and another added with the same total count, or when type/collation changes make the saved encoded values incompatible with the current ANALYZE request.
 
 The per-partition blob size depends on the number of pruned samples (determined by the ~110K total budget distributed proportionally across partitions) and the number and types of analyzed columns. Since the total budget is fixed, total storage is roughly constant regardless of partition count — approximately 10–20 MB for 50 mixed-type columns, distributed across all partitions. Narrower tables or `PREDICATE COLUMNS` analysis produce proportionally less.
 
@@ -191,7 +191,7 @@ Proportional representation follows naturally. For Bernoulli, partitions with mo
 
 The same priority-key semantics apply for both persistence and the in-memory global merge: the pruned copy is saved to `mysql.stats_table_data` for future incremental rebuilds, and the retained samples are merged across partitions with the same higher-weight-wins rule. The full unpruned collector is used only for building per-partition histograms and TopN.
 
-Before a saved partition collector participates in a rebuild, TiDB must verify whether the current target would require samples with priority below the saved partition's `minWeight`. If so, that partition is undersampled for the current rebuild target: rows that would have been eligible under the current target were already discarded when the partition sample was saved. TiDB must not proceed silently in this case. It should log and return a SQL warning identifying the undersampled partitions. Whether the implementation continues with the saved samples or falls back to the merge-based global-stats path is a policy decision; the warning is required either way.
+Before a saved partition collector participates in a rebuild, TiDB must verify whether the current target would require samples with priority below the saved partition's `minWeight`. If so, that partition is undersampled for the current rebuild target: rows that would have been eligible under the current target were already discarded when the partition sample was saved. TiDB must not proceed silently in this case. It should log and return a SQL warning identifying the undersampled partitions. The initial policy is to warn but continue using the saved samples rather than falling back immediately.
 
 ### Single-Partition Re-Analyze
 
@@ -201,13 +201,13 @@ When `ANALYZE TABLE t PARTITION p5` is executed:
   1. Analyze partition p5 (scan from TiKV, build stats)
   2. Load saved samples for all other partitions from mysql.stats_table_data
   3. Validate schema compatibility (see below)
-  4. Prune fresh p5 samples proportionally, concatenate with loaded others
+  4. Apply the current target's pruning/bounding rule to fresh p5 samples and merge with loaded others
   5. Build global histogram + TopN from merged samples
   6. Save global stats
   7. Persist p5's pruned samples (replacing old entry)
 ```
 
-**Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th entry in the original ANALYZE sample layout. On load, TiDB must compare the saved collector's schema compatibility fingerprint against the current ANALYZE request. If the fingerprint does not match exactly, the saved samples are discarded and the partition is treated as having no reusable saved samples for this rebuild. Length-only checks such as comparing FMSketch counts are not sufficient: they miss same-count add+drop changes, reordered analyzed columns, and type/collation changes that keep the same column count but make the saved encoded values incompatible.
+**Step 3 — Schema validation**: Saved collectors are position-based — each sample row's `Columns[i]` corresponds to the i-th entry in the original ANALYZE sample layout. On load, TiDB must compare the saved collector's schema compatibility fingerprint against the current ANALYZE request. If the fingerprint is not exact or explicitly-compatible, the saved samples are discarded and the partition is treated as having no reusable saved samples for this rebuild. Length-only checks such as comparing FMSketch counts are not sufficient: they miss same-count add+drop changes, reordered analyzed columns, and type/collation changes that keep the same column count but make the saved encoded values incompatible.
 
 **Missing samples**: If any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms, the merge-based path is used for global stats instead (a warning is logged). If no partition has existing TopN/histograms, global stats are built from whatever samples are available. In both cases, the analyzed partition's samples are still saved for future use. To enable the sample-based path for all partitions, run a full `ANALYZE TABLE`.
 
@@ -258,7 +258,7 @@ The variable defaults to `ON` and serves as a fail-safe: if issues are discovere
 The sample-based path falls back transparently to the merge-based path when:
 - The variable is set to `OFF` or `SAVE`
 - No sample collector is available (e.g., all partition analyses failed)
-- Schema mismatch detected when loading saved samples (columns were added/dropped between analyzes)
+- Saved sample layout is not exact or explicitly-compatible with the current ANALYZE request
 - Any partition has no saved sample data in `mysql.stats_table_data` but has existing TopN/histograms from a prior analyze (see Gradual Transition below)
 
 When a fallback occurs, a warning should be logged and returned to the client as a SQL warning (visible via `SHOW WARNINGS`), indicating the reason (e.g., "N partitions have no saved samples but have existing stats, falling back to merge-based global stats"). When TiDB continues with saved samples even though some partitions are undersampled for the current target, it should also return a warning (for example "partition p42 saved samples are sparser than the current sample target; continuing with saved samples"). This ensures the user running `ANALYZE TABLE` can see when the configured sample target was not fully met, and operators can identify tables that may benefit from denser saved samples.
@@ -301,7 +301,7 @@ This means auto-analyze gradually populates samples partition by partition, whil
 1. **Large partition count (8,000 partitions)**: Memory stays bounded during sample merge — only one accumulated collector in memory at a time.
 2. **Skewed partition sizes**: Partitions with vastly different row counts (e.g., 1K vs 1M rows) produce proportionally representative global samples.
 3. **Schema change between analyzes — add/drop columns**: Adding/dropping columns between a full analyze and a single-partition re-analyze causes the schema compatibility fingerprint to mismatch, so saved samples are not reused.
-4. **Schema change between analyzes — type changes**: Changing column types while keeping the same column count causes the schema compatibility fingerprint to mismatch, so saved samples are not reused.
+4. **Schema change between analyzes — type changes**: Incompatible type changes while keeping the same column count cause the schema compatibility fingerprint to mismatch, so saved samples are not reused.
 4b. **Schema change between analyzes — add+remove columns**: Dropping one column and adding another (same total count, different columns) also causes the schema compatibility fingerprint to mismatch, so positional mismatches in saved samples are avoided.
 5. **DDL during ANALYZE**: Partition drop/truncate during concurrent ANALYZE does not leave orphan samples.
 6. **Empty partitions**: Partitions with zero rows are handled gracefully — they get a saved sample entry with zero samples and do not force fallback to merge-based global stats.
