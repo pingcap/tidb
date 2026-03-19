@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -435,7 +436,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 
 func (ts *basicHTTPHandlerTestSuite) startServerWithConfig(t *testing.T, cfg *config.Config) {
 	var err error
-	ts.store, err = teststore.NewMockStoreWithoutBootstrap()
+	ts.store, err = mockstore.NewMockStore()
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
@@ -528,12 +529,13 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 	artifacts := generateTLSArtifacts(t)
 
 	t.Run("forbidden without client cert", func(t *testing.T) {
+		statusAPIAuditTestRecorder.Reset()
 		ts := createBasicHTTPHandlerTestSuite()
 		cfg := util.NewTestConfig()
 		origCfg := config.GetGlobalConfig()
 		config.StoreGlobalConfig(cfg)
 		defer config.StoreGlobalConfig(origCfg)
-		cfg.Store = config.StoreTypeTiKV
+		cfg.Store = "tikv"
 		cfg.Port = 0
 		cfg.Status.StatusPort = 0
 		cfg.Status.ReportStatus = true
@@ -553,15 +555,23 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { require.NoError(t, resp.Body.Close()) }()
 		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+
+		records := statusAPIAuditTestRecorder.Records()
+		require.Len(t, records, 1)
+		require.Equal(t, "status-api", records[0].sessionAlias)
+		require.Equal(t, extension.StmtError, records[0].tp)
+		require.Contains(t, records[0].sql, "ALTER USER")
+		require.Contains(t, records[0].sql, "******")
 	})
 
 	t.Run("mtls success", func(t *testing.T) {
+		statusAPIAuditTestRecorder.Reset()
 		ts := createBasicHTTPHandlerTestSuite()
 		cfg := util.NewTestConfig()
 		origCfg := config.GetGlobalConfig()
 		config.StoreGlobalConfig(cfg)
 		defer config.StoreGlobalConfig(origCfg)
-		cfg.Store = config.StoreTypeTiKV
+		cfg.Store = "tikv"
 		cfg.Port = 0
 		cfg.Status.StatusPort = 0
 		cfg.Status.ReportStatus = true
@@ -590,7 +600,7 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
 
-		resp, err := client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
+		resp, err = client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
 			"application/json",
 			bytes.NewBufferString(`{"new_password":"KXMF*ivNaLWd*oNhKC+REY2+"}`))
 		require.NoError(t, err)
@@ -604,7 +614,7 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		require.Equal(t, "success", resetResp.Status)
 		require.Equal(t, "Password reset done.", resetResp.Message)
 
-		userDB, err := sql.Open("mysql", fmt.Sprintf("testuser:%s@tcp(127.0.0.1:%d)/test", "KXMF*ivNaLWd*oNhKC+REY2+", ts.Port))
+		userDB, err := sql.Open("mysql", fmt.Sprintf("testuser:%s@tcp(127.0.0.1:%d)/", "KXMF*ivNaLWd*oNhKC+REY2+", ts.Port))
 		require.NoError(t, err)
 		defer func() { require.NoError(t, userDB.Close()) }()
 		require.NoError(t, userDB.Ping())
@@ -622,6 +632,19 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusNoContent, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
+
+		records := statusAPIAuditTestRecorder.Records()
+		require.Len(t, records, 4)
+		require.Equal(t, extension.StmtSuccess, records[0].tp)
+		require.Equal(t, extension.StmtSuccess, records[1].tp)
+		require.Equal(t, extension.StmtSuccess, records[2].tp)
+		require.Equal(t, extension.StmtSuccess, records[3].tp)
+		require.Contains(t, records[0].sql, "CREATE USER")
+		require.Contains(t, records[0].sql, "Passw0rd!")
+		require.Contains(t, records[1].sql, "ALTER USER")
+		require.Contains(t, records[1].sql, "KXMF*ivNaLWd*oNhKC+REY2+")
+		require.Contains(t, records[2].sql, "GRANT")
+		require.Contains(t, records[3].sql, "DROP USER")
 	})
 }
 
