@@ -175,6 +175,28 @@ func TestPreparedPlanCachePartitions(t *testing.T) {
 	}
 }
 
+func TestPreparedPlanCacheExplicitPartitionSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_enable_selected_partition_stats=1`)
+
+	tk.MustExec(`create table t (a int primary key, b varchar(255)) partition by hash(a) partitions 4`)
+	tk.MustExec(`insert into t values (0,"a"),(4,"b"),(1,"c"),(2,"d")`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`prepare stmt from 'select a,b from t partition (p0) where a = ?'`)
+
+	tk.MustExec(`set @a=0`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0 a"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
+	tk.MustExec(`set @a=4`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 b"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
+
 func TestPreparedPlanCachePartitionIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

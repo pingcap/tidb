@@ -911,6 +911,56 @@ func setStaticPartitionPruneInfo(ds *logicalop.DataSource) {
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("static partition prune mode used")
 }
 
+func getSelectedPartitionIDs(pi *model.PartitionInfo, partitionNames []pmodel.CIStr) []int64 {
+	if pi == nil {
+		return nil
+	}
+	processor := &PartitionProcessor{}
+	selectedPartitionIDs := make([]int64, 0, len(pi.Definitions))
+	seen := make(map[int64]struct{}, len(pi.Definitions))
+	for i := range pi.Definitions {
+		partIdx := pi.GetOverlappingDroppingPartitionIdx(i)
+		if partIdx < 0 {
+			continue
+		}
+		if len(partitionNames) > 0 && !processor.findByName(partitionNames, pi.Definitions[partIdx].Name.L) {
+			continue
+		}
+		partitionID := pi.Definitions[partIdx].ID
+		if _, ok := seen[partitionID]; ok {
+			continue
+		}
+		seen[partitionID] = struct{}{}
+		selectedPartitionIDs = append(selectedPartitionIDs, partitionID)
+	}
+	slices.Sort(selectedPartitionIDs)
+	return selectedPartitionIDs
+}
+
+func getPartitionIDsFromPruningResult(pi *model.PartitionInfo, partitionIdxs []int) []int64 {
+	if pi == nil {
+		return nil
+	}
+	if len(partitionIdxs) == 1 && partitionIdxs[0] == FullRange {
+		return getSelectedPartitionIDs(pi, nil)
+	}
+	partitionIDs := make([]int64, 0, len(partitionIdxs))
+	seen := make(map[int64]struct{}, len(partitionIdxs))
+	for _, idx := range partitionIdxs {
+		if idx < 0 || idx >= len(pi.Definitions) {
+			continue
+		}
+		partitionID := pi.Definitions[idx].ID
+		if _, ok := seen[partitionID]; ok {
+			continue
+		}
+		seen[partitionID] = struct{}{}
+		partitionIDs = append(partitionIDs, partitionID)
+	}
+	slices.Sort(partitionIDs)
+	return partitionIDs
+}
+
 // findByName checks whether object name exists in list.
 func (*PartitionProcessor) findByName(partitionNames []pmodel.CIStr, partitionName string) bool {
 	for _, s := range partitionNames {
@@ -1914,7 +1964,8 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		prunedPartitionIDs = append(prunedPartitionIDs, partitionID)
 	}
 	slices.Sort(prunedPartitionIDs)
-	staticPruned := len(prunedPartitionIDs) < len(pi.Definitions)
+	candidatePartitionIDs := getSelectedPartitionIDs(pi, ds.PartitionNames)
+	staticPruned := !slices.Equal(prunedPartitionIDs, candidatePartitionIDs)
 	if staticPruned && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode && ds.SCtx().GetSessionVars().EnableSelectedPartitionStats {
 		setStaticPartitionPruneInfo(ds)
 	}

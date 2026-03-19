@@ -4220,13 +4220,17 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, pa
 		if len(uniquePartitionStats) == 1 {
 			statsTbl = uniquePartitionStats[0]
 		} else {
-			// Reuse the global stats objects and only narrow the table-level counts to the selected partitions.
+			// Multi-partition row-count narrowing is only safe when table-level stats are available.
+			// If the global stats are still pseudo or uninitialized, keep the legacy global/pseudo path;
+			// otherwise we'd mix local row counts with non-local histogram/NDV metadata.
 			statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-			if realtimeCount, modifyCount, ok := cardinality.AggregateSelectedPartitionCounts(uniquePartitionStats); ok {
-				statsTbl = statsTbl.ShallowCopy()
-				statsTbl.RealtimeCount = realtimeCount
-				statsTbl.ModifyCount = modifyCount
-				selectedPartitionCountsOverridden = true
+			if !statsTbl.Pseudo && statsTbl.IsInitialized() {
+				if realtimeCount, modifyCount, ok := cardinality.AggregateSelectedPartitionCounts(uniquePartitionStats); ok {
+					statsTbl = statsTbl.ShallowCopy()
+					statsTbl.RealtimeCount = realtimeCount
+					statsTbl.ModifyCount = modifyCount
+					selectedPartitionCountsOverridden = true
+				}
 			}
 		}
 	} else if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4584,8 +4588,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					}
 				})
 
-				if enableStaticPrune && !hasGlobalIndex {
-					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
+				if enableStaticPrune {
+					if !hasGlobalIndex {
+						b.optFlag = b.optFlag | rule.FlagPartitionProcessor
+					}
 					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 					if isDynamicEnabled {
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
@@ -4869,10 +4875,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil {
-			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
-			// Not using old static prune mode
-			// Single TableReader for all partitions, needs the PhysTblID from storage
+		if tableInfo.Partition != nil && sessionVars.StmtCtx.UseDynamicPruneMode {
+			// UnionScan only needs the hidden physical table ID when the execution still uses
+			// dynamic partition pruning. Static pruning already materializes per-partition children.
 			_ = addExtraPhysTblIDColumn4DS(ds)
 		}
 		result = us

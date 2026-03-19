@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -381,11 +383,65 @@ func dynamicPartitionAccessUsesSubset(sctx base.PlanContext, tblInfo *model.Tabl
 	if tblInfo == nil || tblInfo.GetPartitionInfo() == nil || partInfo == nil {
 		return false, nil
 	}
-	accessObj := getDynamicAccessPartition(sctx, tblInfo, partInfo, "")
-	if accessObj == nil || len(accessObj.err) > 0 {
+	is, ok := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return true, nil
+	}
+	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return true, nil
+	}
+	tbl, ok := tmp.(table.PartitionedTable)
+	if !ok {
 		return false, nil
 	}
-	return !accessObj.AllPartitions, nil
+	currentPartitionIDs, err := getPrunedPartitionIDs(sctx, tbl, partInfo, partInfo.PruningConds)
+	if err != nil {
+		return true, nil
+	}
+	staticPartitionIDs, err := getPrunedPartitionIDs(sctx, tbl, partInfo, getStaticPartitionPruningConds(partInfo.PruningConds))
+	if err != nil {
+		return true, nil
+	}
+	return !slices.Equal(currentPartitionIDs, staticPartitionIDs), nil
+}
+
+func getPrunedPartitionIDs(
+	sctx base.PlanContext,
+	tbl table.PartitionedTable,
+	partInfo *PhysPlanPartInfo,
+	conds []expression.Expression,
+) ([]int64, error) {
+	partitionIdxs, err := PartitionPruning(sctx, tbl, conds, partInfo.PartitionNames, partInfo.Columns, partInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+	return getPartitionIDsFromPruningResult(tbl.Meta().GetPartitionInfo(), partitionIdxs), nil
+}
+
+func getStaticPartitionPruningConds(conds []expression.Expression) []expression.Expression {
+	staticConds := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		if containsMutableConst(cond) {
+			continue
+		}
+		staticConds = append(staticConds, cond)
+	}
+	return staticConds
+}
+
+func containsMutableConst(expr expression.Expression) bool {
+	switch x := expr.(type) {
+	case *expression.Constant:
+		return x.ParamMarker != nil || x.DeferredExpr != nil
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			if containsMutableConst(arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func pointGetUsesSubsetPartition(sctx sessionctx.Context, plan *PointGetPlan) (bool, error) {
@@ -394,6 +450,10 @@ func pointGetUsesSubsetPartition(sctx sessionctx.Context, plan *PointGetPlan) (b
 	}
 	pi := plan.TblInfo.GetPartitionInfo()
 	if pi == nil || (plan.IndexInfo != nil && plan.IndexInfo.Global) {
+		return false, nil
+	}
+	selectedPartitionIDs := getSelectedPartitionIDs(pi, plan.PartitionNames)
+	if len(selectedPartitionIDs) == 0 {
 		return false, nil
 	}
 	clonedPlan, ok := plan.CloneForPlanCache(sctx.GetPlanCtx())
@@ -412,9 +472,16 @@ func pointGetUsesSubsetPartition(sctx sessionctx.Context, plan *PointGetPlan) (b
 		return false, nil
 	}
 	if noMatch {
+		return len(selectedPartitionIDs) > 0, nil
+	}
+	if clonedPointGet.PartitionIdx == nil {
+		return false, nil
+	}
+	partitionIdx := *clonedPointGet.PartitionIdx
+	if partitionIdx < 0 || partitionIdx >= len(pi.Definitions) {
 		return true, nil
 	}
-	return clonedPointGet.PartitionIdx != nil, nil
+	return !slices.Equal(selectedPartitionIDs, []int64{pi.Definitions[partitionIdx].ID}), nil
 }
 
 func batchPointGetUsesSubsetPartition(sctx sessionctx.Context, plan *BatchPointGetPlan) (bool, error) {
@@ -423,6 +490,10 @@ func batchPointGetUsesSubsetPartition(sctx sessionctx.Context, plan *BatchPointG
 	}
 	pi := plan.TblInfo.GetPartitionInfo()
 	if pi == nil || (plan.IndexInfo != nil && plan.IndexInfo.Global) {
+		return false, nil
+	}
+	selectedPartitionIDs := getSelectedPartitionIDs(pi, plan.PartitionNames)
+	if len(selectedPartitionIDs) == 0 {
 		return false, nil
 	}
 	clonedPlan, ok := plan.CloneForPlanCache(sctx.GetPlanCtx())
@@ -441,21 +512,22 @@ func batchPointGetUsesSubsetPartition(sctx sessionctx.Context, plan *BatchPointG
 		return false, nil
 	}
 	if noMatch {
-		return true, nil
+		return len(selectedPartitionIDs) > 0, nil
 	}
+	usedPartitionIDs := make([]int64, 0, len(clonedBatchPointGet.PartitionIdxs))
 	if clonedBatchPointGet.SinglePartition {
-		return len(clonedBatchPointGet.PartitionIdxs) > 0, nil
-	}
-	if len(clonedBatchPointGet.PartitionIdxs) == 0 {
-		return false, nil
-	}
-	usedPartitions := make(map[int]struct{}, len(clonedBatchPointGet.PartitionIdxs))
-	for _, idx := range clonedBatchPointGet.PartitionIdxs {
-		if idx >= 0 {
-			usedPartitions[idx] = struct{}{}
+		if len(clonedBatchPointGet.PartitionIdxs) == 0 {
+			return false, nil
 		}
+		idx := clonedBatchPointGet.PartitionIdxs[0]
+		if idx < 0 || idx >= len(pi.Definitions) {
+			return true, nil
+		}
+		usedPartitionIDs = append(usedPartitionIDs, pi.Definitions[idx].ID)
+		return !slices.Equal(selectedPartitionIDs, usedPartitionIDs), nil
 	}
-	return len(usedPartitions) < len(pi.Definitions), nil
+	usedPartitionIDs = getPartitionIDsFromPruningResult(pi, clonedBatchPointGet.PartitionIdxs)
+	return !slices.Equal(selectedPartitionIDs, usedPartitionIDs), nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
