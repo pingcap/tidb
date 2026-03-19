@@ -21,8 +21,7 @@ DB="$TEST_NAME"
 
 # Create database and table
 run_sql "CREATE DATABASE $DB;"
-run_sql "USE $DB;"
-run_sql "CREATE TABLE t (id INT PRIMARY KEY, c VARCHAR(100));"
+run_sql "CREATE TABLE ${DB}.t (id INT PRIMARY KEY, c VARCHAR(100));"
 
 # Insert some data
 run_sql "INSERT INTO ${DB}.t VALUES (1, 'abc');"
@@ -34,7 +33,11 @@ run_sql "INSERT INTO ${DB}.t VALUES (2, 'def');"
 run_sql "CREATE MASKING POLICY test_policy ON ${DB}.t(c) AS CASE WHEN 1=1 THEN 'masked' END;"
 
 # Verify masking policy exists before backup
-policy_count_before=$(run_sql "SHOW MASKING POLICIES;" | grep -c "test_policy" || echo "0")
+policy_count_before=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;" | grep -c "test_policy" || echo "0")
+if [ "$policy_count_before" != "1" ]; then
+    echo "TEST: [$TEST_NAME] failed! Expected 1 masking policy before backup, got $policy_count_before"
+    exit 1
+fi
 echo "Masking policies before backup: $policy_count_before"
 
 # Backup the database
@@ -59,7 +62,11 @@ fi
 # Note: After restore, the masking policy should be recreated
 # This is the key verification for the fix
 echo "Checking masking policy after restore..."
-run_sql "USE $DB;"
+policy_count_after=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;" | grep -c "test_policy" || echo "0")
+if [ "$policy_count_after" != "1" ]; then
+    echo "TEST: [$TEST_NAME] failed! Expected 1 masking policy after restore, got $policy_count_after"
+    exit 1
+fi
 
 # Check if SHOW MASKING POLICIES returns the policy
 # The policy should be restored during DDL execution
