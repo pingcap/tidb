@@ -37,6 +37,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/compress",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
