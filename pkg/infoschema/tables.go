@@ -351,8 +351,6 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
-	// PingKaiDB tables.
-	TableRegions: autoid.InformationSchemaDBID + 5003,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
