@@ -27692,7 +27692,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(1, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"success\"}[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"success\"}[1m])) by (le, type))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -27701,7 +27701,7 @@
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(1, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"failed\"}[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"failed\"}[1m])) by (le, type))",
               "format": "time_series",
               "hide": false,
               "interval": "",
