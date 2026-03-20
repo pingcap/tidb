@@ -390,6 +390,9 @@ func TestCollectHistNeededColumns(t *testing.T) {
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
 			res:       []string{"pt1.b full", "pt1.ptn full"},
+			expandedParts: map[string][]string{
+				"pt1": {"pt1.p1", "pt1.p2"},
+			},
 		},
 	}
 
@@ -424,4 +427,40 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		require.NoError(t, err, comment)
 		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, tt.expandedParts, comment)
 	}
+}
+
+func TestCollectHistNeededColumnsForSingleSelectedPartitionStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
+	s := createPlannerSuite()
+	defer s.Close()
+
+	s.ctx.GetSessionVars().PartitionPruneMode.Store("dynamic")
+	s.ctx.GetSessionVars().EnableSelectedPartitionStats = true
+	s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+
+	sql := "select * from pt1 where ptn < 10 and b > 1"
+	comment := fmt.Sprintf("sql: %s, pruneMode: dynamic, selectedPartitionStats: true", sql)
+
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, comment)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), nodeW)
+	require.NoError(t, err, comment)
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok, comment)
+
+	flags := builder.GetOptFlag()
+	flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
+	lp, err = logicalOptimize(context.Background(), flags, lp)
+	require.NoError(t, err, comment)
+	checkColumnStatsUsageForStatsLoad(t, s.is, lp,
+		[]string{"pt1.b full", "pt1.ptn full"},
+		map[string][]string{"pt1": {"pt1.p1"}},
+		comment,
+	)
 }
