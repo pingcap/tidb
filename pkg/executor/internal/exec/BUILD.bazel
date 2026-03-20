@@ -54,6 +54,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/types/parser_driver",
         "//pkg/util/logutil",
+        "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
