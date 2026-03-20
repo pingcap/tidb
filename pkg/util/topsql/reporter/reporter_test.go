@@ -828,8 +828,8 @@ func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
 	}
 
 	beforeCollectRUDrop := readCounter(t, reporter_metrics.IgnoreCollectRUChannelFullCounter)
-	tsr.collectRUIncrementsChan <- ruData
-	tsr.collectRUIncrementsChan <- ruData // fill collectRUIncrementsChan (buffer=2)
+	tsr.collectRUIncrementsChan <- ruBatch{timestamp: uint64(nowFunc().Unix()), data: ruData}
+	tsr.collectRUIncrementsChan <- ruBatch{timestamp: uint64(nowFunc().Unix()), data: ruData} // fill collectRUIncrementsChan (buffer=2)
 	doneCollect := make(chan struct{})
 	go func() {
 		tsr.CollectRUIncrements(ruData) // should drop immediately when channel is full
@@ -1159,6 +1159,61 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 	case <-closeDoneAgain:
 	case <-time.After(time.Second):
 		t.Fatal("second close should be non-blocking")
+	}
+}
+
+func TestTopRUBestEffortBoundaryShift(t *testing.T) {
+	origNowFunc := nowFunc
+	var currentUnix int64 = 61
+	nowFunc = func() time.Time {
+		return time.Unix(atomic.LoadInt64(&currentUnix), 0)
+	}
+	t.Cleanup(func() { nowFunc = origNowFunc })
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+
+	key := stmtstats.RUKey{
+		User:       "u-best",
+		SQLDigest:  stmtstats.BinaryDigest("sql-best"),
+		PlanDigest: stmtstats.BinaryDigest("plan-best"),
+	}
+	tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
+		key: {
+			TotalRU:      7,
+			ExecCount:    1,
+			ExecDuration: 1,
+		},
+	})
+	// Drain queued RU into aggregator to make the attribution deterministic in UT.
+	drainRUBatchesForTest(tsr)
+
+	// Timeline:
+	//   - report tick at 60 closes [0,60)
+	//   - this RU batch is collected at t=61 (boundary-late arrival)
+	// Contract:
+	//   - best-effort only, no backfill into an already closed window.
+	// So [0,60) must not contain the RU.
+	first := tsr.ruAggregator.takeReportRecords(60, 60, []byte("ks"))
+	require.Nil(t, findRURecordByDigest(first, "u-best", "sql-best", "plan-best"))
+
+	// The same RU should appear in the next aligned closed window [60,120).
+	second := tsr.ruAggregator.takeReportRecords(120, 60, []byte("ks"))
+	rec := findRURecordByDigest(second, "u-best", "sql-best", "plan-best")
+	require.NotNil(t, rec)
+}
+
+func drainRUBatchesForTest(tsr *RemoteTopSQLReporter) {
+	for {
+		select {
+		case batch := <-tsr.collectRUIncrementsChan:
+			if len(batch.data) == 0 {
+				continue
+			}
+			tsr.ruAggregator.addBatchToBucket(batch.timestamp, batch.data)
+		default:
+			return
+		}
 	}
 }
 

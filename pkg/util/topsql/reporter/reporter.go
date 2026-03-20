@@ -80,7 +80,7 @@ type RemoteTopSQLReporter struct {
 	sqlCPUCollector         *collector.SQLCPUCollector
 	collectCPUTimeChan      chan []collector.SQLCPUTimeRecord
 	collectStmtStatsChan    chan stmtstats.StatementStatsMap
-	collectRUIncrementsChan chan stmtstats.RUIncrementMap
+	collectRUIncrementsChan chan ruBatch
 	collecting              *collecting
 	ruAggregator            *ruWindowAggregator // Online 15s RU aggregation (400->200->100 pipeline)
 	normalizedSQLMap        *normalizedSQLMap
@@ -94,6 +94,14 @@ type RemoteTopSQLReporter struct {
 	keyspaceName []byte
 }
 
+// ruBatch carries RU increments with producer-side timestamp.
+// timestamping at enqueue side keeps RU bucket attribution independent
+// from downstream scheduling delay.
+type ruBatch struct {
+	timestamp uint64
+	data      stmtstats.RUIncrementMap
+}
+
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
 //
 // decodePlan is a decoding function which will be called asynchronously to decode the plan binary to string.
@@ -105,7 +113,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 		cancel:                    cancel,
 		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
 		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
-		collectRUIncrementsChan:   make(chan stmtstats.RUIncrementMap, collectChanBufferSize),
+		collectRUIncrementsChan:   make(chan ruBatch, collectChanBufferSize),
 		reportCollectedDataChan:   make(chan collectedData, 1),
 		collecting:                newCollecting(),
 		ruAggregator:              newRUWindowAggregator(),
@@ -170,7 +178,10 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 }
 
 // CollectRUIncrements implements stmtstats.RUCollector.
-// It receives merged RU increments from aggregator every second, and collectRUWorker consumes them.
+// It receives merged RU increments from aggregator every second.
+// Best-effort window contract: RU is timestamped when collected here. For
+// boundary cases, RU can be attributed to the next report window instead of
+// backfilling an already closed window.
 //
 // WARN: It will drop the data if the processing is not in time.
 // This function is thread-safe and efficient.
@@ -178,8 +189,12 @@ func (tsr *RemoteTopSQLReporter) CollectRUIncrements(data stmtstats.RUIncrementM
 	if len(data) == 0 {
 		return
 	}
+	batch := ruBatch{
+		timestamp: uint64(nowFunc().Unix()),
+		data:      data,
+	}
 	select {
-	case tsr.collectRUIncrementsChan <- data:
+	case tsr.collectRUIncrementsChan <- batch:
 	default:
 		reporter_metrics.IgnoreCollectRUChannelFullCounter.Inc()
 	}
@@ -239,9 +254,11 @@ func (tsr *RemoteTopSQLReporter) collectRUWorker() {
 		select {
 		case <-tsr.ctx.Done():
 			return
-		case data := <-tsr.collectRUIncrementsChan:
-			timestamp := uint64(nowFunc().Unix())
-			tsr.ruAggregator.addBatchToBucket(timestamp, data)
+		case batch := <-tsr.collectRUIncrementsChan:
+			if len(batch.data) == 0 {
+				continue
+			}
+			tsr.ruAggregator.addBatchToBucket(batch.timestamp, batch.data)
 		}
 	}
 }
