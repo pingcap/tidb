@@ -136,8 +136,6 @@ const (
 	SlowLogWRU = "Request_unit_write"
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
-	// SlowLogRUV2Metrics is the RU v2 metrics for the statement.
-	SlowLogRUV2Metrics = "RUv2_metrics"
 	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
 	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
@@ -146,6 +144,8 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
+	// SlowLogRUV2Metrics is the RU v2 metrics for the statement.
+	SlowLogRUV2Metrics = "RUv2_metrics"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -547,14 +547,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if waitRUDuration := logItems.RUDetails.RUWaitDuration(); waitRUDuration > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(waitRUDuration.Seconds(), 'f', -1, 64))
 	}
-	var tiKVRU, tiFlashRU int64
-	if logItems.RUDetails != nil {
-		tiKVRU = int64(logItems.RUDetails.TiKVRUV2())
-		tiFlashRU = int64(logItems.RUDetails.TiflashRU())
-	}
-	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
-		writeSlowLogItem(&buf, SlowLogRUV2Metrics, formatted)
-	}
 	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogTidbCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TidbCPUTime.Seconds(), 'f', -1, 64))
 	}
@@ -563,6 +555,14 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
+	var tiKVRU, tiFlashRU int64
+	if logItems.RUDetails != nil {
+		tiKVRU = int64(logItems.RUDetails.TiKVRUV2())
+		tiFlashRU = int64(logItems.RUDetails.TiflashRU())
+	}
+	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
+		writeSlowLogItem(&buf, SlowLogRUV2Metrics, formatted)
+	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
