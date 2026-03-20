@@ -591,6 +591,19 @@ run_python_verify() {
         verify
 }
 
+run_python_recall() {
+    require_cmd python3
+    refresh_runtime_ports
+    python3 "${PYTHON_HELPER}" \
+        --host "${TIDB_HOST}" \
+        --port "${TIDB_PORT}" \
+        --database test \
+        --table hybrid_vector_docs \
+        --index-name idx_hybrid_vector \
+        --rows "${ROWS}" \
+        recall
+}
+
 show_status() {
     tiup status || true
     tiup "${PLAYGROUND_COMPONENT}" display --tag "${PLAYGROUND_TAG}" || true
@@ -620,7 +633,8 @@ Commands:
   up        Start MinIO, TiUP playground, and wait for the playground-managed TiCDC changefeed
   prepare   Prepare schema, create hybrid index, load data through CDC, and add delta data
   verify    Verify inverted/vector results and planner path
-  all       Run up + prepare + verify
+  recall    Run recall@K test (brute-force vs TiCI vector search)
+  all       Run up + prepare + verify + recall
   status    Print TiUP status and playground display output
   down      Clean playground and stop the MinIO started by this script
 
@@ -657,10 +671,14 @@ main() {
         verify)
             run_python_verify
             ;;
+        recall)
+            run_python_recall
+            ;;
         all)
             start_playground
             run_python_prepare
             run_python_verify
+            run_python_recall
             ;;
         status)
             show_status

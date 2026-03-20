@@ -32,7 +32,7 @@ DELTA_ANCHOR_TITLE = "post_index_anchor"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["prepare", "verify"])
+    parser.add_argument("command", choices=["prepare", "verify", "recall"])
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4000)
     parser.add_argument("--user", default="root")
@@ -44,6 +44,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--interval", type=int, default=5)
+    parser.add_argument("--recall-queries", type=int, default=20, help="number of random query vectors for recall test")
+    parser.add_argument(
+        "--recall-k",
+        type=str,
+        default="1,10,50",
+        help="comma-separated K values for recall@K",
+    )
     return parser.parse_args()
 
 
@@ -336,6 +343,81 @@ def verify(args: argparse.Namespace) -> None:
     )
 
 
+def brute_force_topk_sql(
+    args: argparse.Namespace, query_vec: List[float], k: int
+) -> str:
+    """Brute-force top-K via TiKV table scan (USE INDEX() bypasses all indexes)."""
+    return (
+        f"SELECT id FROM `{args.database}`.`{args.table}` USE INDEX() "
+        f"ORDER BY vec_l2_distance(embedding, {sql_literal(vector_literal(query_vec))}) "
+        f"LIMIT {k};"
+    )
+
+
+def tici_topk_sql(
+    args: argparse.Namespace, query_vec: List[float], k: int
+) -> str:
+    """Top-K via TiCI hybrid vector index."""
+    return (
+        f"SELECT id FROM `{args.database}`.`{args.table}` "
+        f"ORDER BY vec_l2_distance(embedding, {sql_literal(vector_literal(query_vec))}) "
+        f"LIMIT {k};"
+    )
+
+
+def compute_recall(ground_truth: List[int], predicted: List[int], k: int) -> float:
+    gt_set = set(ground_truth[:k])
+    pred_set = set(predicted[:k])
+    if not gt_set:
+        return 1.0
+    return len(gt_set & pred_set) / len(gt_set)
+
+
+def recall(args: argparse.Namespace) -> None:
+    k_values = [int(x.strip()) for x in args.recall_k.split(",")]
+    max_k = max(k_values)
+    num_queries = args.recall_queries
+    rng = random.Random(args.seed + 1000)  # different seed from data generation
+
+    print(f"recall test: {num_queries} queries, K={k_values}, dim={VECTOR_DIM}")
+
+    query_vectors = [random_vector(rng) for _ in range(num_queries)]
+
+    results: dict[int, List[float]] = {k: [] for k in k_values}
+
+    for qi, qvec in enumerate(query_vectors):
+        gt_ids = fetch_ids(args, brute_force_topk_sql(args, qvec, max_k))
+        tici_ids = fetch_ids(args, tici_topk_sql(args, qvec, max_k))
+
+        for k in k_values:
+            r = compute_recall(gt_ids, tici_ids, k)
+            results[k].append(r)
+
+        if (qi + 1) % 5 == 0 or qi == 0:
+            print(f"  query {qi + 1}/{num_queries} done")
+
+    print()
+    all_pass = True
+    for k in k_values:
+        scores = results[k]
+        avg = sum(scores) / len(scores) if scores else 0.0
+        min_r = min(scores) if scores else 0.0
+        perfect = sum(1 for s in scores if s >= 1.0)
+        threshold = 0.80 if k <= 1 else 0.90
+        status = "PASS" if avg >= threshold else "FAIL"
+        if status == "FAIL":
+            all_pass = False
+        print(
+            f"  recall@{k:>3d}: avg={avg:.4f}  min={min_r:.4f}  "
+            f"perfect={perfect}/{len(scores)}  [{status}] (threshold={threshold:.2f})"
+        )
+
+    print()
+    if not all_pass:
+        raise RuntimeError("recall test FAILED: one or more K values below threshold")
+    print("recall test PASSED")
+
+
 def main() -> None:
     args = parse_args()
     if args.command == "prepare":
@@ -343,6 +425,9 @@ def main() -> None:
         return
     if args.command == "verify":
         verify(args)
+        return
+    if args.command == "recall":
+        recall(args)
         return
     raise ValueError(f"unsupported command: {args.command}")
 
