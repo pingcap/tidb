@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -113,6 +114,68 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func updateTriggerPseudoRecord(
+	ctx context.Context,
+	sessCtx sessionctx.Context,
+	v *expression.VarAssignment,
+) (bool, error) {
+	lhs := v.Name
+	ss := strings.Split(lhs, ".")
+	if len(ss) != 2 {
+		return false, nil
+	}
+	tableRef, colName := ss[0], ss[1]
+	if strings.ToLower(tableRef) != "new" {
+		return false, nil
+	}
+	sessVars := sessCtx.GetSessionVars()
+	triggerCtx := sessVars.StmtCtx.TriggerCtx
+	if !triggerCtx.InTrigger {
+		return false, nil
+	}
+	// MySQL semantics: NEW is only writable in BEFORE INSERT/UPDATE triggers.
+	// TiDB uses TriggerCtx.NewData/Updated to indicate whether NEW exists / is writable.
+	if exec, ok := triggerCtx.Exec.(*TriggerExec); ok {
+		if exec.currentEvent() == ast.TriggerEventDelete {
+			return true, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", exec.currentEvent().String())
+		}
+		if exec.currentTiming() == ast.TriggerTimingAfter {
+			return true, dbterror.ErrTrgCantChangeRow.FastGenByArgs("NEW", exec.currentTiming().String()+" ")
+		}
+	}
+	if len(triggerCtx.NewData) == 0 {
+		// e.g. DELETE trigger.
+		return true, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", "")
+	}
+	if len(triggerCtx.Updated) == 0 {
+		// e.g. AFTER trigger.
+		return true, dbterror.ErrTrgCantChangeRow.FastGenByArgs("NEW", "")
+	}
+	tblInfo := triggerCtx.TableInfo
+	if tblInfo == nil {
+		return true, errors.New("trigger table info is nil")
+	}
+	colIdx := -1
+	for i, col := range tblInfo.Columns {
+		if col.Name.L == strings.ToLower(colName) {
+			colIdx = i
+		}
+	}
+	if colIdx == -1 {
+		return false, dbterror.ErrBadField.FastGenByArgs(colName, tableRef)
+	}
+	if colIdx >= len(triggerCtx.NewData) || colIdx >= len(triggerCtx.Updated) {
+		return true, errors.Errorf("trigger pseudo record index out of range: colIdx=%d, newLen=%d, updatedLen=%d", colIdx, len(triggerCtx.NewData), len(triggerCtx.Updated))
+	}
+	evalVal, err := v.Expr.Eval(sessCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return true, err
+	}
+	triggerCtx.NewData[colIdx] = evalVal
+	triggerCtx.Updated[colIdx] = true
+	return true, nil
+}
+
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
 	// According to the grammar rule, the procedure local variable is parsed as a system variable.
 	// VariableName EqOrAssignmentEq SetExpr
@@ -131,6 +194,15 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	if sysVar == nil {
 		if variable.IsRemovedSysVar(name) {
 			return nil // removed vars permit parse-but-ignore
+		}
+		if sessionVars.StmtCtx.TriggerCtx.InTrigger {
+			ok, err := updateTriggerPseudoRecord(ctx, e.Ctx(), v)
+			if err != nil {
+				return err
+			}
+			if ok {
+				return nil
+			}
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}

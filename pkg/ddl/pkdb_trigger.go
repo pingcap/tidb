@@ -253,29 +253,8 @@ func (e *executor) DropTrigger(ctx sessionctx.Context, stmt *ast.DropTriggerStmt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 
-	// Find the table that contains this trigger.
-	// TODO(trigger): we can optimize this by maintaining a mapping from trigger name to table.
-	var tableID int64
-	var tableName pmodel.CIStr
-	tbls, err := is.SchemaTableInfos(e.ctx, schemaName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, tbl := range tbls {
-		tblInfo := tbl
-		for _, trigger := range tblInfo.Triggers {
-			if trigger.Name.L == triggerName.L {
-				tableID = tblInfo.ID
-				tableName = tblInfo.Name
-				break
-			}
-		}
-		if tableID != 0 {
-			break
-		}
-	}
-
-	if tableID == 0 {
+	tableName, tableID, ok := infoschema.TableByTriggerName(is, schemaName, triggerName)
+	if !ok {
 		err := dbterror.ErrTrgDoesNotExist.FastGenByArgs()
 		if stmt.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -358,19 +337,10 @@ func buildTriggerInfo(ctx sessionctx.Context, stmt *ast.CreateTriggerStmt) (*mod
 	return triggerInfo, nil
 }
 
-// TODO(trigger): find a more efficient way to do uniqueness check.
-func checkDatabaseTriggerConflict(ctx context.Context, is infoschema.InfoSchema, schemaName pmodel.CIStr, triggerName pmodel.CIStr) error {
-	tbls, err := is.SchemaTableInfos(ctx, schemaName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, tbl := range tbls {
-		tblInfo := tbl
-		for _, trigger := range tblInfo.Triggers {
-			if trigger.Name.L == triggerName.L {
-				return dbterror.ErrTrgAlreadyExists.GenWithStackByArgs(triggerName.L)
-			}
-		}
+func checkDatabaseTriggerConflict(_ context.Context, is infoschema.InfoSchema, schemaName pmodel.CIStr, triggerName pmodel.CIStr) error {
+	_, _, ok := infoschema.TableByTriggerName(is, schemaName, triggerName)
+	if ok {
+		return dbterror.ErrTrgAlreadyExists.GenWithStackByArgs(triggerName.L)
 	}
 	return nil
 }

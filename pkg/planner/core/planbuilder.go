@@ -708,6 +708,14 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSignal(ctx, x)
 	case *ast.GetDiagnosticsStmt:
 		return b.buildGetDiagnostics(ctx, x)
+	default:
+		plan, err := b.tryBuildProcedureInstant(ctx, x)
+		if err != nil {
+			return nil, err
+		}
+		if plan != nil {
+			return plan, nil
+		}
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -863,11 +871,13 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			mockTablePlan := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
 			var possiblePlan base.LogicalPlan
+
+			inTrigger := b.ctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true, requireColumnPriv)
 			if err != nil {
 				return nil, err
 			}
-			if !procedureVar {
+			if !procedureVar && !inTrigger {
 				mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				var err error
 				assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true, requireColumnPriv)
@@ -3769,6 +3779,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
 			Procedure:             show.Procedure,
+			Trigger:               show.Trigger,
 			Table:                 tnW,
 			Partition:             show.Partition,
 			Column:                show.Column,
@@ -5832,6 +5843,42 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if err := b.preprocessAlterProcedure(v); err != nil {
 			return nil, err
 		}
+	case *ast.CreateTriggerStmt:
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("TRIGGER", user.AuthUsername,
+				user.AuthHostname, v.TableName.Name.L)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.TriggerPriv, v.TableName.Schema.L,
+				v.TableName.Name.L, "", err)
+			if v.Definer.CurrentUser {
+				v.Definer = user
+			}
+			if v.Definer.String() != user.String() {
+				err = plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+			}
+		}
+	case *ast.DropTriggerStmt:
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			triggerSchema := v.TriggerName.Schema
+			if triggerSchema.L == "" {
+				triggerSchema = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+			}
+			targetTable := ""
+			if b.is != nil {
+				if tblName, _, ok := infoschema.TableByTriggerName(b.is, triggerSchema, v.TriggerName.Name); ok {
+					targetTable = tblName.L
+				}
+			}
+			// If the trigger is not found, fall back to database-level privilege check to avoid using trigger name as object.
+			targetObject := targetTable
+			if targetObject == "" {
+				targetObject = triggerSchema.O
+			}
+			authErr := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("TRIGGER", user.AuthUsername,
+				user.AuthHostname, targetObject)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.TriggerPriv, triggerSchema.L,
+				targetTable, "", authErr)
+		}
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -6270,6 +6317,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	case ast.ShowCreateFunction:
 		names = []string{"Function", "sql_mode", "Create Function", "character_set_client", "collation_connection", "Database Collation"}
+	case ast.ShowCreateTrigger:
+		names = []string{"Trigger", "sql_mode", "SQL Original Statement", "character_set_client", "collation_connection", "Database Collation", "Created"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTimestamp}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:

@@ -97,7 +97,9 @@ const (
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
 	TableConstraints = "TABLE_CONSTRAINTS"
-	tableTriggers    = "TRIGGERS"
+	// TableTriggers is the string constant of TRIGGERS.
+	TableTriggers = "TRIGGERS"
+	tableTriggers = TableTriggers
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
 	TableUserPrivileges = "USER_PRIVILEGES"
 	// TableSchemaPrivileges provides information about schema privileges

@@ -206,6 +206,10 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeRepairTable(x)
 	case *ast.CreateSequenceStmt:
 		err = e.executeCreateSequence(x)
+	case *ast.CreateTriggerStmt:
+		err = e.executeCreateTrigger(x)
+	case *ast.DropTriggerStmt:
+		err = e.executeDropTrigger(x)
 	case *ast.CreateProcedureInfo:
 		err = e.executeCreateProcedure(x)
 	case *ast.DropProcedureStmt:
@@ -738,6 +742,14 @@ func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 	return e.ddlExecutor.CreateSequence(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateTrigger(s *ast.CreateTriggerStmt) error {
+	return e.ddlExecutor.CreateTrigger(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeDropTrigger(s *ast.DropTriggerStmt) error {
+	return e.ddlExecutor.DropTrigger(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeCreateProcedure(s *ast.CreateProcedureInfo) error {

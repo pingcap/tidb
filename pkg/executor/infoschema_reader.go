@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -245,6 +246,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTablePrivileges(ctx, sctx)
 		case infoschema.TableSchemaPrivileges:
 			err = e.setDataFromSchemaPrivileges(ctx, sctx)
+		case infoschema.TableTriggers:
+			err = e.setDataForTriggers(ctx, sctx)
 		case infoschema.TableRegions:
 			err = e.setDataForTableRegions(ctx, sctx)
 		case infoschema.TableLogReplStatusGlobal:
@@ -2527,6 +2530,89 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 				schema.O,                  // TABLE_SCHEMA
 				tbl.Name.O,                // TABLE_NAME
 				infoschema.ForeignKeyType, // CONSTRAINT_TYPE
+			)
+			rows = append(rows, record)
+			e.recordMemoryConsume(record)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTriggers(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTableTriggersExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTableTriggersExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	type orderKey struct {
+		event  ast.TriggerEvent
+		timing ast.TriggerTiming
+	}
+	mkOrderKey := func(event ast.TriggerEvent, timing ast.TriggerTiming) orderKey {
+		return orderKey{event: event, timing: timing}
+	}
+	rows := make([][]types.Datum, 0, len(tables))
+	for i, tbl := range tables {
+		schema := schemas[i]
+		if !ex.HasTriggerSchema(schema.L) {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
+		}
+
+		actionOrderByName := make(map[string]int, len(tbl.Triggers))
+		trigGroups := make(map[orderKey][]*model.TriggerInfo)
+		for _, trigger := range tbl.Triggers {
+			key := mkOrderKey(trigger.Event, trigger.Timing)
+			trigGroups[key] = append(trigGroups[key], trigger)
+		}
+		for _, group := range trigGroups {
+			ordered := orderTriggersForExecution(group)
+			for idx, trig := range ordered {
+				actionOrderByName[trig.Name.L] = idx + 1
+			}
+		}
+
+		for _, trigger := range tbl.Triggers {
+			var createdTime any // TIMESTAMP(2)
+			if trigger.CreatedTimestamp > 0 {
+				ts := time.Unix(int64(trigger.CreatedTimestamp), 0)
+				createdTime = types.NewTime(types.FromGoTime(ts), mysql.TypeTimestamp, 2)
+			}
+
+			record := types.MakeDatums(
+				infoschema.CatalogVal,             // TRIGGER_CATALOG
+				schema.O,                          // TRIGGER_SCHEMA
+				trigger.Name.O,                    // TRIGGER_NAME
+				trigger.Event.String(),            // EVENT_MANIPULATION
+				infoschema.CatalogVal,             // EVENT_OBJECT_CATALOG
+				schema.O,                          // EVENT_OBJECT_SCHEMA
+				trigger.Table.O,                   // EVENT_OBJECT_TABLE
+				actionOrderByName[trigger.Name.L], // ACTION_ORDER
+				nil,                               // ACTION_CONDITION
+				trigger.Body,                      // ACTION_STATEMENT
+				"ROW",                             // ACTION_ORIENTATION
+				trigger.Timing.String(),           // ACTION_TIMING
+				nil,                               // ACTION_REFERENCE_OLD_TABLE
+				nil,                               // ACTION_REFERENCE_NEW_TABLE
+				"OLD",                             // ACTION_REFERENCE_OLD_ROW
+				"NEW",                             // ACTION_REFERENCE_NEW_ROW
+				createdTime,                       // CREATED
+				trigger.SQLMode.String(),          // SQL_MODE
+				trigger.Definer.String(),          // DEFINER
+				trigger.CharacterSetClient,        // CHARACTER_SET_CLIENT
+				trigger.CollationConnection,       // COLLATION_CONNECTION
+				trigger.DatabaseCollation,         // DATABASE_COLLATION
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)

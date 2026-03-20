@@ -212,3 +212,23 @@ func TestGetDiagnosticsInProcedure(t *testing.T) {
 	tk.Res[3].Check(testkit.Rows("Truncated incorrect INTEGER value: '6x' 1292 22007 1234 xxxxxs 05000"))
 	tk.ClearProcedureRes()
 }
+
+func TestGetStackedDiagnosticsAfterProcedureError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_backup_stmtctx(id int primary key)")
+	tk.MustExec("insert into t_backup_stmtctx values (1)")
+	tk.MustExec(`create procedure p_backup_stmtctx() begin
+		declare continue handler for 1062 begin
+			insert into t_not_exist values (1);
+		end;
+		insert into t_backup_stmtctx values (1);
+	end`)
+	tk.MustGetErrCode("call p_backup_stmtctx()", mysql.ErrNoSuchTable)
+
+	tk.MustExec("create procedure p_check_backup_stmtctx() begin get STACKED Diagnostics @a = ROW_COUNT; end;")
+	tk.MustGetErrCode("call p_check_backup_stmtctx()", mysql.ErrGetStackedDaWithoutActiveHandler)
+}

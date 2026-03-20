@@ -5029,6 +5029,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
 		case infoschema.TableRegions:
 			p.Extractor = &TableRegionsExtractor{}
+		case infoschema.TableTriggers:
+			p.Extractor = NewInfoSchemaTableTriggersExtractor()
 		case infoschema.TableLogReplStatusGlobal:
 			p.Extractor = &LogReplStatusGlobalExtractor{}
 		case infoschema.TableLogReplClusterStatusGlobal:
@@ -5460,14 +5462,12 @@ func pruneAndBuildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-	hasFK bool,
+	hasTrigger bool,
 ) (TblColPosInfoSlice, *bitset.BitSet, error) {
 	var nonPruned *bitset.BitSet
-	// If there is foreign key, we can't prune the columns.
-	// Use a very relax check for foreign key cascades and checks.
-	// If there's one table containing foreign keys, all of the tables would not do pruning.
-	// It should be strict in the future or just support pruning column when there is foreign key.
-	if !hasFK {
+	// If there are foreign key checks/cascades or triggers, we can't prune the columns.
+	// Use a relaxed check for the whole statement. We can make this more precise later.
+	if !hasTrigger {
 		nonPruned = bitset.New(uint(len(names)))
 		nonPruned.SetAll()
 	}
@@ -5490,9 +5490,9 @@ func pruneAndBuildColPositionInfoForDelete(
 		cols2PosInfo := &cols2PosInfos[i]
 		tbl := tblID2Table[cols2PosInfo.TblID]
 		tblInfo := tbl.Meta()
-		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
-		// nonPrunedSet will be nil if it's a point get or has foreign keys.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || variable.EnableLBAC.Load() {
+		// If it's partitioned, uses triggers/foreign keys, or has LBAC, skip pruning.
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasTrigger || nonPruned == nil || variable.EnableLBAC.Load()
+		if skipPruning {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
 			if err != nil {
 				return nil, nil, err
@@ -6342,7 +6342,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}
 
 	var nonPruned *bitset.BitSet
-	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
+	hasTrigger := len(del.FKCascades) > 0 || len(del.FKChecks) > 0 || hasDeleteTriggers(tblID2table)
+	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, hasTrigger)
 	if err != nil {
 		return nil, err
 	}
@@ -6373,6 +6374,17 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	return del, err
+}
+
+func hasDeleteTriggers(tblID2table map[int64]table.Table) bool {
+	for _, tbl := range tblID2table {
+		for _, trg := range tbl.Meta().Triggers {
+			if trg.Event == ast.TriggerEventDelete {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, schema *expression.Schema) (map[int64][]util.HandleCols, error) {

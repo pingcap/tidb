@@ -301,6 +301,9 @@ func IsSQLStateCompletion(sqlState string) bool {
 func (b *PlanBuilder) buildCallParamPlan(ctx context.Context, stmtNodes *ast.CreateProcedureInfo, node *ast.CallStmt, collate string) ([]*ProcedureParameterVal, error) {
 	params := make([]*ProcedureParameterVal, 0, len(stmtNodes.ProcedureParam))
 	procedureCon := variable.NewProcedureContext(variable.BLOCKLABEL)
+	if b.procedureNowContext != nil {
+		procedureCon = b.procedureNowContext
+	}
 	b.procedureNowContext = procedureCon
 	b.procedurePlan.ProcedureCtx = procedureCon
 	var err error
@@ -426,6 +429,30 @@ func (b *PlanBuilder) makePlanForCallProcedure(ctx context.Context, procedureInf
 		return nil, err
 	}
 	return plan, err
+}
+
+func (b *PlanBuilder) tryBuildProcedureInstant(ctx context.Context, node ast.Node) (base.Plan, error) {
+	if !b.ctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger {
+		return nil, nil
+	}
+	v, ok := node.(ast.StmtNode)
+	if !ok {
+		return nil, nil
+	}
+	// TODO(trigger): filter out non-procedure statements.
+	collate, ok := b.ctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
+	if !ok {
+		collate = mysql.DefaultCollationName
+	}
+	b.procedurePlan.initProcedureExec()
+	err := b.procedureNodePlan(ctx, v, collate)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	plan := &ProcedurePlan{}
+	plan.ProcedureExecPlan = b.procedurePlan
+	return &TriggerProcedure{Plan: plan}, nil
 }
 
 // buildCallProcedure Generate call command execution plan.

@@ -76,7 +76,8 @@ type UpdateExec struct {
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
-	fkCascades map[int64][]*FKCascadeExec
+	fkCascades  map[int64][]*FKCascadeExec
+	triggerExec *TriggerExec
 
 	IgnoreError bool
 	PolicyName  string // The label policy name binded to this table.
@@ -736,6 +737,11 @@ func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
 		fkCascades = append(fkCascades, fkc...)
 	}
 	return fkCascades
+}
+
+// GetTriggerExec implements WithTriggerSupport interface.
+func (e *UpdateExec) GetTriggerExec() *TriggerExec {
+	return e.triggerExec
 }
 
 // HasFKCascades implements WithForeignKeyTrigger interface.

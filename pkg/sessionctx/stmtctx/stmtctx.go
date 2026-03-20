@@ -456,7 +456,14 @@ type StatementContext struct {
 	}
 
 	TriggerCtx struct {
+		HasTriggerCascades bool
+
 		InTrigger bool
+		TableInfo *model.TableInfo
+		OldData   []types.Datum
+		NewData   []types.Datum
+		Updated   []bool
+		Exec      any
 	}
 
 	UserFuncCtx struct {

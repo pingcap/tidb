@@ -70,6 +70,7 @@ const (
 	SequenceName     = "sequence_name"
 	ColumnName       = "column_name"
 	DDLStateName     = "state"
+	TriggerSchema    = "trigger_schema"
 )
 
 //revive:enable:exported
@@ -83,6 +84,7 @@ var patternMatchable = map[string]struct{}{
 	SequenceSchema:   {},
 	SequenceName:     {},
 	ColumnName:       {},
+	TriggerSchema:    {},
 }
 
 const (
@@ -611,6 +613,26 @@ func NewInfoSchemaSequenceExtractor() *InfoSchemaSequenceExtractor {
 	}
 	e.colNames = []string{SequenceSchema, SequenceName}
 	return e
+}
+
+// InfoSchemaTableTriggersExtractor is the predicate extractor for information_schema.triggers.
+type InfoSchemaTableTriggersExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaTableTriggersExtractor creates a new InfoSchemaTableTriggersExtractor.
+func NewInfoSchemaTableTriggersExtractor() *InfoSchemaTableTriggersExtractor {
+	e := &InfoSchemaTableTriggersExtractor{}
+	e.extractableColumns = extractableCols{
+		schema: TriggerSchema,
+	}
+	e.colNames = []string{TriggerSchema}
+	return e
+}
+
+// HasTriggerSchema returns true if trigger schema is specified in predicates.
+func (e *InfoSchemaTableTriggersExtractor) HasTriggerSchema(name string) bool {
+	return !e.filter(TriggerSchema, name)
 }
 
 // findTablesByID finds tables by table IDs and append them to table map.

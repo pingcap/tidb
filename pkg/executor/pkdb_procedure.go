@@ -27,12 +27,14 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -73,6 +75,7 @@ type ProcedureExec struct {
 	// Save the mapping relationship between stored procedure internal variables and user variables
 	outVarParam         map[string]string         // save variable name. Wait for the stored procedure to finish executing and set the output value
 	outLocalParam       map[string]string         // save local variable name.Wait for the stored procedure to finish executing and set the output value
+	outTriggerParam     map[string]int            // save trigger pseudo record variable name. Wait for the stored procedure to finish executing and set the output value
 	procedurePlan       plannercore.ProcedureExec // store execution plan
 	cachedProcedurePlan *plannercore.RoutineCacahe
 	definerUser         string
@@ -89,6 +92,7 @@ type ProcedureExec struct {
 func (e *ProcedureExec) Close() error {
 	e.outVarParam = nil
 	e.outLocalParam = nil
+	e.outTriggerParam = nil
 	err := e.BaseExecutor.Close()
 	if err != nil {
 		return err
@@ -101,14 +105,31 @@ func (e *ProcedureExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 	if e.done {
 		return nil
 	}
-	callStmt, ok := e.Statement.(*ast.CallStmt)
-	if !ok {
-		e.done = true
-		return errors.Errorf("unsupported statement %T in ProcedureExec", e.Statement)
+	switch x := e.Statement.(type) {
+	case *ast.CallStmt:
+		_, err = e.callProcedure(ctx, x)
+	default:
+		// This case occurs when the trigger body is combined with the procedure body.
+		err = e.triggerCallProcedure(ctx)
 	}
-	_, err = e.callProcedure(ctx, callStmt)
 
 	e.done = true
+	return err
+}
+
+func (e *ProcedureExec) triggerCallProcedure(ctx context.Context) (err error) {
+	e.Ctx().GetSessionVars().SetInCallProcedure()
+	defer func() {
+		e.Ctx().GetSessionVars().OutCallProcedure(err != nil)
+	}()
+	mockCallStmt := &ast.CallStmt{
+		Procedure: &ast.FuncCallExpr{
+			Schema: pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB),
+			FnName: pmodel.NewCIStr(""),
+			Args:   []ast.ExprNode{},
+		},
+	}
+	_, err = e.callProcedure(ctx, mockCallStmt)
 	return err
 }
 
@@ -280,12 +301,41 @@ func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) exec.Execu
 		ProcedureSQLMod:     v.ProcedureSQLMod,
 		outVarParam:         make(map[string]string, 10),
 		outLocalParam:       make(map[string]string, 10),
+		outTriggerParam:     make(map[string]int, 10),
 		procedurePlan:       v.Plan.ProcedureExecPlan,
 		cachedProcedurePlan: v.CachedProcedurePlan,
 		IsStrict:            v.IsStrictMode,
 		definerHost:         v.Plan.DefinerHost,
 		definerUser:         v.Plan.DefinerUser,
 		securityType:        securityType,
+		buildPlan:           b.build,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildTriggerProcedure(v *plannercore.TriggerProcedure) exec.Executor {
+	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base.SetInitCap(chunk.ZeroCapacity)
+	sqlMode, ok := b.ctx.GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		b.err = errors.New("unknown system var " + variable.SQLModeVar)
+	}
+	e := &ProcedureExec{
+		BaseExecutor:        base,
+		Statement:           nil,
+		flag:                0,
+		is:                  b.is,
+		done:                false,
+		ProcedureSQLMod:     sqlMode,
+		outVarParam:         make(map[string]string, 10),
+		outLocalParam:       make(map[string]string, 10),
+		outTriggerParam:     make(map[string]int, 10),
+		procedurePlan:       v.Plan.ProcedureExecPlan,
+		cachedProcedurePlan: &plannercore.RoutineCacahe{},
+		IsStrict:            b.ctx.GetSessionVars().SQLMode.HasStrictMode(),
+		definerHost:         v.Plan.DefinerHost,
+		definerUser:         v.Plan.DefinerUser,
+		securityType:        "INVOKER",
 		buildPlan:           b.build,
 	}
 	return e
@@ -317,6 +367,7 @@ func init() {
 			ProcedureSQLMod:     v.ProcedureSQLMod,
 			outVarParam:         make(map[string]string, 10),
 			outLocalParam:       make(map[string]string, 10),
+			outTriggerParam:     make(map[string]int, 10),
 			procedurePlan:       plan.ProcedureExecPlan,
 			cachedProcedurePlan: v.CachedProcedurePlan,
 			IsStrict:            v.IsStrictMode,
@@ -383,6 +434,36 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 				e.outVarParam[param.DeclName] = name
 			}
 		case *ast.ColumnNameExpr:
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			if v.Name.IsTriggerPseudoRecord() && sc.TriggerCtx.InTrigger {
+				datum, idx, err := getTriggerRowDatum(sc, v)
+				if err != nil {
+					return err
+				}
+				if param.ParamType == ast.MODE_OUT || param.ParamType == ast.MODE_INOUT {
+					routineName := s.Procedure.Schema.String() + "." + s.Procedure.FnName.String()
+					if v.Name.Table.L != "new" {
+						return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, routineName)
+					}
+					// MySQL semantics: OUT/INOUT arguments must be a variable or NEW pseudo-variable in BEFORE trigger.
+					// TiDB uses TriggerCtx.NewData/Updated to indicate whether NEW exists / is writable.
+					if len(sc.TriggerCtx.Updated) == 0 {
+						return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, routineName)
+					}
+				}
+				if param.ParamType == ast.MODE_OUT {
+					datum.SetNull()
+				}
+				err = plannercore.UpdateVariableVar(param.DeclName, datum, e.Ctx().GetSessionVars())
+				if err != nil {
+					return err
+				}
+				if param.ParamType == ast.MODE_OUT || param.ParamType == ast.MODE_INOUT {
+					e.outTriggerParam[param.DeclName] = idx
+				}
+				break
+			}
+
 			if !e.Ctx().GetSessionVars().InOtherCall() {
 				return exeerrors.ErrBadField.GenWithStackByArgs(s.Procedure.Args[i].(*ast.ColumnNameExpr).Name.Name.O, "field list")
 			}
@@ -413,7 +494,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 				return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 			var exec plannercore.ProcedureCompileAndExec
-			if e.isFunction {
+			if e.Ctx().GetSessionVars().StmtCtx.TriggerCtx.InTrigger || e.isFunction {
 				exec = e.executeWithSameContext
 			}
 			if e.Ctx().GetSessionVars().InOtherCall() {
@@ -444,8 +525,69 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 	return nil
 }
 
+func ensureTriggerNewWritable(sc *stmtctx.StatementContext) error {
+	triggerCtx := sc.TriggerCtx
+	// MySQL semantics: NEW is only writable in BEFORE INSERT/UPDATE triggers.
+	// TiDB uses TriggerCtx.NewData/Updated to indicate whether NEW exists / is writable.
+	if exec, ok := triggerCtx.Exec.(*TriggerExec); ok {
+		if exec.currentEvent() == ast.TriggerEventDelete {
+			return dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", exec.currentEvent().String())
+		}
+		if exec.currentTiming() == ast.TriggerTimingAfter {
+			return dbterror.ErrTrgCantChangeRow.FastGenByArgs("NEW", exec.currentTiming().String()+" ")
+		}
+	}
+	if len(triggerCtx.NewData) == 0 {
+		// e.g. DELETE trigger.
+		return dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", "")
+	}
+	if len(triggerCtx.Updated) == 0 {
+		// e.g. AFTER trigger.
+		return dbterror.ErrTrgCantChangeRow.FastGenByArgs("NEW", "")
+	}
+	return nil
+}
+
+func getTriggerRowDatum(sc *stmtctx.StatementContext, v *ast.ColumnNameExpr) (types.Datum, int, error) {
+	idx := -1
+	for i, c := range sc.TriggerCtx.TableInfo.Columns {
+		if c.Name.L == v.Name.Name.L {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return types.Datum{}, 0, exeerrors.ErrBadField.GenWithStackByArgs(v.Name.Name.O, "field list")
+	}
+	switch v.Name.Table.L {
+	case "new":
+		if len(sc.TriggerCtx.NewData) == 0 {
+			if exec, ok := sc.TriggerCtx.Exec.(*TriggerExec); ok {
+				return types.Datum{}, 0, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", exec.currentEvent().String())
+			}
+			return types.Datum{}, 0, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", "")
+		}
+		if idx >= len(sc.TriggerCtx.NewData) {
+			return types.Datum{}, 0, errors.Errorf("trigger pseudo record index out of range: colIdx=%d, newLen=%d", idx, len(sc.TriggerCtx.NewData))
+		}
+		return sc.TriggerCtx.NewData[idx], idx, nil
+	case "old":
+		if len(sc.TriggerCtx.OldData) == 0 {
+			if exec, ok := sc.TriggerCtx.Exec.(*TriggerExec); ok {
+				return types.Datum{}, 0, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("OLD", exec.currentEvent().String())
+			}
+			return types.Datum{}, 0, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("OLD", "")
+		}
+		if idx >= len(sc.TriggerCtx.OldData) {
+			return types.Datum{}, 0, errors.Errorf("trigger pseudo record index out of range: colIdx=%d, oldLen=%d", idx, len(sc.TriggerCtx.OldData))
+		}
+		return sc.TriggerCtx.OldData[idx], idx, nil
+	}
+	return types.Datum{}, 0, exeerrors.ErrBadField.GenWithStackByArgs(v.Name.Name.O, "field list")
+}
+
 // outParams handle out parameters.
-func (e *ProcedureExec) outParams() error {
+func (e *ProcedureExec) outParams(ctx context.Context) error {
 	plannercore.ResetCallStatus(e.Ctx())
 	for key, v := range e.outVarParam {
 		varType, datum, notFind := e.procedurePlan.ProcedureCtx.GetProcedureVariable(key)
@@ -457,6 +599,28 @@ func (e *ProcedureExec) outParams() error {
 		} else {
 			e.Ctx().GetSessionVars().SetUserVarVal(v, datum)
 			e.Ctx().GetSessionVars().SetUserVarType(v, varType)
+		}
+	}
+
+	trigCtx := e.Ctx().GetSessionVars().StmtCtx.TriggerCtx
+	if trigCtx.InTrigger && len(e.outTriggerParam) > 0 {
+		if err := ensureTriggerNewWritable(e.Ctx().GetSessionVars().StmtCtx); err != nil {
+			return err
+		}
+		for k, idx := range e.outTriggerParam {
+			_, datum, notFind := e.procedurePlan.ProcedureCtx.GetProcedureVariable(k)
+			if notFind {
+				continue
+			}
+			casted, err := table.CastColumnValue(e.Ctx().GetExprCtx(), datum, trigCtx.TableInfo.Columns[idx], false, false)
+			if err != nil {
+				return err
+			}
+			if idx >= len(trigCtx.NewData) || idx >= len(trigCtx.Updated) {
+				return errors.Errorf("trigger pseudo record index out of range: colIdx=%d, newLen=%d, updatedLen=%d", idx, len(trigCtx.NewData), len(trigCtx.Updated))
+			}
+			trigCtx.NewData[idx] = casted
+			trigCtx.Updated[idx] = true
 		}
 	}
 
@@ -481,7 +645,9 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 		return nil, exeerrors.ErrProcedureDisabled
 	}
 	e.Ctx().GetSessionVars().SetInCallProcedure()
-	defer func() { e.Ctx().GetSessionVars().OutCallProcedure(err != nil) }()
+	defer func() {
+		e.Ctx().GetSessionVars().OutCallProcedure(err != nil)
+	}()
 	//The last FinishExecuteStmt is expected to be a call statement.
 	var originalSQL string
 	if e.Ctx().GetSessionVars().StmtCtx != nil {
@@ -534,7 +700,7 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 			// In order to clean up the display cache (sql, execution plan, hash value, etc.) rebuild the StatementContext
 			// StatementContext some structures use sync.Once unable to update.
 			sc := stmtctx.NewStmtCtx()
-			if !e.isFunction {
+			if !e.Ctx().GetSessionVars().StmtCtx.TriggerCtx.InTrigger && !e.isFunction {
 				sc.OriginalSQL = originalSQL
 				e.Ctx().GetSessionVars().StmtCtx.CopyMuForCallProcedure(sc)
 				e.Ctx().GetSessionVars().StmtCtx = sc
@@ -609,7 +775,7 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 	if e.isFunction {
 		return nil, exeerrors.ErrSpNoreturnend.GenWithStackByArgs(s.Procedure.Schema.String() + "." + s.Procedure.FnName.String())
 	}
-	err = e.outParams()
+	err = e.outParams(ctx)
 	return nil, err
 }
 
@@ -667,7 +833,7 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 		}
 		oldIP = ip
 		cmd := e.procedurePlan.ProcedureCommandList[ip]
-		if e.isFunction {
+		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction {
 			cmd.RegisterCompileAndExecFunc(e.executeWithSameContext)
 		}
 
@@ -714,6 +880,15 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	}
 
 	builder := newExecutorBuilder(e.Ctx(), e.is, nil)
+	if triggerCtx := e.Ctx().GetSessionVars().StmtCtx.TriggerCtx; triggerCtx.InTrigger {
+		if trigExec, ok := triggerCtx.Exec.(*TriggerExec); ok {
+			// Preserve the caller's latest executor to avoid leaking the inner statement's executor
+			// into the outer trigger execution context (see TriggerExec.latestExec).
+			origLatestExec := trigExec.latestExec
+			defer func() { trigExec.latestExec = origLatestExec }()
+			builder.triggerExec = trigExec
+		}
+	}
 	newExec := builder.build(p)
 	if builder.err != nil {
 		return nil, nil, builder.err
@@ -768,11 +943,53 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	errLevels := sc.ErrLevels()
 	originalFlags := sc.TypeFlags()
 	originalErrLevels := errLevels
+	originalInInsertStmt := sc.InInsertStmt
+	originalInUpdateStmt := sc.InUpdateStmt
+	originalInDeleteStmt := sc.InDeleteStmt
+	originalInSelectStmt := sc.InSelectStmt
+	originalInLoadDataStmt := sc.InLoadDataStmt
+	originalInCreateOrAlterStmt := sc.InCreateOrAlterStmt
+	originalInSetSessionStatesStmt := sc.InSetSessionStatesStmt
+	originalInShowWarning := sc.InShowWarning
+	originalInDiagnostics := sc.InDiagnostics
+	originalLastWarningNum := sc.LastWarningNum
+	originalPriority := sc.Priority
+	originalNotFillCache := sc.NotFillCache
+	originalWeakConsistency := sc.WeakConsistency
 
 	restore := func() {
-		sctx.GetSessionVars().StmtCtx.SetTypeFlags(originalFlags)
-		sctx.GetSessionVars().StmtCtx.SetErrLevels(originalErrLevels)
+		sc := sctx.GetSessionVars().StmtCtx
+		sc.InInsertStmt = originalInInsertStmt
+		sc.InUpdateStmt = originalInUpdateStmt
+		sc.InDeleteStmt = originalInDeleteStmt
+		sc.InSelectStmt = originalInSelectStmt
+		sc.InLoadDataStmt = originalInLoadDataStmt
+		sc.InCreateOrAlterStmt = originalInCreateOrAlterStmt
+		sc.InSetSessionStatesStmt = originalInSetSessionStatesStmt
+		sc.InShowWarning = originalInShowWarning
+		sc.InDiagnostics = originalInDiagnostics
+		sc.LastWarningNum = originalLastWarningNum
+		sc.Priority = originalPriority
+		sc.NotFillCache = originalNotFillCache
+		sc.WeakConsistency = originalWeakConsistency
+		sc.SetTypeFlags(originalFlags)
+		sc.SetErrLevels(originalErrLevels)
 	}
+
+	sc.InInsertStmt = false
+	sc.InUpdateStmt = false
+	sc.InDeleteStmt = false
+	sc.InSelectStmt = false
+	sc.InLoadDataStmt = false
+	sc.InCreateOrAlterStmt = false
+	sc.InSetSessionStatesStmt = false
+	sc.InShowWarning = false
+	sc.InDiagnostics = false
+	sc.LastWarningNum = 0
+	sc.Priority = mysql.NoPriority
+	sc.NotFillCache = false
+	sc.WeakConsistency = false
+
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.

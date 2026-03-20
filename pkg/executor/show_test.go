@@ -18,10 +18,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -123,4 +129,65 @@ func TestShowIndexWithGlobalIndex(t *testing.T) {
 	tk.MustExec("insert test_t1 values (1, 1);")
 	tk.MustExec("alter table test_t1 add unique index p_a (a) GLOBAL;")
 	tk.MustQuery("show index from test_t1").Check(testkit.Rows("test_t1 0 p_a 1 a A 0 <nil> <nil> YES BTREE   YES <nil> NO YES"))
+}
+
+func TestShowTriggerPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+
+	origSchemaCacheSize := tk.MustQuery("select @@global.tidb_schema_cache_size").Rows()[0][0].(string)
+	tk.MustExec("set global tidb_schema_cache_size = 0")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_schema_cache_size = " + origSchemaCacheSize)
+	})
+	require.NoError(t, dom.Reload())
+	isV2, _ := infoschema.IsV2(dom.InfoSchema())
+	require.False(t, isV2, "expected infoschema v1 after setting tidb_schema_cache_size=0")
+
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	tk.MustExec("create trigger trg1 before insert on t for each row set @x = 1")
+
+	tk.MustExec("create user u_show_trg_sel@'%'")
+	tk.MustExec("create user u_show_trg_trig@'%'")
+	tk.MustExec("grant select on test.t to u_show_trg_sel@'%'")
+	tk.MustExec("grant trigger on test.t to u_show_trg_trig@'%'")
+
+	tkSel := testkit.NewTestKit(t, store)
+	require.NoError(t, tkSel.Session().Auth(&auth.UserIdentity{Username: "u_show_trg_sel", Hostname: "%"}, nil, nil, nil))
+	tkSel.MustExec("use test")
+	require.NotNil(t, tkSel.Session().GetSessionVars().User)
+	checker := privilege.GetPrivilegeManager(tkSel.Session())
+	require.NotNil(t, checker)
+	require.False(t, checker.RequestVerification(tkSel.Session().GetSessionVars().ActiveRoles, "test", "t", "", mysql.TriggerPriv))
+	tkSel.MustQuery("show triggers").Check(testkit.Rows())
+
+	requireMySQLErrCode(t, tkSel.QueryToErr("show create trigger trg1"), errno.ErrSpecificAccessDenied)
+
+	tkTrig := testkit.NewTestKit(t, store)
+	require.NoError(t, tkTrig.Session().Auth(&auth.UserIdentity{Username: "u_show_trg_trig", Hostname: "%"}, nil, nil, nil))
+	tkTrig.MustExec("use test")
+	tkTrig.MustQuery("show triggers").CheckAt([]int{0}, testkit.Rows("trg1"))
+	tkTrig.MustQuery("show create trigger trg1").CheckAt([]int{0}, testkit.Rows("trg1"))
+}
+
+func requireMySQLErrCode(t *testing.T, err error, errCode int) {
+	t.Helper()
+	require.Error(t, err)
+
+	originErr := errors.Cause(err)
+	switch v := originErr.(type) {
+	case *terror.Error:
+		require.Equal(t, errCode, int(v.Code()))
+	case *terror.TiDBError:
+		require.Equal(t, errCode, int(v.MYSQLERRNO))
+	default:
+		require.Failf(t, "unexpected error type", "type=%T err=%v", originErr, originErr)
+	}
 }

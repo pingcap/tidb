@@ -1539,6 +1539,12 @@ type CallStmt struct {
 	CachedProcedurePlan *RoutineCacahe
 }
 
+// TriggerProcedure trigger procedure plan.
+type TriggerProcedure struct {
+	baseSchemaProducer
+	Plan *ProcedurePlan
+}
+
 // SignalInfo record signal information item
 type SignalInfo struct {
 	Name int

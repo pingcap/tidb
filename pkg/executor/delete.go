@@ -49,7 +49,8 @@ type DeleteExec struct {
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
-	fkCascades map[int64][]*FKCascadeExec
+	fkCascades  map[int64][]*FKCascadeExec
+	triggerExec *TriggerExec
 
 	ignoreErr bool
 
@@ -286,10 +287,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) (err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
+	}
+
+	if ts, ok := ctx.GetTableCtx().GetTriggerSupport(); ok {
+		if err := ts.OnDeleteBefore(t.Meta(), data); err != nil {
+			return err
+		}
+		defer func() {
+			if err == nil {
+				err = ts.OnDeleteAfter(t.Meta(), data)
+			}
+		}()
 	}
 
 	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesRowLayout)
@@ -359,6 +371,11 @@ func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
 // HasFKCascades implements WithForeignKeyTrigger interface.
 func (e *DeleteExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
+}
+
+// GetTriggerExec implements WithTriggerSupport interface.
+func (e *DeleteExec) GetTriggerExec() *TriggerExec {
+	return e.triggerExec
 }
 
 type handleInfoPair struct {

@@ -71,6 +71,10 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+
+	// triggerTableMap records the mapping from (schema, trigger_name) to its owning table.
+	// The schema and trigger name are in lower case.
+	triggerTableMap map[schemaAndTriggerName]triggerTable
 }
 
 type infoSchemaMisc struct {
@@ -98,6 +102,16 @@ type SchemaAndTableName struct {
 	table  string
 }
 
+type schemaAndTriggerName struct {
+	schema  string
+	trigger string
+}
+
+type triggerTable struct {
+	tableName pmodel.CIStr
+	tableID   int64
+}
+
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := newInfoSchema()
@@ -120,6 +134,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 			return true
 		})
 		tb.DBID = dbInfo.ID
+		result.addTriggers(dbInfo.Name, tb)
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
@@ -151,6 +166,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.addSchema(tableNames)
 	for _, tb := range tables {
 		tb.DBID = mysqlDBInfo.ID
+		result.addTriggers(mysqlDBInfo.Name, tb)
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
@@ -176,6 +192,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.addSchema(tableNames)
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
+		result.addTriggers(dbInfo.Name, tb)
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
@@ -207,7 +224,21 @@ func newInfoSchema() *infoSchema {
 		schemaID2Name:         map[int64]string{},
 		sortedTablesBuckets:   make([]sortedTables, bucketCount),
 		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		triggerTableMap:       make(map[schemaAndTriggerName]triggerTable),
 	}
+}
+
+// TableByTriggerName returns the table name and table ID by trigger name.
+// The schema and trigger name are case-insensitive.
+func TableByTriggerName(is InfoSchema, schema, trigger pmodel.CIStr) (pmodel.CIStr, int64, bool) {
+	if is == nil {
+		return pmodel.CIStr{}, 0, false
+	}
+	base := is.base()
+	if base == nil {
+		return pmodel.CIStr{}, 0, false
+	}
+	return base.tableByTriggerName(schema, trigger)
 }
 
 func (is *infoSchema) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
@@ -684,6 +715,38 @@ func (is *infoSchema) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *mod
 		}
 		is.referredForeignKeyMap[refer] = newReferredFKList
 	}
+}
+
+func (is *infoSchema) addTriggers(schema pmodel.CIStr, tbInfo *model.TableInfo) {
+	if len(tbInfo.Triggers) == 0 {
+		return
+	}
+	for _, trigger := range tbInfo.Triggers {
+		is.triggerTableMap[schemaAndTriggerName{schema: schema.L, trigger: trigger.Name.L}] = triggerTable{
+			tableName: tbInfo.Name,
+			tableID:   tbInfo.ID,
+		}
+	}
+}
+
+func (is *infoSchema) deleteTriggers(schema pmodel.CIStr, tbInfo *model.TableInfo) {
+	if len(tbInfo.Triggers) == 0 {
+		return
+	}
+	for _, trigger := range tbInfo.Triggers {
+		delete(is.triggerTableMap, schemaAndTriggerName{schema: schema.L, trigger: trigger.Name.L})
+	}
+}
+
+func (is *infoSchema) tableByTriggerName(schema, trigger pmodel.CIStr) (pmodel.CIStr, int64, bool) {
+	if len(is.triggerTableMap) == 0 {
+		return pmodel.CIStr{}, 0, false
+	}
+	val, ok := is.triggerTableMap[schemaAndTriggerName{schema: schema.L, trigger: trigger.L}]
+	if !ok {
+		return pmodel.CIStr{}, 0, false
+	}
+	return val.tableName, val.tableID, true
 }
 
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
