@@ -254,9 +254,15 @@ func doOptimize(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
+	totalStart := time.Now()
+	defer func() {
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "do_optimize.total", time.Since(totalStart), nil)
+	}()
 	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
+	logicalOptimizeStart := time.Now()
 	logic, err := logicalOptimize(ctx, flag, logic)
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "do_optimize.logical_optimize", time.Since(logicalOptimizeStart), err)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -268,11 +274,15 @@ func doOptimize(
 	if planCounter == 0 {
 		planCounter = -1
 	}
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	physicalOptimizeStart := time.Now()
+	physical, cost, err := physicalOptimize(ctx, logic, &planCounter)
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "do_optimize.physical_optimize", time.Since(physicalOptimizeStart), err)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	postOptimizeStart := time.Now()
 	finalPlan := postOptimize(ctx, sctx, physical)
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "do_optimize.post_optimize", time.Since(postOptimizeStart), nil)
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -963,6 +973,10 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPla
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
+	totalStart := time.Now()
+	defer func() {
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "logical_optimize.total", time.Since(totalStart), nil)
+	}()
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
@@ -990,7 +1004,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
+		ruleStart := time.Now()
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "logical_optimize.rule."+rule.Name(), time.Since(ruleStart), err)
 		if err != nil {
 			return nil, err
 		}
@@ -1004,7 +1020,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		ruleStart := time.Now()
 		logic, _, err = rule.Optimize(ctx, logic, opt)
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "logical_optimize.again_rule."+rule.Name(), time.Since(ruleStart), err)
 		if err != nil {
 			return nil, err
 		}
@@ -1019,16 +1037,25 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+func physicalOptimize(ctx context.Context, logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+	totalStart := time.Now()
+	defer func() {
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.total", time.Since(totalStart), err)
+	}()
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
+	deriveStatsStart := time.Now()
 	if _, err := logic.RecursiveDeriveStats(nil); err != nil {
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.recursive_derive_stats", time.Since(deriveStatsStart), err)
 		return nil, 0, err
 	}
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.recursive_derive_stats", time.Since(deriveStatsStart), nil)
 
+	preparePropertiesStart := time.Now()
 	preparePossibleProperties(logic)
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.prepare_possible_properties", time.Since(preparePropertiesStart), nil)
 
 	prop := &property.PhysicalProperty{
 		TaskTp:      property.RootTaskType,
@@ -1056,7 +1083,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
+	findBestTaskStart := time.Now()
 	t, _, err := logic.FindBestTask(prop, planCounter, opt)
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.find_best_task", time.Since(findBestTaskStart), err)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1071,10 +1100,15 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
+	resolveIndicesStart := time.Now()
 	if err = t.Plan().ResolveIndices(); err != nil {
+		logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.resolve_indices", time.Since(resolveIndicesStart), err)
 		return nil, 0, err
 	}
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.resolve_indices", time.Since(resolveIndicesStart), nil)
+	getPlanCostStart := time.Now()
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	logSlowMVRefreshPlanningPhaseFromContext(ctx, "physical_optimize.get_plan_cost", time.Since(getPlanCostStart), err)
 	return t.Plan(), cost, err
 }
 

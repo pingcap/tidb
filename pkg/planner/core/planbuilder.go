@@ -3878,13 +3878,21 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 
 	fromTS := stmt.LastSuccessfulRefreshReadTSO
 
-	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt, target string) (base.PhysicalPlan, error) {
+		optCtx = withSlowMVRefreshPlanningLog(optCtx, b.ctx, dbName, viewName.Name.O, target)
+		totalStart := time.Now()
+		defer func() {
+			logSlowMVRefreshPlanningPhase(b.ctx, dbName, viewName.Name.O, target, "total", time.Since(totalStart), nil)
+		}()
 		nodeW := resolve.NewNodeW(sel)
 		sctx, ok := b.ctx.(sessionctx.Context)
 		if !ok {
 			return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
 		}
-		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
+		preprocessStart := time.Now()
+		err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is}))
+		logSlowMVRefreshPlanningPhase(b.ctx, dbName, viewName.Name.O, target, "preprocess", time.Since(preprocessStart), err)
+		if err != nil {
 			return nil, err
 		}
 
@@ -3893,7 +3901,9 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(savedBlockNames)
 
 		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+		buildStart := time.Now()
 		p, err := innerBuilder.Build(optCtx, nodeW)
+		logSlowMVRefreshPlanningPhase(b.ctx, dbName, viewName.Name.O, target, "build", time.Since(buildStart), err)
 		if err != nil {
 			return nil, err
 		}
@@ -3917,7 +3927,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, errors.New("mvmerge: merge source select is nil")
 	}
 	sourceOptimizeStart := time.Now()
-	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect, "merge_source")
 	if phaseInfo != nil {
 		phaseInfo.OptimizeMergeSource = time.Since(sourceOptimizeStart)
 	}
@@ -3953,7 +3963,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
 		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
 		fullUpdateOptimizeStart := time.Now()
-		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
+		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect, "full_update_lookup_template")
 		if phaseInfo != nil {
 			phaseInfo.OptimizeFullUpdate = time.Since(fullUpdateOptimizeStart)
 		}
@@ -3976,6 +3986,15 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if phaseInfo != nil {
 			phaseInfo.ExtractFullUpdate = time.Since(extractFullUpdateStart)
 		}
+		logSlowMVRefreshPlanningPhase(
+			b.ctx,
+			dbName,
+			viewName.Name.O,
+			"full_update_lookup_template",
+			"extract_template",
+			time.Since(extractFullUpdateStart),
+			err,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -4017,6 +4036,56 @@ func getMVMergePhaseInfo(sctx base.PlanContext) *stmtctx.MVMergePhaseInfo {
 		return nil
 	}
 	return &sessVars.StmtCtx.MVMergePhaseInfo
+}
+
+const slowMVRefreshPlanningWarnThreshold = time.Second
+
+type slowMVRefreshPlanningLogKey struct{}
+
+type slowMVRefreshPlanningLogInfo struct {
+	sctx     base.PlanContext
+	dbName   string
+	viewName string
+	target   string
+}
+
+func withSlowMVRefreshPlanningLog(ctx context.Context, sctx base.PlanContext, dbName, viewName, target string) context.Context {
+	return context.WithValue(ctx, slowMVRefreshPlanningLogKey{}, slowMVRefreshPlanningLogInfo{
+		sctx:     sctx,
+		dbName:   dbName,
+		viewName: viewName,
+		target:   target,
+	})
+}
+
+func logSlowMVRefreshPlanningPhase(sctx base.PlanContext, dbName, viewName, target, phase string, elapsed time.Duration, err error) {
+	if elapsed < slowMVRefreshPlanningWarnThreshold {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("db", dbName),
+		zap.String("view", viewName),
+		zap.String("target", target),
+		zap.String("phase", phase),
+		zap.Duration("elapsed", elapsed),
+	}
+	if sctx != nil {
+		if sessVars := sctx.GetSessionVars(); sessVars != nil {
+			fields = append(fields, zap.Uint64("conn", sessVars.ConnectionID))
+		}
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	logutil.BgLogger().Warn("refresh materialized view planning is slow", fields...)
+}
+
+func logSlowMVRefreshPlanningPhaseFromContext(ctx context.Context, phase string, elapsed time.Duration, err error) {
+	info, ok := ctx.Value(slowMVRefreshPlanningLogKey{}).(slowMVRefreshPlanningLogInfo)
+	if !ok {
+		return
+	}
+	logSlowMVRefreshPlanningPhase(info.sctx, info.dbName, info.viewName, info.target, phase, elapsed, err)
 }
 
 type mvFullUpdateLookupTemplate struct {

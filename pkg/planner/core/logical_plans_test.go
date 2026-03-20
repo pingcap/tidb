@@ -1921,7 +1921,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	p, _, err = physicalOptimize(ctx, p.(base.LogicalPlan), &PlanCounterDisabled)
 	return p.(base.PhysicalPlan), stmt, err
 }
 
