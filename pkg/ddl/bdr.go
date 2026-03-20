@@ -47,7 +47,7 @@ func deniedByBDRWhenAddColumn(options []*ast.ColumnOption) bool {
 	tpLen := len(options) - comment - generated
 
 	if tpLen == 0 || (tpLen == 1 && nullable) || (tpLen == 1 && !notNull && defaultValue) ||
-		(tpLen == 2 && notNull && defaultValue) {
+		(tpLen == 2 && notNull && defaultValue) || (tpLen == 2 && nullable && defaultValue) {
 		return false
 	}
 

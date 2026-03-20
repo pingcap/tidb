@@ -68,6 +68,11 @@ func TestDeniedByBDRWhenAddColumn(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "Test with explicit nullable and defaultValue options (NULL DEFAULT NULL)",
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionNull}, {Tp: ast.ColumnOptionDefaultValue}},
+			expected: false,
+		},
+		{
 			name:     "Test with other options",
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionCheck}},
 			expected: true,
