@@ -394,11 +394,11 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 type BaseExecutorV2 struct {
 	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
 
-	executorMeta
 	executorKillerHandler
 	executorStats
+	nextIOAccState nextIOAcc // reusable accumulator context for RUv2 tracking
+	executorMeta
 	executorChunkAllocator
-	nextIOAccState nextIOAcc
 }
 
 // NewBaseExecutorV2 creates a new BaseExecutorV2 instance.

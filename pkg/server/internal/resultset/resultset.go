@@ -57,21 +57,21 @@ func New(recordSet sqlexec.RecordSet, preparedStmt *core.PlanCacheStmt) ResultSe
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	preparedStmt *core.PlanCacheStmt
-	columns      []*column.Info
-	closed       int32
 	cursorRUV2   *CursorRUV2Tracker
+	columns      []*column.Info
 	// finishLock is a mutex used to synchronize access to the `Next`,`Finish` and `Close` functions of the adapter.
 	// It ensures that only one goroutine can access the `Next`,`Finish` and `Close` functions at a time, preventing race conditions.
 	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
 	finishLock sync.Mutex
+	closed       int32
 }
 
 // CursorRUV2Tracker keeps reporting state for server-side cursor fetches.
 type CursorRUV2Tracker struct {
 	reporter          resourcegroup.ConsumptionReporter
-	resourceGroupName string
 	metrics           *execdetails.RUV2Metrics
 	ruDetails         *clientutil.RUDetails
+	resourceGroupName string
 	weights           execdetails.RUV2Weights
 	reportedTiDBRU    int64
 	reportedTiKVRUV2  float64
