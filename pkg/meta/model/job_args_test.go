@@ -578,8 +578,8 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewAttributesArgs{
-		AlertWarningSec:  10,
-		AlertCriticalSec: 20,
+		AlertWarningSec: 10,
+		AlertOverdueSec: 20,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}

@@ -744,16 +744,16 @@ func GetAlterMaterializedViewRefreshArgs(job *Job) (*AlterMaterializedViewRefres
 
 // AlterMaterializedViewAttributesArgs is the arguments for ActionAlterMaterializedViewAttributes ddl.
 type AlterMaterializedViewAttributesArgs struct {
-	AlertWarningSec  int64 `json:"alert_warning_sec,omitempty"`
-	AlertCriticalSec int64 `json:"alert_critical_sec,omitempty"`
+	AlertWarningSec int64 `json:"alert_warning_sec,omitempty"`
+	AlertOverdueSec int64 `json:"alert_overdue_sec,omitempty"`
 }
 
 func (a *AlterMaterializedViewAttributesArgs) getArgsV1(*Job) []any {
-	return []any{a.AlertWarningSec, a.AlertCriticalSec}
+	return []any{a.AlertWarningSec, a.AlertOverdueSec}
 }
 
 func (a *AlterMaterializedViewAttributesArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.AlertWarningSec, &a.AlertCriticalSec))
+	return errors.Trace(job.decodeArgs(&a.AlertWarningSec, &a.AlertOverdueSec))
 }
 
 // GetAlterMaterializedViewAttributesArgs gets the args for ActionAlterMaterializedViewAttributes.

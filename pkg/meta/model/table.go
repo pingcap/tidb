@@ -743,9 +743,9 @@ type MaterializedViewInfo struct {
 	// for automatically scheduled MV refresh tasks. 0 means disabled.
 	AlertWarningSec int64 `json:"alert_warning_sec,omitempty"`
 
-	// AlertCriticalSec controls critical log threshold (seconds) since LAST_SUCCESS_READ_TSO
+	// AlertOverdueSec controls overdue log threshold (seconds) since LAST_SUCCESS_READ_TSO
 	// for automatically scheduled MV refresh tasks. 0 means disabled.
-	AlertCriticalSec int64 `json:"alert_critical_sec,omitempty"`
+	AlertOverdueSec int64 `json:"alert_overdue_sec,omitempty"`
 
 	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW session.
 	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`

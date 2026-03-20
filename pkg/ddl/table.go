@@ -1108,7 +1108,7 @@ func onAlterMaterializedViewAttributes(jobCtx *jobContext, job *model.Job, se *s
 
 	oldTblInfo := tblInfo.Clone()
 	tblInfo.MaterializedView.AlertWarningSec = args.AlertWarningSec
-	tblInfo.MaterializedView.AlertCriticalSec = args.AlertCriticalSec
+	tblInfo.MaterializedView.AlertOverdueSec = args.AlertOverdueSec
 
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {

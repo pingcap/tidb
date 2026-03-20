@@ -42,8 +42,8 @@ import (
 )
 
 const (
-	mviewAttrAlertWarning  = "mview_alert_warning"
-	mviewAttrAlertCritical = "mview_alert_critical"
+	mviewAttrAlertWarning = "mview_alert_warning"
+	mviewAttrAlertOverdue = "mview_alert_overdue"
 )
 
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
@@ -178,7 +178,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
-	alertWarningSec, alertCriticalSec, err := parseMViewAttributes(s.Attributes)
+	alertWarningSec, alertOverdueSec, err := parseMViewAttributes(s.Attributes)
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		RefreshStartWith:  refreshStartWith,
 		RefreshNext:       refreshNext,
 		AlertWarningSec:   alertWarningSec,
-		AlertCriticalSec:  alertCriticalSec,
+		AlertOverdueSec:   alertOverdueSec,
 		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
@@ -572,7 +572,7 @@ func (e *executor) alterMaterializedViewAttributes(
 	mviewID int64,
 	attrs string,
 ) error {
-	alertWarningSec, alertCriticalSec, err := parseMViewAttributes(attrs)
+	alertWarningSec, alertOverdueSec, err := parseMViewAttributes(attrs)
 	if err != nil {
 		return err
 	}
@@ -589,8 +589,8 @@ func (e *executor) alterMaterializedViewAttributes(
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.AlterMaterializedViewAttributesArgs{
-		AlertWarningSec:  alertWarningSec,
-		AlertCriticalSec: alertCriticalSec,
+		AlertWarningSec: alertWarningSec,
+		AlertOverdueSec: alertOverdueSec,
 	}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
@@ -766,7 +766,7 @@ func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshCla
 	}
 }
 
-func parseMViewAttributes(attrs string) (alertWarningSec, alertCriticalSec int64, err error) {
+func parseMViewAttributes(attrs string) (alertWarningSec, alertOverdueSec int64, err error) {
 	attrs = strings.TrimSpace(attrs)
 	if attrs == "" {
 		return 0, 0, nil
@@ -800,18 +800,18 @@ func parseMViewAttributes(attrs string) (alertWarningSec, alertCriticalSec int64
 		switch key {
 		case mviewAttrAlertWarning:
 			alertWarningSec = val
-		case mviewAttrAlertCritical:
-			alertCriticalSec = val
+		case mviewAttrAlertOverdue:
+			alertOverdueSec = val
 		default:
 			return 0, 0, errors.Errorf("unsupported ATTRIBUTES key: %s", key)
 		}
 	}
 
-	if alertWarningSec > 0 && alertCriticalSec > 0 && alertWarningSec > alertCriticalSec {
+	if alertWarningSec > 0 && alertOverdueSec > 0 && alertWarningSec > alertOverdueSec {
 		return 0, 0, errors.Errorf("invalid ATTRIBUTES: %s (%d) must be less than or equal to %s (%d)",
-			mviewAttrAlertWarning, alertWarningSec, mviewAttrAlertCritical, alertCriticalSec)
+			mviewAttrAlertWarning, alertWarningSec, mviewAttrAlertOverdue, alertOverdueSec)
 	}
-	return alertWarningSec, alertCriticalSec, nil
+	return alertWarningSec, alertOverdueSec, nil
 }
 
 type mviewGroupByInfo struct {

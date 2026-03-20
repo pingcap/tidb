@@ -5348,9 +5348,9 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST NEXT 300 AS SELECT 1",
 		},
 		{
-			"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='mview_alert_warning=300,mview_alert_critical=600' AS SELECT 1",
+			"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
 			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_critical=600' AS SELECT 1",
+			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
@@ -5413,12 +5413,12 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"ALTER MATERIALIZED VIEW `mv` REFRESH NEXT 300",
 		},
 		{
-			"ALTER MATERIALIZED VIEW mv ATTRIBUTES='mview_alert_warning=5,mview_alert_critical=5'",
+			"ALTER MATERIALIZED VIEW mv ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
 			true,
-			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_critical=5'",
+			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
 		},
 		{
-			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300, ATTRIBUTES='mview_alert_warning=5,mview_alert_critical=10'",
+			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300, ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=10'",
 			false,
 			"",
 		},

@@ -52,7 +52,7 @@ type MVService struct {
 	ctx                 context.Context
 	sch                 *ServerConsistentHash
 
-	nextTimeoutScanMillis atomic.Int64
+	nextRefreshAlertScanMillis atomic.Int64
 
 	executor *TaskExecutor
 	notifier Notifier
@@ -79,8 +79,8 @@ type MVService struct {
 		mvLogCount             atomic.Int64
 		runningMVRefreshCount  atomic.Int64
 		runningMVLogPurgeCount atomic.Int64
-		overdueWarningCount    atomic.Int64
-		overdueCriticalCount   atomic.Int64
+		alertWarningCount      atomic.Int64
+		alertOverdueCount      atomic.Int64
 	}
 
 	mvRefreshMu struct {
@@ -142,10 +142,10 @@ type mv struct {
 	lastSuccessReadTSO uint64
 	lastSuccessTime    time.Time
 	alertWarningSec    int64
-	alertCriticalSec   int64
+	alertOverdueSec    int64
 	// Suppress repeated overdue logs for the same lastSuccessReadTSO.
-	lastLoggedWarningTSO  uint64
-	lastLoggedCriticalTSO uint64
+	lastLoggedWarningTSO uint64
+	lastLoggedOverdueTSO uint64
 
 	orderTs    int64 // unix timestamp in milliseconds
 	retryCount atomic.Int64
@@ -229,44 +229,44 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 	}
 }
 
-type overdueRefreshTask struct {
-	mviewID          int64
-	schemaName       string
-	mviewName        string
-	nextRefresh      time.Time
-	lastSuccessTime  time.Time
-	alertWarningSec  int64
-	alertCriticalSec int64
-	retryCount       int64
-	taskState        string
-	critical         bool
+type refreshAlertTask struct {
+	mviewID         int64
+	schemaName      string
+	mviewName       string
+	nextRefresh     time.Time
+	lastSuccessTime time.Time
+	alertWarningSec int64
+	alertOverdueSec int64
+	retryCount      int64
+	taskState       string
+	overdue         bool
 }
 
-// maybeLogOverdueRefreshTasks scans pending refresh tasks and logs overdue ones.
+// maybeLogRefreshAlertTasks scans pending refresh tasks and logs warning/overdue alerts.
 // The scan runs on maintenanceTick and is rate-limited to once per minute.
-func (t *MVService) maybeLogOverdueRefreshTasks(now time.Time) {
+func (t *MVService) maybeLogRefreshAlertTasks(now time.Time) {
 	nowMillis := now.UnixMilli()
-	if next := t.nextTimeoutScanMillis.Load(); next > nowMillis {
+	if next := t.nextRefreshAlertScanMillis.Load(); next > nowMillis {
 		return
 	}
-	t.nextTimeoutScanMillis.Store(now.Add(mvRefreshAlertScanInterval).UnixMilli())
+	t.nextRefreshAlertScanMillis.Store(now.Add(mvRefreshAlertScanInterval).UnixMilli())
 
-	overdueTasks, warningCount, criticalCount := t.collectOverdueRefreshTasks(now)
-	t.metrics.overdueWarningCount.Store(warningCount)
-	t.metrics.overdueCriticalCount.Store(criticalCount)
-	if len(overdueTasks) == 0 {
+	alertTasks, warningCount, overdueCount := t.collectRefreshAlertTasks(now)
+	t.metrics.alertWarningCount.Store(warningCount)
+	t.metrics.alertOverdueCount.Store(overdueCount)
+	if len(alertTasks) == 0 {
 		return
 	}
-	t.logMVRefreshTimeout(overdueTasks)
+	t.logMVRefreshAlerts(alertTasks)
 }
 
-func (t *MVService) collectOverdueRefreshTasks(now time.Time) ([]overdueRefreshTask, int64, int64) {
+func (t *MVService) collectRefreshAlertTasks(now time.Time) ([]refreshAlertTask, int64, int64) {
 	t.mvRefreshMu.Lock()
 	defer t.mvRefreshMu.Unlock()
 
-	overdueTasks := make([]overdueRefreshTask, 0)
+	alertTasks := make([]refreshAlertTask, 0)
 	var warningCount int64
-	var criticalCount int64
+	var overdueCount int64
 	for mviewID, item := range t.mvRefreshMu.pending {
 		if item.Value == nil || item.Value.nextRefresh.IsZero() {
 			continue
@@ -279,28 +279,28 @@ func (t *MVService) collectOverdueRefreshTasks(now time.Time) ([]overdueRefreshT
 			continue
 		}
 		overdueDuration := now.Sub(lastSuccessTime)
-		critical := false
-		if item.Value.alertCriticalSec > 0 && overdueDuration >= time.Duration(item.Value.alertCriticalSec)*time.Second {
-			critical = true
+		overdue := false
+		if item.Value.alertOverdueSec > 0 && overdueDuration >= time.Duration(item.Value.alertOverdueSec)*time.Second {
+			overdue = true
 		} else if item.Value.alertWarningSec > 0 && overdueDuration >= time.Duration(item.Value.alertWarningSec)*time.Second {
-			critical = false
+			overdue = false
 		} else {
 			continue
 		}
-		if critical {
-			criticalCount++
+		if overdue {
+			overdueCount++
 		} else {
 			warningCount++
 		}
 		if tso := item.Value.lastSuccessReadTSO; tso > 0 {
-			if critical {
-				if item.Value.lastLoggedCriticalTSO == tso {
+			if overdue {
+				if item.Value.lastLoggedOverdueTSO == tso {
 					continue
 				}
-				item.Value.lastLoggedCriticalTSO = tso
+				item.Value.lastLoggedOverdueTSO = tso
 			} else {
-				// If critical has already been logged for this tso, skip warning downgrade logs.
-				if item.Value.lastLoggedWarningTSO == tso || item.Value.lastLoggedCriticalTSO == tso {
+				// If overdue has already been logged for this tso, skip warning downgrade logs.
+				if item.Value.lastLoggedWarningTSO == tso || item.Value.lastLoggedOverdueTSO == tso {
 					continue
 				}
 				item.Value.lastLoggedWarningTSO = tso
@@ -310,25 +310,25 @@ func (t *MVService) collectOverdueRefreshTasks(now time.Time) ([]overdueRefreshT
 		if item.Value.orderTs == maxNextScheduleTs {
 			taskState = "running"
 		}
-		overdueTasks = append(overdueTasks, overdueRefreshTask{
-			mviewID:          mviewID,
-			schemaName:       item.Value.schemaName,
-			mviewName:        item.Value.mviewName,
-			nextRefresh:      item.Value.nextRefresh,
-			lastSuccessTime:  lastSuccessTime,
-			alertWarningSec:  item.Value.alertWarningSec,
-			alertCriticalSec: item.Value.alertCriticalSec,
-			retryCount:       item.Value.retryCount.Load(),
-			taskState:        taskState,
-			critical:         critical,
+		alertTasks = append(alertTasks, refreshAlertTask{
+			mviewID:         mviewID,
+			schemaName:      item.Value.schemaName,
+			mviewName:       item.Value.mviewName,
+			nextRefresh:     item.Value.nextRefresh,
+			lastSuccessTime: lastSuccessTime,
+			alertWarningSec: item.Value.alertWarningSec,
+			alertOverdueSec: item.Value.alertOverdueSec,
+			retryCount:      item.Value.retryCount.Load(),
+			taskState:       taskState,
+			overdue:         overdue,
 		})
 	}
-	return overdueTasks, warningCount, criticalCount
+	return alertTasks, warningCount, overdueCount
 }
 
-// logMVRefreshTimeout logs overdue refresh task details with warning/critical levels.
-func (t *MVService) logMVRefreshTimeout(overdueTasks []overdueRefreshTask) {
-	for _, task := range overdueTasks {
+// logMVRefreshAlerts logs refresh alert task details with warning/overdue levels.
+func (t *MVService) logMVRefreshAlerts(alertTasks []refreshAlertTask) {
+	for _, task := range alertTasks {
 		fields := append(t.runtimeLogFields(),
 			zap.Int64("mview_id", task.mviewID),
 			zap.String("schema", task.schemaName),
@@ -336,11 +336,11 @@ func (t *MVService) logMVRefreshTimeout(overdueTasks []overdueRefreshTask) {
 			zap.Time("next_refresh", task.nextRefresh),
 			zap.Time("last_success_time", task.lastSuccessTime),
 			zap.Int64("alert_warning_sec", task.alertWarningSec),
-			zap.Int64("alert_critical_sec", task.alertCriticalSec),
+			zap.Int64("alert_overdue_sec", task.alertOverdueSec),
 			zap.Int64("failed_retry_count", task.retryCount),
 			zap.String("state", task.taskState),
 		)
-		if task.critical {
+		if task.overdue {
 			logutil.BgLogger().Error("Materialized_view_refresh_time_overdue", fields...)
 		} else {
 			logutil.BgLogger().Warn("Materialized_view_refresh_time_warning", fields...)
@@ -627,7 +627,7 @@ func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) {
 			om.Value.lastSuccessReadTSO = nm.lastSuccessReadTSO
 			om.Value.lastSuccessTime = nm.lastSuccessTime
 			om.Value.alertWarningSec = nm.alertWarningSec
-			om.Value.alertCriticalSec = nm.alertCriticalSec
+			om.Value.alertOverdueSec = nm.alertOverdueSec
 			changed := om.Value.nextRefresh != nm.nextRefresh
 			om.Value.nextRefresh = nm.nextRefresh
 			if om.Value.orderTs != maxNextScheduleTs { // not running
@@ -902,7 +902,7 @@ func (t *MVService) Run() {
 		if maintenanceTick {
 			t.mh.reportMetrics(t)
 			t.maybeGCOperationHistory(now)
-			t.maybeLogOverdueRefreshTasks(now)
+			t.maybeLogRefreshAlertTasks(now)
 			resetTimer(maintenanceTimer, t.basicInterval)
 		}
 

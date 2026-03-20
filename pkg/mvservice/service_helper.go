@@ -127,7 +127,7 @@ func resolveMVIdentityByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	mvID int64,
-) (schemaName, mviewName string, alertWarningSec, alertCriticalSec int64, found bool, err error) {
+) (schemaName, mviewName string, alertWarningSec, alertOverdueSec int64, found bool, err error) {
 	if mvID <= 0 {
 		return "", "", 0, 0, false, errors.New("mview id is invalid")
 	}
@@ -142,7 +142,7 @@ func resolveMVIdentityByID(
 	}
 	if mvMeta.MaterializedView != nil {
 		alertWarningSec = max(0, mvMeta.MaterializedView.AlertWarningSec)
-		alertCriticalSec = max(0, mvMeta.MaterializedView.AlertCriticalSec)
+		alertOverdueSec = max(0, mvMeta.MaterializedView.AlertOverdueSec)
 	}
 	dbInfo, ok := infoSchema.SchemaByID(mvMeta.DBID)
 	if !ok || dbInfo == nil {
@@ -153,7 +153,7 @@ func resolveMVIdentityByID(
 	if schemaName == "" || mviewName == "" {
 		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
 	}
-	return schemaName, mviewName, alertWarningSec, alertCriticalSec, true, nil
+	return schemaName, mviewName, alertWarningSec, alertOverdueSec, true, nil
 }
 
 // RefreshMV executes one incremental refresh round for a materialized view.
@@ -449,12 +449,12 @@ func (*serviceHelper) loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 			lastSuccessReadTSO: lastSuccessReadTSO,
 			lastSuccessTime:    lastSuccessTime,
 		}
-		schemaName, mviewName, alertWarningSec, alertCriticalSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mvID)
+		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mvID)
 		if resolveErr == nil && found {
 			m.schemaName = schemaName
 			m.mviewName = mviewName
 			m.alertWarningSec = alertWarningSec
-			m.alertCriticalSec = alertCriticalSec
+			m.alertOverdueSec = alertOverdueSec
 		}
 		m.orderTs = m.nextRefresh.UnixMilli()
 		newPending[mvID] = m

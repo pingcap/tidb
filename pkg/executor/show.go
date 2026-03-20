@@ -1801,8 +1801,8 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 	if mvInfo.AlertWarningSec > 0 {
 		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_warning=%d", mvInfo.AlertWarningSec))
 	}
-	if mvInfo.AlertCriticalSec > 0 {
-		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_critical=%d", mvInfo.AlertCriticalSec))
+	if mvInfo.AlertOverdueSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_overdue=%d", mvInfo.AlertOverdueSec))
 	}
 	if len(attrPairs) > 0 {
 		fmt.Fprintf(buf, " ATTRIBUTES='%s'", strings.Join(attrPairs, ","))
