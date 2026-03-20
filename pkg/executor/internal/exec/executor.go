@@ -396,9 +396,9 @@ type BaseExecutorV2 struct {
 
 	executorKillerHandler
 	executorStats
-	nextIOAccState nextIOAcc // reusable accumulator context for RUv2 tracking
 	executorMeta
 	executorChunkAllocator
+	nextIOAccState nextIOAcc // reusable accumulator context for RUv2 tracking
 }
 
 // NewBaseExecutorV2 creates a new BaseExecutorV2 instance.
