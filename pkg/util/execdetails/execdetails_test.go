@@ -352,6 +352,13 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	require.Equal(t, int64(157258), tikvRU)
 	require.Equal(t, int64(24680), tiflashRU)
 	require.Equal(t, int64(296136), totalRU)
+
+	t.Run("zero scale stays zero", func(t *testing.T) {
+		zeroScaleWeights := weights
+		zeroScaleWeights.RUScale = 0
+		require.Zero(t, snapshot.CalculateRUValues(zeroScaleWeights))
+		require.Equal(t, snapshot.TiKVRU+snapshot.TiFlashRU, snapshot.TotalRU(zeroScaleWeights))
+	})
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {

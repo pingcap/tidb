@@ -408,11 +408,7 @@ func (s RUV2MetricsSnapshot) calculateRUValuesWithWeights(weights RUV2Weights) (
 			float64(s.SessionParserTotal)*weights.SessionParserTotal +
 			float64(s.TxnCnt)*weights.TxnCnt
 
-	scale := weights.RUScale
-	if scale == 0 {
-		scale = DefaultRUV2Weights().RUScale
-	}
-	tidbRU = int64(tidbRUFloat * scale)
+	tidbRU = int64(tidbRUFloat * weights.RUScale)
 	return
 }
 
