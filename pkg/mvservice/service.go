@@ -107,7 +107,7 @@ const (
 	mvRefreshAlertScanInterval   = 30 * time.Second
 	maxNextScheduleTs            = 9e18
 
-	defaultCHReplicas = 20
+	defaultCHReplicas = 100
 
 	mvTaskDurationTypeRefresh = "mv_refresh"
 	mvTaskDurationTypePurge   = "mvlog_purge"
