@@ -88,6 +88,7 @@ func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RU
 	}
 
 	// Collapse all points in this 15s bucket to the bucket start timestamp.
+	// bucket.collecting is protected by a.mu in this path.
 	bucket.collecting.addBatch(bucketStart, increments)
 }
 
@@ -163,7 +164,7 @@ func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64) {
 // buildReportRecords merges taken buckets and produces final proto records.
 // It does not require a lock.
 func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEnd, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord {
-	singleBucket := windowEnd-windowStart <= itemInterval
+	singleInterval := windowEnd-windowStart <= itemInterval
 
 	bucketsPerInterval := int((itemInterval + ruBaseBucketSeconds - 1) / ruBaseBucketSeconds)
 	intervalPreCapUsers := bucketsPerInterval * maxTopUsers
@@ -173,7 +174,7 @@ func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEn
 	mergedPreCapUsers := intervalsPerWindow * ruReportTopNUsers
 	mergedPreCapSQLsPerUser := intervalsPerWindow * ruReportTopNSQLsPerUser
 	var mergedOutput *ruCollecting
-	if !singleBucket {
+	if !singleInterval {
 		mergedOutput = newRUCollectingWithCaps(mergedPreCapUsers, mergedPreCapSQLsPerUser)
 	}
 
@@ -189,7 +190,7 @@ func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEn
 		}
 		// Apply TopN and merge into output.
 		intervalCompacted := intervalCollecting.compactWithLimits(ruReportTopNUsers, ruReportTopNSQLsPerUser)
-		if singleBucket {
+		if singleInterval {
 			if intervalCompacted == nil {
 				return nil
 			}

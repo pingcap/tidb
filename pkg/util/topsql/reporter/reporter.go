@@ -210,8 +210,7 @@ func (tsr *RemoteTopSQLReporter) Close() {
 func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
-	currentReportInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
-	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
+	reportTicker := newReportTicker()
 	defer reportTicker.Stop()
 	for {
 		select {
@@ -227,11 +226,6 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			timestamp := uint64(nowFunc().Unix())
 			tsr.processStmtStatsData()
 			tsr.takeDataAndSendToReportChan(timestamp)
-			// Update `reportTicker` if report interval changed.
-			if newInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
-				currentReportInterval = newInterval
-				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
-			}
 		}
 	}
 }
@@ -398,7 +392,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
-			interval := time.Duration(topsqlstate.GlobalState.ReportIntervalSeconds.Load()) * time.Second
+			interval := time.Duration(topsqlstate.DefTiDBTopSQLReportIntervalSeconds) * time.Second
 			if interval < timeout {
 				timeout = interval
 			}

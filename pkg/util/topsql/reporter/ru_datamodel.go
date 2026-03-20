@@ -430,9 +430,6 @@ func (c *ruCollecting) add(timestamp uint64, key stmtstats.RUKey, incr *stmtstat
 // addBatch adds a batch of RU increments for a given timestamp.
 // It is called from collectRUWorker.
 func (c *ruCollecting) addBatch(timestamp uint64, increments stmtstats.RUIncrementMap) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	for key, incr := range increments {
 		c.add(timestamp, key, incr)
 	}
@@ -555,7 +552,10 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 
 	// Fast path: everything is already within the final TopN bounds and there is
 	// no pre-aggregated "others user" or "others SQL". In this case compacting
-	// would be a no-op, so we can safely return the original collecting.
+	// would be a no-op, so we can return the original collecting.
+	//
+	// NOTE: fast path may return c itself. Callers must treat the returned
+	// collecting as read-only (or ownership-transferred) and must not mutate it.
 	if len(c.users) <= maxUsers && c.othersUser == nil {
 		underSQLCap := true
 		for _, u := range c.users {
@@ -649,13 +649,11 @@ func (c *ruCollecting) getOrCreateOthersUser() *userRUCollecting {
 
 // mergeFrom merges data from src into the current ruCollecting.
 // If rewriteTimestamp is true, all timestamps are rewritten to targetTimestamp.
+// Callers must ensure external synchronization.
 func (c *ruCollecting) mergeFrom(src *ruCollecting, targetTimestamp uint64, rewriteTimestamp bool) {
 	if src == nil {
 		return
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	// Merge regular users.
 	for _, srcUser := range src.users {

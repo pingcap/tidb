@@ -6,6 +6,7 @@ go_library(
         "datamodel.go",
         "datasink.go",
         "pubsub.go",
+        "report_ticker.go",
         "reporter.go",
         "ru_datamodel.go",
         "ru_window_aggregator.go",

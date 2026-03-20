@@ -34,7 +34,8 @@ import (
 )
 
 const (
-	maxSQLNum = 5000
+	maxSQLNum             = 5000
+	defaultReportInterval = int(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
 )
 
 var keyspaceName = []byte("123")
@@ -108,10 +109,13 @@ func (ds *mockDataSink) TrySend(data *ReportData, _ time.Time) error {
 func (ds *mockDataSink) OnReporterClosing() {
 }
 
-func setupRemoteTopSQLReporter(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
+func setupRemoteTopSQLReporter(tb testing.TB, maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
+	tb.Helper()
+
 	topsqlstate.GlobalState.MaxStatementCount.Store(int64(maxStatementsNum))
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(int64(interval))
+	restoreTicker := SetReportTickerIntervalSecondsForTest(interval)
+	tb.Cleanup(restoreTicker)
 	topsqlstate.EnableTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	ds := newMockDataSink2()
@@ -174,7 +178,7 @@ func TestDoReportSendsMetaWhenRURecordsEmpty(t *testing.T) {
 }
 
 func TestCollectAndSendBatch(t *testing.T) {
-	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1)
+	tsr, ds := setupRemoteTopSQLReporter(t, maxSQLNum, 1)
 	populateCache(tsr, 0, maxSQLNum, 1)
 	require.Len(t, ds.data, 1)
 	data := ds.data[0]
@@ -206,7 +210,7 @@ func TestCollectAndSendBatch(t *testing.T) {
 }
 
 func TestCollectAndEvicted(t *testing.T) {
-	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1)
+	tsr, ds := setupRemoteTopSQLReporter(t, maxSQLNum, 1)
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 	require.Len(t, ds.data, 1)
 	data := ds.data[0]
@@ -244,44 +248,37 @@ func TestCollectAndEvicted(t *testing.T) {
 	}
 }
 
-func TestEffectiveReportIntervalSecondsTopSQLIndependentFromTopRU(t *testing.T) {
-	// Contract: TopRU item interval changes must not mutate TopSQL report interval.
-	// We toggle TopRU enable/disable and invalid interval inputs to verify isolation.
+func TestTopRUItemIntervalLifecycleIndependentFromFixedReportTicker(t *testing.T) {
+	// Contract: TopRU interval lifecycle is independent from fixed TopSQL report ticker.
 	topsqlstate.DisableTopSQL()
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
-	origTopSQLInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
+	topsqlstate.ResetTopRUItemInterval()
 	t.Cleanup(func() {
-		topsqlstate.GlobalState.ReportIntervalSeconds.Store(origTopSQLInterval)
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
 		topsqlstate.ResetTopRUItemInterval()
 	})
 
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(60)
-	topsqlstate.ResetTopRUItemInterval()
-	topsqlstate.SetTopRUItemInterval(15)
-
-	require.Equal(t, int64(60), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+	require.NoError(t, topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_15S))
+	require.Equal(t, int64(tipb.ItemInterval_ITEM_INTERVAL_15S), topsqlstate.GetTopRUItemInterval())
 
 	topsqlstate.EnableTopRU()
-	require.Equal(t, int64(60), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+	require.NoError(t, topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_30S))
+	require.Equal(t, int64(tipb.ItemInterval_ITEM_INTERVAL_30S), topsqlstate.GetTopRUItemInterval())
 
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(10)
-	topsqlstate.SetTopRUItemInterval(1)
-	require.Equal(t, int64(10), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+	require.Error(t, topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(1)))
+	require.Equal(t, int64(tipb.ItemInterval_ITEM_INTERVAL_30S), topsqlstate.GetTopRUItemInterval())
 
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(30)
-	topsqlstate.ResetTopRUItemInterval()
-	topsqlstate.SetTopRUItemInterval(0)
-	require.Equal(t, int64(30), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+	require.NoError(t, topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED))
+	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
 
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
-	require.Equal(t, int64(30), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
 }
 
 func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
@@ -301,7 +298,7 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 }
 
 func TestCollectAndTopN(t *testing.T) {
-	tsr, ds := setupRemoteTopSQLReporter(2, 1)
+	tsr, ds := setupRemoteTopSQLReporter(t, 2, 1)
 
 	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -408,7 +405,7 @@ func TestCollectAndTopN(t *testing.T) {
 }
 
 func TestCollectCapacity(t *testing.T) {
-	tsr, _ := setupRemoteTopSQLReporter(maxSQLNum, 62)
+	tsr, _ := setupRemoteTopSQLReporter(t, maxSQLNum, defaultReportInterval)
 	registerSQL := func(n int) {
 		for i := range n {
 			key := []byte("sqlDigest" + strconv.Itoa(i))
@@ -460,7 +457,7 @@ func TestCollectCapacity(t *testing.T) {
 }
 
 func TestCollectInternal(t *testing.T) {
-	tsr, ds := setupRemoteTopSQLReporter(3000, 1)
+	tsr, ds := setupRemoteTopSQLReporter(t, 3000, 1)
 
 	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -492,7 +489,8 @@ func TestCollectInternal(t *testing.T) {
 }
 
 func TestMultipleDataSinks(t *testing.T) {
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+	restoreTicker := SetReportTickerIntervalSecondsForTest(1)
+	t.Cleanup(restoreTicker)
 	topsqlstate.EnableTopSQL()
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
@@ -585,7 +583,8 @@ func TestMultipleDataSinks(t *testing.T) {
 }
 
 func TestReporterWorker(t *testing.T) {
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+	restoreTicker := SetReportTickerIntervalSecondsForTest(3)
+	t.Cleanup(restoreTicker)
 
 	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	r.Start()
@@ -627,7 +626,8 @@ func TestReporterWorker(t *testing.T) {
 }
 
 func TestProcessStmtStatsData(t *testing.T) {
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+	restoreTicker := SetReportTickerIntervalSecondsForTest(3)
+	t.Cleanup(restoreTicker)
 	topsqlstate.GlobalState.MaxStatementCount.Store(3)
 
 	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
@@ -1162,8 +1162,9 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 	}
 }
 
-func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
-	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval)
+func initializeCache(tb testing.TB, maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
+	tb.Helper()
+	ts, ds := setupRemoteTopSQLReporter(tb, maxStatementsNum, interval)
 	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts, ds
 }
@@ -1201,7 +1202,7 @@ func makeTopRURecordsForBench(numUsers, numSQLsPerUser int) []tipb.TopRURecord {
 	agg.addBatchToBucket(16, batch)
 	agg.addBatchToBucket(31, batch)
 	agg.addBatchToBucket(46, batch)
-	return agg.takeReportRecords(60, 60, keyspaceName)
+	return agg.takeReportRecords(uint64(defaultReportInterval), uint64(defaultReportInterval), keyspaceName)
 }
 
 // BenchmarkReporterScenarios provides a unified benchmark suite for reporter paths,
@@ -1213,21 +1214,21 @@ func BenchmarkReporterScenarios(b *testing.B) {
 		ruRecords := makeTopRURecordsForBench(100, 100)
 
 		b.Run("TopSQLOnly", func(b *testing.B) {
-			tsr, _ := initializeCache(maxSQLNum, 120)
+			tsr, _ := initializeCache(b, maxSQLNum, defaultReportInterval)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				populateCache(tsr, 0, maxSQLNum, uint64(i))
 			}
 		})
 		b.Run("TopRUOnly", func(b *testing.B) {
-			tsr, _ := initializeCache(maxSQLNum, 120)
+			tsr, _ := initializeCache(b, maxSQLNum, defaultReportInterval)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				tsr.doReport(&ReportData{RURecords: ruRecords})
 			}
 		})
 		b.Run("TopSQLAndTopRU", func(b *testing.B) {
-			tsr, _ := initializeCache(maxSQLNum, 120)
+			tsr, _ := initializeCache(b, maxSQLNum, defaultReportInterval)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				populateCacheWithRU(tsr, 0, maxSQLNum, uint64(i), ruRecords)
@@ -1236,7 +1237,7 @@ func BenchmarkReporterScenarios(b *testing.B) {
 	})
 
 	b.Run("collect_evict", func(b *testing.B) {
-		tsr, _ := initializeCache(maxSQLNum, 120)
+		tsr, _ := initializeCache(b, maxSQLNum, defaultReportInterval)
 		begin := 0
 		end := maxSQLNum
 		for i := range b.N {

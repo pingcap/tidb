@@ -99,7 +99,8 @@ func TestTopSQLReporter(t *testing.T) {
 	server, err := mockServer.StartMockAgentServer()
 	require.NoError(t, err)
 	topsqlstate.GlobalState.MaxStatementCount.Store(200)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+	restoreTicker := reporter.SetReportTickerIntervalSecondsForTest(1)
+	t.Cleanup(restoreTicker)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
@@ -224,7 +225,8 @@ func TestTopSQLPubSub(t *testing.T) {
 	defer cpuprofile.StopCPUProfiler()
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(200)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+	restoreTicker := reporter.SetReportTickerIntervalSecondsForTest(1)
+	t.Cleanup(restoreTicker)
 
 	topsqlstate.EnableTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
