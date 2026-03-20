@@ -17,12 +17,10 @@ package planstats_test
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -267,16 +265,67 @@ func countFullStats(stats *statistics.HistColl, colID int64) int {
 	return cnt
 }
 
-// markStatsTableUninitializedForTest clears the cached column/index stats in place while preserving
-// the table-level metadata such as row count. This lets the planner observe an uninitialized partition
-// stats entry without disturbing the separately cached global stats entry.
-func markStatsTableUninitializedForTest(t *testing.T, statsTbl *statistics.Table) {
+func prepareSelectedPartitionStatsTestTable(t *testing.T, rowCount int) (*parser.Parser, *domain.Domain, sessionctx.Context, *model.TableInfo) {
 	t.Helper()
-	histColl := reflect.ValueOf(&statsTbl.HistColl).Elem()
-	for _, fieldName := range []string{"columns", "indices"} {
-		field := histColl.FieldByName(fieldName)
-		reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.Zero(field.Type()))
+
+	p := parser.New()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+	tk.MustExec(
+		"create table pt(a int, b int) partition by range(a) (" +
+			"partition p0 values less than (100)," +
+			"partition p1 values less than (200)," +
+			"partition p2 values less than maxvalue)",
+	)
+
+	rows := make([]string, 0, rowCount)
+	for i := 0; i < rowCount; i++ {
+		rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
 	}
+	const batchSize = 200
+	for start := 0; start < len(rows); start += batchSize {
+		end := start + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		tk.MustExec("insert into pt values " + strings.Join(rows[start:end], ","))
+	}
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	t.Cleanup(func() {
+		dom.StatsHandle().SetLease(oriLease)
+	})
+	tk.MustExec("analyze table pt all columns")
+	dom.StatsHandle().Clear()
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
+	require.NoError(t, err)
+	return p, dom, ctx, tbl.Meta()
+}
+
+func optimizeToTableReader(t *testing.T, p *parser.Parser, ctx sessionctx.Context, dom *domain.Domain, sql string) *plannercore.PhysicalTableReader {
+	t.Helper()
+
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
+	require.NoError(t, err)
+
+	reader, ok := plan.(*plannercore.PhysicalTableReader)
+	require.True(t, ok)
+	require.NotEmpty(t, reader.TablePlans)
+	return reader
 }
 
 func TestPlanStatsLoadTimeout(t *testing.T) {
@@ -586,339 +635,77 @@ func TestPartialStatsInExplain(t *testing.T) {
 	}
 }
 
-func TestDynamicPartitionPruneUsesSelectedPartitionStatsForSinglePartitionOnly(t *testing.T) {
-	p := parser.New()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	testKit := testkit.NewTestKit(t, store)
-	ctx := testKit.Session().(sessionctx.Context)
-
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists pt")
-	testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	testKit.MustExec("set @@session.tidb_analyze_version = 2")
-	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
-	testKit.MustExec(
-		"create table pt(a int, b int) partition by range(a) (" +
-			"partition p0 values less than (100)," +
-			"partition p1 values less than (200)," +
-			"partition p2 values less than maxvalue)",
-	)
-
-	rows := make([]string, 0, 1200)
-	for i := 0; i < 1200; i++ {
-		rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
-	}
-	const batchSize = 200
-	for start := 0; start < len(rows); start += batchSize {
-		end := start + batchSize
-		if end > len(rows) {
-			end = len(rows)
-		}
-		testKit.MustExec("insert into pt values " + strings.Join(rows[start:end], ","))
-	}
-
-	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
-	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table pt all columns")
-	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
-	require.NoError(t, err)
-	globalStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+func TestDynamicPartitionPruneSelectedPartitionStatsForSinglePartitionOnly(t *testing.T) {
+	p, dom, ctx, tblInfo := prepareSelectedPartitionStatsTestTable(t, 1200)
+	globalStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, int64(1200), globalStats.RealtimeCount)
 
 	for _, tc := range []struct {
+		name                 string
 		sql                  string
 		expectedScanRowCount float64
 		expectedHistRowCount int64
 	}{
 		{
-			sql:                  "select /*+ set_var(tidb_opt_enable_selected_partition_stats=0) */ * from pt where a < 200",
-			expectedScanRowCount: 1200,
-			expectedHistRowCount: 1200,
-		},
-		{
+			name:                 "multiple partitions still use global stats",
 			sql:                  "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 200",
 			expectedScanRowCount: 1200,
 			expectedHistRowCount: 1200,
 		},
 		{
+			name:                 "single partition uses selected partition stats",
 			sql:                  "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 100",
 			expectedScanRowCount: 100,
 			expectedHistRowCount: 100,
 		},
 		{
-			sql:                  "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt",
+			name:                 "explicit partition clause still falls back to global stats",
+			sql:                  "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt partition (p0)",
 			expectedScanRowCount: 1200,
 			expectedHistRowCount: 1200,
 		},
 	} {
-		stmt, err := p.ParseOneStmt(tc.sql, "", "")
-		require.NoError(t, err)
-		require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
-		nodeW := resolve.NewNodeW(stmt)
-		plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
-		require.NoError(t, err)
-
-		reader, ok := plan.(*plannercore.PhysicalTableReader)
-		require.True(t, ok)
-		require.NotEmpty(t, reader.TablePlans)
-		scan := reader.TablePlans[0]
-		require.Equal(t, tc.expectedScanRowCount, scan.StatsInfo().RowCount)
-		require.Equal(t, tc.expectedHistRowCount, scan.StatsInfo().HistColl.RealtimeCount)
+		t.Run(tc.name, func(t *testing.T) {
+			reader := optimizeToTableReader(t, p, ctx, dom, tc.sql)
+			scan := reader.TablePlans[0]
+			require.Equal(t, tc.expectedScanRowCount, scan.StatsInfo().RowCount)
+			require.Equal(t, tc.expectedHistRowCount, scan.StatsInfo().HistColl.RealtimeCount)
+		})
 	}
-}
-
-func TestDynamicPartitionPruneExplicitPartitionFallsBackToGlobalStats(t *testing.T) {
-	p := parser.New()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	testKit := testkit.NewTestKit(t, store)
-	ctx := testKit.Session().(sessionctx.Context)
-
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists pt")
-	testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	testKit.MustExec("set @@session.tidb_analyze_version = 2")
-	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
-	testKit.MustExec(
-		"create table pt(a int, b int) partition by range(a) (" +
-			"partition p0 values less than (100)," +
-			"partition p1 values less than (200)," +
-			"partition p2 values less than maxvalue)",
-	)
-
-	rows := make([]string, 0, 1200)
-	for i := 0; i < 1200; i++ {
-		rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
-	}
-	const batchSize = 200
-	for start := 0; start < len(rows); start += batchSize {
-		end := start + batchSize
-		if end > len(rows) {
-			end = len(rows)
-		}
-		testKit.MustExec("insert into pt values " + strings.Join(rows[start:end], ","))
-	}
-
-	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
-	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table pt all columns")
-	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-
-	stmt, err := p.ParseOneStmt("select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt partition (p0)", "", "")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
-	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
-	require.NoError(t, err)
-
-	reader, ok := plan.(*plannercore.PhysicalTableReader)
-	require.True(t, ok)
-	require.NotEmpty(t, reader.TablePlans)
-	scan := reader.TablePlans[0]
-	require.Equal(t, float64(1200), scan.StatsInfo().RowCount)
-	require.Equal(t, int64(1200), scan.StatsInfo().HistColl.RealtimeCount)
 }
 
 func TestDynamicPartitionPruneSelectedPartitionStatsFallsBackWithoutGlobalStats(t *testing.T) {
-	p := parser.New()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	p, dom, ctx, tblInfo := prepareSelectedPartitionStatsTestTable(t, 300)
 
-	testKit := testkit.NewTestKit(t, store)
-	ctx := testKit.Session().(sessionctx.Context)
-
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists pt")
-	testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	testKit.MustExec("set @@session.tidb_analyze_version = 2")
-	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
-	testKit.MustExec(
-		"create table pt(a int, b int) partition by range(a) (" +
-			"partition p0 values less than (100)," +
-			"partition p1 values less than (200)," +
-			"partition p2 values less than maxvalue)",
-	)
-
-	rows := make([]string, 0, 300)
-	for i := 0; i < 300; i++ {
-		rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
-	}
-	testKit.MustExec("insert into pt values " + strings.Join(rows, ","))
-
-	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
-	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table pt all columns")
-	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
-	require.NoError(t, err)
-	globalStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	globalStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	// Mutate the cached global stats entry in place so the planner still sees analyzed partition stats,
 	// but the multi-partition fallback path observes pseudo global stats on the next lookup.
-	*globalStats = *statistics.PseudoTable(tbl.Meta(), false, true)
+	*globalStats = *statistics.PseudoTable(tblInfo, false, true)
 	require.True(t, globalStats.Pseudo)
 
-	stmt, err := p.ParseOneStmt("select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 200", "", "")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
-	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
-	require.NoError(t, err)
-
-	reader, ok := plan.(*plannercore.PhysicalTableReader)
-	require.True(t, ok)
+	reader := optimizeToTableReader(t, p, ctx, dom, "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 200")
 	require.True(t, reader.StatsInfo().HistColl.Pseudo)
 	require.Equal(t, int64(statistics.PseudoRowCount), reader.StatsInfo().HistColl.RealtimeCount)
 }
 
 func TestDynamicPartitionPruneSelectedPartitionStatsFallsBackToGlobalWhenSinglePartitionStatsArePseudo(t *testing.T) {
-	p := parser.New()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	p, dom, ctx, tblInfo := prepareSelectedPartitionStatsTestTable(t, 300)
 
-	testKit := testkit.NewTestKit(t, store)
-	ctx := testKit.Session().(sessionctx.Context)
-
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists pt")
-	testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	testKit.MustExec("set @@session.tidb_analyze_version = 2")
-	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
-	testKit.MustExec(
-		"create table pt(a int, b int) partition by range(a) (" +
-			"partition p0 values less than (100)," +
-			"partition p1 values less than (200)," +
-			"partition p2 values less than maxvalue)",
-	)
-
-	rows := make([]string, 0, 300)
-	for i := 0; i < 300; i++ {
-		rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
-	}
-	testKit.MustExec("insert into pt values " + strings.Join(rows, ","))
-
-	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
-	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table pt all columns")
-	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
-	require.NoError(t, err)
-	globalStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	globalStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.False(t, globalStats.Pseudo)
-	preloadStmt, err := p.ParseOneStmt("select /*+ set_var(tidb_opt_enable_selected_partition_stats=0) */ * from pt where a < 100", "", "")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(ctx, preloadStmt))
-	preloadNodeW := resolve.NewNodeW(preloadStmt)
-	_, _, err = planner.Optimize(context.Background(), ctx, preloadNodeW, dom.InfoSchema())
-	require.NoError(t, err)
-	globalStats = dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	_ = optimizeToTableReader(t, p, ctx, dom, "select /*+ set_var(tidb_opt_enable_selected_partition_stats=0) */ * from pt where a < 100")
+	globalStats = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, globalStats.IsInitialized())
-	partID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	partStats := dom.StatsHandle().GetPhysicalTableStats(partID, tbl.Meta())
-	*partStats = *statistics.PseudoTable(tbl.Meta(), false, true)
+	partID := tblInfo.GetPartitionInfo().Definitions[0].ID
+	partStats := dom.StatsHandle().GetPhysicalTableStats(partID, tblInfo)
+	*partStats = *statistics.PseudoTable(tblInfo, false, true)
 	require.True(t, partStats.Pseudo)
 
-	stmt, err := p.ParseOneStmt("select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 100", "", "")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
-	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
-	require.NoError(t, err)
-
-	reader, ok := plan.(*plannercore.PhysicalTableReader)
-	require.True(t, ok)
-	require.NotEmpty(t, reader.TablePlans)
+	reader := optimizeToTableReader(t, p, ctx, dom, "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 100")
 	scan := reader.TablePlans[0]
 	require.False(t, scan.StatsInfo().HistColl.Pseudo)
 	require.Equal(t, int64(300), scan.StatsInfo().HistColl.RealtimeCount)
 	require.Equal(t, float64(300), scan.StatsInfo().RowCount)
-}
-
-func TestDynamicPartitionPruneSelectedPartitionStatsFallsBackToGlobalWhenSinglePartitionStatsAreUninitialized(t *testing.T) {
-	p := parser.New()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	testKit := testkit.NewTestKit(t, store)
-	ctx := testKit.Session().(sessionctx.Context)
-
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists pt")
-	testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	testKit.MustExec("set @@session.tidb_analyze_version = 2")
-	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
-	testKit.MustExec(
-		"create table pt(a int, b int) partition by range(a) (" +
-			"partition p0 values less than (100)," +
-			"partition p1 values less than (200)," +
-			"partition p2 values less than maxvalue)",
-	)
-
-	rows := make([]string, 0, 300)
-	for i := 0; i < 300; i++ {
-		rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
-	}
-	testKit.MustExec("insert into pt values " + strings.Join(rows, ","))
-
-	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
-	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table pt all columns")
-	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
-	require.NoError(t, err)
-	globalStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	require.False(t, globalStats.Pseudo)
-	preloadStmt, err := p.ParseOneStmt("select /*+ set_var(tidb_opt_enable_selected_partition_stats=0) */ * from pt where a < 100", "", "")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(ctx, preloadStmt))
-	preloadNodeW := resolve.NewNodeW(preloadStmt)
-	_, _, err = planner.Optimize(context.Background(), ctx, preloadNodeW, dom.InfoSchema())
-	require.NoError(t, err)
-	globalStats = dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	require.True(t, globalStats.IsInitialized())
-	partID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	partStats := dom.StatsHandle().GetPhysicalTableStats(partID, tbl.Meta())
-	markStatsTableUninitializedForTest(t, partStats)
-	require.False(t, partStats.Pseudo)
-	require.False(t, partStats.IsInitialized())
-	require.True(t, dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta()).IsInitialized())
-	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
-
-	stmt, err := p.ParseOneStmt("select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 100", "", "")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
-	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
-	require.NoError(t, err)
-
-	reader, ok := plan.(*plannercore.PhysicalTableReader)
-	require.True(t, ok)
-	require.NotEmpty(t, reader.TablePlans)
-	scan := reader.TablePlans[0]
-	require.False(t, scan.StatsInfo().HistColl.Pseudo)
-	require.Equal(t, int64(300), scan.StatsInfo().HistColl.RealtimeCount)
 }
 
 func TestDynamicPartitionPruneFallbackWithGlobalIndexAndMissingGlobalStats(t *testing.T) {
