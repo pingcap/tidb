@@ -139,10 +139,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 			return nil, false, err
 		}
 	}
-	metrics.RUV2PlanDeriveStatsPaths.Add(float64(len(ds.PossibleAccessPaths)))
-	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
-		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
-	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
@@ -155,6 +151,10 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, false, err
+	}
+	metrics.RUV2PlanDeriveStatsPaths.Add(float64(len(ds.PossibleAccessPaths)))
+	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
+		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
 	}
 
 	indexForce := false
