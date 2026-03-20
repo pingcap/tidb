@@ -2740,6 +2740,11 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 			if idx >= 0 {
 				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
+		} else {
+			// No FullSchema at the Apply level (non-LATERAL or LATERAL without USING/NATURAL).
+			// Treat Apply as a transparent wrapper and recurse into the outer (left) child,
+			// which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+			return findFieldNameFromNaturalUsingJoin(x.Children()[0], v)
 		}
 	}
 	return nil, nil, nil

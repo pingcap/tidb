@@ -1266,29 +1266,6 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
-// findChildFullSchema returns the FullSchema of a child plan if it is a
-// LogicalJoin or LogicalApply (possibly wrapped by LogicalSelection from
-// ON clauses on inner joins). This is needed so that column pruning and
-// used-column extraction can find redundant USING/NATURAL columns.
-func findChildFullSchema(p base.LogicalPlan) *expression.Schema {
-	for {
-		switch x := p.(type) {
-		case *LogicalJoin:
-			return x.FullSchema // may be nil
-		case *LogicalApply:
-			return x.FullSchema // may be nil
-		case *LogicalSelection:
-			children := p.Children()
-			if len(children) != 1 {
-				return nil
-			}
-			p = children[0]
-		default:
-			return nil
-		}
-	}
-}
-
 // ExtractUsedCols extracts all the needed columns.
 func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
@@ -1306,25 +1283,40 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	for _, naeqCond := range p.NAEQConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
 	}
-	lChild := p.Children()[0]
-	rChild := p.Children()[1]
-	lSchema := lChild.Schema()
-	rSchema := rChild.Schema()
-	// Also check FullSchema which includes redundant USING/NATURAL columns.
-	// Walk through wrapper operators (e.g., LogicalSelection from ON clauses)
-	// and handle LogicalApply (from LATERAL joins) in addition to LogicalJoin.
-	lFullSchema := findChildFullSchema(lChild)
-	rFullSchema := findChildFullSchema(rChild)
 	for _, col := range parentUsedCols {
-		if (lSchema != nil && lSchema.Contains(col)) ||
-			(lFullSchema != nil && lFullSchema.Contains(col)) {
+		if planCanResolveUsedCol(p.Children()[0], col) {
 			leftCols = append(leftCols, col)
-		} else if (rSchema != nil && rSchema.Contains(col)) ||
-			(rFullSchema != nil && rFullSchema.Contains(col)) {
+		} else if planCanResolveUsedCol(p.Children()[1], col) {
 			rightCols = append(rightCols, col)
 		}
 	}
 	return leftCols, rightCols
+}
+
+// planCanResolveUsedCol walks through unary wrappers and join FullSchema so
+// pruning keeps redundant USING/NATURAL JOIN columns needed by upper filters.
+func planCanResolveUsedCol(p base.LogicalPlan, col *expression.Column) bool {
+	if p == nil || col == nil {
+		return false
+	}
+	if schema := p.Schema(); schema != nil && schema.Contains(col) {
+		return true
+	}
+	switch x := p.(type) {
+	case *LogicalSelection, *LogicalLimit, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return planCanResolveUsedCol(x.Children()[0], col)
+	case *LogicalApply:
+		for _, child := range x.Children() {
+			if planCanResolveUsedCol(child, col) {
+				return true
+			}
+		}
+	case *LogicalJoin:
+		if x.FullSchema != nil && x.FullSchema.Contains(col) {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeSchema merge the schema of left and right child of join.

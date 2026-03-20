@@ -375,18 +375,11 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
-	var (
-		join            *logicalop.LogicalJoin
-		isJoin          bool
-		isSelectionJoin bool
-	)
-	join, isJoin = p.(*logicalop.LogicalJoin)
-	selection, isSelection := p.(*logicalop.LogicalSelection)
-	if isSelection {
-		join, isSelectionJoin = selection.Children()[0].(*logicalop.LogicalJoin)
-	}
-	if (isJoin && join.FullSchema != nil) || (isSelectionJoin && join.FullSchema != nil) {
-		for i, col := range join.FullSchema.Columns {
+	// findJoinFullSchema walks through LogicalSelection wrappers and handles
+	// both LogicalJoin and LogicalApply, so USING/NATURAL JOIN redundant columns
+	// are included in the aggregate schema regardless of wrapping.
+	if fullSchema, fullNames := findJoinFullSchema(p); fullSchema != nil {
+		for i, col := range fullSchema.Columns {
 			if p.Schema().Contains(col) {
 				continue
 			}
@@ -398,7 +391,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
-			names = append(names, join.FullNames[i])
+			names = append(names, fullNames[i])
 		}
 	}
 	hasGroupBy := len(gbyItems) > 0
@@ -530,6 +523,30 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 			p.SetOutputNames(clonedNames)
 		}
+		// Apply column alias list from AS dt(c1, c2, ...) syntax.
+		// Only valid for derived tables (not table names); parser enforces this.
+		if !isTableName && len(x.ColumnNames) > 0 {
+			// Count visible output columns to validate against the alias list.
+			visibleCount := 0
+			for _, name := range p.OutputNames() {
+				if !name.Hidden {
+					visibleCount++
+				}
+			}
+			if visibleCount != len(x.ColumnNames) {
+				return nil, dbterror.ErrViewWrongList
+			}
+			aliasIdx := 0
+			for _, name := range p.OutputNames() {
+				if name.Hidden {
+					continue
+				}
+				alias := x.ColumnNames[aliasIdx]
+				aliasIdx++
+				name.ColName = alias
+				name.OrigColName = alias
+			}
+		}
 		// `TableName` is not a select block, so we do not need to handle it.
 		var plannerSelectBlockAsName []ast.HintTable
 		if p := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
@@ -645,9 +662,9 @@ func findJoinFullSchema(p base.LogicalPlan) (*expression.Schema, types.NameSlice
 	}
 }
 
-// containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source.
-// This handles parenthesized forms like (LATERAL (...) AS dt) where the parser creates
-// nested Join nodes: Join{Right: Join{Left: TableSource{Lateral:true}}}
+// containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source
+// anywhere in its subtree. Used only to decide whether to push outerSchemas before
+// building the right side, so nested LATERAL sources can resolve outer columns.
 func containsLateralTableSource(node ast.ResultSetNode) bool {
 	switch n := node.(type) {
 	case *ast.TableSource:
@@ -664,6 +681,29 @@ func containsLateralTableSource(node ast.ResultSetNode) bool {
 	}
 }
 
+// isImmediateLateralTableSource checks whether the top-level ResultSetNode is itself a
+// LATERAL TableSource, without recursing into both sides of a multi-table nested join.
+// A parenthesized single-table form (Join{Left: source, Right: nil}) is transparent and
+// is unwrapped, but a multi-table join on the right side is not itself a LATERAL source.
+// This is used after rightPlan is built to decide whether to produce a LogicalApply:
+// only the immediate right operand being LATERAL (or actual correlations in rightPlan)
+// should trigger that, not a LATERAL nested deeper in the right subtree.
+func isImmediateLateralTableSource(node ast.ResultSetNode) bool {
+	switch n := node.(type) {
+	case *ast.TableSource:
+		return n.Lateral
+	case *ast.Join:
+		// Parenthesized single-table ref: parser creates Join{Left: source, Right: nil}
+		if n.Right == nil {
+			return isImmediateLateralTableSource(n.Left)
+		}
+		// A multi-table join is not itself a single LATERAL source
+		return false
+	default:
+		return false
+	}
+}
+
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
@@ -672,10 +712,11 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
-	// Check if right side is LATERAL
-	// Detect LATERAL - check if right side contains a LATERAL table source
-	// This handles both direct TableSource and parenthesized forms like (LATERAL (...) AS dt)
-	// When parenthesized, the parser creates: Join{Right: Join{Left: TableSource{Lateral:true}}}
+	// Detect whether the right subtree contains any LATERAL table source.
+	// This is used only to decide whether to push outerSchemas before building
+	// the right side, so that nested LATERAL sources can resolve outer columns.
+	// The decision to produce a LogicalApply is deferred until after rightPlan is
+	// built (see below), where a tighter check is applied.
 	isLateral := containsLateralTableSource(joinNode.Right)
 
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
@@ -725,9 +766,34 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
-	// For LATERAL: Build LogicalApply instead of LogicalJoin
+	// Decide whether this join should produce a LogicalApply.
+	// containsLateralTableSource (isLateral) was used above only to decide
+	// whether to push outerSchemas.  The LogicalApply decision requires a
+	// tighter check so that a LATERAL nested *inside* the right subtree —
+	// one that correlates only with something inside that subtree, not with
+	// the current left side — does not cause the outer join to be mis-classified
+	// as a lateral apply.
+	//
+	// We call buildLateralJoin only when:
+	//   (a) the immediate right operand is itself a LATERAL TableSource, OR
+	//   (b) rightPlan carries correlated columns that reference the left schema.
+	//
+	// Condition (b) is the safety net: if a nested LATERAL inside the right
+	// subtree does reference the current left schema (unusual but possible),
+	// we still produce the correct LogicalApply.
 	if isLateral {
-		return b.buildLateralJoin(ctx, leftPlan, rightPlan, joinNode)
+		outerSchema := leftPlan.Schema()
+		if fullSchema, _ := findJoinFullSchema(leftPlan); fullSchema != nil {
+			outerSchema = fullSchema
+		}
+		immediateIsLateral := isImmediateLateralTableSource(joinNode.Right)
+		corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, outerSchema)
+		if immediateIsLateral || len(corCols) > 0 {
+			return b.buildLateralJoin(ctx, leftPlan, rightPlan, joinNode)
+		}
+		// No direct lateral correlation with the left side; fall through to a
+		// normal LogicalJoin.  The nested LATERAL was already handled by its
+		// own buildJoin call and is now encapsulated inside rightPlan.
 	}
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
@@ -885,9 +951,9 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	var joinType base.JoinType
 	switch joinNode.Tp {
 	case ast.LeftJoin:
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("LATERAL with LEFT JOIN")
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("LEFT JOIN is not supported with LATERAL")
 	case ast.RightJoin:
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("LATERAL with RIGHT JOIN")
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("RIGHT JOIN is not supported with LATERAL")
 	default:
 		// Comma syntax (ast.CrossJoin) and explicit INNER JOIN
 		joinType = base.InnerJoin
@@ -916,9 +982,10 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	// When LEFT/RIGHT JOIN support is added, ResetNotNullFlag must be called here.
 
 	// Clone output names to avoid sharing FieldName structs that might be mutated later.
-	// Clear DBName for the right-side (derived table) outputs to prevent confusion with
-	// actual database tables. This is consistent with buildResultSetNode behavior for all
-	// aliased derived tables (see line ~470).
+	// Do NOT override DBName here: derived-table outputs already carry DBName="" from
+	// buildResultSetNode, and real-table columns inside a nested right subtree (e.g.
+	// t2 in "t2 CROSS JOIN LATERAL(...)") must keep their original DBName so that
+	// schema-qualified references like ORDER BY test.t2.a continue to resolve.
 	outputNames := make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
 	for i, name := range leftPlan.OutputNames() {
 		outputNames[i] = &types.FieldName{
@@ -934,7 +1001,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	}
 	for i, name := range rightPlan.OutputNames() {
 		outputNames[leftPlan.Schema().Len()+i] = &types.FieldName{
-			DBName:            ast.NewCIStr(""), // Clear DBName for derived table
+			DBName:            name.DBName,
 			OrigTblName:       name.OrigTblName,
 			OrigColName:       name.OrigColName,
 			TblName:           name.TblName,
@@ -958,9 +1025,17 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		lFullSchema = leftPlan.Schema()
 		lFullNames = leftPlan.OutputNames()
 	}
-	// For LATERAL, right side is always a derived table (never a LogicalJoin with FullSchema)
-	rFullSchema = rightPlan.Schema()
-	rFullNames = rightPlan.OutputNames()
+	// When buildLateralJoin is triggered by condition (b) (correlated columns in a nested
+	// right subtree), rightPlan may itself be a LogicalJoin or LogicalApply with its own
+	// FullSchema from a USING/NATURAL join on the right side. Propagate it upward the same
+	// way buildJoin does for the right child.
+	if fullSchema, fullNames := findJoinFullSchema(rightPlan); fullSchema != nil {
+		rFullSchema = fullSchema
+		rFullNames = fullNames
+	} else {
+		rFullSchema = rightPlan.Schema()
+		rFullNames = rightPlan.OutputNames()
+	}
 
 	ap.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 
@@ -2604,6 +2679,11 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 				idx, err = expression.FindFieldName(x.FullNames, v.Name)
 				schemaCols, outputNames = x.FullSchema.Columns, x.FullNames
 			}
+		case *logicalop.LogicalApply:
+			if len(x.FullNames) != 0 {
+				idx, err = expression.FindFieldName(x.FullNames, v.Name)
+				schemaCols, outputNames = x.FullSchema.Columns, x.FullNames
+			}
 		}
 		if err != nil || idx < 0 {
 			// nowhere to be found.
@@ -2622,6 +2702,16 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		// ORDER BY/HAVING name resolution may still be based on FullNames. Remap
 		// redundant qualified base-table columns to canonical join outputs.
 		if mappedCol, mappedName := join.ResolveRedundantColumn(col); mappedCol != nil {
+			col, name = mappedCol, mappedName
+		}
+	} else if ap, ok := p.(*logicalop.LogicalApply); ok &&
+		name != nil &&
+		name.Redundant &&
+		name.OrigTblName.L != "" {
+		// LogicalApply embeds LogicalJoin and carries the same FullNames/FullSchema,
+		// so redundant USING/NATURAL JOIN columns resolved from FullNames must be
+		// remapped to canonical outputs here as well.
+		if mappedCol, mappedName := ap.ResolveRedundantColumn(col); mappedCol != nil {
 			col, name = mappedCol, mappedName
 		}
 	}
@@ -2910,12 +3000,22 @@ func findColumnNameByUniqueID(p base.LogicalPlan, uniqueID int64) *ast.ColumnNam
 		}
 	}
 	// USING/NATURAL JOIN can keep table-qualified outer references only in FullSchema/FullNames.
-	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil && len(join.FullNames) != 0 {
-		for idx, pCol := range join.FullSchema.Columns {
+	// LogicalApply embeds LogicalJoin and may carry the same FullSchema/FullNames when a
+	// LATERAL join sits on top of a USING/NATURAL join on the left side.
+	var fullSchema *expression.Schema
+	var fullNames types.NameSlice
+	switch x := p.(type) {
+	case *logicalop.LogicalJoin:
+		fullSchema, fullNames = x.FullSchema, x.FullNames
+	case *logicalop.LogicalApply:
+		fullSchema, fullNames = x.FullSchema, x.FullNames
+	}
+	if fullSchema != nil && len(fullNames) != 0 {
+		for idx, pCol := range fullSchema.Columns {
 			if uniqueID != pCol.UniqueID {
 				continue
 			}
-			pName := join.FullNames[idx]
+			pName := fullNames[idx]
 			return &ast.ColumnName{
 				Schema: pName.DBName,
 				Table:  pName.TblName,
@@ -3840,7 +3940,14 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, se
 			if sel.GroupBy.Rollup {
 				return plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(strconv.Itoa(errExprLoc.Offset + 1))
 			}
-			colRef := name.TblName.O + "." + name.OrigColName.O
+			// OrigColName is empty for derived-table columns (e.g. aliased aggregates
+			// like `MAX(...) AS col2`). Fall back to ColName so the error message
+			// includes the full identifier rather than the truncated "tbl." form.
+			colPart := name.OrigColName.O
+			if colPart == "" {
+				colPart = name.ColName.O
+			}
+			colRef := name.TblName.O + "." + colPart
 			if name.DBName.O != "" {
 				colRef = name.DBName.O + "." + colRef
 			}
@@ -4018,9 +4125,12 @@ func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause
 	exprs := make([]ast.ExprNode, 0, len(gby.Items))
 	schema := p.Schema()
 	names := p.OutputNames()
-	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-		schema = join.FullSchema
-		names = join.FullNames
+	// findJoinFullSchema walks through transparent wrappers (LogicalSelection)
+	// and handles both LogicalJoin and LogicalApply, so GROUP BY resolution sees
+	// redundant USING/NATURAL JOIN columns even when a Selection sits above the join.
+	if fullSchema, fullNames := findJoinFullSchema(p); fullSchema != nil {
+		schema = fullSchema
+		names = fullNames
 	}
 	resolver := &gbyResolver{
 		ctx:        b.ctx,

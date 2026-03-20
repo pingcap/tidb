@@ -21,20 +21,10 @@ a	cnt
 drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
-insert into t1 values (1), (2), (3), (4);
-insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
 select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+Error 3809 (HY000): Invalid use of LATERAL: LEFT JOIN is not supported with LATERAL
+select * from t1 cross join lateral (select b from t2 where t2.a = t1.a) as lat;
 a	b
-1	a
-2	c
-3	d
-4	NULL
-select * from t1 left join lateral (select b from t2 where t2.a = t1.a and t2.a = 99) as lat on true order by t1.a;
-a	b
-1	NULL
-2	NULL
-3	NULL
-4	NULL
 drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
@@ -47,8 +37,9 @@ id	estRows	task	access object	operator info
 <id>	<estRows>	<task>	<access_object>	<operator_info>
 <id>	<estRows>	<task>	<access_object>	<operator_info>
 <id>	<estRows>	<task>	<access_object>	<operator_info>
-explain format='brief' select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+explain format='brief' select * from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true;
 id	estRows	task	access object	operator info
+<id>	<estRows>	<task>	<access_object>	<operator_info>
 <id>	<estRows>	<task>	<access_object>	<operator_info>
 <id>	<estRows>	<task>	<access_object>	<operator_info>
 <id>	<estRows>	<task>	<access_object>	<operator_info>
@@ -119,7 +110,7 @@ drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b int);
 select * from t1 right join lateral (select b from t2 where t2.a = t1.a) as lat on true;
-Error 3809 (HY000): Invalid use of LATERAL: LATERAL cannot be used with RIGHT JOIN when it references the left side
+Error 3809 (HY000): Invalid use of LATERAL: RIGHT JOIN is not supported with LATERAL
 drop table if exists t1, t2, t3, t4;
 create table t1 (a int, b int, c int);
 create table t2 (a int, b int, c int);
@@ -175,3 +166,18 @@ Projection	15593.77	root		planner__core__lateral_join.t1.a, planner__core__later
       └─StreamAgg	15593.77	cop[tikv]		funcs:sum(planner__core__lateral_join.t4.c)->Column#23
         └─Selection	155937.66	cop[tikv]		eq(planner__core__lateral_join.t4.a, planner__core__lateral_join.t2.a)
           └─TableFullScan	155937656.25	cop[tikv]	table:t4	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 'x'), (2, 'y');
+select t1.a, dt.mycol from t1, lateral (select b from t2 where t2.a = t1.a) as dt(mycol) order by t1.a;
+a	mycol
+1	x
+2	y
+select dt.id, dt.val from t1, lateral (select t2.a, t2.b from t2 where t2.a = t1.a) as dt(id, val) order by dt.id;
+id	val
+1	x
+2	y
+select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2) order by t1.a;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts

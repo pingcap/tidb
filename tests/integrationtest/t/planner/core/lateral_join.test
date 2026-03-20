@@ -20,7 +20,7 @@ create table t1 (a int);
 create table t2 (a int, b varchar(10));
 
 ## LEFT JOIN LATERAL - not yet supported
---error 1235
+--error 3809
 select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
 
 ## CROSS JOIN LATERAL - works (same as comma syntax)
@@ -105,7 +105,7 @@ create table t1 (a int);
 create table t2 (a int, b int);
 
 ## RIGHT JOIN with LATERAL not yet supported
---error 1235
+--error 3809
 select * from t1 right join lateral (select b from t2 where t2.a = t1.a) as lat on true;
 
 # TestLateralJoinUSINGCorrelationDecorrelate
@@ -131,3 +131,21 @@ select t1.a, t2.b, t3.c, dt.c from t1 join t2 using(a) join t3 on t2.b=t3.b, lat
 
 ## EXPLAIN: LATERAL + USING + ON with aggregate that blocks decorrelation
 explain format='brief' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select sum(t4.c) as s from t4 where t4.a=t2.a) as dt;
+
+# TestLateralJoinColumnAlias
+## Column alias list AS dt(col1, ...) renames output columns of a derived table.
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 'x'), (2, 'y');
+
+## Basic column alias: dt.mycol resolves correctly
+select t1.a, dt.mycol from t1, lateral (select b from t2 where t2.a = t1.a) as dt(mycol) order by t1.a;
+
+## Multiple column aliases
+select dt.id, dt.val from t1, lateral (select t2.a, t2.b from t2 where t2.a = t1.a) as dt(id, val) order by dt.id;
+
+## Wrong column count errors with ErrViewWrongList (1353)
+--error 1353
+select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2) order by t1.a;

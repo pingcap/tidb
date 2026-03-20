@@ -194,7 +194,7 @@ func TestOuter2InnerLateralSelection(t *testing.T) {
 		suiteData := GetOuter2InnerSuiteData()
 		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := tk.MustQuery("explain format = 'brief' " + sql)
+			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())

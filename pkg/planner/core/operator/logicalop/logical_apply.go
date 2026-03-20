@@ -76,6 +76,29 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 
 // PredicatePushDown inherits the BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
+// findChildFullSchema returns the FullSchema of p if it is a LogicalJoin or
+// LogicalApply (possibly wrapped by LogicalSelection from ON clauses). Used
+// during column pruning to find redundant USING/NATURAL columns from the
+// left child so that LATERAL correlation extraction sees them.
+func findChildFullSchema(p base.LogicalPlan) *expression.Schema {
+	for {
+		switch x := p.(type) {
+		case *LogicalJoin:
+			return x.FullSchema // may be nil
+		case *LogicalApply:
+			return x.FullSchema // may be nil
+		case *LogicalSelection:
+			children := p.Children()
+			if len(children) != 1 {
+				return nil
+			}
+			p = children[0]
+		default:
+			return nil
+		}
+	}
+}
+
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
