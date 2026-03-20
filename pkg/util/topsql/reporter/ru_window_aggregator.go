@@ -67,9 +67,10 @@ func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RU
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Late data for already reported windows is ignored.
+	// Best-effort contract: late batches are shifted to the earliest still-open
+	// report window instead of being dropped.
 	if a.lastReportedEndTs > 0 && bucketStart < a.lastReportedEndTs {
-		return
+		bucketStart = a.lastReportedEndTs
 	}
 
 	a.rotateBucketsBefore(bucketStart)

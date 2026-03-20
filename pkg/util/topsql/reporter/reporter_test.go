@@ -887,7 +887,7 @@ func TestReporterBackpressureAndDropScenario(t *testing.T) {
 	sinkCh := make(chan *ReportData, 4)
 	require.NoError(t, tsr.Register(newMockDataSink(sinkCh)))
 
-	go tsr.collectRUWorker()
+	go tsr.collectWorker()
 
 	sendBatch := func(ts int64, reportEnd uint64) {
 		atomic.StoreInt64(&currentUnix, ts)
@@ -983,7 +983,7 @@ func TestTopRUPipelineInProcessIntegration(t *testing.T) {
 
 	ch := make(chan *ReportData, 2)
 	require.NoError(t, tsr.Register(newMockDataSink(ch)))
-	go tsr.collectRUWorker()
+	go tsr.collectWorker()
 	go tsr.reportWorker()
 
 	hotSQLDigest, hotPlanDigest := []byte("sql-hot"), []byte("plan-hot")
@@ -1096,7 +1096,7 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 	collectDone := make(chan struct{})
 	reportDone := make(chan struct{})
 	go func() {
-		tsr.collectRUWorker()
+		tsr.collectWorker()
 		close(collectDone)
 	}()
 	go func() {
@@ -1135,7 +1135,7 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 	select {
 	case <-collectDone:
 	case <-time.After(time.Second):
-		t.Fatal("collectRUWorker should exit on close")
+		t.Fatal("collectWorker should exit on close")
 	}
 	select {
 	case <-reportDone:

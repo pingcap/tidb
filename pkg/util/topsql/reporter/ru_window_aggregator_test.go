@@ -233,8 +233,9 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 	require.Greater(t, totalRU, 0.0, "total reported RU should be positive")
 }
 
-func TestRUWindowAggregatorDropsLateDataAfterWindowReported(t *testing.T) {
-	// A closed [0,60) window can be reported only once, and later writes to that window must be dropped.
+func TestRUWindowAggregatorShiftsLateDataAfterWindowReported(t *testing.T) {
+	// A closed [0,60) window can be reported only once.
+	// Late writes to that window are shifted to the earliest still-open report window.
 	agg := newRUWindowAggregator()
 
 	agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
@@ -248,7 +249,7 @@ func TestRUWindowAggregatorDropsLateDataAfterWindowReported(t *testing.T) {
 	require.NotNil(t, first)
 	require.NotNil(t, findRURecordByDigest(first, "u1", "sql-a", "plan-a"))
 
-	// Late data for [0,60) should be ignored after reportEnd=60 was emitted.
+	// Late data for [0,60) should be shifted into the next reportable window.
 	agg.addBatchToBucket(10, stmtstats.RUIncrementMap{
 		{
 			User:       "u1",
@@ -266,18 +267,20 @@ func TestRUWindowAggregatorDropsLateDataAfterWindowReported(t *testing.T) {
 
 	second := agg.takeReportRecords(120, 60, []byte("ks"))
 	require.NotEmpty(t, second)
-	require.Nil(t, findRURecordByDigest(second, "u1", "sql-late", "plan-late"))
+	late := findRURecordByDigest(second, "u1", "sql-late", "plan-late")
+	require.NotNil(t, late)
+	require.Len(t, late.Items, 1)
+	require.InDelta(t, 999.0, late.Items[0].TotalRu, 1e-9)
 	cur := findRURecordByDigest(second, "u1", "sql-cur", "plan-cur")
 	require.NotNil(t, cur)
 	require.Len(t, cur.Items, 1)
 	require.InDelta(t, 1.0, cur.Items[0].TotalRu, 1e-9)
-	// Also guard against "late data hidden in others".
-	require.InDelta(t, 1.0, totalRUFromTopRURecords(second), 1e-9)
+	require.InDelta(t, 1000.0, totalRUFromTopRURecords(second), 1e-9)
 }
 
 func TestLateDataUnderConcurrentReporting(t *testing.T) {
-	// Risk covered: concurrent report + late writes must not re-pollute already reported windows
-	// and should keep subsequent window output deterministic.
+	// Risk covered: concurrent report + late writes should not lose already collected RU.
+	// Late writes can be split across second/third window depending on interleaving.
 	agg := newRUWindowAggregator()
 	keyA := stmtstats.RUKey{
 		User:       "u-a",
@@ -332,7 +335,6 @@ func TestLateDataUnderConcurrentReporting(t *testing.T) {
 	<-reportDone
 
 	require.NotEmpty(t, second)
-	require.Nil(t, findRURecordByDigest(second, "u-late", "sql-late", "plan-late"))
 	recB := findRURecordByDigest(second, "u-b", "sql-b", "plan-b")
 	require.NotNil(t, recB)
 	require.Len(t, recB.Items, 1)
@@ -351,7 +353,14 @@ func TestLateDataUnderConcurrentReporting(t *testing.T) {
 	}
 	third := agg.takeReportRecords(180, 60, []byte("ks"))
 	require.NotNil(t, findRURecordByDigest(third, "u-c", "sql-c", "plan-c"))
-	require.Nil(t, findRURecordByDigest(third, "u-late", "sql-late", "plan-late"))
+	lateTotal := 0.0
+	if rec := findRURecordByDigest(second, "u-late", "sql-late", "plan-late"); rec != nil {
+		lateTotal += sumTopRUItems(rec.Items)
+	}
+	if rec := findRURecordByDigest(third, "u-late", "sql-late", "plan-late"); rec != nil {
+		lateTotal += sumTopRUItems(rec.Items)
+	}
+	require.InDelta(t, 200*999, lateTotal, 1e-6)
 }
 
 func TestRUWindowAggregatorFinalReportCappedTo100x100(t *testing.T) {

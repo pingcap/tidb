@@ -98,8 +98,8 @@ type RemoteTopSQLReporter struct {
 // timestamping at enqueue side keeps RU bucket attribution independent
 // from downstream scheduling delay.
 type ruBatch struct {
-	timestamp uint64
 	data      stmtstats.RUIncrementMap
+	timestamp uint64
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
@@ -131,7 +131,6 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 func (tsr *RemoteTopSQLReporter) Start() {
 	tsr.sqlCPUCollector.Start()
 	go tsr.collectWorker()
-	go tsr.collectRUWorker()
 	go tsr.reportWorker()
 }
 
@@ -237,28 +236,15 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 		case data := <-tsr.collectStmtStatsChan:
 			timestamp := uint64(nowFunc().Unix())
 			tsr.stmtStatsBuffer[timestamp] = data
-		case <-reportTicker.C:
-			timestamp := uint64(nowFunc().Unix())
-			tsr.processStmtStatsData()
-			tsr.takeDataAndSendToReportChan(timestamp)
-		}
-	}
-}
-
-// collectRUWorker consumes RU increments from collectRUIncrementsChan.
-// It runs in a separate goroutine from collectWorker.
-func (tsr *RemoteTopSQLReporter) collectRUWorker() {
-	defer util.Recover("top-sql", "collectRUWorker", nil, false)
-
-	for {
-		select {
-		case <-tsr.ctx.Done():
-			return
 		case batch := <-tsr.collectRUIncrementsChan:
 			if len(batch.data) == 0 {
 				continue
 			}
 			tsr.ruAggregator.addBatchToBucket(batch.timestamp, batch.data)
+		case <-reportTicker.C:
+			timestamp := uint64(nowFunc().Unix())
+			tsr.processStmtStatsData()
+			tsr.takeDataAndSendToReportChan(timestamp)
 		}
 	}
 }
