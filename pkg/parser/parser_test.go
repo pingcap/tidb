@@ -6137,6 +6137,10 @@ func TestSessionManage(t *testing.T) {
 		{"kill tidb 23123", true, "KILL TIDB 23123"},
 		{"kill tidb connection 23123", true, "KILL TIDB 23123"},
 		{"kill tidb query 23123", true, "KILL TIDB QUERY 23123"},
+		// User variable support (#55369)
+		{"kill @id", true, "KILL @`id`"},
+		{"kill connection @id", true, "KILL @`id`"},
+		{"kill query @id", true, "KILL QUERY @`id`"},
 		{"show processlist", true, "SHOW PROCESSLIST"},
 		{"show full processlist", true, "SHOW FULL PROCESSLIST"},
 		{"shutdown", true, "SHUTDOWN"},
