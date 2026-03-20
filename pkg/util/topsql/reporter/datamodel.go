@@ -150,7 +150,7 @@ type record struct {
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
-	listCap := min(topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load()+1, maxTsItemsCapacity)
+	listCap := min(int64(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)/topsqlstate.GlobalState.PrecisionSeconds.Load()+1, maxTsItemsCapacity)
 	return &record{
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
