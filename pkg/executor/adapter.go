@@ -1747,6 +1747,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanFromCache:     sessVars.FoundInPlanCache,
 		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
+		MVMergeInfo:       stmtCtx.MVMergePhaseInfo,
 		KVTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitKVRespDuration)),
 		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),

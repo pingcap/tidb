@@ -179,6 +179,12 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	require.True(t, hasCountStar)
 	require.True(t, hasCountExpr)
 	require.True(t, hasSum)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.Total)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildLocal)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildAST)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeMergeSource)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeFullUpdate)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.ExtractFullUpdate)
 
 	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
 	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
@@ -311,6 +317,12 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 			require.Equal(t, 1, mvOffsetCount[ai.MVOffset])
 		}
 	}
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.Total)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildLocal)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildAST)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeMergeSource)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeFullUpdate)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.ExtractFullUpdate)
 
 	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
 	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true

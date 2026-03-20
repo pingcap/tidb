@@ -153,6 +153,12 @@ func TestBuildCountSum(t *testing.T) {
 	require.True(t, hasCountStar)
 	require.True(t, hasCountExpr)
 	require.True(t, hasSum)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.Total)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildLocal)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildAST)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeMergeSource)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeFullUpdate)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.ExtractFullUpdate)
 
 	item, ok := is.TableItemByID(mv.ID)
 	require.True(t, ok)
@@ -550,6 +556,12 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	}
 	require.True(t, hasMax)
 	require.True(t, hasMin)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.Total)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildLocal)
+	require.NotZero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.BuildAST)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeMergeSource)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.OptimizeFullUpdate)
+	require.Zero(t, sctx.GetSessionVars().StmtCtx.MVMergePhaseInfo.ExtractFullUpdate)
 
 	item, ok := is.TableItemByID(mv.ID)
 	require.True(t, ok)

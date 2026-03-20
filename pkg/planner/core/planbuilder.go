@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -3840,6 +3841,15 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 }
 
 func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+	phaseInfo := getMVMergePhaseInfo(b.ctx)
+	if phaseInfo != nil {
+		phaseInfo.Reset()
+		buildStart := time.Now()
+		defer func() {
+			phaseInfo.Total = time.Since(buildStart)
+		}()
+	}
+
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
@@ -3906,7 +3916,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if res.MergeSourceSelect == nil {
 		return nil, errors.New("mvmerge: merge source select is nil")
 	}
+	sourceOptimizeStart := time.Now()
 	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	if phaseInfo != nil {
+		phaseInfo.OptimizeMergeSource = time.Since(sourceOptimizeStart)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -3938,7 +3952,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		// so force-enable the switch during this one-shot optimization and restore it afterward.
 		savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
 		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
+		fullUpdateOptimizeStart := time.Now()
 		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
+		if phaseInfo != nil {
+			phaseInfo.OptimizeFullUpdate = time.Since(fullUpdateOptimizeStart)
+		}
 		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
 		if err != nil {
 			return nil, err
@@ -3947,6 +3965,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			return nil, errors.Errorf("mvmerge full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
 		}
 		var template *mvFullUpdateLookupTemplate
+		extractFullUpdateStart := time.Now()
 		template, err = extractMVFullUpdateLookupTemplate(
 			fullUpdateLookupPlan,
 			res.FullUpdateLookupColumnCount,
@@ -3954,6 +3973,9 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			res.FullUpdateLookupMVOffsets,
 			res.GroupKeyMVOffsets,
 		)
+		if phaseInfo != nil {
+			phaseInfo.ExtractFullUpdate = time.Since(extractFullUpdateStart)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -3984,6 +4006,17 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		AggInfos:                    res.AggInfos,
 	}.Init(b.ctx)
 	return plan, nil
+}
+
+func getMVMergePhaseInfo(sctx base.PlanContext) *stmtctx.MVMergePhaseInfo {
+	if sctx == nil {
+		return nil
+	}
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil || sessVars.StmtCtx == nil {
+		return nil
+	}
+	return &sessVars.StmtCtx.MVMergePhaseInfo
 }
 
 type mvFullUpdateLookupTemplate struct {

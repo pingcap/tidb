@@ -212,6 +212,31 @@ func (s *stmtCache) reset() *stmtCache {
 	return s
 }
 
+// MVMergePhaseInfo records the planner-side phase timings of mvmerge.Build.
+type MVMergePhaseInfo struct {
+	Total               time.Duration
+	BuildLocal          time.Duration
+	BuildAST            time.Duration
+	OptimizeMergeSource time.Duration
+	OptimizeFullUpdate  time.Duration
+	ExtractFullUpdate   time.Duration
+}
+
+// Reset clears all mvmerge phase timings.
+func (m *MVMergePhaseInfo) Reset() {
+	*m = MVMergePhaseInfo{}
+}
+
+// HasValue reports whether any mvmerge phase timing has been recorded.
+func (m MVMergePhaseInfo) HasValue() bool {
+	return m.Total > 0 ||
+		m.BuildLocal > 0 ||
+		m.BuildAST > 0 ||
+		m.OptimizeMergeSource > 0 ||
+		m.OptimizeFullUpdate > 0 ||
+		m.ExtractFullUpdate > 0
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -331,6 +356,9 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
+
+	// MVMergePhaseInfo records the planner-side mvmerge phase timings for slow query diagnostics.
+	MVMergePhaseInfo MVMergePhaseInfo
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.

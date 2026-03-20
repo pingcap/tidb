@@ -230,6 +230,12 @@ func TestSlowLogFormat(t *testing.T) {
 # Compile_time: 0.00000001
 # Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Optimize_time: 0.00000001
+# MVMerge_total_time: 0.03
+# MVMerge_build_local_time: 0.002
+# MVMerge_build_ast_time: 0.003
+# MVMerge_optimize_merge_source_time: 0.01
+# MVMerge_optimize_full_update_time: 0.01
+# MVMerge_extract_full_update_time: 0.005
 # Wait_TS: 0.000000003
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
 # DB: test
@@ -294,6 +300,14 @@ func TestSlowLogFormat(t *testing.T) {
 			DurationRewrite:            3,
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
+		},
+		MVMergeInfo: stmtctx.MVMergePhaseInfo{
+			Total:               30 * time.Millisecond,
+			BuildLocal:          2 * time.Millisecond,
+			BuildAST:            3 * time.Millisecond,
+			OptimizeMergeSource: 10 * time.Millisecond,
+			OptimizeFullUpdate:  10 * time.Millisecond,
+			ExtractFullUpdate:   5 * time.Millisecond,
 		},
 		ExecRetryCount:    3,
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,

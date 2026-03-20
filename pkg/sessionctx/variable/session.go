@@ -3307,6 +3307,18 @@ const (
 	SlowLogRewriteTimeStr = "Rewrite_time"
 	// SlowLogOptimizeTimeStr is the optimization time.
 	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogMVMergeTotalTimeStr is the total mvmerge build time.
+	SlowLogMVMergeTotalTimeStr = "MVMerge_total_time"
+	// SlowLogMVMergeBuildLocalTimeStr is the mvmerge buildLocal phase time.
+	SlowLogMVMergeBuildLocalTimeStr = "MVMerge_build_local_time"
+	// SlowLogMVMergeBuildASTTimeStr is the manual AST construction time inside mvmerge.
+	SlowLogMVMergeBuildASTTimeStr = "MVMerge_build_ast_time"
+	// SlowLogMVMergeOptimizeMergeSourceTimeStr is the merge-source derived SELECT optimization time.
+	SlowLogMVMergeOptimizeMergeSourceTimeStr = "MVMerge_optimize_merge_source_time"
+	// SlowLogMVMergeOptimizeFullUpdateTimeStr is the full-update lookup template optimization time.
+	SlowLogMVMergeOptimizeFullUpdateTimeStr = "MVMerge_optimize_full_update_time"
+	// SlowLogMVMergeExtractFullUpdateTimeStr is the full-update lookup template extraction time.
+	SlowLogMVMergeExtractFullUpdateTimeStr = "MVMerge_extract_full_update_time"
 	// SlowLogWaitTSTimeStr is the time of waiting TS.
 	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
@@ -3455,6 +3467,7 @@ type SlowQueryLogItems struct {
 	PlanDigest        string
 	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
+	MVMergeInfo       stmtctx.MVMergePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
@@ -3543,6 +3556,14 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	buf.WriteString("\n")
 
 	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(logItems.TimeOptimize.Seconds(), 'f', -1, 64))
+	if logItems.MVMergeInfo.HasValue() {
+		writeSlowLogItem(&buf, SlowLogMVMergeTotalTimeStr, strconv.FormatFloat(logItems.MVMergeInfo.Total.Seconds(), 'f', -1, 64))
+		writeSlowLogItem(&buf, SlowLogMVMergeBuildLocalTimeStr, strconv.FormatFloat(logItems.MVMergeInfo.BuildLocal.Seconds(), 'f', -1, 64))
+		writeSlowLogItem(&buf, SlowLogMVMergeBuildASTTimeStr, strconv.FormatFloat(logItems.MVMergeInfo.BuildAST.Seconds(), 'f', -1, 64))
+		writeSlowLogItem(&buf, SlowLogMVMergeOptimizeMergeSourceTimeStr, strconv.FormatFloat(logItems.MVMergeInfo.OptimizeMergeSource.Seconds(), 'f', -1, 64))
+		writeSlowLogItem(&buf, SlowLogMVMergeOptimizeFullUpdateTimeStr, strconv.FormatFloat(logItems.MVMergeInfo.OptimizeFullUpdate.Seconds(), 'f', -1, 64))
+		writeSlowLogItem(&buf, SlowLogMVMergeExtractFullUpdateTimeStr, strconv.FormatFloat(logItems.MVMergeInfo.ExtractFullUpdate.Seconds(), 'f', -1, 64))
+	}
 	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(logItems.TimeWaitTS.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {

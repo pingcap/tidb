@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -200,7 +202,16 @@ func Build(
 	opt BuildOptions,
 	aggArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
+	phaseInfo := getMVMergePhaseInfo(sctx)
+	if phaseInfo != nil {
+		phaseInfo.Reset()
+	}
+
+	buildLocalStart := time.Now()
 	local, err := buildLocal(sctx, is, mv)
+	if phaseInfo != nil {
+		phaseInfo.BuildLocal = time.Since(buildLocalStart)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -358,6 +369,14 @@ func buildFromLocal(
 	}
 	if aggArgNotNullByOffset == nil {
 		aggArgNotNullByOffset = inferAggArgNotNullByOffset(local)
+	}
+
+	phaseInfo := getMVMergePhaseInfo(local.sctx)
+	if phaseInfo != nil {
+		buildASTStart := time.Now()
+		defer func() {
+			phaseInfo.BuildAST = time.Since(buildASTStart)
+		}()
 	}
 
 	// Stage 2: build merge source SQL in two steps:
@@ -625,6 +644,17 @@ func inferAggArgNotNullByOffset(local *buildLocalResult) map[int]bool {
 		return nil
 	}
 	return out
+}
+
+func getMVMergePhaseInfo(sctx planctx.PlanContext) *stmtctx.MVMergePhaseInfo {
+	if sctx == nil {
+		return nil
+	}
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil || sessVars.StmtCtx == nil {
+		return nil
+	}
+	return &sessVars.StmtCtx.MVMergePhaseInfo
 }
 
 func parseSelectFromSQL(sctx planctx.PlanContext, sql string) (*ast.SelectStmt, error) {
