@@ -59,7 +59,7 @@ OCI_ARTIFACT_HOST="us-docker.pkg.dev/pingcap-testing-account/hub" ./download_pin
 For local hybrid-vector end-to-end validation against TiUP playground, use:
 
 ```bash
-cd /Users/jin/Desktop/tidb/tests/integrationtest2/tici
+cd tests/integrationtest2/tici
 ./hybrid_vector_e2e.sh all
 ```
 
@@ -130,11 +130,11 @@ By default the helper isolates itself from any existing local playground by usin
 
 If you want different ports, override `PORT_OFFSET`, `TIDB_PORT`, `PD_PORT`, `CDC_PORT`, or `MINIO_PORT`.
 
-The script auto-discovers the current desktop layout by default:
+The script assumes the following default paths (override with environment variables):
 
-- TiDB: `/Users/jin/Desktop/tidb/bin/tidb-server`
-- TiFlash: `/Users/jin/Desktop/tiflash-fts/cmake-build-codex-release/dbms/src/Server/tiflash`
-- TiCI: `/Users/jin/Desktop/tici/target/release/tici-server`
+- TiDB: `<repo_root>/bin/tidb-server`
+- TiFlash: `<workspace>/tiflash-fts/cmake-build-codex-release/dbms/src/Server/tiflash`
+- TiCI: `<workspace>/tici/target/release/tici-server`
 
 Available commands:
 

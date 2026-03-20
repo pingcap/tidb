@@ -30,6 +30,10 @@ CHANGEFEED_INFO_FILE="${OUTPUT_ROOT}/playground-changefeed.json"
 
 PLAYGROUND_VERSION=${PLAYGROUND_VERSION:-"v1.16.2-feature.fts"}
 PLAYGROUND_TAG=${PLAYGROUND_TAG:-"hybrid-vector-e2e"}
+if [[ ! "${PLAYGROUND_TAG}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "ERROR: PLAYGROUND_TAG contains unsafe characters: ${PLAYGROUND_TAG}" >&2
+    exit 1
+fi
 PLAYGROUND_COMPONENT="playground:${PLAYGROUND_VERSION}"
 TIUP_MIRROR=${TIUP_MIRROR:-"http://tiup.pingcap.net:8988"}
 
@@ -201,14 +205,22 @@ wait_for_tiflash() {
     die "TiFlash did not register in time; see ${PLAYGROUND_LOG}"
 }
 
+platform_lib_ext() {
+    case "$(uname -s)" in
+        Darwin) printf 'dylib' ;;
+        *)      printf 'so' ;;
+    esac
+}
+
 resolve_search_lib_dir() {
-    local candidate
+    local ext candidate
+    ext=$(platform_lib_ext)
     for candidate in \
         "${TIFLASH_SEARCH_LIB_DIR}" \
         "${TIFLASH_SEARCH_LIB_DIR%/release}" \
         "$(dirname "${TIFLASH_BINPATH}")"
     do
-        if [ -n "${candidate}" ] && [ -f "${candidate}/libtici_search_lib.dylib" ]; then
+        if [ -n "${candidate}" ] && [ -f "${candidate}/libtici_search_lib.${ext}" ]; then
             printf '%s\n' "${candidate}"
             return 0
         fi
@@ -217,9 +229,10 @@ resolve_search_lib_dir() {
 }
 
 prepare_runtime_env() {
-    local search_lib_dir
-    search_lib_dir=$(resolve_search_lib_dir) || die "cannot find libtici_search_lib.dylib from ${TIFLASH_SEARCH_LIB_DIR}"
-    [ -f "${TIFLASH_PROXY_LIB_DIR}/libtiflash_proxy.dylib" ] || die "cannot find libtiflash_proxy.dylib in ${TIFLASH_PROXY_LIB_DIR}"
+    local ext search_lib_dir
+    ext=$(platform_lib_ext)
+    search_lib_dir=$(resolve_search_lib_dir) || die "cannot find libtici_search_lib.${ext} from ${TIFLASH_SEARCH_LIB_DIR}"
+    [ -f "${TIFLASH_PROXY_LIB_DIR}/libtiflash_proxy.${ext}" ] || die "cannot find libtiflash_proxy.${ext} in ${TIFLASH_PROXY_LIB_DIR}"
 
     if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
         export DYLD_LIBRARY_PATH="${search_lib_dir}:${TIFLASH_PROXY_LIB_DIR}:${DYLD_LIBRARY_PATH}"

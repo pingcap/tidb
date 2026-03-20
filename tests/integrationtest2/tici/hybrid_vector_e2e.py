@@ -287,10 +287,10 @@ def inverted_query_sql(args: argparse.Namespace, title: str) -> str:
     )
 
 
-def explain_contains(args: argparse.Namespace, sql: str, needle: str) -> bool:
+def explain_contains_all(args: argparse.Namespace, sql: str, needles: Sequence[str]) -> bool:
     rows = query_rows(args, sql)
     joined = "\n".join("\t".join(row) for row in rows)
-    return needle in joined
+    return all(needle in joined for needle in needles)
 
 
 def fetch_ids(args: argparse.Namespace, sql: str) -> List[int]:
@@ -338,8 +338,9 @@ def verify(args: argparse.Namespace) -> None:
     wait_until(
         "vector explain path",
         args,
-        lambda: explain_contains(args, vector_explain_sql(args, 0, 3), "vector search")
-        and explain_contains(args, vector_explain_sql(args, 0, 3), args.index_name),
+        lambda: explain_contains_all(
+            args, vector_explain_sql(args, 0, 3), ["vector search", args.index_name]
+        ),
     )
 
 
