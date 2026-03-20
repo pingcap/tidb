@@ -213,7 +213,7 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 	}
 	sch := newServerConsistentHashForTest(mapping, helper, "")
 
-	if err := sch.refresh(); err != nil {
+	if _, err := sch.refresh(); err != nil {
 		t.Fatalf("fetch failed: %v", err)
 	}
 	if len(sch.servers) != 1 {
@@ -239,14 +239,22 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 	}
 	sch := newServerConsistentHashForTest(mapping, helper, "")
 
-	if err := sch.refresh(); err != nil {
+	changed, err := sch.refresh()
+	if err != nil {
 		t.Fatalf("first fetch failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected changed=true in first refresh")
 	}
 	beforeNodeCount := sch.chash.NodeCount()
 	beforeRingSize := len(sch.chash.ring)
 
-	if err := sch.refresh(); err != nil {
+	changed, err = sch.refresh()
+	if err != nil {
 		t.Fatalf("second fetch failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected changed=false in second refresh")
 	}
 	if got := sch.chash.NodeCount(); got != beforeNodeCount {
 		t.Fatalf("expected node count %d, got %d", beforeNodeCount, got)
@@ -320,8 +328,11 @@ func TestServerConsistentHashFetchError(t *testing.T) {
 	}
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 
-	err := sch.refresh()
+	changed, err := sch.refresh()
 	if err == nil {
 		t.Fatalf("expected fetch error, got nil")
+	}
+	if changed {
+		t.Fatalf("expected changed=false on fetch error")
 	}
 }

@@ -271,7 +271,7 @@ func TestTaskExecutorBackpressure(t *testing.T) {
 	}
 	require.Eventually(t, func() bool {
 		return exec.metrics.counters.backpressureCount.Load() > 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 	require.Equal(t, int64(1), exec.metrics.counters.backpressureCount.Load())
 
 	controller.blocked.Store(false)
@@ -279,7 +279,7 @@ func TestTaskExecutorBackpressure(t *testing.T) {
 	waitForSignal(t, done, time.Hour)
 	require.Eventually(t, func() bool {
 		return exec.metrics.gauges.backpressureBlocked.Load() == 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
@@ -340,7 +340,7 @@ func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
 	waitStarted("t2")
 	require.Eventually(t, func() bool {
 		return exec.metrics.counters.finishedCount.Load() == 2
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestTaskExecutorCloseInterruptsBackpressureWait(t *testing.T) {
@@ -377,7 +377,7 @@ func TestTaskExecutorCloseInterruptsBackpressureWait(t *testing.T) {
 	}
 	require.Eventually(t, func() bool {
 		return exec.metrics.gauges.backpressureBlocked.Load() == 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 	require.Greater(t, exec.metrics.counters.backpressureCount.Load(), int64(0))
 }
 
@@ -1013,7 +1013,7 @@ func (h *mvServiceTestHarness) stop() {
 	h.cancel()
 	select {
 	case <-h.runDone:
-	case <-time.After(time.Second):
+	case <-time.After(testEventuallyWait):
 		h.t.Fatal("mv service did not stop in time")
 	}
 }
@@ -1037,17 +1037,17 @@ func (h *mvServiceTestHarness) waitFetchCycleSince(logCalls, viewCalls int32) {
 	h.t.Helper()
 	require.Eventually(h.t, func() bool {
 		return h.helper.fetchLogsCalls.Load() > logCalls && h.helper.fetchViewCalls.Load() > viewCalls
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func (h *mvServiceTestHarness) waitRefreshTask(mvID int64) {
 	h.t.Helper()
-	waitInt64SignalReal(h.t, h.helper.refreshSignal, mvID, time.Second, "refresh task")
+	waitInt64SignalReal(h.t, h.helper.refreshSignal, mvID, testEventuallyWait, "refresh task")
 }
 
 func (h *mvServiceTestHarness) waitPurgeTask(mvLogID int64) {
 	h.t.Helper()
-	waitInt64SignalReal(h.t, h.helper.purgeSignal, mvLogID, time.Second, "purge task")
+	waitInt64SignalReal(h.t, h.helper.purgeSignal, mvLogID, testEventuallyWait, "purge task")
 }
 
 func (h *mvServiceTestHarness) assertNoPending() {
@@ -1055,7 +1055,7 @@ func (h *mvServiceTestHarness) assertNoPending() {
 	require.Eventually(h.t, func() bool {
 		mvLogCount, mvCount := pendingTaskCounts(h.svc)
 		return mvLogCount == 0 && mvCount == 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestMVServiceFullChainSimulation(t *testing.T) {
@@ -1086,7 +1086,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 
 		require.Eventually(t, func() bool {
 			return h.svc.executor.metrics.counters.finishedCount.Load() == 2
-		}, time.Second, time.Millisecond)
+		}, testEventuallyWait, testEventuallyTick)
 		assertTaskExecutorMetrics(t, h.svc.executor, 2, 2, 0, 0, 0, 0, 0, 0)
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
@@ -1116,7 +1116,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+2 &&
 				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
 				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+2
-		}, time.Second, time.Millisecond)
+		}, testEventuallyWait, testEventuallyTick)
 
 		h.helper.refreshErr = nil
 		h.helper.purgeErr = nil
@@ -1129,7 +1129,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+4 &&
 				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
 				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+4
-		}, time.Second, time.Millisecond)
+		}, testEventuallyWait, testEventuallyTick)
 
 		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
 		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))

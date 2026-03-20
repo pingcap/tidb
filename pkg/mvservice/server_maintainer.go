@@ -120,7 +120,8 @@ func (sch *ServerConsistentHash) RemoveServer(srvID string) {
 }
 
 // refresh reloads server membership and rebuilds the hash ring when changed.
-func (sch *ServerConsistentHash) refresh() error {
+// It returns whether the membership set actually changed.
+func (sch *ServerConsistentHash) refresh() (bool, error) {
 	sch.mu.RLock()
 	oldSrvCnt := len(sch.servers)
 	sch.mu.RUnlock()
@@ -133,7 +134,7 @@ func (sch *ServerConsistentHash) refresh() error {
 			zap.NamedError("context_error", sch.ctx.Err()),
 			zap.Error(err),
 		)
-		return err
+		return false, err
 	}
 	// Filter servers by helper policy.
 	for k, v := range newInfos {
@@ -158,7 +159,7 @@ func (sch *ServerConsistentHash) refresh() error {
 		sch.mu.RUnlock()
 
 		if unchanged {
-			return nil
+			return false, nil
 		}
 	}
 	{
@@ -170,12 +171,7 @@ func (sch *ServerConsistentHash) refresh() error {
 		sch.mu.Unlock() // Release guard after rebuild.
 	}
 
-	logutil.BgLogger().Info(
-		"refreshed TiDB server membership for MV scheduler",
-		zap.Int("old_server_count", oldSrvCnt),
-		zap.Int("new_server_count", len(newInfos)),
-	)
-	return nil
+	return true, nil
 }
 
 // Available checks if the server responsible for key is available (i.e. matches current server ID).

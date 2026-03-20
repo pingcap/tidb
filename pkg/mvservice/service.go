@@ -122,11 +122,11 @@ const (
 
 	mvRunEventInitFailed         = "init_failed"
 	mvRunEventRecoveredPanic     = "mv_service_panic"
-	mvRunEventServerRefreshOK    = "server_refresh_ok"
+	mvRunEventServerChanged      = "server_changed"
 	mvRunEventServerRefreshError = "server_refresh_error"
-	mvRunEventFetchByDDL         = "fetch_meta_trigger_ddl"
-	mvRunEventFetchByInterval    = "fetch_meta_trigger_interval"
-	mvRunEventHistoryGCGetTSOErr = "history_gc_get_tso_error"
+	mvRunEventFetchByDDL         = "fetch_meta_by_ddl"
+	mvRunEventFetchByInterval    = "fetch_meta_by_interval"
+	mvRunEventHistoryGCGetTSOErr = "get_tso_error"
 
 	mvHistoryGCOwnerKey = "gc-mv-op-hist"
 
@@ -360,7 +360,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 	}
 }
 
-func (t *MVService) executeRefreshTask(m *mv) error {
+func (t *MVService) executeRefreshTask(m *mv) (err error) {
 	if !t.hasPendingMVTask(m) {
 		return nil
 	}
@@ -369,12 +369,26 @@ func (t *MVService) executeRefreshTask(m *mv) error {
 	defer t.metrics.runningMVRefreshCount.Add(-1)
 
 	taskStart := mvsNow()
-	nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
-	t.observeTaskDuration(mvTaskDurationTypeRefresh, taskStart, err)
-	return t.handleRefreshTaskResult(m, nextRefresh, err)
+	var nextRefresh time.Time
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error(
+				"refresh MV task panicked",
+				zap.Int64("mview_id", m.ID),
+				zap.Any("panic", r),
+				zap.ByteString("stack", debug.Stack()),
+			)
+			err = fmt.Errorf("refresh MV task panicked: %v", r)
+		}
+		t.observeTaskDuration(mvTaskDurationTypeRefresh, taskStart, err)
+		t.handleRefreshTaskResult(m, nextRefresh, err)
+	}()
+
+	nextRefresh, err = t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
+	return err
 }
 
-func (t *MVService) executePurgeTask(l *mvLog) error {
+func (t *MVService) executePurgeTask(l *mvLog) (err error) {
 	if !t.hasPendingMVLogTask(l) {
 		return nil
 	}
@@ -383,9 +397,23 @@ func (t *MVService) executePurgeTask(l *mvLog) error {
 	defer t.metrics.runningMVLogPurgeCount.Add(-1)
 
 	taskStart := mvsNow()
-	nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
-	t.observeTaskDuration(mvTaskDurationTypePurge, taskStart, err)
-	return t.handlePurgeTaskResult(l, nextPurge, err)
+	var nextPurge time.Time
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error(
+				"purge MV log task panicked",
+				zap.Int64("mvlog_id", l.ID),
+				zap.Any("panic", r),
+				zap.ByteString("stack", debug.Stack()),
+			)
+			err = fmt.Errorf("purge MV log task panicked: %v", r)
+		}
+		t.observeTaskDuration(mvTaskDurationTypePurge, taskStart, err)
+		t.handlePurgeTaskResult(l, nextPurge, err)
+	}()
+
+	nextPurge, err = t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
+	return err
 }
 
 // hasPendingMVTask reports whether this exact refresh task is still tracked.
@@ -426,7 +454,7 @@ func (t *MVService) runtimeLogFields() []zap.Field {
 	return fields
 }
 
-func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err error) error {
+func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err error) {
 	defer t.notifier.Wake()
 	if err != nil {
 		retryCount := m.retryCount.Add(1)
@@ -441,19 +469,18 @@ func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err er
 			zap.Error(err),
 		)
 		logutil.BgLogger().Warn("refresh MV task failed, rescheduled for retry", fields...)
-		return err
+		return
 	}
 	if nextRefresh.IsZero() {
 		m.retryCount.Store(0)
 		t.removeMVTask(m)
-		return nil
+		return
 	}
 	m.retryCount.Store(0)
 	t.rescheduleMVSuccess(m, nextRefresh)
-	return nil
 }
 
-func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err error) error {
+func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err error) {
 	defer t.notifier.Wake()
 	if err != nil {
 		retryCount := l.retryCount.Add(1)
@@ -468,16 +495,15 @@ func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err err
 			zap.Error(err),
 		)
 		logutil.BgLogger().Warn("purge MV log task failed, rescheduled for retry", fields...)
-		return err
+		return
 	}
 	if nextPurge.IsZero() {
 		l.retryCount.Store(0)
 		t.removeMVLogTask(l)
-		return nil
+		return
 	}
 	l.retryCount.Store(0)
 	t.rescheduleMVLogSuccess(l, nextPurge)
-	return nil
 }
 
 // removeMVLogTask removes a purge task from the scheduler after completion.
@@ -857,6 +883,7 @@ func (t *MVService) Run() {
 	}()
 
 	lastSrvRefresh := time.Time{}
+	sawInitialServerRefresh := false
 	for {
 		ddlDirty := false
 		maintenanceTick := false
@@ -879,19 +906,25 @@ func (t *MVService) Run() {
 			resetTimer(maintenanceTimer, t.basicInterval)
 		}
 
+		serverChanged := false
 		if now.Sub(lastSrvRefresh) >= t.serverRefreshInterval {
-			if err := t.sch.refresh(); err != nil {
+			changed, err := t.sch.refresh()
+			if err != nil {
 				t.mh.observeRunEvent(mvRunEventServerRefreshError)
 				fields := append(t.runtimeLogFields(), zap.Error(err))
 				logutil.BgLogger().Warn("refresh all TiDB server info failed", fields...)
 			} else {
-				t.mh.observeRunEvent(mvRunEventServerRefreshOK)
+				if sawInitialServerRefresh && changed {
+					serverChanged = true
+					t.mh.observeRunEvent(mvRunEventServerChanged)
+				}
+				sawInitialServerRefresh = true
 			}
 			lastSrvRefresh = now
 		}
 
 		needFetch := t.shouldFetchMVMeta(now)
-		if ddlDirty || needFetch {
+		if ddlDirty || serverChanged || needFetch {
 			if ddlDirty {
 				t.mh.observeRunEvent(mvRunEventFetchByDDL)
 			}
@@ -902,14 +935,15 @@ func (t *MVService) Run() {
 			if err := t.fetchAllMVMeta(); err != nil {
 				fields := append(t.runtimeLogFields(),
 					zap.Bool("ddl_dirty", ddlDirty),
+					zap.Bool("server_changed", serverChanged),
 					zap.Bool("periodic_fetch", needFetch),
 					zap.Error(err),
 				)
 				logutil.BgLogger().Warn("fetch materialized view metadata failed", fields...)
 				// Keep retries bounded:
 				// - periodic fetch failure keeps existing fetchInterval throttling.
-				// - DDL-triggered failure retries sooner to reduce stale-window.
-				t.markFetchFailure(now, ddlDirty)
+				// - DDL/topology-triggered failure retries sooner to reduce stale-window.
+				t.markFetchFailure(now, ddlDirty || serverChanged)
 			}
 		}
 
@@ -923,9 +957,9 @@ func (t *MVService) Run() {
 }
 
 // markFetchFailure records a synthetic lastMetaFetchMillis to control next fetch time.
-func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
+func (t *MVService) markFetchFailure(now time.Time, urgent bool) {
 	fetchInterval := t.fetchInterval()
-	if !ddlTriggered {
+	if !urgent {
 		t.lastMetaFetchMillis.Store(now.UnixMilli())
 		return
 	}
