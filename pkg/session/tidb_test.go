@@ -84,7 +84,7 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
 	require.NotNil(t, se.sessionVars.RUV2Metrics)
-	require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.Snapshot(se.sessionVars.RUV2Weights()).SessionParserTotal)
+	require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
 
 	dctx := se.GetDistSQLCtx()
 	require.Equal(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)

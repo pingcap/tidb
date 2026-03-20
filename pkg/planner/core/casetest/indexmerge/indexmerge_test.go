@@ -126,8 +126,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		})
 		require.Equalf(t, output[i], result, "case:%v sql:%s", i, tc)
 		if result != "[]" {
-			snapshot := ds.SCtx().GetSessionVars().RUV2Metrics.Snapshot(ds.SCtx().GetSessionVars().RUV2Weights())
-			require.Equalf(t, int64(len(ds.PossibleAccessPaths)), snapshot.PlanDeriveStatsPaths, "case:%v sql:%s", i, tc)
+			require.Equalf(t, int64(len(ds.PossibleAccessPaths)), ds.SCtx().GetSessionVars().RUV2Metrics.PlanDeriveStatsPaths(), "case:%v sql:%s", i, tc)
 		}
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}

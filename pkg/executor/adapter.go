@@ -1719,7 +1719,7 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	}
 
 	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.Snapshot(weights).CalculateRUValues(weights)
+	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
 
 	dctx := a.Ctx.GetDistSQLCtx()
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {

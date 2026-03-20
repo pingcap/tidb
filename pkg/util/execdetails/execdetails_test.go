@@ -337,36 +337,32 @@ func TestCopRuntimeStats(t *testing.T) {
 
 func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	weights := defaultRUV2WeightsForTest()
-	snapshot := RUV2MetricsSnapshot{
-		ResultChunkCells:        1000,
-		ExecutorL1:              map[string]int64{"TableReader": 5, "Projection": 7},
-		ExecutorL2:              map[string]int64{"Selection": 11},
-		ExecutorL3:              map[string]int64{"HashJoin": 13},
-		ExecutorL5InsertRows:    17,
-		PlanCnt:                 19,
-		PlanDeriveStatsPaths:    23,
-		ResourceManagerReadCnt:  29,
-		ResourceManagerWriteCnt: 31,
-		SessionParserTotal:      37,
-		TxnCnt:                  41,
-		TiKVKVEngineCacheMiss:   43,
-		TiKVCoprocessorExecutorWorkTotal: map[string]int64{
-			"BatchSelection": 53,
-			"BatchTopN":      59,
-		},
-		TiKVCoprocessorExecutorIterations: 61,
-		TiKVCoprocessorResponseBytes:      67,
-		TiKVRaftstoreStoreWriteTriggerWB:  71,
-		TiKVStorageProcessedKeysBatchGet:  73,
-		TiKVStorageProcessedKeysGet:       79,
-		TiKVRU:                            157258,
-		TiFlashRU:                         24680,
-	}
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddExecutorMetric(1, "TableReader", 5)
+	metrics.AddExecutorMetric(1, "Projection", 7)
+	metrics.AddExecutorMetric(2, "Selection", 11)
+	metrics.AddExecutorMetric(3, "HashJoin", 13)
+	metrics.AddExecutorL5InsertRows(17)
+	metrics.AddPlanCnt(19)
+	metrics.AddPlanDeriveStatsPaths(23)
+	metrics.AddResourceManagerReadCnt(29)
+	metrics.AddResourceManagerWriteCnt(31)
+	metrics.AddSessionParserTotal(37)
+	metrics.AddTxnCnt(41)
+	metrics.AddTiKVKVEngineCacheMiss(43)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchSelection", 53)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 59)
+	metrics.AddTiKVCoprocessorExecutorIterations(61)
+	metrics.AddTiKVCoprocessorResponseBytes(67)
+	metrics.AddTiKVRaftstoreStoreWriteTriggerWB(71)
+	metrics.AddTiKVStorageProcessedKeysBatchGet(73)
+	metrics.AddTiKVStorageProcessedKeysGet(79)
 
-	tidbRU := snapshot.CalculateRUValues(weights)
-	tikvRU := snapshot.TiKVRU
-	tiflashRU := snapshot.TiFlashRU
-	totalRU := snapshot.TotalRU(weights)
+	tidbRU := metrics.CalculateRUValues(weights)
+	tikvRU := int64(157258)
+	tiflashRU := int64(24680)
+	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
 	require.Equal(t, int64(114198), tidbRU)
 	require.Equal(t, int64(157258), tikvRU)
 	require.Equal(t, int64(24680), tiflashRU)
@@ -375,8 +371,8 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
 		zeroScaleWeights.RUScale = 0
-		require.Zero(t, snapshot.CalculateRUValues(zeroScaleWeights))
-		require.Equal(t, snapshot.TiKVRU+snapshot.TiFlashRU, snapshot.TotalRU(zeroScaleWeights))
+		require.Zero(t, metrics.CalculateRUValues(zeroScaleWeights))
+		require.Equal(t, tikvRU+tiflashRU, metrics.TotalRU(zeroScaleWeights, tikvRU, tiflashRU))
 	})
 }
 
@@ -386,29 +382,22 @@ func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
 	metrics.AddResultChunkCells(1000)
 	metrics.AddPlanCnt(2)
 
-	snapshot := metrics.Snapshot(weights)
-	require.Equal(t, snapshot.TiDBRU, snapshot.CalculateRUValues(weights))
+	baseline := metrics.CalculateRUValues(weights)
 
 	updated := weights
 	updated.ResultChunkCells *= 10
 	updated.PlanCnt *= 10
 
-	require.Equal(t, snapshot.TiDBRU, snapshot.CalculateRUValues(updated))
-
-	freshSnapshot := metrics.Snapshot(updated)
-	require.NotEqual(t, snapshot.TiDBRU, freshSnapshot.TiDBRU)
-	require.Equal(t, freshSnapshot.TiDBRU, freshSnapshot.CalculateRUValues(updated))
+	require.NotEqual(t, baseline, metrics.CalculateRUValues(updated))
 }
 
 func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	weights := defaultRUV2WeightsForTest()
-	formatted := FormatRUV2Metrics(RUV2MetricsSnapshot{
-		ResultChunkCells:                 1000,
-		ResourceManagerWriteCnt:          20,
-		TiKVCoprocessorExecutorWorkTotal: map[string]int64{"BatchTopN": 10},
-		TiKVRU:                           10987,
-		TiFlashRU:                        246,
-	}, weights)
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddResourceManagerWriteCnt(20)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 10)
+	formatted := FormatRUV2Metrics(metrics, weights, 10987, 246)
 
 	require.Contains(t, formatted, "tidb_ru:")
 	require.Contains(t, formatted, "tikv_ru:")
@@ -426,11 +415,10 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 
 func TestRUV2RuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
 	stats := &RUV2RuntimeStats{
-		Snapshot: RUV2MetricsSnapshot{
-			TiKVRU:    200,
-			TiFlashRU: 300,
-		},
-		Weights: defaultRUV2WeightsForTest(),
+		Metrics:   NewRUV2Metrics(),
+		TiKVRU:    200,
+		TiFlashRU: 300,
+		Weights:   defaultRUV2WeightsForTest(),
 	}
 
 	require.Equal(t, "RU:500.00", stats.String())

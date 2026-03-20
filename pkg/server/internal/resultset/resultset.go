@@ -99,7 +99,7 @@ func NewCursorRUV2Tracker(
 	}
 	if baselineReported {
 		if metrics != nil {
-			tracker.reportedTiDBRU = metrics.Snapshot(weights).CalculateRUValues(weights)
+			tracker.reportedTiDBRU = metrics.CalculateRUValues(weights)
 		}
 		if ruDetails != nil {
 			tracker.reportedTiKVRUV2 = ruDetails.TiKVRUV2()
@@ -124,7 +124,7 @@ func (t *CursorRUV2Tracker) reportDelta() {
 
 	var currentTiDBRU int64
 	if t.metrics != nil {
-		currentTiDBRU = t.metrics.Snapshot(t.weights).CalculateRUValues(t.weights)
+		currentTiDBRU = t.metrics.CalculateRUValues(t.weights)
 	}
 	currentTiKVRUV2 := t.reportedTiKVRUV2
 	if t.ruDetails != nil {

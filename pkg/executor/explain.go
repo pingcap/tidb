@@ -143,13 +143,16 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
 			if ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx); ruv2Metrics != nil {
 				weights := e.Ctx().GetSessionVars().RUV2Weights()
-				snapshot := ruv2Metrics.Snapshot(weights)
+				stats := &execdetails.RUV2RuntimeStats{
+					Metrics: ruv2Metrics.Clone(),
+					Weights: weights,
+				}
 				if ruDetailsRaw != nil {
 					ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-					snapshot.TiKVRU = int64(ruDetails.TiKVRUV2())
-					snapshot.TiFlashRU = int64(ruDetails.TiflashRU())
+					stats.TiKVRU = int64(ruDetails.TiKVRUV2())
+					stats.TiFlashRU = int64(ruDetails.TiflashRU())
 				}
-				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RUV2RuntimeStats{Snapshot: snapshot, Weights: weights})
+				coll.RegisterStats(e.explain.TargetPlan.ID(), stats)
 			}
 		}
 	}

@@ -299,7 +299,7 @@ type SlowQueryLogItems struct {
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
-	RUV2Metrics       execdetails.RUV2MetricsSnapshot
+	RUV2Metrics       *execdetails.RUV2Metrics
 	MemMax            int64
 	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
@@ -547,7 +547,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if waitRUDuration := logItems.RUDetails.RUWaitDuration(); waitRUDuration > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(waitRUDuration.Seconds(), 'f', -1, 64))
 	}
-	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights()); len(formatted) > 0 {
+	var tiKVRU, tiFlashRU int64
+	if logItems.RUDetails != nil {
+		tiKVRU = int64(logItems.RUDetails.TiKVRUV2())
+		tiFlashRU = int64(logItems.RUDetails.TiflashRU())
+	}
+	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
 		writeSlowLogItem(&buf, SlowLogRUV2Metrics, formatted)
 	}
 	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {

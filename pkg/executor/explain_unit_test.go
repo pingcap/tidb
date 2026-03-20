@@ -141,15 +141,15 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
 
 		weights := ctx.GetSessionVars().RUV2Weights()
-		snapshot := ctx.GetSessionVars().RUV2Metrics.Snapshot(weights)
-		require.Equal(t, int64(5), snapshot.ExecutorL5InsertRows)
+		metrics := ctx.GetSessionVars().RUV2Metrics
+		require.Equal(t, int64(5), metrics.ExecutorL5InsertRows())
 		require.Contains(
 			t,
 			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String(),
-			fmt.Sprintf("RU:%.2f", float64(snapshot.TotalRU(weights))),
+			fmt.Sprintf("RU:%.2f", float64(metrics.TotalRU(weights, 0, 0))),
 		)
 
 		recordInsertRows2Metrics(ctx.GetSessionVars())
-		require.Equal(t, int64(5), ctx.GetSessionVars().RUV2Metrics.Snapshot(weights).ExecutorL5InsertRows)
+		require.Equal(t, int64(5), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 	})
 }

@@ -223,11 +223,9 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	} else {
 		ruDetails = util.NewRUDetails()
 	}
-	var ruv2Snapshot execdetails.RUV2MetricsSnapshot
+	var ruv2Metrics *execdetails.RUV2Metrics
 	if sessVars.RUV2Metrics != nil {
-		ruv2Snapshot = sessVars.RUV2Metrics.Snapshot(sessVars.RUV2Weights())
-		ruv2Snapshot.TiKVRU = int64(ruDetails.TiKVRUV2())
-		ruv2Snapshot.TiFlashRU = int64(ruDetails.TiflashRU())
+		ruv2Metrics = sessVars.RUV2Metrics.Clone()
 	}
 
 	binaryPlan := ""
@@ -267,7 +265,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.Warnings = variable.CollectWarningsForSlowLog(stmtCtx)
 	items.ResourceGroupName = stmtCtx.ResourceGroupName
 	items.RUDetails = ruDetails
-	items.RUV2Metrics = ruv2Snapshot
+	items.RUV2Metrics = ruv2Metrics
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()

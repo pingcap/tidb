@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -396,27 +397,24 @@ func TestSlowLogFormat(t *testing.T) {
 	require.NoError(t, err)
 
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
-	logItems.RUV2Metrics = seVar.RUV2Metrics.Snapshot(seVar.RUV2Weights())
-	logItems.RUV2Metrics.TiKVRU = int64(ruDetails.TiKVRUV2())
-	logItems.RUV2Metrics.TiFlashRU = int64(ruDetails.TiflashRU())
+	logItems.RUV2Metrics = seVar.RUV2Metrics.Clone()
 	compareSlowLogItems(t, logItems, actual)
 }
 
 func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 	seVar := variable.NewSessionVars(nil)
 	logItems := &variable.SlowQueryLogItems{
-		SQL:        "select 1",
-		Digest:     "digest",
-		TimeTotal:  time.Second,
-		Succ:       true,
-		ExecDetail: &execdetails.ExecDetails{},
-		UsedStats:  &stmtctx.UsedStatsInfo{},
-		RUDetails:  util.NewRUDetailsWith(0, 0, 0),
-		RUV2Metrics: execdetails.RUV2MetricsSnapshot{
-			TiKVRU:    100,
-			TiFlashRU: 50,
-		},
+		SQL:         "select 1",
+		Digest:      "digest",
+		TimeTotal:   time.Second,
+		Succ:        true,
+		ExecDetail:  &execdetails.ExecDetails{},
+		UsedStats:   &stmtctx.UsedStatsInfo{},
+		RUDetails:   util.NewRUDetailsWith(0, 0, 0),
+		RUV2Metrics: execdetails.NewRUV2Metrics(),
 	}
+	logItems.RUDetails.AddTiKVRUV2(100)
+	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
 
 	logString := seVar.SlowLogFormat(logItems)
 	require.Contains(t, logString, "# RUv2_metrics: total_ru:150, tidb_ru:0, tikv_ru:100, tiflash_ru:50")
@@ -460,7 +458,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "RUV2Metrics", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {

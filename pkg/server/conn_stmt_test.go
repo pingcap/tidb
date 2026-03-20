@@ -173,7 +173,7 @@ func TestCursorWithParams(t *testing.T) {
 			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
 			TxnCnt:                  cfg.RUV2.TxnCnt,
 		}
-		baselineTiDBRU := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights)
+		baselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
 
 		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights, true)
 		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
@@ -181,7 +181,7 @@ func TestCursorWithParams(t *testing.T) {
 		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
 
 		require.Equal(t, "rg1", reporter.tidbGroup)
-		expectedCursorDelta := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights) - baselineTiDBRU
+		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
 		require.Equal(t, float64(expectedCursorDelta), reporter.tidbRUV2)
 		require.Equal(t, 0.0, reporter.tikvRUV2)
 
@@ -196,7 +196,7 @@ func TestCursorWithParams(t *testing.T) {
 		reporter.tidbRUV2 = 0
 		reporter.tikvRUV2 = 0
 		resultset.ReportCursorRUV2Delta(rsNoBaseline, 4)
-		expectedTotal := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights)
+		expectedTotal := ruv2Metrics.CalculateRUValues(weights)
 		require.Equal(t, float64(expectedTotal), reporter.tidbRUV2)
 		require.Equal(t, ruDetails.TiKVRUV2(), reporter.tikvRUV2)
 	})
