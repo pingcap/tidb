@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
@@ -441,14 +442,16 @@ func getKeyTS(key []byte) (uint64, error) {
 }
 
 // ReadFilteredEntriesFromFiles loads content of a log file from external storage, and filter out entries based on TS.
+//
+// To prevent decompressed buffers from being pinned in memory by carry-forward entries,
+// all surviving entries have their key/value bytes copied before returning. For entries
+// with many MVCC versions of the same logical key (e.g. auto-increment counters), only
+// the highest-timestamp version is kept, reducing downstream entry counts dramatically.
 func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 	ctx context.Context,
 	file Log,
 	filterTS uint64,
 ) ([]*KvEntryWithTS, []*KvEntryWithTS, error) {
-	kvEntries := make([]*KvEntryWithTS, 0)
-	filteredOutKvEntries := make([]*KvEntryWithTS, 0)
-
 	buff, err := lm.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
 		lm.storage, file.FileEncryptionInfo)
 	if err != nil {
@@ -460,14 +463,27 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:]))
 	}
 
-	iter := stream.NewEventIterator(buff)
-	for iter.Valid() {
-		iter.Next()
-		if iter.GetError() != nil {
-			return nil, nil, errors.Trace(iter.GetError())
+	// kvEntries and filteredOutKvEntries are pre-populated with DDL job history entries
+	// (copied immediately, no dedup benefit). Non-DDL entries are deduplicated in
+	// dedupMap and appended after iteration ends.
+	kvEntries := make([]*KvEntryWithTS, 0)
+	filteredOutKvEntries := make([]*KvEntryWithTS, 0)
+
+	// dedupMap maps logical-key (key with TS suffix stripped) to the highest-TS entry
+	// seen so far. Entries are stored as sub-slices of buff during iteration; copies
+	// happen only for the winning entry after all entries have been scanned.
+	dedupMap := make(map[string]*KvEntryWithTS)
+	// dedupOrder tracks insertion order so output is deterministic.
+	dedupOrder := make([]string, 0)
+
+	eventIter := stream.NewEventIterator(buff)
+	for eventIter.Valid() {
+		eventIter.Next()
+		if eventIter.GetError() != nil {
+			return nil, nil, errors.Trace(eventIter.GetError())
 		}
 
-		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+		txnEntry := kv.Entry{Key: eventIter.Key(), Value: eventIter.Value()}
 
 		if !utils.IsDBOrDDLJobHistoryKey(txnEntry.Key) {
 			// only restore mDB and mDDLHistory
@@ -498,10 +514,49 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			continue
 		}
 
-		if ts < filterTS {
-			kvEntries = append(kvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
+		if utils.IsMetaDDLJobHistoryKey(txnEntry.Key) {
+			// DDL job history keys are unique per job ID; copy immediately.
+			keyCopy := make([]byte, len(txnEntry.Key))
+			copy(keyCopy, txnEntry.Key)
+			valCopy := make([]byte, len(txnEntry.Value))
+			copy(valCopy, txnEntry.Value)
+			e := &KvEntryWithTS{E: kv.Entry{Key: keyCopy, Value: valCopy}, Ts: ts}
+			if ts < filterTS {
+				kvEntries = append(kvEntries, e)
+			} else {
+				filteredOutKvEntries = append(filteredOutKvEntries, e)
+			}
+			continue
+		}
+
+		// For all other mDB:* keys, deduplicate by logical key (key without TS suffix).
+		// Keep only the highest-TS version; copies are deferred until after iteration so
+		// that only the surviving entry is copied (not every MVCC version).
+		logicalKey := string(restoreutils.TruncateTS(txnEntry.Key))
+		if existing, ok := dedupMap[logicalKey]; ok {
+			if ts > existing.Ts {
+				// Replace with higher-ts version; position in dedupOrder is unchanged.
+				dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
+			}
 		} else {
-			filteredOutKvEntries = append(filteredOutKvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
+			dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
+			dedupOrder = append(dedupOrder, logicalKey)
+		}
+	}
+
+	// Copy surviving dedup entries (buff is still live here, but after return the
+	// copies are the only references, allowing buff to be GC'd promptly).
+	for _, logicalKey := range dedupOrder {
+		e := dedupMap[logicalKey]
+		keyCopy := make([]byte, len(e.E.Key))
+		copy(keyCopy, e.E.Key)
+		valCopy := make([]byte, len(e.E.Value))
+		copy(valCopy, e.E.Value)
+		copied := &KvEntryWithTS{E: kv.Entry{Key: keyCopy, Value: valCopy}, Ts: e.Ts}
+		if e.Ts < filterTS {
+			kvEntries = append(kvEntries, copied)
+		} else {
+			filteredOutKvEntries = append(filteredOutKvEntries, copied)
 		}
 	}
 
