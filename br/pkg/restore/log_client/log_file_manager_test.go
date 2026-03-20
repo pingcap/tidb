@@ -615,6 +615,206 @@ func generateKvData() ([]byte, logclient.Log) {
 	}
 }
 
+// encodemdbkv constructs an encoded KV entry whose logical key (key with TS stripped)
+// equals logicalKeyPrefix. Multiple calls with different ts values produce entries that
+// share the same logical key, exercising the dedup path in ReadFilteredEntriesFromFiles.
+func encodemdbkv(logicalKeyPrefix string, ts uint64, emptyV bool) []byte {
+	key := codec.EncodeUintDesc([]byte(logicalKeyPrefix), ts)
+	v := "mdb value"
+	if emptyV {
+		v = ""
+	}
+	return stream.EncodeKVEntry(key, []byte(v))
+}
+
+// encodeddljobkv constructs an encoded KV entry for a DDL job history key.
+// The "mDDLJobHistory" prefix makes IsMetaDDLJobHistoryKey return true.
+func encodeddljobkv(jobID int, ts uint64) []byte {
+	prefix := fmt.Sprintf("mDDLJobHistory:%d", jobID)
+	key := codec.EncodeUintDesc([]byte(prefix), ts)
+	return stream.EncodeKVEntry(key, []byte(fmt.Sprintf("job-%d-data", jobID)))
+}
+
+// mdbkvEntry returns the expected KvEntryWithTS for a deduplicated mDB entry.
+func mdbkvEntry(logicalKeyPrefix string, ts uint64) *logclient.KvEntryWithTS {
+	key := codec.EncodeUintDesc([]byte(logicalKeyPrefix), ts)
+	return &logclient.KvEntryWithTS{
+		E:  kv.Entry{Key: key, Value: []byte("mdb value")},
+		Ts: ts,
+	}
+}
+
+// ddljobkvEntry returns the expected KvEntryWithTS for a DDL job history entry.
+func ddljobkvEntry(jobID int, ts uint64) *logclient.KvEntryWithTS {
+	prefix := fmt.Sprintf("mDDLJobHistory:%d", jobID)
+	key := codec.EncodeUintDesc([]byte(prefix), ts)
+	return &logclient.KvEntryWithTS{
+		E:  kv.Entry{Key: key, Value: []byte(fmt.Sprintf("job-%d-data", jobID))},
+		Ts: ts,
+	}
+}
+
+// buildTestBuffer concatenates encoded KV entries and produces the DataFileInfo
+// (sha256 checksum, offset, length) required by ReadFilteredEntriesFromFiles.
+func buildTestBuffer(entries ...[]byte) ([]byte, *backuppb.DataFileInfo) {
+	buff := make([]byte, 0)
+	for _, e := range entries {
+		buff = append(buff, e...)
+	}
+	sum := sha256.Sum256(buff)
+	return buff, &backuppb.DataFileInfo{
+		Sha256:      sum[:],
+		RangeOffset: 0,
+		RangeLength: uint64(len(buff)),
+		Cf:          consts.WriteCF,
+	}
+}
+
+// TestReadFilteredEntries_DedupMDBKeys verifies that multiple MVCC versions of the same
+// logical mDB key are deduplicated, keeping only the highest-TS version.
+func TestReadFilteredEntries_DedupMDBKeys(t *testing.T) {
+	ctx := context.Background()
+	data, file := buildTestBuffer(
+		// Three MVCC versions of the same logical key "mDB:1:IID:5".
+		encodemdbkv("mDB:1:IID:5", 40, false),
+		encodemdbkv("mDB:1:IID:5", 60, false),
+		encodemdbkv("mDB:1:IID:5", 50, false),
+		// Two MVCC versions of a second logical key.
+		encodemdbkv("mDB:1:Table:3", 45, false),
+		encodemdbkv("mDB:1:Table:3", 70, false),
+	)
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+
+	// filterTS=55: winners ts=60 and ts=70 both land in filteredOutKvEntries.
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 55)
+	require.NoError(t, err)
+	require.Empty(t, kvEntries)
+	// Output follows first-seen insertion order of logical keys.
+	require.Equal(t, []*logclient.KvEntryWithTS{
+		mdbkvEntry("mDB:1:IID:5", 60),
+		mdbkvEntry("mDB:1:Table:3", 70),
+	}, filteredOutKvEntries)
+}
+
+// TestReadFilteredEntries_DDLJobHistoryBypassesDedup verifies that keys with the
+// "mDDLJobHistory" prefix are copied immediately without deduplication, so all
+// entries survive regardless of shared logical-key collisions. It also checks that
+// DDL entries appear before dedup entries in the output slices.
+func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
+	ctx := context.Background()
+	data, file := buildTestBuffer(
+		encodeddljobkv(100, 40),
+		encodeddljobkv(101, 50),
+		// A regular mDB key written after the DDL entries to verify output ordering.
+		encodemdbkv("mDB:reg:1", 45, false),
+	)
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+
+	// filterTS=100: all entries land in kvEntries.
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+	require.NoError(t, err)
+	require.Empty(t, filteredOutKvEntries)
+	// DDL entries are appended during iteration; dedup entries are appended after.
+	require.Equal(t, []*logclient.KvEntryWithTS{
+		ddljobkvEntry(100, 40),
+		ddljobkvEntry(101, 50),
+		mdbkvEntry("mDB:reg:1", 45),
+	}, kvEntries)
+}
+
+// TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys verifies correct routing when a
+// single file contains both DDL job history keys and regular mDB keys.
+func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
+	ctx := context.Background()
+	data, file := buildTestBuffer(
+		encodeddljobkv(200, 40),
+		encodemdbkv("mDB:mixed:1", 42, false),
+		encodeddljobkv(201, 60),
+		encodemdbkv("mDB:mixed:1", 55, false), // higher TS wins dedup
+	)
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+
+	// filterTS=50: ts<50 → kvEntries, ts>=50 → filteredOutKvEntries.
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
+	require.NoError(t, err)
+	// DDL job 200 (ts=40 < 50) lands in kvEntries during iteration.
+	require.Equal(t, []*logclient.KvEntryWithTS{
+		ddljobkvEntry(200, 40),
+	}, kvEntries)
+	// DDL job 201 (ts=60 >= 50) is appended to filteredOutKvEntries during iteration;
+	// mDB:mixed:1 winner (ts=55 >= 50) is appended after iteration ends.
+	require.Equal(t, []*logclient.KvEntryWithTS{
+		ddljobkvEntry(201, 60),
+		mdbkvEntry("mDB:mixed:1", 55),
+	}, filteredOutKvEntries)
+}
+
+// TestReadFilteredEntries_DedupFilterTSSplit verifies that the dedup winner's TS
+// determines which output slice it lands in, even when a lower-TS losing version
+// would have gone to the other slice.
+func TestReadFilteredEntries_DedupFilterTSSplit(t *testing.T) {
+	ctx := context.Background()
+	data, file := buildTestBuffer(
+		encodemdbkv("mDB:splitkey", 40, false), // loses dedup; would land in kvEntries
+		encodemdbkv("mDB:splitkey", 60, false), // wins dedup; lands in filteredOutKvEntries
+	)
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+
+	// filterTS=50: winner ts=60 >= filterTS → filteredOutKvEntries, not kvEntries.
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
+	require.NoError(t, err)
+	require.Empty(t, kvEntries)
+	require.Equal(t, []*logclient.KvEntryWithTS{
+		mdbkvEntry("mDB:splitkey", 60),
+	}, filteredOutKvEntries)
+}
+
+// TestReadFilteredEntries_CopySemantics verifies that returned entries are independent
+// copies and do not retain references to the original buffer.
+func TestReadFilteredEntries_CopySemantics(t *testing.T) {
+	ctx := context.Background()
+	data, file := buildTestBuffer(encodemdbkv("mDB:copytest", 50, false))
+	helper := &logclient.FakeStreamMetadataHelper{Data: data}
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)
+
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+	require.NoError(t, err)
+	require.Empty(t, filteredOutKvEntries)
+	require.Len(t, kvEntries, 1)
+
+	// Snapshot the returned bytes before corrupting the underlying buffer.
+	wantKey := kv.Key(append([]byte(nil), kvEntries[0].E.Key...))
+	wantVal := append([]byte(nil), kvEntries[0].E.Value...)
+
+	// Corrupt the entire buffer that FakeStreamMetadataHelper returned.
+	for i := range helper.Data {
+		helper.Data[i] = 0xFF
+	}
+
+	// The returned entry must be an independent copy and unaffected.
+	require.Equal(t, wantKey, kvEntries[0].E.Key)
+	require.Equal(t, wantVal, kvEntries[0].E.Value)
+}
+
+// TestReadFilteredEntries_DedupEmptyValueSkipped verifies that an entry whose value is
+// empty is discarded before reaching the dedup map, allowing a lower-TS version
+// with a non-empty value to survive as the dedup winner.
+func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
+	ctx := context.Background()
+	data, file := buildTestBuffer(
+		encodemdbkv("mDB:emptytest", 60, true),  // highest TS but empty value → discarded
+		encodemdbkv("mDB:emptytest", 40, false), // lower TS, non-empty → dedup winner
+	)
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+	require.NoError(t, err)
+	require.Empty(t, filteredOutKvEntries)
+	require.Equal(t, []*logclient.KvEntryWithTS{
+		mdbkvEntry("mDB:emptytest", 40),
+	}, kvEntries)
+}
+
 func TestReadAllEntries(t *testing.T) {
 	ctx := context.Background()
 	data, file := generateKvData()
