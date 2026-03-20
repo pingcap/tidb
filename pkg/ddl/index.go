@@ -2023,7 +2023,7 @@ func ensureFulltextIndexReorgMeta(job *model.Job) error {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index requires distributed fast reorg ingest")
 	}
 	if !job.ReorgMeta.UseCloudStorage {
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index on non-empty table requires global sort; set @@global.tidb_cloud_storage_uri")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index on non-empty table requires global sort; set @@global.tidb_cloud_storage_uri")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
