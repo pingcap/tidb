@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
@@ -413,13 +414,14 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	require.Equal(t, "tiflash_ru:246", parts[3])
 }
 
-func TestRUV2RuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
-	stats := &RUV2RuntimeStats{
+func TestRURuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetails(),
 		Metrics:   NewRUV2Metrics(),
-		TiKVRU:    200,
-		TiFlashRU: 300,
 		Weights:   defaultRUV2WeightsForTest(),
 	}
+	stats.RUDetails.AddTiKVRUV2(200)
+	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
 
 	require.Equal(t, "RU:500.00", stats.String())
 }

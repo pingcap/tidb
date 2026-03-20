@@ -69,8 +69,6 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
-	// TpRUV2RuntimeStats is the tp for RUV2RuntimeStats
-	TpRUV2RuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -984,21 +982,36 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 // toggle once RU v1 / v2 coexistence is fully rolled out.
 var displayRUVersion = "v2"
 
-// RURuntimeStats is a wrapper of util.RUDetails,
-// which implements the RuntimeStats interface.
+// RURuntimeStats wraps RU details and statement-level RU v2 metrics for EXPLAIN output.
 type RURuntimeStats struct {
 	*util.RUDetails
+	Metrics *RUV2Metrics
+	Weights RUV2Weights
 }
 
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
-	if displayRUVersion != "v1" {
-		return ""
-	}
-	if e.RUDetails != nil {
+	switch displayRUVersion {
+	case "v1":
+		if e.RUDetails != nil {
+			buf := bytes.NewBuffer(make([]byte, 0, 8))
+			buf.WriteString("RU:")
+			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+			return buf.String()
+		}
+	case "v2":
+		var tiKVRU, tiFlashRU int64
+		if e.RUDetails != nil {
+			tiKVRU = int64(e.RUDetails.TiKVRUV2())
+			tiFlashRU = int64(e.RUDetails.TiflashRU())
+		}
+		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
+		if totalRU == 0 {
+			return ""
+		}
 		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+		buf.WriteString(strconv.FormatFloat(float64(totalRU), 'f', 2, 64))
 		return buf.String()
 	}
 	return ""
@@ -1006,75 +1019,33 @@ func (e *RURuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *RURuntimeStats) Clone() RuntimeStats {
-	return &RURuntimeStats{RUDetails: e.RUDetails.Clone()}
-}
-
-// Merge implements the RuntimeStats interface.
-func (e *RURuntimeStats) Merge(other RuntimeStats) {
-	if tmp, ok := other.(*RURuntimeStats); ok {
-		if e.RUDetails != nil {
-			e.RUDetails.Merge(tmp.RUDetails)
-		} else {
-			e.RUDetails = tmp.RUDetails.Clone()
-		}
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (*RURuntimeStats) Tp() int {
-	return TpRURuntimeStats
-}
-
-// RUV2RuntimeStats is a wrapper of statement-level RU v2 metrics.
-type RUV2RuntimeStats struct {
-	Metrics   *RUV2Metrics
-	TiKVRU    int64
-	TiFlashRU int64
-	Weights   RUV2Weights
-}
-
-// String implements the RuntimeStats interface.
-func (e *RUV2RuntimeStats) String() string {
-	if displayRUVersion != "v2" {
-		return ""
-	}
-	// Only output the total RU value, not the detailed ruv2 metrics.
-	totalRU := e.Metrics.TotalRU(e.Weights, e.TiKVRU, e.TiFlashRU)
-	if totalRU == 0 {
-		return ""
-	}
-	buf := bytes.NewBuffer(make([]byte, 0, 8))
-	buf.WriteString("RU:")
-	buf.WriteString(strconv.FormatFloat(float64(totalRU), 'f', 2, 64))
-	return buf.String()
-}
-
-// Clone implements the RuntimeStats interface.
-func (e *RUV2RuntimeStats) Clone() RuntimeStats {
 	if e == nil {
-		return &RUV2RuntimeStats{}
+		return &RURuntimeStats{}
 	}
-	return &RUV2RuntimeStats{
+	var ruDetails *util.RUDetails
+	if e.RUDetails != nil {
+		ruDetails = e.RUDetails.Clone()
+	}
+	return &RURuntimeStats{
+		RUDetails: ruDetails,
 		Metrics:   e.Metrics.Clone(),
-		TiKVRU:    e.TiKVRU,
-		TiFlashRU: e.TiFlashRU,
 		Weights:   e.Weights,
 	}
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *RUV2RuntimeStats) Merge(other RuntimeStats) {
-	if e == nil {
-		return
-	}
-	if tmp, ok := other.(*RUV2RuntimeStats); ok {
+func (e *RURuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*RURuntimeStats); ok {
+		if e.RUDetails != nil && tmp.RUDetails != nil {
+			e.RUDetails.Merge(tmp.RUDetails)
+		} else if e.RUDetails == nil && tmp.RUDetails != nil {
+			e.RUDetails = tmp.RUDetails.Clone()
+		}
 		if e.Metrics != nil {
 			e.Metrics.Merge(tmp.Metrics)
 		} else {
 			e.Metrics = tmp.Metrics.Clone()
 		}
-		e.TiKVRU += tmp.TiKVRU
-		e.TiFlashRU += tmp.TiFlashRU
 		if e.Weights == (RUV2Weights{}) {
 			e.Weights = tmp.Weights
 		}
@@ -1082,6 +1053,6 @@ func (e *RUV2RuntimeStats) Merge(other RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (*RUV2RuntimeStats) Tp() int {
-	return TpRUV2RuntimeStats
+func (*RURuntimeStats) Tp() int {
+	return TpRURuntimeStats
 }

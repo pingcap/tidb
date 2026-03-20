@@ -35,6 +35,7 @@ go_test(
         "//pkg/config",
         "//pkg/kv",
         "//pkg/testkit/testsetup",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",

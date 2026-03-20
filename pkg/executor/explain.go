@@ -136,23 +136,18 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	if e.explain.Analyze && e.analyzeExec != nil && e.executed {
 		recordInsertRows2Metrics(e.Ctx().GetSessionVars())
 		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
-		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
-			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-			coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
-		}
 		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
-			if ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx); ruv2Metrics != nil {
-				weights := e.Ctx().GetSessionVars().RUV2Weights()
-				stats := &execdetails.RUV2RuntimeStats{
-					Metrics: ruv2Metrics.Clone(),
-					Weights: weights,
-				}
-				if ruDetailsRaw != nil {
-					ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-					stats.TiKVRU = int64(ruDetails.TiKVRUV2())
-					stats.TiFlashRU = int64(ruDetails.TiflashRU())
-				}
-				coll.RegisterStats(e.explain.TargetPlan.ID(), stats)
+			var ruDetails *clientutil.RUDetails
+			if ruDetailsRaw != nil {
+				ruDetails = ruDetailsRaw.(*clientutil.RUDetails).Clone()
+			}
+			ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+			if ruDetails != nil || ruv2Metrics != nil {
+				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
+					RUDetails: ruDetails,
+					Metrics:   ruv2Metrics.Clone(),
+					Weights:   e.Ctx().GetSessionVars().RUV2Weights(),
+				})
 			}
 		}
 	}
