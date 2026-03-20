@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
-const (
+var (
 	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
 	waitForCleanDataRound = 150
 	// waitForCleanDataInterval is a min duration between 2 check for data clean.
@@ -37,6 +38,11 @@ const (
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+
+	if !testflag.Long() {
+		waitForCleanDataRound = 50
+		waitForCleanDataInterval = 20 * time.Millisecond
+	}
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0

@@ -45,6 +45,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testflag",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",

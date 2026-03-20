@@ -15,6 +15,7 @@
 package chunk
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -342,20 +343,30 @@ func TestSyncAllocator(t *testing.T) {
 
 	alloc := NewSyncAllocator(NewAllocator())
 
+	var gotNil atomic.Bool
 	wg := &sync.WaitGroup{}
-	for range 1000 {
+	workerCount := runtime.GOMAXPROCS(0) * 4
+	if workerCount < 8 {
+		workerCount = 8
+	}
+	const resetRounds = 10
+	const allocRounds = 20
+	for range workerCount {
 		wg.Add(1)
 		go func() {
-			for range 10 {
-				for range 100 {
+			defer wg.Done()
+			for range resetRounds {
+				for range allocRounds {
 					chk := alloc.Alloc(fieldTypes, 5, 100)
-					require.NotNil(t, chk)
+					if chk == nil {
+						gotNil.Store(true)
+						return
+					}
 				}
 				alloc.Reset()
 			}
-
-			wg.Done()
 		}()
 	}
 	wg.Wait()
+	require.False(t, gotNil.Load())
 }

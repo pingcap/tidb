@@ -53,7 +53,7 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	}
 	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(20)`))
 	_, err := tk0.Exec(sql)
 	require.True(t, strings.Contains(err.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
 	runtime.GC()
@@ -86,7 +86,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
 	sqlExecute := "execute stmt;"                                                                                     // Need about 100MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(20)`))
 	runtime.GC()
 	// won't be killed by tidb_mem_quota_query
 	tk0.MustExec(sqlPrepare)
@@ -169,7 +169,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(20)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))

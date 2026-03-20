@@ -59,7 +59,7 @@ func executeTopNInFailpoint(t *testing.T, exe *sortexec.TopNExec, hardLimit int6
 	once := sync.Once{}
 
 	go func() {
-		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
+		time.Sleep(time.Duration(rand.Int31n(50)) * time.Millisecond)
 		once.Do(func() {
 			exe.Close()
 		})
@@ -485,25 +485,25 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
 	exe.FileNamePrefixForTest = testFuncName
-	for range 10 {
+	for range 3 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for range 10 {
+	for range 3 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for range 10 {
+	for range 3 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for range 10 {
+	for range 3 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}

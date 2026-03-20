@@ -152,7 +152,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := context.WithValue(baseCtx, "etcd", true)
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)

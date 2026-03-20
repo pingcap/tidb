@@ -72,6 +72,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 		}, 5*time.Second, 100*time.Millisecond)
 		require.Eventually(t, func() bool {
 			//nolint: all_revive
+			runtime.GC()
 			return !GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load()
 		}, 5*time.Second, 100*time.Millisecond)
 	}()
@@ -82,6 +83,12 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	getNowGCNum := func() uint32 {
 		runtime.ReadMemStats(r)
 		return r.NumGC
+	}
+	waitMemoryLimitGC := func(lastGCNum uint32) {
+		require.Eventually(t, func() bool {
+			runtime.GC()
+			return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && lastGCNum < getNowGCNum()
+		}, 5*time.Second, 100*time.Millisecond)
 	}
 	checkNextGCEqualMemoryLimit := func() {
 		runtime.ReadMemStats(r)
@@ -95,9 +102,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	gcNum := getNowGCNum()
 
 	memory210mb := allocator.alloc(210 << 20)
-	require.Eventually(t, func() bool {
-		return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond)
+	waitMemoryLimitGC(gcNum)
 	// Test waiting for reset
 	require.Eventually(t, func() bool {
 		return GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage) == debug.SetMemoryLimit(-1)
@@ -119,9 +124,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	gcNum = getNowGCNum()
 	checkNextGCEqualMemoryLimit()
 	memory210mb = allocator.alloc(210 << 20)
-	require.Eventually(t, func() bool {
-		return gcNum < getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond)
+	waitMemoryLimitGC(gcNum)
 	allocator.free(memory210mb)
 	allocator.free(memory600mb)
 }
@@ -133,111 +136,97 @@ func TestIssue48741(t *testing.T) {
 	EnableGOGCTuner.Store(false)
 	defer EnableGOGCTuner.Store(gogcTuner)
 
+	allocator := &mockAllocator{}
+	defer allocator.freeAll()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner", "return(200)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner"))
+	}()
+
+	oldServerMemoryLimit := memory.ServerMemoryLimit.Load()
+	oldPercentage := GlobalMemoryLimitTuner.GetPercentage()
+	defer func() {
+		memory.ServerMemoryLimit.Store(oldServerMemoryLimit)
+		GlobalMemoryLimitTuner.SetPercentage(oldPercentage)
+		GlobalMemoryLimitTuner.UpdateMemoryLimit()
+	}()
+
 	getMemoryLimitGCTotal := func() int64 {
 		return memory.MemoryLimitGCTotal.Load()
 	}
 
-	waitingTunningFinishFn := func() {
-		for GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() {
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	allocator := &mockAllocator{}
-	defer allocator.freeAll()
-
-	checkIfMemoryLimitIsModified := func() {
-		// Try to trigger GC by 1GB * 80% = 800MB (tidb_server_memory_limit * tidb_server_memory_limit_gc_trigger)
-		gcNum := getMemoryLimitGCTotal()
-		memory810mb := allocator.alloc(810 << 20)
-		require.Eventually(t,
-			// Wait for the GC triggered by memory810mb
-			func() bool {
-				runtime.GC()
-				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
-			},
-			5*time.Second, 100*time.Millisecond)
-
-		// update memoryLimit, and sleep 500ms, let t.UpdateMemoryLimit() be called.
-		memory.ServerMemoryLimit.Store(1500 << 20) // 1.5 GB
-		time.Sleep(500 * time.Millisecond)
-		// UpdateMemoryLimit success during tunning.
-		require.True(t, GlobalMemoryLimitTuner.adjustPercentageInProgress.Load())
-		require.Equal(t, debug.SetMemoryLimit(-1), int64(1500<<20*80/100))
-		waitingTunningFinishFn()
-		// After the GC triggered by memory810mb.
-		gcNumAfterMemory810mb := getMemoryLimitGCTotal()
-
-		memory200mb := allocator.alloc(200 << 20)
-		time.Sleep(2 * time.Second)
-		// The heapInUse is less than 1.5GB * 80% = 1.2GB, so the gc will not be triggered.
-		require.Equal(t, gcNumAfterMemory810mb, getMemoryLimitGCTotal())
-
-		memory300mb := allocator.alloc(300 << 20)
-		require.Eventually(t,
-			// Wait for the GC triggered by memory300mb
-			func() bool {
-				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
-			},
-			5*time.Second, 100*time.Millisecond)
-
-		// Sleep 500ms, let t.UpdateMemoryLimit() be called.
-		time.Sleep(500 * time.Millisecond)
-		// The memory limit will be 1.5GB * 110% during tunning.
+	waitMemoryLimitGC := func(lastGCCount int64) {
 		require.Eventually(t, func() bool {
-			return debug.SetMemoryLimit(-1) == int64(1500<<20*110/100)
-		}, 5*time.Second, 100*time.Millisecond)
-		require.True(t, GlobalMemoryLimitTuner.adjustPercentageInProgress.Load())
-
-		allocator.free(memory810mb)
-		allocator.free(memory200mb)
-		allocator.free(memory300mb)
+			runtime.GC()
+			return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && lastGCCount < getMemoryLimitGCTotal()
+		}, 3*time.Second, 20*time.Millisecond)
 	}
+
+	waitingTunningFinishFn := func() {
+		require.Eventually(t, func() bool {
+			return !GlobalMemoryLimitTuner.adjustPercentageInProgress.Load()
+		}, 3*time.Second, 10*time.Millisecond)
+	}
+
+	baseMemoryLimit := uint64(256 << 20)
+	newMemoryLimit := uint64(384 << 20)
+
+	memory.ServerMemoryLimit.Store(baseMemoryLimit)
+	GlobalMemoryLimitTuner.SetPercentage(0.8)
+	GlobalMemoryLimitTuner.UpdateMemoryLimit()
+	require.Equal(t, int64(baseMemoryLimit)*80/100, debug.SetMemoryLimit(-1))
 
 	checkIfMemoryLimitNotModified := func() {
-		// Try to trigger GC by 1GB * 80% = 800MB (tidb_server_memory_limit * tidb_server_memory_limit_gc_trigger)
 		gcNum := getMemoryLimitGCTotal()
-		memory810mb := allocator.alloc(810 << 20)
-		require.Eventually(t,
-			// Wait for the GC triggered by memory810mb
-			func() bool {
-				runtime.GC()
-				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
-			},
-			5*time.Second, 100*time.Millisecond)
+		memoryLimitGCTriggerBytes := allocator.alloc(int(int64(baseMemoryLimit) * 85 / 100))
+		waitMemoryLimitGC(gcNum)
 
-		// During the process of adjusting the percentage, the memory limit will be set to 1GB * 110% = 1.1GB.
 		require.Eventually(t, func() bool {
-			return debug.SetMemoryLimit(-1) == int64(1<<30*110/100)
-		}, 5*time.Second, 100*time.Millisecond)
+			return debug.SetMemoryLimit(-1) == int64(baseMemoryLimit)*110/100
+		}, 3*time.Second, 20*time.Millisecond)
 
-		gcNumAfterMemory810mb := getMemoryLimitGCTotal()
-		// After the GC triggered by memory810mb.
+		gcNumAfterFirstGC := getMemoryLimitGCTotal()
 		waitingTunningFinishFn()
 
-		require.Eventually(t,
-			// The GC will be trigged immediately after memoryLimit is set back to 1GB * 80% = 800MB.
-			func() bool {
-				runtime.GC()
-				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
-			},
-			2*time.Second, 100*time.Millisecond)
+		memoryLimitGCTriggerBytes2 := allocator.alloc(16 << 20)
+		defer allocator.free(memoryLimitGCTriggerBytes2)
+		waitMemoryLimitGC(gcNumAfterFirstGC)
+		waitingTunningFinishFn()
 
-		allocator.free(memory810mb)
+		allocator.free(memoryLimitGCTriggerBytes)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage"))
-	}()
+	checkIfMemoryLimitIsModified := func() {
+		gcNum := getMemoryLimitGCTotal()
+		memoryLimitGCTriggerBytes := allocator.alloc(int(int64(baseMemoryLimit) * 85 / 100))
+		waitMemoryLimitGC(gcNum)
 
-	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
-	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
-	GlobalMemoryLimitTuner.UpdateMemoryLimit()
-	require.Equal(t, debug.SetMemoryLimit(-1), int64(1<<30*80/100))
+		memory.ServerMemoryLimit.Store(newMemoryLimit)
+		GlobalMemoryLimitTuner.UpdateMemoryLimit()
+		require.Equal(t, int64(newMemoryLimit)*80/100, debug.SetMemoryLimit(-1))
+		waitingTunningFinishFn()
+
+		gcNumAfterUpdate := getMemoryLimitGCTotal()
+		memoryBelowLimit := allocator.alloc(32 << 20)
+		require.Never(t, func() bool {
+			return getMemoryLimitGCTotal() != gcNumAfterUpdate
+		}, 200*time.Millisecond, 20*time.Millisecond)
+
+		memoryExceedLimit := allocator.alloc(int(int64(newMemoryLimit) * 30 / 100))
+		waitMemoryLimitGC(gcNumAfterUpdate)
+
+		require.Eventually(t, func() bool {
+			return debug.SetMemoryLimit(-1) == int64(newMemoryLimit)*110/100
+		}, 3*time.Second, 20*time.Millisecond)
+		waitingTunningFinishFn()
+
+		allocator.free(memoryLimitGCTriggerBytes)
+		allocator.free(memoryBelowLimit)
+		allocator.free(memoryExceedLimit)
+	}
 
 	checkIfMemoryLimitNotModified()
-	waitingTunningFinishFn()
 	checkIfMemoryLimitIsModified()
 }
 

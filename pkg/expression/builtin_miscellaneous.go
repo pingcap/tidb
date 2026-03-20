@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	stderrs "errors"
 	"fmt"
 	"math"
 	"net"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 var (
@@ -271,6 +273,9 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 				// independent sessions.
 				return 0, false, errUserLockDeadlock
 			}
+		}
+		if stderrs.Is(err, tikverr.ErrLockWaitTimeout) {
+			return 0, false, nil // Another user has the lock
 		}
 		return 0, false, err
 	}

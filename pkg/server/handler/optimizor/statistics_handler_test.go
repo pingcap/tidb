@@ -50,7 +50,6 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
 	// Recreate it to avoid racing on subsequent server starts in the same test binary.
@@ -62,11 +61,13 @@ func TestDumpStatsAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-	go func() {
-		err := server.Run(nil)
+	runErr := make(chan error, 1)
+	go func() { runErr <- server.Run(nil) }()
+	select {
+	case <-server2.RunInGoTestChan:
+	case err := <-runErr:
 		require.NoError(t, err)
-	}()
-	<-server2.RunInGoTestChan
+	}
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
@@ -297,7 +298,6 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 }
 
 func TestStatsPriorityQueueAPI(t *testing.T) {
-	tmp := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
@@ -305,7 +305,6 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
 	// Recreate it to avoid racing on subsequent server starts in the same test binary.
@@ -317,11 +316,13 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-	go func() {
-		err := server.Run(nil)
+	runErr := make(chan error, 1)
+	go func() { runErr <- server.Run(nil) }()
+	select {
+	case <-server2.RunInGoTestChan:
+	case err := <-runErr:
 		require.NoError(t, err)
-	}()
-	<-server2.RunInGoTestChan
+	}
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
@@ -368,7 +369,6 @@ func TestLoadNullStatsFile(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	// Creating and running the server
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
@@ -381,11 +381,13 @@ func TestLoadNullStatsFile(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-	go func() {
-		err := server.Run(nil)
+	runErr := make(chan error, 1)
+	go func() { runErr <- server.Run(nil) }()
+	select {
+	case <-server2.RunInGoTestChan:
+	case err := <-runErr:
 		require.NoError(t, err)
-	}()
-	<-server2.RunInGoTestChan
+	}
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()

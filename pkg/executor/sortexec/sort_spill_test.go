@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -362,7 +363,11 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
-	for range 50 {
+	repeatCount := 5
+	if testflag.Long() {
+		repeatCount = 50
+	}
+	for range repeatCount {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 		multiPartitionCase(t, ctx, sortCase, false)

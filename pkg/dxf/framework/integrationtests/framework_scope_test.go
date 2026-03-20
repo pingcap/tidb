@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/rand"
@@ -67,18 +68,24 @@ func TestScopeBasic(t *testing.T) {
 		t.Skip("target scope in nextgen is fixed to 'dxf_service', skip this test")
 	}
 	nodeCnt := 3
+	if !testflag.Long() {
+		nodeCnt = 2
+	}
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 
-	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 3), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 
 	// 1. all "" role.
 	taskID := submitTaskAndCheckSuccessForScope(c.Ctx, t, "😁", nodeCnt, "", c.TestContext)
 
-	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000", ":4001", ":4002"})
-	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows(""))
-	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
-	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
+	expectedNodes := make([]string, 0, nodeCnt)
+	for i := 0; i < nodeCnt; i++ {
+		host := c.GetNodeIDByIdx(i)
+		expectedNodes = append(expectedNodes, host)
+		tk.MustQuery(fmt.Sprintf(`select role from mysql.dist_framework_meta where host="%s"`, host)).Check(testkit.Rows(""))
+	}
+	checkSubtaskOnNodes(c.Ctx, t, taskID, expectedNodes)
 
 	// 2. one "background" role.
 	t.Cleanup(func() {
@@ -98,14 +105,17 @@ func TestScopeBasic(t *testing.T) {
 	<-ch
 	taskID = submitTaskAndCheckSuccessForScope(c.Ctx, t, "😊", nodeCnt, "background", c.TestContext)
 
-	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
-	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
-	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
-	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000"})
+	tk.MustQuery(fmt.Sprintf(`select role from mysql.dist_framework_meta where host="%s"`, c.GetNodeIDByIdx(0))).Check(testkit.Rows("background"))
+	for i := 1; i < nodeCnt; i++ {
+		tk.MustQuery(fmt.Sprintf(`select role from mysql.dist_framework_meta where host="%s"`, c.GetNodeIDByIdx(i))).Check(testkit.Rows(""))
+	}
+	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{c.GetNodeIDByIdx(0)})
+
+	if !testflag.Long() {
+		return
+	}
 
 	// 3. 2 "background" role.
-	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
-	time.Sleep(5 * time.Second)
 	ch2 := make(chan struct{})
 	var counter2 atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh", func() {
@@ -113,6 +123,7 @@ func TestScopeBasic(t *testing.T) {
 			ch2 <- struct{}{}
 		}
 	})
+	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	<-ch2
 	taskID = submitTaskAndCheckSuccessForScope(c.Ctx, t, "😆", nodeCnt, "background", c.TestContext)
 	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000", ":4001"})
@@ -159,20 +170,20 @@ func generateScopeCase(nodeCnt int, scopeCnt int) targetScopeCase {
 	}
 }
 
-func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.TestKit, testCase targetScopeCase, idx int, nodeCnt int) {
+func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.TestKit, testCase targetScopeCase, idx int, nodeCnt int, refreshCnt int) {
 	for i := range testCase.nodeScopes {
 		tk.MustExec(fmt.Sprintf("update mysql.dist_framework_meta set role = \"%s\" where host = \"%s\"", testCase.nodeScopes[i], c.GetNodeIDByIdx(i)))
 	}
 	ch := make(chan struct{})
 	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh", func() {
-		if counter.Add(1) <= 3 {
+		if counter.Add(1) <= int32(refreshCnt) {
 			ch <- struct{}{}
 		}
 	})
-	<-ch
-	<-ch
-	<-ch
+	for i := 0; i < refreshCnt; i++ {
+		<-ch
+	}
 	taskID := submitTaskAndCheckSuccessForScope(c.Ctx, t, "task"+strconv.Itoa(idx), nodeCnt, testCase.scope, c.TestContext)
 	expected := make([]string, 0)
 	for i, scope := range testCase.nodeScopes {
@@ -185,13 +196,21 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 
 func TestTargetScope(t *testing.T) {
 	nodeCnt := 10
+	scopeCnt := 5
+	caseNum := 10
+	refreshCnt := 3
+	if !testflag.Long() {
+		nodeCnt = 4
+		scopeCnt = 2
+		caseNum = 1
+		refreshCnt = 1
+	}
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
-	caseNum := 10
 	for i := range caseNum {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, 5), i, nodeCnt)
+			runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, scopeCnt), i, nodeCnt, refreshCnt)
 		})
 	}
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
@@ -282,10 +283,18 @@ func TestCancelVariousJobs(t *testing.T) {
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return(10)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
 	}()
+
+	testCases := allTestCase
+	if !testflag.Long() {
+		const shortCaseCount = 25
+		if len(allTestCase) > shortCaseCount {
+			testCases = allTestCase[:shortCaseCount]
+		}
+	}
 
 	i := atomicutil.NewInt64(0)
 	canceled := atomicutil.NewBool(false)
@@ -293,7 +302,12 @@ func TestCancelVariousJobs(t *testing.T) {
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testutil.MatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
+		idx := int(i.Load())
+		if idx < 0 || idx >= len(testCases) {
+			return
+		}
+		tc := testCases[idx]
+		if testutil.MatchCancelState(t, job, tc.cancelState, tc.sql) && !canceled.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
@@ -316,7 +330,7 @@ func TestCancelVariousJobs(t *testing.T) {
 	}
 
 	waitDDLWorkerExited()
-	for j, tc := range allTestCase {
+	for j, tc := range testCases {
 		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)

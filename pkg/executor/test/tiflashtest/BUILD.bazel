@@ -23,6 +23,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testflag",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/sqlkiller",
         "//pkg/util/tiflashcompute",

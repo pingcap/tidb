@@ -702,18 +702,27 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 func setupStmtSummary() {
+	tmpFile, err := os.CreateTemp("", "tidb-statements-*.log")
+	if err != nil {
+		panic(err)
+	}
+	filename := tmpFile.Name()
+	_ = tmpFile.Close()
 	stmtsummaryv2.Setup(&stmtsummaryv2.Config{
-		Filename: "tidb-statements.log",
+		Filename: filename,
 	})
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Instance.StmtSummaryEnablePersistent = true
+		conf.Instance.StmtSummaryFilename = filename
 	})
 }
 
 func closeStmtSummary() {
+	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Instance.StmtSummaryEnablePersistent = false
+		conf.Instance.StmtSummaryFilename = "tidb-statements.log"
 	})
 	stmtsummaryv2.GlobalStmtSummary.Close()
-	_ = os.Remove(config.GetGlobalConfig().Instance.StmtSummaryFilename)
+	_ = os.Remove(filename)
 }

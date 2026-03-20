@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/stathat/consistent"
@@ -266,7 +267,11 @@ func TestDispatchPolicyRR(t *testing.T) {
 }
 
 func TestTopoFetcherBackoff(t *testing.T) {
-	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
+	maxBackoffMS := fetchTopoMaxBackoff
+	if !testflag.Long() {
+		maxBackoffMS = 200
+	}
+	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), maxBackoffMS, nil)
 	expectErr := errors.New("Cannot find proper topo from AutoScaler")
 	var retryNum int
 	start := time.Now()
@@ -278,10 +283,14 @@ func TestTopoFetcherBackoff(t *testing.T) {
 		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Int("retryNum", retryNum))
 	}
 	dura := time.Since(start)
-	// fetchTopoMaxBackoff is milliseconds.
-	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
-	require.GreaterOrEqual(t, dura, 30*time.Second)
-	require.LessOrEqual(t, dura, 50*time.Second)
+	// maxBackoffMS is milliseconds.
+	require.GreaterOrEqual(t, dura, time.Duration(maxBackoffMS)*time.Millisecond)
+	if testflag.Long() {
+		require.GreaterOrEqual(t, dura, 30*time.Second)
+		require.LessOrEqual(t, dura, 50*time.Second)
+	} else {
+		require.LessOrEqual(t, dura, 5*time.Second)
+	}
 }
 
 func TestGetAllUsedTiFlashStores(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,8 +38,19 @@ func TestCancelWhileScan(t *testing.T) {
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	for i := range 10000 {
-		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i))
+
+	const rowCount = 10000
+	const batchSize = 500
+	rows := make([]string, 0, batchSize)
+	for i := range rowCount {
+		rows = append(rows, fmt.Sprintf("(%d, NOW() - INTERVAL 24 HOUR)", i))
+		if len(rows) == batchSize {
+			tk.MustExec("insert into test.t values " + strings.Join(rows, ","))
+			rows = rows[:0]
+		}
+	}
+	if len(rows) > 0 {
+		tk.MustExec("insert into test.t values " + strings.Join(rows, ","))
 	}
 	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)

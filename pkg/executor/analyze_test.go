@@ -190,28 +190,50 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 }
 
 func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
-	for i := 0; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	setup := func(t *testing.T) *testkit.TestKit {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
+		tk.MustExec("set @@tidb_analyze_version=2")
+		tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
+		for i := 0; i < 20; i++ {
+			tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+		return tk
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorageErr", "1*return(true)")
+	t.Run("save error returns promptly", func(t *testing.T) {
+		tk := setup(t)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorageErr", "1*return(true)")
 
-	done := make(chan error, 1)
-	go func() {
-		done <- tk.ExecToErr("analyze table t")
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("analyze hangs after save analyze result error")
-	}
+		done := make(chan error, 1)
+		go func() {
+			done <- tk.ExecToErr("analyze table t")
+		}()
+		select {
+		case err := <-done:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze hangs after save analyze result error")
+		}
+	})
+
+	t.Run("retryable deadlock succeeds", func(t *testing.T) {
+		tk := setup(t)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorageErr", "1*return(\"deadlock\")")
+
+		done := make(chan error, 1)
+		go func() {
+			done <- tk.ExecToErr("analyze table t")
+		}()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze hangs after save analyze result deadlock")
+		}
+	})
 }
 
 func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {

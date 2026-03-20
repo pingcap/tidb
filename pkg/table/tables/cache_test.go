@@ -137,53 +137,53 @@ func TestCacheCondition(t *testing.T) {
 	tk.MustExec("create table t2 (id int primary key, v int)")
 	tk.MustExec("alter table t2 cache")
 
+	origLease := tk.MustQuery("select @@global.tidb_table_cache_lease").Rows()[0][0]
+	tk.MustExec("set @@global.tidb_table_cache_lease = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_table_cache_lease = %v", origLease))
+	})
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/table/tables/mockCacheTableWriteLease", "return(1000)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/table/tables/mockCacheTableWriteLease"))
+	}()
+
 	// Explain should not trigger cache.
-	for range 10 {
+	for range 3 {
 		tk.MustQuery("explain select * from t2")
-		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Insert should not trigger cache.
-	for i := range 10 {
+	for i := range 3 {
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%d,%d)", i, i))
-		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Update should not trigger cache.
-	for range 10 {
+	for range 3 {
 		tk.MustExec("update t2 set v = v + 1 where id > 0")
-		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Contains PointGet Update should not trigger cache.
-	for range 10 {
+	for range 3 {
 		tk.MustExec("update t2 set v = v + 1 where id = 2")
-		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	for i := range 10 {
+	for i := range 3 {
 		tk.MustExec(fmt.Sprintf("delete from t2 where id = %d", i))
-		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Normal query should trigger cache.
 	tk.MustQuery("select * from t2")
-	cacheUsed := false
-	for range 100 {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select * from t2")
-		if lastReadFromCache(tk) {
-			cacheUsed = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.True(t, cacheUsed)
+		return lastReadFromCache(tk)
+	}, 12*time.Second, 20*time.Millisecond)
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
@@ -192,6 +192,18 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+
+	origLease := tk.MustQuery("select @@global.tidb_table_cache_lease").Rows()[0][0]
+	tk.MustExec("set @@global.tidb_table_cache_lease = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_table_cache_lease = %v", origLease))
+	})
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/table/tables/mockCacheTableWriteLease", "return(1000)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/table/tables/mockCacheTableWriteLease"))
+	}()
+
 	tk.MustExec("drop table if exists write_tmp1")
 	tk.MustExec("create  table write_tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into write_tmp1 values" +
@@ -201,17 +213,10 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	tk.MustExec("alter table write_tmp1 cache")
 	// Read and add read lock
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "3 113 1003"))
-	// read lock should valid
-	var i int
-	for i = range 10 {
-		if lastReadFromCache(tk) {
-			break
-		}
-		// Wait for the cache to be loaded.
-		time.Sleep(50 * time.Millisecond)
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "3 113 1003"))
-	}
-	require.True(t, i < 10)
+		return lastReadFromCache(tk)
+	}, time.Second, 20*time.Millisecond)
 
 	tk.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
@@ -221,19 +226,15 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 		"3 113 1003"))
 	require.False(t, lastReadFromCache(tk))
 
-	// wait write lock expire and check cache can be used again
-	for !lastReadFromCache(tk) {
-		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows(
-			"1 101 1001",
-			"2 222 222",
-			"3 113 1003"))
-	}
-	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for !lastReadFromCache(tk) {
-		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
-	}
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
+	require.False(t, lastReadFromCache(tk))
+
+	// Wait write lock expire and check cache can be used again.
+	require.Eventually(t, func() bool {
+		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
+		return lastReadFromCache(tk)
+	}, 12*time.Second, 20*time.Millisecond)
 }
 
 func TestCacheTableComplexRead(t *testing.T) {
@@ -284,6 +285,18 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
+
+	origLease := tk1.MustQuery("select @@global.tidb_table_cache_lease").Rows()[0][0]
+	tk1.MustExec("set @@global.tidb_table_cache_lease = 1")
+	t.Cleanup(func() {
+		tk1.MustExec(fmt.Sprintf("set @@global.tidb_table_cache_lease = %v", origLease))
+	})
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/table/tables/mockCacheTableWriteLease", "return(1000)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/table/tables/mockCacheTableWriteLease"))
+	}()
+
 	tk1.MustExec("drop table if exists aba")
 	tk1.MustExec("create table aba (id int, v int)")
 	tk1.MustExec("insert into aba values (1, 1)")
@@ -313,16 +326,10 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2.MustExec("update aba set v = 2")
 
 	// And then make the cache available again.
-	cacheUsed = false
-	for range 100 {
+	require.Eventually(t, func() bool {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
-		if lastReadFromCache(tk2) {
-			cacheUsed = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.True(t, cacheUsed)
+		return lastReadFromCache(tk2)
+	}, 12*time.Second, 20*time.Millisecond)
 
 	// tk1 should not use the staled cache, because the data is changed.
 	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))

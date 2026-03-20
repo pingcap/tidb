@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -52,7 +53,7 @@ func TestIndexMergePickAndExecTaskPanic(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergePickAndExecTaskPanic"))
 	}()
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id")
-	require.Contains(t, err.Error(), "pickAndExecTaskPanic")
+	require.ErrorContains(t, err, "pickAndExecTaskPanic")
 }
 
 func TestPartitionTableRandomIndexMerge(t *testing.T) {
@@ -530,10 +531,15 @@ func TestIndexMergePanic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
+	repeatCount := 10
+	if testflag.Long() {
+		repeatCount = 100
+	}
+
 	// TestIndexMergePanicPartialIndexWorker
 	fp := "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialIndexWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	for range repeatCount {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -541,7 +547,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicPartialTableWorker
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialTableWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	for range repeatCount {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -549,7 +555,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicProcessWorkerUnion
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerUnion"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	for range repeatCount {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -557,7 +563,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicProcessWorkerIntersection
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerIntersection"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	for range repeatCount {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -565,7 +571,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicPartitionTableIntersectionWorker
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartitionTableIntersectionWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	for range repeatCount {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -573,7 +579,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicTableScanWorker
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicTableScanWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	for range repeatCount {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -592,6 +598,11 @@ func TestIndexMergeError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
+	repeatCount := 10
+	if testflag.Long() {
+		repeatCount = 100
+	}
+
 	packagePath := "github.com/pingcap/tidb/pkg/executor/"
 	errFPPaths := []string{
 		packagePath + "testIndexMergeErrorPartialIndexWorker",
@@ -600,7 +611,7 @@ func TestIndexMergeError(t *testing.T) {
 	for _, fp := range errFPPaths {
 		fmt.Println("handling failpoint: ", fp)
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
-		for range 100 {
+		for range repeatCount {
 			indexMergePanicRunSQL(t, tk, fp)
 		}
 		require.NoError(t, failpoint.Disable(fp))

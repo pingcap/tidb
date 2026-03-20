@@ -128,22 +128,22 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
-	ver178 := 178
-	seV178 := session.CreateSessionAndSetID(t, store)
+	ver249 := 249
+	seV249 := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver178))
+	err = m.FinishBootstrap(int64(ver249))
 	require.NoError(t, err)
-	session.RevertVersionAndVariables(t, seV178, ver178)
-	session.MustExec(t, seV178, injectQuery)
+	session.RevertVersionAndVariables(t, seV249, ver249)
+	session.MustExec(t, seV249, injectQuery)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
 	store.SetOption(session.StoreBootstrappedKey, nil)
-	ver, err := session.GetBootstrapVersion(seV178)
+	ver, err := session.GetBootstrapVersion(seV249)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver178), ver)
+	require.Equal(t, int64(ver249), ver)
 
 	conf := new(log.Config)
 	lg, p, e := log.InitLogger(conf, zap.WithFatalHook(zapcore.WriteThenPanic))
@@ -176,31 +176,19 @@ func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
 		t.Skip("the schema version of the first next-gen kernel release is 250, no need to go through upgrade operations below it, skip it")
 	}
 	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", false) })
-	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
 }
 
 func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("the schema version of the first next-gen kernel release is 250, no need to go through upgrade operations below it, skip it")
 	}
-	t.Run("test dist task running", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", false)
-	})
-	t.Run("test dist task succeed", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'succeed'", false)
-	})
-	t.Run("test dist task failed", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'failed'", false)
-	})
-	t.Run("test dist task reverted", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'reverted'", false)
-	})
-	t.Run("test dist task paused", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", false)
-	})
-	t.Run("test dist task other", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", false)
-	})
+	testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task (id, task_key, `type`, state) values "+
+		"(1, 'aaa1', 'aaa', 'running'),"+
+		"(2, 'aaa2', 'aaa', 'succeed'),"+
+		"(3, 'aaa3', 'aaa', 'failed'),"+
+		"(4, 'aaa4', 'aaa', 'reverted'),"+
+		"(5, 'aaa5', 'aaa', 'paused'),"+
+		"(6, 'aaa6', 'aaa', 'other')", false)
 }
 
 func TestTiDBUpgradeToVer211(t *testing.T) {

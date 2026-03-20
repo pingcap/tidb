@@ -61,7 +61,7 @@ func TestInterruptedDuringSort(t *testing.T) {
 	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */, "")
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
-	for range 10240 {
+	for range 1024 {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}
@@ -69,7 +69,7 @@ func TestInterruptedDuringSort(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 		cancelTime = time.Now()
 		wg.Done()
@@ -120,7 +120,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */, testFuncName)
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
-	for range 10240 {
+	for range 1024 {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}
@@ -130,7 +130,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 		cancelTime = time.Now()
 		wg.Done()

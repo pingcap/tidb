@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -146,6 +147,18 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 	}, time.Minute, time.Second)
 }
 
+func forceSamplingOnce(ctx context.Context, wrk *worker) {
+	wrk.Lock()
+	wrk.fillInTableNames()
+	wrk.Unlock()
+	for i := range wrk.workloadTables {
+		rt := &wrk.workloadTables[i]
+		if rt.tableType == samplingTable {
+			wrk.samplingTable(ctx, rt)
+		}
+	}
+}
+
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
@@ -167,10 +180,12 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	// sampling succeeded
+	forceSamplingOnce(ctx, wrk1)
+	forceSamplingOnce(ctx, wrk2)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select instance_id, count(*) from workload_schema.hist_memory_usage group by instance_id").Rows()
 		return len(res) >= 2
-	}, time.Minute, time.Second)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	// no snapshot for now
 	res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
@@ -181,13 +196,13 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 1
-	}, time.Minute, time.Second)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	wrk2.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 2
-	}, time.Minute, time.Second)
+	}, 10*time.Second, 50*time.Millisecond)
 }
 
 func getMultipleWorkerCount(tk *testkit.TestKit, worker string) int {
@@ -200,25 +215,31 @@ func TestMultipleWorker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	wrk1 := setupWorker(ctx, t, addr, dom, "worker1", true)
-	wrk1.changeSamplingInterval(ctx, "1")
+	samplingInterval := "1"
+	if !testflag.Long() {
+		samplingInterval = "0"
+	}
+	wrk1.changeSamplingInterval(ctx, samplingInterval)
 	wrk2 := setupWorker(ctx, t, addr, dom, "worker2", true)
-	wrk2.changeSamplingInterval(ctx, "1")
+	wrk2.changeSamplingInterval(ctx, samplingInterval)
 
 	// start worker 1
 	now := time.Now() // This time must be before we started worker1.
 	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
 	waitForTables(ctx, t, wrk1, now)
+	forceSamplingOnce(ctx, wrk1)
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker1") >= 1
-	}, time.Minute, time.Millisecond*100)
+	}, 10*time.Second, 50*time.Millisecond)
 	// worker1 should be the owner.
 	require.True(t, wrk1.owner.IsOwner())
 
 	// start worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
+	forceSamplingOnce(ctx, wrk2)
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker2") >= 1
-	}, time.Minute, time.Millisecond*100)
+	}, 10*time.Second, 50*time.Millisecond)
 	// worker1 should still be the owner.
 	require.True(t, wrk1.owner.IsOwner())
 	require.False(t, wrk2.owner.IsOwner())
@@ -232,16 +253,17 @@ func TestMultipleWorker(t *testing.T) {
 	// worker2 should become owner
 	require.Eventually(t, func() bool {
 		return wrk2.owner.IsOwner()
-	}, time.Minute, time.Millisecond*100)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	// start worker 1 again
 	cnt1 := getMultipleWorkerCount(tk, "worker1")
 	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
+	forceSamplingOnce(ctx, wrk1)
 	// wait for worker1 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker1")
 		return cnt > cnt1
-	}, time.Minute, time.Millisecond*100)
+	}, 10*time.Second, 50*time.Millisecond)
 	// worker2 should still be the owner.
 	require.False(t, wrk1.owner.IsOwner())
 	require.True(t, wrk2.owner.IsOwner())
@@ -255,16 +277,17 @@ func TestMultipleWorker(t *testing.T) {
 	// worker 1 should become owner
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
-	}, time.Minute, time.Millisecond*100)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	// start worker 2 again
 	cnt2 := getMultipleWorkerCount(tk, "worker2")
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
+	forceSamplingOnce(ctx, wrk2)
 	// wait for worker2 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker2")
 		return cnt > cnt2
-	}, time.Minute, time.Millisecond*100)
+	}, 10*time.Second, 50*time.Millisecond)
 	// worker1 should still be the owner
 	require.True(t, wrk1.owner.IsOwner())
 	require.False(t, wrk2.owner.IsOwner())
@@ -284,10 +307,11 @@ func TestGlobalWorker(t *testing.T) {
 	waitForTables(ctx, t, wrk, now)
 
 	// sampling succeeded
+	forceSamplingOnce(ctx, wrk)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()
 		return len(res) >= 1
-	}, time.Minute, time.Second)
+	}, 10*time.Second, 50*time.Millisecond)
 }
 
 func TestAdminWorkloadRepo(t *testing.T) {
@@ -349,7 +373,7 @@ func validateDate(t *testing.T, row []any, idx int, lastRowTs time.Time, maxSecs
 }
 
 func SamplingTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, cnt int, maxSecs int) time.Time {
-	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' group by instance_id, ts order by ts asc")
 
 	for _, row := range rows {
 		// check that the instance_id is correct
@@ -367,19 +391,31 @@ func TestSamplingTimingWorker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
-	wrk.changeSamplingInterval(ctx, "2")
+	samplingInterval1 := "1"
+	samplingInterval2 := "2"
+	cnt := 1
+	maxSecs1 := 2
+	maxSecs2 := 3
+	if testflag.Long() {
+		samplingInterval1 = "2"
+		samplingInterval2 = "5"
+		cnt = 3
+		maxSecs1 = 3
+		maxSecs2 = 6
+	}
+	wrk.changeSamplingInterval(ctx, samplingInterval1)
 	now := time.Now()
 	wrk.setRepositoryDest(ctx, "table")
 
 	waitForTables(ctx, t, wrk, now)
 
 	lastRowTs := time.Now()
-	lastRowTs = SamplingTimingWorker(t, tk, lastRowTs, 3, 3)
+	lastRowTs = SamplingTimingWorker(t, tk, lastRowTs, cnt, maxSecs1)
 
 	// Change interval and verify new samples are taken at new interval
-	wrk.changeSamplingInterval(ctx, "5")
+	wrk.changeSamplingInterval(ctx, samplingInterval2)
 
-	_ = SamplingTimingWorker(t, tk, lastRowTs, 3, 6)
+	_ = SamplingTimingWorker(t, tk, lastRowTs, cnt, maxSecs2)
 }
 
 func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row []any, lastRowTs time.Time, maxSecs int) {
@@ -393,14 +429,15 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
 	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
 
-	// We want to get all rows if we are starting from 0.
-	snapWhere := ""
-	if lastSnapID > 0 {
-		snapWhere = " where snap_id > " + strconv.Itoa(lastSnapID)
+	if lastSnapID == 0 && len(rows) > 0 {
+		firstSnapID, err := strconv.Atoi(rows[0][0].(string))
+		require.NoError(t, err)
+		lastSnapID = firstSnapID - 1
 	}
+	snapWhere := " where snap_id > " + strconv.Itoa(lastSnapID)
 
-	rows2 := getRows(t, tk, cnt, maxSecs, "select snap_id, ts, instance_id from WORKLOAD_SCHEMA.HIST_MEMORY_USAGE2"+snapWhere+" order by snap_id asc")
-	rows3 := getRows(t, tk, cnt, maxSecs, "select snap_id, ts, instance_id from WORKLOAD_SCHEMA.HIST_MEMORY_USAGE3"+snapWhere+" order by snap_id asc")
+	rows2 := getRows(t, tk, cnt, maxSecs, "select snap_id, min(ts), min(instance_id) from WORKLOAD_SCHEMA.HIST_MEMORY_USAGE2"+snapWhere+" group by snap_id order by snap_id asc")
+	rows3 := getRows(t, tk, cnt, maxSecs, "select snap_id, min(ts), min(instance_id) from WORKLOAD_SCHEMA.HIST_MEMORY_USAGE3"+snapWhere+" group by snap_id order by snap_id asc")
 	rowidx := 0
 
 	for _, row := range rows {
@@ -435,20 +472,34 @@ func TestSnapshotTimingWorker(t *testing.T) {
 		"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, "HIST_MEMORY_USAGE3", "", "", "",
 	})
 
-	wrk.changeSnapshotInterval(ctx, "2")
+	snapshotInterval1 := "1"
+	snapshotInterval2 := "2"
+	cnt1 := 1
+	maxSecs1 := 2
+	cnt2 := 1
+	maxSecs2 := 3
+	if testflag.Long() {
+		snapshotInterval1 = "2"
+		snapshotInterval2 = "6"
+		cnt1 = 3
+		maxSecs1 = 3
+		cnt2 = 1
+		maxSecs2 = 7
+	}
+	wrk.changeSnapshotInterval(ctx, snapshotInterval1)
 	now := time.Now()
 	wrk.setRepositoryDest(ctx, "table")
 
 	waitForTables(ctx, t, wrk, now)
 
-	// Check that snapshots are taken at 2 second intervals
+	// Check that snapshots are taken at expected intervals
 	lastRowTs := time.Now()
 	lastSnapID := 0
-	lastRowTs, lastSnapID = SnapshotTimingWorker(t, tk, lastRowTs, lastSnapID, 3, 3)
+	lastRowTs, lastSnapID = SnapshotTimingWorker(t, tk, lastRowTs, lastSnapID, cnt1, maxSecs1)
 
 	// Change interval and verify new snapshots are taken at new interval
-	wrk.changeSnapshotInterval(ctx, "6")
-	_, _ = SnapshotTimingWorker(t, tk, lastRowTs, lastSnapID, 1, 7)
+	wrk.changeSnapshotInterval(ctx, snapshotInterval2)
+	_, _ = SnapshotTimingWorker(t, tk, lastRowTs, lastSnapID, cnt2, maxSecs2)
 }
 
 func TestStoppingAndRestartingWorker(t *testing.T) {
@@ -462,14 +513,17 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 	wrk.setRepositoryDest(ctx, "table")
 
 	waitForTables(ctx, t, wrk, now)
+	forceSamplingOnce(ctx, wrk)
+	_, err := wrk.takeSnapshot(ctx)
+	require.NoError(t, err)
 
 	// There should be one row every second.
 	require.Eventually(t, func() bool {
 		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) > 0
-	}, time.Minute, time.Second)
+	}, 10*time.Second, 50*time.Millisecond)
 	require.Eventually(t, func() bool {
 		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) > 0
-	}, time.Minute, time.Second)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	// Stop worker and verify no new samples are taken
 	wrk.setRepositoryDest(ctx, "")
@@ -477,20 +531,28 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 	samplingCnt := len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows())
 	snapshotCnt := len(tk.MustQuery("select snap_id from workload_schema." + histSnapshotsTable).Rows())
 
-	// Wait for 5 seconds to make sure no new samples are taken
-	time.Sleep(time.Second * 5)
-	require.True(t, len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) == samplingCnt)
-	require.True(t, len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) == snapshotCnt)
+	noNewSampleWait := 1200 * time.Millisecond
+	if testflag.Long() {
+		noNewSampleWait = 5 * time.Second
+	}
+	require.Never(t, func() bool {
+		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) != samplingCnt ||
+			len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) != snapshotCnt
+	}, noNewSampleWait, 200*time.Millisecond)
 
 	// Restart worker and verify new samples are taken
 	wrk.setRepositoryDest(ctx, "table")
+	eventuallyWithLock(t, wrk, func() bool { return wrk.cancel != nil })
+	forceSamplingOnce(ctx, wrk)
+	_, err = wrk.takeSnapshot(ctx)
+	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) >= samplingCnt
-	}, time.Minute, time.Second)
+		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) > samplingCnt
+	}, 10*time.Second, 50*time.Millisecond)
 	require.Eventually(t, func() bool {
-		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) >= snapshotCnt
-	}, time.Minute, time.Second)
+		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) > snapshotCnt
+	}, 10*time.Second, 50*time.Millisecond)
 }
 
 func TestSettingSQLVariables(t *testing.T) {
@@ -870,13 +932,12 @@ func TestHouseKeeperThread(t *testing.T) {
 	wrk.Unlock()
 
 	// check partitions
-	time.Sleep(time.Second * 10)
 	require.Eventually(t, func() bool {
 		return validatePartitionsMatchExpected(ctx, t, sess, plTbl, []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)})
-	}, time.Second*10, time.Second)
+	}, time.Second*10, 200*time.Millisecond)
 	require.Eventually(t, func() bool {
 		return validatePartitionsMatchExpected(ctx, t, sess, dlwTbl, []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)})
-	}, time.Second*10, time.Second)
+	}, time.Second*10, 200*time.Millisecond)
 }
 
 func TestCalcNextTick(t *testing.T) {
@@ -890,6 +951,10 @@ func TestCalcNextTick(t *testing.T) {
 func TestOwnerRandomDown(t *testing.T) {
 	workerNum := 3
 	testNum := 9
+	if !testflag.Long() {
+		workerNum = 2
+		testNum = 2
+	}
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
 	workers := make([]*worker, 0, workerNum)
@@ -906,7 +971,7 @@ func TestOwnerRandomDown(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return workers[0].checkTablesExists(ctx, now)
-	}, time.Minute, 100*time.Millisecond)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	require.Eventually(t, func() bool {
 		var err error
@@ -920,7 +985,7 @@ func TestOwnerRandomDown(t *testing.T) {
 		}
 
 		return found && err == nil
-	}, time.Minute, 100*time.Millisecond)
+	}, 10*time.Second, 50*time.Millisecond)
 
 	// let us randomly stop the owner
 	for j := range testNum {
@@ -964,27 +1029,27 @@ func TestOwnerRandomDown(t *testing.T) {
 		}
 
 		// new owner elected
+		var newOwner *worker
 		require.Eventually(t, func() bool {
 			return slices.ContainsFunc(workers, func(wrk *worker) bool {
 				wrk.Lock()
 				defer wrk.Unlock()
-				return wrk.cancel != nil &&
-					wrk.owner.IsOwner() && wrk != oldOwner
-			})
-		}, time.Minute, 100*time.Millisecond)
-
-		// new snapshot taken
-		require.Eventually(t, func() bool {
-			return slices.ContainsFunc(workers, func(wrk *worker) bool {
-				wrk.Lock()
-				defer wrk.Unlock()
-				if wrk.cancel == nil {
+				if wrk.cancel == nil || !wrk.owner.IsOwner() || wrk == oldOwner {
 					return false
 				}
-				newSnapID, err := wrk.getSnapID(ctx)
-				return err == nil && newSnapID > prevSnapID
+				newOwner = wrk
+				return true
 			})
-		}, time.Minute, 100*time.Millisecond)
+		}, 10*time.Second, 50*time.Millisecond)
+		require.NotNil(t, newOwner)
+
+		// new snapshot taken
+		_, err = newOwner.takeSnapshot(ctx)
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			newSnapID, err := newOwner.getSnapID(ctx)
+			return err == nil && newSnapID > prevSnapID
+		}, 10*time.Second, 50*time.Millisecond)
 
 		// recover stopped owner
 		for idx, wrk := range workers {

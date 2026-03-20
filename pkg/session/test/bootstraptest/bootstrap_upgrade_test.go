@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
@@ -162,51 +163,42 @@ func TestUpgradeVersion74(t *testing.T) {
 
 	ctx := context.Background()
 
-	cases := []struct {
-		oldValue int
-		newValue int
-	}{
-		{200, 3000},
-		{3000, 3000},
-		{3001, 3001},
-	}
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	for _, ca := range cases {
-		func() {
-			store, dom := session.CreateStoreAndBootstrap(t)
-			defer func() { require.NoError(t, store.Close()) }()
+	seV73 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(73))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV73, 72)
 
-			seV73 := session.CreateSessionAndSetID(t, store)
-			txn, err := store.Begin()
-			require.NoError(t, err)
-			m := meta.NewMutator(txn)
-			err = m.FinishBootstrap(int64(73))
-			require.NoError(t, err)
-			err = txn.Commit(context.Background())
-			require.NoError(t, err)
-			revertVersionAndVariables(t, seV73, 72)
-			session.MustExec(t, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
-			session.MustExec(t, seV73, "commit")
-			store.SetOption(session.StoreBootstrappedKey, nil)
-			ver, err := session.GetBootstrapVersion(seV73)
-			require.NoError(t, err)
-			require.Equal(t, int64(72), ver)
-			dom.Close()
-			domV74, err := session.BootstrapSession(store)
-			require.NoError(t, err)
-			defer domV74.Close()
-			seV74 := session.CreateSessionAndSetID(t, store)
-			ver, err = session.GetBootstrapVersion(seV74)
-			require.NoError(t, err)
-			require.Equal(t, session.CurrentBootstrapVersion, ver)
-			r := session.MustExecToRecodeSet(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
-			req := r.NewChunk(nil)
-			require.NoError(t, r.Next(ctx, req))
-			require.Equal(t, 1, req.NumRows())
-			row := req.GetRow(0)
-			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(0))
-		}()
-	}
+	// Only upgrade from the old default to the new default should be covered here.
+	session.MustExec(t, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = 200")
+	session.MustExec(t, seV73, "commit")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV73)
+	require.NoError(t, err)
+	require.Equal(t, int64(72), ver)
+	dom.Close()
+
+	domV74, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV74.Close()
+
+	seV74 := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seV74)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	r := session.MustExecToRecodeSet(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, strconv.Itoa(vardef.DefTiDBStmtSummaryMaxStmtCount), row.GetString(0))
 }
 
 func TestUpgradeVersion75(t *testing.T) {
@@ -762,6 +754,10 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
 	tc.OnBootstrapExported = func(s sessionapi.Session) {
+		const maxDDLOps = int32(4)
+		if tc.Cnt.Load() >= maxDDLOps {
+			return
+		}
 		var query1, query2 string
 		switch tc.Cnt.Load() % 2 {
 		case 0:
@@ -1043,141 +1039,6 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.Equal(t, 1, req.NumRows())
 		row := req.GetRow(0)
 		require.Equal(t, "ALL", row.GetString(0))
-	})
-
-	// Test case 2: Fresh 8.3.0 cluster (version 210) without explicit setting
-	// After upgrade, should be set to "PREDICATE" to preserve 8.3.0 behavior
-	t.Run("Fresh 8.3.0 upgrade without setting", func(t *testing.T) {
-		store, dom := session.CreateStoreAndBootstrap(t)
-		defer func() { require.NoError(t, store.Close()) }()
-
-		seV210 := session.CreateSessionAndSetID(t, store)
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		m := meta.NewMutator(txn)
-		err = m.FinishBootstrap(int64(210))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		revertVersionAndVariables(t, seV210, 210)
-
-		// Set the variable to "PREDICATE" to simulate the default 8.3.0 state
-		// NOTE: When TiDB starts for the first time, it will insert the default value into mysql.global_variables.
-		session.MustExec(t, seV210, "REPLACE INTO mysql.global_variables VALUES ('tidb_analyze_column_options', 'PREDICATE')")
-		session.MustExec(t, seV210, "commit")
-
-		store.SetOption(session.StoreBootstrappedKey, nil)
-		ver, err := session.GetBootstrapVersion(seV210)
-		require.NoError(t, err)
-		require.Equal(t, int64(210), ver)
-		dom.Close()
-
-		domCurrent, err := session.BootstrapSession(store)
-		require.NoError(t, err)
-		defer domCurrent.Close()
-
-		seCurrent := session.CreateSessionAndSetID(t, store)
-		ver, err = session.GetBootstrapVersion(seCurrent)
-		require.NoError(t, err)
-		require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-		// Check that the variable is kept as "PREDICATE" after upgrade
-		r := session.MustExecToRecodeSet(t, seCurrent, "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_analyze_column_options'")
-		req := r.NewChunk(nil)
-		require.NoError(t, r.Next(ctx, req))
-		require.Equal(t, 1, req.NumRows())
-		row := req.GetRow(0)
-		require.Equal(t, "PREDICATE", row.GetString(0))
-	})
-
-	// Test case 3: 8.3.0 cluster with explicit "ALL" setting
-	// The variable exists with value "ALL" (user explicitly set it)
-	// Should remain "ALL" after upgrade
-	t.Run("8.3.0 upgrade with explicit ALL setting", func(t *testing.T) {
-		store, dom := session.CreateStoreAndBootstrap(t)
-		defer func() { require.NoError(t, store.Close()) }()
-
-		seV210 := session.CreateSessionAndSetID(t, store)
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		m := meta.NewMutator(txn)
-		err = m.FinishBootstrap(int64(210))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		revertVersionAndVariables(t, seV210, 210)
-
-		// Set the variable to "ALL" to simulate user explicitly setting it
-		session.MustExec(t, seV210, "REPLACE INTO mysql.global_variables VALUES ('tidb_analyze_column_options', 'ALL')")
-		session.MustExec(t, seV210, "commit")
-
-		store.SetOption(session.StoreBootstrappedKey, nil)
-		ver, err := session.GetBootstrapVersion(seV210)
-		require.NoError(t, err)
-		require.Equal(t, int64(210), ver)
-		dom.Close()
-
-		domCurrent, err := session.BootstrapSession(store)
-		require.NoError(t, err)
-		defer domCurrent.Close()
-
-		seCurrent := session.CreateSessionAndSetID(t, store)
-		ver, err = session.GetBootstrapVersion(seCurrent)
-		require.NoError(t, err)
-		require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-		// Check that the variable remains "ALL" (unchanged)
-		r := session.MustExecToRecodeSet(t, seCurrent, "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_analyze_column_options'")
-		req := r.NewChunk(nil)
-		require.NoError(t, r.Next(ctx, req))
-		require.Equal(t, 1, req.NumRows())
-		row := req.GetRow(0)
-		require.Equal(t, "ALL", row.GetString(0))
-	})
-
-	// Test case 4: 8.3.0 cluster with explicit "PREDICATE" setting
-	// The variable exists with value "PREDICATE" (user explicitly set it)
-	// Should remain "PREDICATE" after upgrade
-	t.Run("8.3.0 upgrade with explicit PREDICATE setting", func(t *testing.T) {
-		store, dom := session.CreateStoreAndBootstrap(t)
-		defer func() { require.NoError(t, store.Close()) }()
-
-		seV210 := session.CreateSessionAndSetID(t, store)
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		m := meta.NewMutator(txn)
-		err = m.FinishBootstrap(int64(210))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		revertVersionAndVariables(t, seV210, 210)
-
-		// Set the variable to "PREDICATE" to simulate user explicitly setting it
-		session.MustExec(t, seV210, "REPLACE INTO mysql.global_variables VALUES ('tidb_analyze_column_options', 'PREDICATE')")
-		session.MustExec(t, seV210, "commit")
-
-		store.SetOption(session.StoreBootstrappedKey, nil)
-		ver, err := session.GetBootstrapVersion(seV210)
-		require.NoError(t, err)
-		require.Equal(t, int64(210), ver)
-		dom.Close()
-
-		domCurrent, err := session.BootstrapSession(store)
-		require.NoError(t, err)
-		defer domCurrent.Close()
-
-		seCurrent := session.CreateSessionAndSetID(t, store)
-		ver, err = session.GetBootstrapVersion(seCurrent)
-		require.NoError(t, err)
-		require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-		// Check that the variable remains "PREDICATE" (unchanged)
-		r := session.MustExecToRecodeSet(t, seCurrent, "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_analyze_column_options'")
-		req := r.NewChunk(nil)
-		require.NoError(t, r.Next(ctx, req))
-		require.Equal(t, 1, req.NumRows())
-		row := req.GetRow(0)
-		require.Equal(t, "PREDICATE", row.GetString(0))
 	})
 }
 

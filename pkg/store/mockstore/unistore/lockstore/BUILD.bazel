@@ -28,6 +28,7 @@ go_test(
     flaky = True,
     shard_count = 4,
     deps = [
+        "//pkg/testkit/testflag",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

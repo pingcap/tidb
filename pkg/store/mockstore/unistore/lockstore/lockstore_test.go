@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,10 +146,15 @@ func TestMemStoreConcurrent(t *testing.T) {
 		concurrentKeys[i] = numToKey(i)
 	}
 
+	runDuration := time.Second
+	if testflag.Long() {
+		runDuration = 10 * time.Second
+	}
+
 	lock := sync.RWMutex{}
 	ls := NewMemStore(1 << 20)
 	// Starts 10 readers and 1 writer.
-	closeCh := make(chan bool)
+	closeCh := make(chan struct{})
 	wg := new(sync.WaitGroup)
 	wg.Add(keyRange)
 	for i := range keyRange {
@@ -159,7 +165,7 @@ func TestMemStoreConcurrent(t *testing.T) {
 	var totalInsert, totalDelete int
 	hint := new(Hint)
 	for {
-		if totalInsert%128 == 0 && time.Since(start) > time.Second*10 {
+		if totalInsert%128 == 0 && time.Since(start) > runDuration {
 			break
 		}
 		n := ran.Intn(keyRange)
@@ -179,12 +185,9 @@ func TestMemStoreConcurrent(t *testing.T) {
 	}
 	close(closeCh)
 	wg.Wait()
-	arena := ls.getArena()
-	fmt.Println("total insert", totalInsert, "total delete", totalDelete)
-	fmt.Println(len(arena.pendingBlocks), len(arena.writableQueue), len(arena.blocks))
 }
 
-func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int, wg *sync.WaitGroup) {
+func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan struct{}, i int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	key := numToKey(i)
 	buf := make([]byte, 100)
@@ -194,7 +197,6 @@ func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int, wg *s
 		if n%128 == 0 {
 			select {
 			case <-closeCh:
-				fmt.Println("read", n)
 				return
 			default:
 			}

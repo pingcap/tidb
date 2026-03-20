@@ -31,11 +31,20 @@ func TestBindUsageInfo(t *testing.T) {
 		"9d3995845aef70ba086d347f38a4e14c9705e966f7c5793b9fa92194bca2bbef",
 		"aa3c510b94b9d680f729252ca88415794c8a4f52172c5f9e06c27bee57d08329",
 	}
+	oldUpdateBindingUsageInfoBatchSize := bindinfo.UpdateBindingUsageInfoBatchSize
+	oldMaxWriteInterval := bindinfo.MaxWriteInterval
+	defer func() {
+		bindinfo.UpdateBindingUsageInfoBatchSize = oldUpdateBindingUsageInfoBatchSize
+		bindinfo.MaxWriteInterval = oldMaxWriteInterval
+	}()
 	bindinfo.UpdateBindingUsageInfoBatchSize = 2
 	bindinfo.MaxWriteInterval = 100 * time.Microsecond
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	bindingHandle := dom.BindingHandle()
 	tk := testkit.NewTestKit(t, store)
+	waitInterval := 10 * time.Millisecond
+	originEnableBindingUsage := tk.MustQuery("select @@global.tidb_enable_binding_usage").Rows()[0][0]
+	defer tk.MustExec("set @@global.tidb_enable_binding_usage=?", originEnableBindingUsage)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
@@ -62,7 +71,7 @@ func TestBindUsageInfo(t *testing.T) {
 		"5d3975ef2160c1e0517353798dac90a9914095d82c025e7cd97bd55aeb804798 <nil>",
 		"9d3995845aef70ba086d347f38a4e14c9705e966f7c5793b9fa92194bca2bbef <nil>",
 		"aa3c510b94b9d680f729252ca88415794c8a4f52172c5f9e06c27bee57d08329 <nil>"))
-	time.Sleep(50 * time.Microsecond)
+	time.Sleep(waitInterval)
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 	result := tk.MustQuery(fmt.Sprintf(`select sql_digest,last_used_date from mysql.bind_info where original_sql != '%s' order by sql_digest`, bindinfo.BuiltinPseudoSQL4BindLock))
 	t.Log("result:", result.Rows())
@@ -74,7 +83,7 @@ func TestBindUsageInfo(t *testing.T) {
 		tk.MustExec("execute stmt2;")
 		tk.MustExec("execute stmt3;")
 		tk.MustExec("select * from t1, t2, t3, t4, t5")
-		time.Sleep(1 * time.Second)
+		time.Sleep(waitInterval)
 		// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 		resetAllLastUsedData(tk)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
@@ -92,7 +101,7 @@ func TestBindUsageInfo(t *testing.T) {
 	// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 	resetAllLastUsedData(tk)
 	for range 5 {
-		time.Sleep(1 * time.Second)
+		time.Sleep(waitInterval)
 		// No used, so last_used_date should not be updated.
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 		tk.MustQuery(`select last_used_date from mysql.bind_info where last_used_date is not null`).Check(testkit.Rows())
@@ -100,7 +109,7 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tk.MustExec("execute stmt2;")
 	tk.MustExec("execute stmt3;")
-	time.Sleep(1 * time.Second)
+	time.Sleep(waitInterval)
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 	// it has been updated again.
 	rows := tk.MustQuery(
@@ -114,7 +123,7 @@ func TestBindUsageInfo(t *testing.T) {
 		tk.MustExec("execute stmt2;")
 		tk.MustExec("execute stmt3;")
 		tk.MustExec("select * from t1, t2, t3, t4, t5")
-		time.Sleep(1 * time.Second)
+		time.Sleep(waitInterval)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 		tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is not null`, bindinfo.BuiltinPseudoSQL4BindLock)).
 			Check(testkit.Rows())

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -899,15 +900,42 @@ func TestTxnAssertion(t *testing.T) {
 		})
 	}
 
-	for _, level := range []string{"STRICT", "OFF"} {
-		for _, lock := range []bool{false, true} {
-			for _, lockIdx := range []bool{false, true} {
-				for _, useCommonHandle := range []bool{false, true} {
-					t.Logf("testing testAssertionBasicImpl level: %v, lock: %v, lockIdx: %v, useCommonHandle: %v...", level, lock, lockIdx, useCommonHandle)
-					testAssertionBasicImpl(level, lock, lockIdx, useCommonHandle)
+	type assertionBasicCase struct {
+		level           string
+		lock            bool
+		lockIdx         bool
+		useCommonHandle bool
+	}
+	var basicCases []assertionBasicCase
+	if testflag.Long() {
+		for _, level := range []string{"STRICT", "OFF"} {
+			for _, lock := range []bool{false, true} {
+				for _, lockIdx := range []bool{false, true} {
+					for _, useCommonHandle := range []bool{false, true} {
+						basicCases = append(basicCases, assertionBasicCase{
+							level:           level,
+							lock:            lock,
+							lockIdx:         lockIdx,
+							useCommonHandle: useCommonHandle,
+						})
+					}
 				}
 			}
 		}
+	} else {
+		basicCases = []assertionBasicCase{
+			{level: "STRICT", lock: false, lockIdx: false, useCommonHandle: false},
+			{level: "STRICT", lock: true, lockIdx: true, useCommonHandle: true},
+			{level: "OFF", lock: true, lockIdx: false, useCommonHandle: false},
+			{level: "OFF", lock: false, lockIdx: true, useCommonHandle: true},
+		}
+	}
+	for _, c := range basicCases {
+		t.Logf(
+			"testing testAssertionBasicImpl level: %v, lock: %v, lockIdx: %v, useCommonHandle: %v...",
+			c.level, c.lock, c.lockIdx, c.useCommonHandle,
+		)
+		testAssertionBasicImpl(c.level, c.lock, c.lockIdx, c.useCommonHandle)
 	}
 
 	testUntouchedIndexImpl := func(level string, pessimistic bool) {

@@ -458,8 +458,35 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
 		})
 
-		failpoint.Inject("mockBackfillSlow", func() {
-			time.Sleep(100 * time.Millisecond)
+		failpoint.Inject("mockBackfillSlow", func(val failpoint.Value) {
+			delay := 100 * time.Millisecond
+			switch v := val.(type) {
+			case bool:
+				if !v {
+					delay = 0
+				}
+			case int:
+				if v > 0 {
+					delay = time.Duration(v) * time.Millisecond
+				} else {
+					delay = 0
+				}
+			case int64:
+				if v > 0 {
+					delay = time.Duration(v) * time.Millisecond
+				} else {
+					delay = 0
+				}
+			case float64:
+				if v > 0 {
+					delay = time.Duration(v) * time.Millisecond
+				} else {
+					delay = 0
+				}
+			}
+			if delay > 0 {
+				time.Sleep(delay)
+			}
 		})
 
 		// Change the batch size dynamically.

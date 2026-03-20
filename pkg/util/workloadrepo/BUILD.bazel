@@ -63,6 +63,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/testkit/testflag",
         "//pkg/util/slice",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

@@ -15,12 +15,16 @@
 package applycache
 
 import (
+	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -100,38 +104,92 @@ func TestApplyCacheConcurrent(t *testing.T) {
 		require.Equal(t, int64(100), applyCacheKVMem(key[i], value[i]))
 	}
 
-	applyCache.Set(key[0], value[0])
+	ok, err := applyCache.Set(key[0], value[0])
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	rounds := 20
+	if testflag.Long() {
+		rounds = 100
+	}
+
+	ctx2, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 2)
+
+	waitNonNil := func(key []byte, timeout time.Duration) error {
+		deadline := time.Now().Add(timeout)
+		for {
+			if ctx2.Err() != nil {
+				return nil
+			}
+			result, err := applyCache.Get(key)
+			if err != nil {
+				return err
+			}
+			if result != nil {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return errors.New("timeout waiting apply cache entry")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-	var func1 = func() {
-		for range 100 {
-			for {
-				result, err := applyCache.Get(key[0])
-				require.NoError(t, err)
-				if result != nil {
-					applyCache.Set(key[1], value[1])
-					break
-				}
+
+	go func() {
+		defer wg.Done()
+		for range rounds {
+			if err := waitNonNil(key[0], time.Second); err != nil {
+				cancel()
+				errCh <- err
+				return
+			}
+			ok, err := applyCache.Set(key[1], value[1])
+			if err != nil {
+				cancel()
+				errCh <- err
+				return
+			}
+			if !ok {
+				cancel()
+				errCh <- errors.New("applyCache.Set unexpectedly returned ok=false")
+				return
 			}
 		}
-		wg.Done()
-	}
-	var func2 = func() {
-		for range 100 {
-			for {
-				result, err := applyCache.Get(key[1])
-				require.NoError(t, err)
-				if result != nil {
-					applyCache.Set(key[0], value[0])
-					break
-				}
+		errCh <- nil
+	}()
+
+	go func() {
+		defer wg.Done()
+		for range rounds {
+			if err := waitNonNil(key[1], time.Second); err != nil {
+				cancel()
+				errCh <- err
+				return
+			}
+			ok, err := applyCache.Set(key[0], value[0])
+			if err != nil {
+				cancel()
+				errCh <- err
+				return
+			}
+			if !ok {
+				cancel()
+				errCh <- errors.New("applyCache.Set unexpectedly returned ok=false")
+				return
 			}
 		}
-		wg.Done()
-	}
-	go func1()
-	go func2()
+		errCh <- nil
+	}()
+
 	wg.Wait()
+	for range 2 {
+		require.NoError(t, <-errCh)
+	}
 	result, err := applyCache.Get(key[0])
 	require.NoError(t, err)
 	require.NotNil(t, result)

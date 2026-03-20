@@ -92,7 +92,7 @@ func TestDDLScheduling(t *testing.T) {
 		record = append(record, job.ID)
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRunJobTime", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRunJobTime", `return(10)`)
 
 	wg.Wait()
 

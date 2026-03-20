@@ -1,7 +1,10 @@
 ---
 name: "\U0001F41B Bug Report"
 about: As a User, I want to report a Bug.
-labels: type/bug
+title: ''
+labels: ''
+assignees: ''
+
 ---
 
 ## Bug Report
@@ -19,4 +22,3 @@ Please answer these questions before submitting your issue. Thanks!
 ### 4. What is your TiDB version? (Required)
 
 <!-- Paste the output of SELECT tidb_version() -->
-

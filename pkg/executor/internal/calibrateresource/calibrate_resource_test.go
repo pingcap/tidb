@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -146,9 +147,11 @@ tiflash_proxy_tikv_server_cpu_cores_quota 20
 
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("69768"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD TPCC").Check(testkit.Rows("69768"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("55823"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY").Check(testkit.Rows("34926"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("109776"))
+	if testflag.Long() {
+		tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("55823"))
+		tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY").Check(testkit.Rows("34926"))
+		tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("109776"))
+	}
 
 	// change total tidb cpu to less than tikv_cpu_quota
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockGOMAXPROCS", "return(8)"))
@@ -225,6 +228,12 @@ tiflash_proxy_tikv_server_cpu_cores_quota 20
 		types.MakeDatums(datetimeBeforeNow(10*time.Second), "tikv-2", "tikv", 2.281),
 	}
 	mockData["process_cpu_usage"] = cpu1
+
+	if !testflag.Long() {
+		tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 11 minute END_TIME now()").Check(testkit.Rows("8161"))
+		tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION '11m'").Check(testkit.Rows("8161"))
+		return
+	}
 
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 11 minute").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION '11m'").Check(testkit.Rows("8161"))

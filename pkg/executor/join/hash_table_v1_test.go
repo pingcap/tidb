@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -165,6 +166,10 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 }
 
 func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("memory size assertions are only stable on linux/amd64")
+	}
+
 	m := NewConcurrentMapHashTable()
 	require.Equal(t, int64(77904), m.memDelta)
 	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.

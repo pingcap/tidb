@@ -550,8 +550,27 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 		return nil, err
 	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
-		if val.(bool) {
-			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
+		var maxSleepMs int64
+		switch v := val.(type) {
+		case bool:
+			if v {
+				maxSleepMs = 500
+			}
+		case int:
+			if v > 0 {
+				maxSleepMs = int64(v)
+			}
+		case int64:
+			if v > 0 {
+				maxSleepMs = v
+			}
+		case float64:
+			if v > 0 {
+				maxSleepMs = int64(v)
+			}
+		}
+		if maxSleepMs > 0 {
+			time.Sleep(time.Duration(rand.Int63n(maxSleepMs)) * time.Millisecond) // #nosec G404
 		}
 	})
 	txn, err := w.sess.Txn()

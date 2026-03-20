@@ -57,7 +57,7 @@ func TestHANodeRandomShutdown(t *testing.T) {
 }
 
 func TestHARandomShutdownInDifferentStep(t *testing.T) {
-	c := testutil.NewDXFContextWithRandomNodes(t, 6, 15)
+	c := testutil.NewDXFContextWithRandomNodes(t, 4, 8)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// they might overlap, but will leave at least 2 nodes running

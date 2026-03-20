@@ -854,9 +854,13 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 
 func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMergeTableTask, error) {
 	failpoint.Inject("testIndexMergeMainReturnEarly", func(_ failpoint.Value) {
-		// To make sure processWorker make resultCh to be full.
-		// When main goroutine close finished, processWorker may be stuck when writing resultCh.
-		time.Sleep(time.Second * 20)
+		// To make sure processWorker makes resultCh full.
+		// When main goroutine closes finished, processWorker may be stuck when writing resultCh.
+		// Use a bounded wait instead of sleeping 20s to avoid slowing down UT.
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for cap(e.resultCh) > 0 && len(e.resultCh) < cap(e.resultCh) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
 		failpoint.Return(nil, errors.New("failpoint testIndexMergeMainReturnEarly"))
 	})
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {

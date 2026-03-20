@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -152,16 +153,22 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
-		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
-			dom.SysProcTracker().KillSysProcess(id)
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			ids := handleutil.GlobalAutoAnalyzeProcessList.All()
+			if len(ids) > 0 || time.Now().After(deadline) {
+				for _, id := range ids {
+					dom.SysProcTracker().KillSysProcess(id)
+				}
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	})
-	sentTasks := 0
 TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
-			sentTasks++
 		case <-e.errExitCh:
 			break TASKLOOP
 		case <-gctx.Done():
@@ -181,24 +188,25 @@ TASKLOOP:
 	if err != nil {
 		err = normalizeCtxErrWithCause(ctx, err)
 	} else if ctx.Err() != nil {
-		// Preserve the original cancellation cause before follow-up work (for example stats cache update)
-		// can degrade it into a plain context error.
 		err = normalizeCtxErrWithCause(ctx, ctx.Err())
 	}
 	if err != nil {
-		for task := range taskCh {
-			finishJobWithLog(statsHandle, task.job, err)
-		}
-		for i := sentTasks; i < len(tasks); i++ {
-			finishJobWithLog(statsHandle, tasks[i].job, err)
-		}
+		finishRemainingAnalyzeJobsOnErr(statsHandle, tasks, err)
 		return err
 	}
 
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
-		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
-			dom.SysProcTracker().KillSysProcess(id)
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			ids := handleutil.GlobalAutoAnalyzeProcessList.All()
+			if len(ids) > 0 || time.Now().After(deadline) {
+				for _, id := range ids {
+					dom.SysProcTracker().KillSysProcess(id)
+				}
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
@@ -548,7 +556,9 @@ func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Conte
 		}
 	}()
 	return ctx, func() {
-		cancel(context.Canceled)
+		if ctx.Err() == nil && killer.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
+			cancel(context.Canceled)
+		}
 	}
 }
 
@@ -695,6 +705,22 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
 				zap.String("sample rate reason", job.SampleRateReason))
 		}
+	}
+}
+
+func finishRemainingAnalyzeJobsOnErr(statsHandle *handle.Handle, tasks []*analyzeTask, analyzeErr error) {
+	if analyzeErr == nil {
+		return
+	}
+	for _, task := range tasks {
+		job := task.job
+		if job == nil || job.ID == nil || !job.EndTime.IsZero() {
+			continue
+		}
+		if job.StartTime.IsZero() {
+			statsHandle.StartAnalyzeJob(job)
+		}
+		finishJobWithLog(statsHandle, job, analyzeErr)
 	}
 }
 

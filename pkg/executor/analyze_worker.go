@@ -16,11 +16,15 @@ package executor
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
@@ -85,6 +89,11 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			continue
 		}
 		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+		for retry := 0; isRetryableSaveStatsErr(err) && retry < 5; retry++ {
+			logutil.Logger(ctx).Warn("save table stats to storage failed, retrying", zap.Error(err), zap.Int("retry", retry+1))
+			time.Sleep(time.Duration(retry+1) * 100 * time.Millisecond)
+			err = statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+		}
 		if err != nil {
 			logutil.Logger(ctx).Warn("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(statsHandle, results.Job, err)
@@ -98,4 +107,16 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 		}
 		results.DestroyAndPutToPool()
 	}
+}
+
+func isRetryableSaveStatsErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if dbutil.IsRetryableError(err) || exeerrors.ErrDeadlock.Equal(err) || strings.Contains(err.Error(), exeerrors.ErrDeadlock.Error()) {
+		return true
+	}
+	// This error is produced by statement retry exhaustion during pessimistic locking; retrying the
+	// whole SaveAnalyzeResultToStorage usually succeeds in a new internal txn.
+	return strings.Contains(err.Error(), "pessimistic lock retry limit reached")
 }
