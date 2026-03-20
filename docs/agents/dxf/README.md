@@ -74,7 +74,7 @@ Use it to quickly find:
     preemption decisions.
 
 - Learning/edge-case references:
-  - `docs/note/import-into/README.md`: IMPORT INTO conflict-resolution and
+  - `docs/agents/import-into/README.md`: IMPORT INTO conflict-resolution and
     cleanup troubleshooting map.
   - `pkg/dxf/example/`: minimal DXF app skeleton (scheduler + executor extension
     wiring) useful when adding a new task type.
