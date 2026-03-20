@@ -46,6 +46,14 @@ type nextIOAcc struct {
 	inCells int64
 }
 
+func (a *nextIOAcc) reset() {
+	if a == nil {
+		return
+	}
+	stdatomic.StoreInt64(&a.inRows, 0)
+	stdatomic.StoreInt64(&a.inCells, 0)
+}
+
 func calcCellCount(rows, cols int) int64 {
 	if rows <= 0 || cols <= 0 {
 		return 0
@@ -65,6 +73,21 @@ func (a *nextIOAcc) addInput(rows, cols int) {
 type nextIOAccKeyType struct{}
 
 var nextIOAccKey nextIOAccKeyType
+
+type nextIOAccProvider interface {
+	reusableNextIOAcc() *nextIOAcc
+}
+
+func getReusableNextIOAcc(e Executor) *nextIOAcc {
+	if provider, ok := e.(nextIOAccProvider); ok {
+		return provider.reusableNextIOAcc()
+	}
+	return &nextIOAcc{}
+}
+
+func needNextIOAcc(trackRUV2 bool, parentAcc *nextIOAcc, childCount int) bool {
+	return childCount > 0 && (trackRUV2 || parentAcc != nil)
+}
 
 type ruv2ExecutorMetric struct {
 	label string
@@ -375,6 +398,7 @@ type BaseExecutorV2 struct {
 	executorKillerHandler
 	executorStats
 	executorChunkAllocator
+	nextIOAccState nextIOAcc
 }
 
 // NewBaseExecutorV2 creates a new BaseExecutorV2 instance.
@@ -419,6 +443,11 @@ func (*BaseExecutorV2) Next(_ context.Context, _ *chunk.Chunk) error {
 // Detach detaches the current executor from the session context.
 func (*BaseExecutorV2) Detach() (Executor, bool) {
 	return nil, false
+}
+
+func (e *BaseExecutorV2) reusableNextIOAcc() *nextIOAcc {
+	e.nextIOAccState.reset()
+	return &e.nextIOAccState
 }
 
 // BuildNewBaseExecutorV2 builds a new `BaseExecutorV2` based on the configuration of the current base executor.
@@ -551,13 +580,15 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 
 	parentAcc, _ := ctx.Value(nextIOAccKey).(*nextIOAcc)
 	info, trackRUV2 := ruv2ExecutorMetricByType[execType]
-	needLocalAcc := trackRUV2 || (parentAcc != nil && len(e.AllChildren()) > 0)
+	childCount := len(e.AllChildren())
+	needLocalAcc := needNextIOAcc(trackRUV2, parentAcc, childCount)
 	var myAcc *nextIOAcc
 	if needLocalAcc {
 		// Keep descendant IO local to this executor before optionally bubbling the
-		// executor output up to its parent. This avoids per-call allocations for
-		// executors that are outside the tracked RUv2 subtree.
-		myAcc = &nextIOAcc{}
+		// executor output up to its parent. Only executors with children need a
+		// local accumulator, and BaseExecutorV2-backed executors can reuse one
+		// across Next() calls.
+		myAcc = getReusableNextIOAcc(e)
 		ctx = context.WithValue(ctx, nextIOAccKey, myAcc)
 	}
 
@@ -579,8 +610,11 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return e.HandleSQLKillerSignal()
 	}
 
-	inRows := stdatomic.LoadInt64(&myAcc.inRows)
-	inCells := stdatomic.LoadInt64(&myAcc.inCells)
+	var inRows, inCells int64
+	if myAcc != nil {
+		inRows = stdatomic.LoadInt64(&myAcc.inRows)
+		inCells = stdatomic.LoadInt64(&myAcc.inCells)
+	}
 	outCells := calcCellCount(outRows, outCols)
 	// Dispatch both row-based and cell-based deltas; info.useCells filters each executor to its configured unit.
 	if inRows != 0 {
