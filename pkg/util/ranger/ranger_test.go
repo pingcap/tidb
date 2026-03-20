@@ -2141,6 +2141,82 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 
+func TestDetachCondAndBuildRangeForIndexWithFoldedFalseAccessCond(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null, key idx_ab(a, b))")
+
+	sctx := tk.Session()
+	selection := getSelectionFromQuery(t, sctx, "select * from t where a = 1 and b = 1")
+	tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
+	require.NotNil(t, cols)
+
+	condA, err := expression.NewFunctionBase(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), cols[0], expression.NewInt64Const(1))
+	require.NoError(t, err)
+	condB1, err := expression.NewFunctionBase(sctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), cols[1])
+	require.NoError(t, err)
+	condB2, err := expression.NewFunctionBase(sctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), cols[1])
+	require.NoError(t, err)
+	conditions := []expression.Expression{condA, condB1, condB2}
+
+	accessConds, _, _, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conditions, cols, lengths)
+	require.False(t, emptyRange)
+	require.Equal(t, "[eq(test.t.a, 1) 0]", expression.StringifyExpressionsWithCtx(sctx.GetExprCtx().GetEvalCtx(), accessConds))
+
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conditions, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res, "[]", "[]", "[]")
+}
+
+func TestDetachCondAndBuildRangeForIndexWithNullEQPoint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int, key idx_ab(a, b))")
+
+	sctx := tk.Session()
+	selection := getSelectionFromQuery(t, sctx, "select * from t where a = 1 and b is null")
+	tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
+	require.NotNil(t, cols)
+
+	condA, err := expression.NewFunctionBase(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), cols[0], expression.NewInt64Const(1))
+	require.NoError(t, err)
+	condB, err := expression.NewFunctionBase(sctx.GetExprCtx(), ast.NullEQ, types.NewFieldType(mysql.TypeTiny), cols[1], expression.NewNullWithFieldType(cols[1].GetStaticType()))
+	require.NoError(t, err)
+	conditions := []expression.Expression{condA, condB}
+
+	// `col <=> NULL` can be represented as a [null, null] point in points.go, but it is intentionally
+	// excluded from the eq-prefix extraction path. The exported detacher should still recover the precise
+	// null point by building a tail-column range from the remained condition.
+	accessConds, _, newConditions, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conditions, cols, lengths)
+	require.False(t, emptyRange)
+	require.Len(t, accessConds, 1)
+	require.Equal(t, ast.EQ, accessConds[0].(*expression.ScalarFunction).FuncName.L)
+	require.Len(t, newConditions, 1)
+	require.Equal(t, ast.NullEQ, newConditions[0].(*expression.ScalarFunction).FuncName.L)
+
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conditions, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Len(t, res.AccessConds, 2)
+	require.Equal(t, ast.EQ, res.AccessConds[0].(*expression.ScalarFunction).FuncName.L)
+	require.Equal(t, ast.NullEQ, res.AccessConds[1].(*expression.ScalarFunction).FuncName.L)
+	require.Empty(t, res.RemainedConds)
+	require.Len(t, res.Ranges, 1)
+	require.Len(t, res.Ranges[0].LowVal, 2)
+	require.Len(t, res.Ranges[0].HighVal, 2)
+	require.Equal(t, int64(1), res.Ranges[0].LowVal[0].GetInt64())
+	require.Equal(t, int64(1), res.Ranges[0].HighVal[0].GetInt64())
+	require.True(t, res.Ranges[0].LowVal[1].IsNull())
+	require.True(t, res.Ranges[0].HighVal[1].IsNull())
+	require.False(t, res.Ranges[0].LowExclude)
+	require.False(t, res.Ranges[0].HighExclude)
+}
+
 func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

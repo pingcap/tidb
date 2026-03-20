@@ -63,3 +63,45 @@
 
 - `go test -count=1 -run TestCacheable -tags=intest,deadlock ./pkg/planner/core/casetest/plancache`
 - `go test -count=1 -run TestPreparedPlanCacheWithCTE -tags=intest,deadlock ./pkg/planner/core/casetest/plancache`
+
+## 2026-03-11: Ranger Access Conditions Folded to Constant (Issue #63914)
+
+### Scope and Entry Points
+
+- Source file: `pkg/util/ranger/detacher.go`.
+- Entry point: `detachCNFCondAndBuildRangeForIndex`.
+- Regression test: `pkg/executor/prepared_test.go`, `TestPreparePlanCache4Function`.
+
+### Why Issue #63914 Happened
+
+- `ExtractEqAndInCondition` can fold a prefix access condition into
+  `*expression.Constant` during prepared execution.
+- The downstream range-detach path still assumes the access-condition prefix
+  only contains `*expression.ScalarFunction`.
+- When a folded constant remains inside `accessConds`, the later EQ-count loop
+  panics on the type assertion, and the connection is torn down by the panic.
+
+### Fix Direction
+
+- Normalize `accessConds` immediately after extraction, before any range build
+  or EQ-prefix counting.
+- Treat folded `false` / `null` as an empty range result.
+- Treat folded `true` as a broken prefix boundary and move suffix access
+  conditions back to `newConditions` so they are not counted as prefix EQ/IN
+  conditions.
+- Keep the fix local to the proven root-cause path instead of adding ad-hoc
+  handling for only the single-constant case.
+
+### Regression Shape to Keep
+
+- Prepared execution with repeated `<=>` predicates that fold to constants.
+- Multi-column index shape where a suffix condition would otherwise stay in the
+  prefix access chain after the folded constant.
+- Sanity check that follow-up statements on the same connection still succeed.
+
+### Targeted Validation Commands
+
+- `make lint`
+- `make failpoint-enable`
+- `go test -count=1 -run TestPreparePlanCache4Function -tags=intest,deadlock ./pkg/executor`
+- `make failpoint-disable`

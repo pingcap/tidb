@@ -359,6 +359,70 @@ func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 	return lhs
 }
 
+// normalizeConstantAccessConds keeps accessConds compatible with the prefix-range contract.
+// Once an access condition is folded into a constant:
+//   - false / null means the whole CNF item is unsatisfiable;
+//   - true means this index column no longer constrains the range, so suffix access conds
+//     cannot stay in the prefix chain and must fall back to newConditions.
+//
+// Examples:
+//   - accessConds = [a = 1, false, b = 2] => emptyRange = true.
+//   - accessConds = [a = 1, true, b = 2], newConditions = [c > 3]
+//     => normalizedAccessConds = [a = 1], normalizedNewConditions = [c > 3, b = 2].
+func normalizeConstantAccessConds(
+	sctx *rangerctx.RangerContext,
+	accessConds, newConditions []expression.Expression,
+) (
+	normalizedAccessConds []expression.Expression,
+	normalizedNewConditions []expression.Expression,
+	emptyRange bool,
+	err error,
+) {
+	brokenPrefix := -1
+	mutableConstantAccess := false
+	markSkipPlanCache := func() {
+		if mutableConstantAccess {
+			sctx.SetSkipPlanCache("some parameters may be overwritten")
+		}
+	}
+	for i, cond := range accessConds {
+		con, ok := cond.(*expression.Constant)
+		if !ok {
+			if brokenPrefix != -1 {
+				newConditions = append(newConditions, accessConds[i:]...)
+				markSkipPlanCache()
+				return accessConds[:brokenPrefix], newConditions, false, nil
+			}
+			continue
+		}
+		mutableConstantAccess = mutableConstantAccess || expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, con)
+		value, err := con.Eval(sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if value.IsNull() {
+			markSkipPlanCache()
+			return nil, nil, true, nil
+		}
+		isTrue, err := value.ToBool(sctx.TypeCtx)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if isTrue == 0 {
+			markSkipPlanCache()
+			return nil, nil, true, nil
+		}
+		if brokenPrefix == -1 {
+			brokenPrefix = i
+		}
+	}
+	if brokenPrefix != -1 {
+		markSkipPlanCache()
+		return accessConds[:brokenPrefix], newConditions, false, nil
+	}
+	return accessConds, newConditions, false, nil
+}
+
 // Check which detach result is more selective. This function is called to choose between point ranges and the best CNF ranges.
 // This is needed because sometimes the best CNF has full intersection and is more selective,
 // and other times it is not when the intersection is not applied.
@@ -398,10 +462,21 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if emptyRange {
 		return res, nil
 	}
-	var remainedConds []expression.Expression
-	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(len(accessConds), accessConds)
+	accessConds, newConditions, emptyRange, err = normalizeConstantAccessConds(d.sctx, accessConds, newConditions)
 	if err != nil {
 		return nil, err
+	}
+	if emptyRange {
+		return res, nil
+	}
+	var remainedConds []expression.Expression
+	if len(accessConds) == 0 {
+		ranges = FullRange()
+	} else {
+		ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(len(accessConds), accessConds)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(remainedConds) > 0 {
 		filterConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), filterConds, remainedConds)
