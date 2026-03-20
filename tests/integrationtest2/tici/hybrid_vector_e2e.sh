@@ -70,6 +70,8 @@ TIFLASH_ENGINE_VERSION=${TIFLASH_ENGINE_VERSION:-""}
 TIFLASH_ENGINE_GIT_HASH=${TIFLASH_ENGINE_GIT_HASH:-""}
 
 ROWS=${ROWS:-10000}
+HNSW_M=${HNSW_M:-16}
+HNSW_EF_CONSTRUCTION=${HNSW_EF_CONSTRUCTION:-200}
 WITHOUT_MONITOR=${WITHOUT_MONITOR:-1}
 REFRESH_TIUP_COMPONENTS=${REFRESH_TIUP_COMPONENTS:-1}
 
@@ -588,6 +590,8 @@ run_python_prepare() {
         --table hybrid_vector_docs \
         --index-name idx_hybrid_vector \
         --rows "${ROWS}" \
+        --hnsw-m "${HNSW_M}" \
+        --hnsw-ef-construction "${HNSW_EF_CONSTRUCTION}" \
         prepare
 }
 
@@ -615,6 +619,21 @@ run_python_recall() {
         --index-name idx_hybrid_vector \
         --rows "${ROWS}" \
         recall
+}
+
+run_python_bench() {
+    require_cmd python3
+    refresh_runtime_ports
+    python3 "${PYTHON_HELPER}" \
+        --host "${TIDB_HOST}" \
+        --port "${TIDB_PORT}" \
+        --database test \
+        --table hybrid_vector_docs \
+        --index-name idx_hybrid_vector \
+        --rows "${ROWS}" \
+        --bench-queries "${BENCH_QUERIES:-100}" \
+        --bench-k "${BENCH_K:-10}" \
+        bench
 }
 
 show_status() {
@@ -647,6 +666,7 @@ Commands:
   prepare   Prepare schema, create hybrid index, load data through CDC, and add delta data
   verify    Verify inverted/vector results and planner path
   recall    Run recall@K test (brute-force vs TiCI vector search)
+  bench     Run latency benchmark (vector search, brute-force, inverted)
   all       Run up + prepare + verify + recall
   status    Print TiUP status and playground display output
   down      Clean playground and stop the MinIO started by this script
@@ -686,6 +706,9 @@ main() {
             ;;
         recall)
             run_python_recall
+            ;;
+        bench)
+            run_python_bench
             ;;
         all)
             start_playground
