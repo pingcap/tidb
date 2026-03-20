@@ -63,7 +63,7 @@ type tidbResultSet struct {
 	// It ensures that only one goroutine can access the `Next`,`Finish` and `Close` functions at a time, preventing race conditions.
 	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
 	finishLock sync.Mutex
-	closed       int32
+	closed     int32
 }
 
 // CursorRUV2Tracker keeps reporting state for server-side cursor fetches.
