@@ -4206,17 +4206,16 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, pa
 
 	if len(partitionIDs) > 0 {
 		usePartitionStats = true
-		uniquePartitionStats := make([]*statistics.Table, 0, len(partitionIDs))
-		seen := make(map[int64]struct{}, len(partitionIDs))
-		for _, partitionID := range partitionIDs {
-			if _, ok := seen[partitionID]; ok {
-				continue
+		selectedPartitionID := partitionIDs[0]
+		singlePartitionSelected := true
+		for _, partitionID := range partitionIDs[1:] {
+			if partitionID != selectedPartitionID {
+				singlePartitionSelected = false
+				break
 			}
-			seen[partitionID] = struct{}{}
-			uniquePartitionStats = append(uniquePartitionStats, statsHandle.GetPhysicalTableStats(partitionID, tblInfo))
 		}
-		if len(uniquePartitionStats) == 1 {
-			statsTbl = uniquePartitionStats[0]
+		if singlePartitionSelected {
+			statsTbl = statsHandle.GetPhysicalTableStats(selectedPartitionID, tblInfo)
 		} else {
 			// Multi-partition selection falls back to the legacy global-stats path. This feature only uses
 			// selected partition stats when the effective partition set is exactly one partition.

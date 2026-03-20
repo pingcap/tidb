@@ -753,6 +753,8 @@ func TestDynamicPartitionPruneSelectedPartitionStatsFallsBackWithoutGlobalStats(
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
 	require.NoError(t, err)
 	globalStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	// Mutate the cached global stats entry in place so the planner still sees analyzed partition stats,
+	// but the multi-partition fallback path observes pseudo global stats on the next lookup.
 	*globalStats = *statistics.PseudoTable(tbl.Meta(), false, true)
 	require.True(t, globalStats.Pseudo)
 
