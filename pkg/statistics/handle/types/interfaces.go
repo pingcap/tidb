@@ -182,8 +182,9 @@ type StatsAnalyze interface {
 	HandleAutoAnalyze() (analyzed bool)
 
 	// ResolveAnalyzeVersion returns the analyze version to use for this table and whether it
-	// matches the requested session version.
-	ResolveAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) (resolvedVersion int, versionMatches bool)
+	// matches the requested session version. For partitioned tables it checks the global stats
+	// and every partition; for non-partitioned tables it checks the table stats alone.
+	ResolveAnalyzeVersion(tblInfo *model.TableInfo, requestedVersion int) (resolvedVersion int, versionMatches bool)
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)

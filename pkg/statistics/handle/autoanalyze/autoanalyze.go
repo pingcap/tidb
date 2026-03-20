@@ -294,17 +294,25 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 }
 
 // ResolveAnalyzeVersion returns the analyze version to use for the table and whether it
-// matches the requested session version.
-func (sa *statsAnalyze) ResolveAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) (int, bool) {
-	// We simply choose one physical id to get its stats.
-	var tbl *statistics.Table
-	for _, pid := range physicalIDs {
-		tbl = sa.statsHandle.GetPhysicalTableStats(pid, tblInfo)
-		if !tbl.Pseudo {
-			break
+// matches the requested session version. For partitioned tables it checks the global
+// stats and every partition; for non-partitioned tables it checks the table stats alone.
+func (sa *statsAnalyze) ResolveAnalyzeVersion(tblInfo *model.TableInfo, requestedVersion int) (int, bool) {
+	globalStats := sa.statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	if _, versionMatches := statistics.ResolveAnalyzeVersionOnTable(globalStats, requestedVersion); !versionMatches {
+		return requestedVersion, false
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return requestedVersion, true
+	}
+	for _, def := range pi.Definitions {
+		partitionStats := sa.statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
+		if _, versionMatches := statistics.ResolveAnalyzeVersionOnTable(partitionStats, requestedVersion); !versionMatches {
+			return requestedVersion, false
 		}
 	}
-	return statistics.ResolveAnalyzeVersionOnTable(tbl, requestedVersion)
+	return requestedVersion, true
 }
 
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.

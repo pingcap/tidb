@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -68,12 +69,20 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	require.True(t, h.HandleAutoAnalyze())
-	tk.MustQuery("select state from mysql.analyze_jobs").Check(testkit.Rows(
-		"finished",
-		"finished",
-		"finished",
-		"finished",
-		"finished",
-		"finished",
-		"finished"))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	pi := tbl.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+
+	p0Stats := h.GetPhysicalTableStats(pi.Definitions[0].ID, tbl.Meta())
+	require.False(t, p0Stats.Pseudo)
+	require.True(t, p0Stats.IsAnalyzed())
+
+	p2Stats := h.GetPhysicalTableStats(pi.Definitions[2].ID, tbl.Meta())
+	require.False(t, p2Stats.Pseudo)
+	require.True(t, p2Stats.IsAnalyzed())
+
+	tk.MustQuery("select distinct state from mysql.analyze_jobs").Check(testkit.Rows("finished"))
 }
