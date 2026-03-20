@@ -61,6 +61,7 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
+        "//pkg/config",
         "//pkg/kv",
         "//pkg/testkit/testsetup",
         "//pkg/util/execdetails",

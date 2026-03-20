@@ -90,7 +90,7 @@ func TestStatementRUV2RPCInterceptorWithGetterFollowsCurrentStatement(t *testing
 	metrics2 := execdetails.NewRUV2Metrics()
 	current := metrics1
 
-	it := NewStatementRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
+	it := newStatementRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
 		return current
 	})
 	require.NotNil(t, it)

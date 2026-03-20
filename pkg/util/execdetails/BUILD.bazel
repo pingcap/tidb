@@ -32,6 +32,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/config",
         "//pkg/kv",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_tipb//go-tipb",

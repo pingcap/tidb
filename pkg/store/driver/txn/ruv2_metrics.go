@@ -30,15 +30,15 @@ func NewStatementRUV2RPCInterceptor(ruv2Metrics *execdetails.RUV2Metrics) interc
 	if ruv2Metrics == nil {
 		return nil
 	}
-	return NewStatementRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
+	return newStatementRUV2RPCInterceptorWithGetter(func() *execdetails.RUV2Metrics {
 		return ruv2Metrics
 	})
 }
 
-// NewStatementRUV2RPCInterceptorWithGetter creates an interceptor that collects
+// newStatementRUV2RPCInterceptorWithGetter creates an interceptor that collects
 // statement-level RUv2 request counters and response-side metrics from
 // ExecDetailsV2.RuV2 using the metrics returned by getter at request time.
-func NewStatementRUV2RPCInterceptorWithGetter(getter func() *execdetails.RUV2Metrics) interceptor.RPCInterceptor {
+func newStatementRUV2RPCInterceptorWithGetter(getter func() *execdetails.RUV2Metrics) interceptor.RPCInterceptor {
 	if getter == nil {
 		return nil
 	}
