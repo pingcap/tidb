@@ -2392,6 +2392,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
+	var columns []*column.Info
+	columnCount := 0
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
@@ -2403,13 +2405,17 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	}
 	totalRows := 0
 	defer func() {
-		metrics.RUV2ResultChunkCells.Add(float64(totalRows * len(rs.Columns())))
+		cells := int64(totalRows) * int64(columnCount)
+		if cells <= 0 {
+			return
+		}
+		metrics.RUV2ResultChunkCells.Add(float64(cells))
 		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 		if ruv2Metrics == nil {
 			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
 		}
 		if ruv2Metrics != nil {
-			ruv2Metrics.AddResultChunkCells(int64(totalRows) * int64(len(rs.Columns())))
+			ruv2Metrics.AddResultChunkCells(cells)
 		}
 	}()
 	for {
@@ -2436,7 +2442,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
-			columns := rs.Columns()
+			columns = rs.Columns()
+			columnCount = len(columns)
 			if stmtDetail != nil {
 				start = time.Now()
 			}
@@ -2468,9 +2475,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		for i := range rowCount {
 			data = data[0:4]
 			if binary {
-				data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				data, err = column.DumpBinaryRow(data, columns, req.GetRow(i), cc.rsEncoder)
 			} else {
-				data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				data, err = column.DumpTextRow(data, columns, req.GetRow(i), cc.rsEncoder)
 			}
 			if err != nil {
 				reg.End()

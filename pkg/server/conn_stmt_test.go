@@ -71,6 +71,24 @@ func (*mockCursorTrackerRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
 
+type firstNextErrRecordSet struct{}
+
+func (*firstNextErrRecordSet) Fields() []*resolve.ResultField {
+	panic("Fields should not be called before the first successful Next")
+}
+
+func (*firstNextErrRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return fmt.Errorf("first next failed")
+}
+
+func (*firstNextErrRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*firstNextErrRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &firstNextErrRecordSet{}
+
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
@@ -199,6 +217,22 @@ func TestCursorWithParams(t *testing.T) {
 		expectedTotal := ruv2Metrics.CalculateRUValues(weights)
 		require.Equal(t, float64(expectedTotal), reporter.tidbRUV2)
 		require.Equal(t, ruDetails.TiKVRUV2(), reporter.tikvRUV2)
+	})
+
+	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		c := CreateMockConn(t, srv).(*mockConn)
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		rs := resultset.New(&firstNextErrRecordSet{}, nil)
+
+		retryable, err := c.writeChunks(ctx, rs, false, mysql.ServerStatusAutocommit)
+		require.True(t, retryable)
+		require.ErrorContains(t, err, "first next failed")
+		require.Zero(t, execdetails.RUV2MetricsFromContext(ctx).ResultChunkCells())
 	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
