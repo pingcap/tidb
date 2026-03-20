@@ -204,4 +204,8 @@ func TestCompareCandidatesPreferSaferEqualityPathForIncomparableRisk(t *testing.
 	result, missingStats := compareCandidates(ctx.GetPlanCtx(), nil, prop, saferEqPath, riskyRangePath, false)
 	require.Equal(t, 1, result)
 	require.False(t, missingStats)
+
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), nil, prop, riskyRangePath, saferEqPath, false)
+	require.Equal(t, -1, result)
+	require.False(t, missingStats)
 }
