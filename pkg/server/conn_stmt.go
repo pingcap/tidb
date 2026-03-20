@@ -464,7 +464,9 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 
 	vars := (&cc.ctx).GetSessionVars()
 	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
-	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx, false))
+	// The execute phase may already have accumulated RU before the first cursor fetch arrives.
+	// Seed the tracker from the current totals so FETCH/CLOSE only reports post-execute deltas.
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx, true))
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return true, err
 }
