@@ -4216,6 +4216,12 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, pa
 		}
 		if singlePartitionSelected {
 			statsTbl = statsHandle.GetPhysicalTableStats(selectedPartitionID, tblInfo)
+			if statsTbl.Pseudo || !statsTbl.IsInitialized() {
+				// Selected partition stats are only useful when the single-partition stats entry is valid.
+				// If it is pseudo or not initialized yet, fall back to the analyzed global stats instead.
+				usePartitionStats = false
+				statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+			}
 		} else {
 			// Multi-partition selection falls back to the legacy global-stats path. This feature only uses
 			// selected partition stats when the effective partition set is exactly one partition.
