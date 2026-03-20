@@ -364,7 +364,7 @@ const (
 
 	// PingKaiDB Enterprise Edit functions
 	ArrayElementAt = "array_element"
-	XPath          = "xpath"
+	ExtractValue   = "extractvalue"
 
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"

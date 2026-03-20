@@ -965,7 +965,7 @@ var funcs = map[string]functionClass{
 
 	// PingKaiDB Enterprise Edit functions
 	ast.ArrayElementAt: &arrayElementFunctionClass{baseFunctionClass{ast.ArrayElementAt, 2, -1}},
-	ast.XPath:          &xpathFunctionClass{baseFunctionClass{ast.XPath, 2, 2}},
+	ast.ExtractValue:   &extractValueFunctionClass{baseFunctionClass{ast.ExtractValue, 2, 2}},
 
 	// vector functions (TiDB extension)
 	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},

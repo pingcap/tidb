@@ -104,22 +104,22 @@ func (b *builtinArrayElementSig) evalJSON(ctx EvalContext, row chunk.Row) (res t
 	return res, false, nil
 }
 
-// xpathFunctionClass's logic is basically the same as that of jsonExtractFunctionClass.
-type xpathFunctionClass struct {
+// extractValueFunctionClass's logic is basically the same as that of jsonExtractFunctionClass.
+type extractValueFunctionClass struct {
 	baseFunctionClass
 }
 
-type builtinXPathSig struct {
+type builtinExtractValueSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinXPathSig) Clone() builtinFunc {
-	newSig := &builtinXPathSig{}
+func (b *builtinExtractValueSig) Clone() builtinFunc {
+	newSig := &builtinExtractValueSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *xpathFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *extractValueFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -132,11 +132,11 @@ func (c *xpathFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinXPathSig{bf}
+	sig := &builtinExtractValueSig{bf}
 	return sig, nil
 }
 
-func (b *builtinXPathSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
+func (b *builtinExtractValueSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
 	var xmlValue, path string
 	xmlValue, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
@@ -148,15 +148,15 @@ func (b *builtinXPathSig) evalString(ctx EvalContext, row chunk.Row) (res string
 	}
 	doc, err := xmlquery.Parse(strings.NewReader(xmlValue))
 	if err != nil {
-		return res, isNull, err
+		ctx.AppendWarning(types.ErrWrongValue2.FastGenByArgs("XML value", err.Error()))
+		return "", true, nil
 	}
-	buf := strings.Builder{}
-	for _, node := range xmlquery.Find(doc, path) {
-		if buf.Len() > 0 {
-			buf.WriteString(",")
-		}
-		buf.WriteString(node.InnerText())
+	result, err := evalExtractValue(doc, path)
+	if err != nil {
+		return "", false, err
 	}
-	res = buf.String()
-	return res, false, nil
+	if result.isScalar {
+		return result.scalar, false, nil
+	}
+	return renderExtractValueMatches(doc, result.matches), false, nil
 }

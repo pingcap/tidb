@@ -92,12 +92,62 @@ func TestXMLType(t *testing.T) {
 	tk.MustExec("insert into t values (1, '<root>v1</root>'), (2, '<root>v2</root>'), (3, '<root>v3</root>');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 <root>v1</root>", "2 <root>v2</root>", "3 <root>v3</root>"))
 
-	// test built-in function xpath
+	// test built-in function extractvalue
 	cases := []struct {
 		xml    string
 		path   string
 		result string
 	}{
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a",
+			result: "a1 a2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/b",
+			result: "b1 b2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/b/c",
+			result: "c1",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/@aa1",
+			result: "aa1",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/@aa2",
+			result: "aa2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/@*",
+			result: "aa1 aa2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "//*",
+			result: "a1 b1 c1 b2 a2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a//*",
+			result: "b1 c1 b2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/b/c/ancestor::*",
+			result: "a1 b1 b2 a2",
+		},
+		{
+			xml:    `<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>`,
+			path:   "/a/b/c/ancestor-or-self::*",
+			result: "a1 b1 c1 b2 a2",
+		},
 		{
 			xml:    `<book id="1" category="database"><title>TiDB-Guide</title><author>Someone</author><price>39.9</price></book>`,
 			path:   "//book/title",
@@ -148,7 +198,7 @@ func TestXMLType(t *testing.T) {
 				<author>Jerry</author>
 			  </authors>`,
 			path:   "//author",
-			result: "Tom,Jerry",
+			result: "Tom Jerry",
 		},
 		{
 			xml:    `<data>hello</data>`,
@@ -181,15 +231,70 @@ func TestXMLType(t *testing.T) {
 			path:   `//server[@port="5000"]/@name`,
 			result: "db2",
 		},
+		{
+			xml:    `<a><b>v</b></a>`,
+			path:   "/a",
+			result: "",
+		},
+		{
+			xml:    `<a><![CDATA[x]]><b>v</b><![CDATA[y]]></a>`,
+			path:   "/a",
+			result: "x y",
+		},
+		{
+			xml:    `<a>a1<b>v</b>a2</a>`,
+			path:   "/a/text()",
+			result: "a1 a2",
+		},
+		{
+			xml:    `<a>a</a>`,
+			path:   `/a | /a/text()`,
+			result: "a",
+		},
+		{
+			xml:    `<a><b>b1</b><b>b2</b></a>`,
+			path:   `string-length("x")`,
+			result: "1",
+		},
+		{
+			xml:    `<a><b>B</b></a>`,
+			path:   `string-length(/a)`,
+			result: "0",
+		},
+		{
+			xml:    `<ns:element xmlns:ns="myns"/>`,
+			path:   `count(ns:element)`,
+			result: "1",
+		},
 	}
 	tk.MustExec("delete from t;")
 	for i, ca := range cases {
 		sql := fmt.Sprintf("insert into t values ( %d, '%s');", i, ca.xml)
 		tk.MustExec(sql)
 		tk.MustQuery(fmt.Sprintf("select b from t where a = %d;", i)).Check(testkit.Rows(ca.xml))
-		tk.MustQuery(fmt.Sprintf("select xpath(b, '%s') from t where a = %d;", ca.path, i)).Check(testkit.Rows(ca.result))
-		tk.MustQuery(fmt.Sprintf("select xpath('%s', '%s')", ca.xml, ca.path)).Check(testkit.Rows(ca.result))
+		tk.MustQuery(fmt.Sprintf("select extractvalue(b, '%s') from t where a = %d;", ca.path, i)).Check(testkit.Rows(ca.result))
+		tk.MustQuery(fmt.Sprintf("select extractvalue('%s', '%s')", ca.xml, ca.path)).Check(testkit.Rows(ca.result))
 	}
+
+	tk.MustExec(`SET @xml = '<a>\n  <b>v</b>\n</a>'`)
+	rows := tk.MustQuery(`SELECT EXTRACTVALUE(@xml, '/a/text()')`).Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 1)
+	require.Equal(t, "\n   \n", rows[0][0])
+	tk.MustQuery(`SELECT HEX(EXTRACTVALUE(@xml, '/a/text()'))`).Check(testkit.Rows("0A2020200A"))
+	tk.MustQuery(`SELECT LENGTH(EXTRACTVALUE(@xml, '/a/text()'))`).Check(testkit.Rows("5"))
+
+	tk.MustQuery(`select extractvalue('<a><b></a>', '/a')`).Check(testkit.Rows("<nil>"))
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, warnings, 1)
+	require.Equal(t, "Warning", warnings[0][0])
+	require.Equal(t, "1525", warnings[0][1])
+	require.Contains(t, warnings[0][2], "Incorrect XML value")
+
+	err := tk.QueryToErr(`select extractvalue('<a>1</a>', '/a[')`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "1105")
+	require.Contains(t, err.Error(), "XPATH syntax error: '/a['")
 
 	// Test valid xml value when inserting.
 	values := []string{

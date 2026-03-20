@@ -672,6 +672,7 @@ eq
 exp
 export_set
 extract
+extractvalue
 field
 find_in_set
 floor
@@ -904,7 +905,6 @@ weekday
 weekofyear
 weight_string
 xor
-xpath
 year
 yearweek
 SHOW INDEX FROM performance_schema.events_statements_summary_by_digest;
