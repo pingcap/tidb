@@ -18,10 +18,29 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
+
+func defaultRUV2WeightsForTest() execdetails.RUV2Weights {
+	cfg := config.DefaultRUV2Config()
+	return execdetails.RUV2Weights{
+		RUScale:                 cfg.RUScale,
+		ResultChunkCells:        cfg.ResultChunkCells,
+		ExecutorL1:              cfg.ExecutorL1,
+		ExecutorL2:              cfg.ExecutorL2,
+		ExecutorL3:              cfg.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		SessionParserTotal:      cfg.SessionParserTotal,
+		TxnCnt:                  cfg.TxnCnt,
+	}
+}
 
 func TestStatementRUV2RPCInterceptor(t *testing.T) {
 	ruv2Metrics := execdetails.NewRUV2Metrics()
@@ -55,7 +74,7 @@ func TestStatementRUV2RPCInterceptor(t *testing.T) {
 	_, err = wrapFn("tikv-1", writeReq)
 	require.NoError(t, err)
 
-	snapshot := ruv2Metrics.Snapshot(execdetails.DefaultRUV2Weights())
+	snapshot := ruv2Metrics.Snapshot(defaultRUV2WeightsForTest())
 	require.Equal(t, int64(1), snapshot.ResourceManagerReadCnt)
 	require.Equal(t, int64(1), snapshot.ResourceManagerWriteCnt)
 	require.Equal(t, int64(9), snapshot.TiKVStorageProcessedKeysBatchGet)
@@ -102,8 +121,8 @@ func TestStatementRUV2RPCInterceptorWithGetterFollowsCurrentStatement(t *testing
 	_, err = wrapFn("tikv-1", &tikvrpc.Request{Type: tikvrpc.CmdPrewrite, StoreTp: tikvrpc.TiKV})
 	require.NoError(t, err)
 
-	require.Equal(t, int64(1), metrics1.Snapshot(execdetails.DefaultRUV2Weights()).ResourceManagerReadCnt)
-	require.Equal(t, int64(0), metrics1.Snapshot(execdetails.DefaultRUV2Weights()).ResourceManagerWriteCnt)
-	require.Equal(t, int64(1), metrics2.Snapshot(execdetails.DefaultRUV2Weights()).ResourceManagerWriteCnt)
-	require.Equal(t, int64(0), metrics2.Snapshot(execdetails.DefaultRUV2Weights()).ResourceManagerReadCnt)
+	require.Equal(t, int64(1), metrics1.Snapshot(defaultRUV2WeightsForTest()).ResourceManagerReadCnt)
+	require.Equal(t, int64(0), metrics1.Snapshot(defaultRUV2WeightsForTest()).ResourceManagerWriteCnt)
+	require.Equal(t, int64(1), metrics2.Snapshot(defaultRUV2WeightsForTest()).ResourceManagerWriteCnt)
+	require.Equal(t, int64(0), metrics2.Snapshot(defaultRUV2WeightsForTest()).ResourceManagerReadCnt)
 }

@@ -21,11 +21,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
+
+func defaultRUV2WeightsForTest() RUV2Weights {
+	cfg := config.DefaultRUV2Config()
+	return RUV2Weights{
+		RUScale:                 cfg.RUScale,
+		ResultChunkCells:        cfg.ResultChunkCells,
+		ExecutorL1:              cfg.ExecutorL1,
+		ExecutorL2:              cfg.ExecutorL2,
+		ExecutorL3:              cfg.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		SessionParserTotal:      cfg.SessionParserTotal,
+		TxnCnt:                  cfg.TxnCnt,
+	}
+}
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
@@ -317,7 +336,7 @@ func TestCopRuntimeStats(t *testing.T) {
 }
 
 func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
-	weights := DefaultRUV2Weights()
+	weights := defaultRUV2WeightsForTest()
 	snapshot := RUV2MetricsSnapshot{
 		ResultChunkCells:        1000,
 		ExecutorL1:              map[string]int64{"TableReader": 5, "Projection": 7},
@@ -362,7 +381,7 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
-	weights := DefaultRUV2Weights()
+	weights := defaultRUV2WeightsForTest()
 	metrics := NewRUV2Metrics()
 	metrics.AddResultChunkCells(1000)
 	metrics.AddPlanCnt(2)
@@ -382,7 +401,7 @@ func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
 }
 
 func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
-	weights := DefaultRUV2Weights()
+	weights := defaultRUV2WeightsForTest()
 	formatted := FormatRUV2Metrics(RUV2MetricsSnapshot{
 		ResultChunkCells:                 1000,
 		ResourceManagerWriteCnt:          20,
@@ -411,7 +430,7 @@ func TestRUV2RuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
 			TiKVRU:    200,
 			TiFlashRU: 300,
 		},
-		Weights: DefaultRUV2Weights(),
+		Weights: defaultRUV2WeightsForTest(),
 	}
 
 	require.Equal(t, "RU:500.00", stats.String())

@@ -159,7 +159,20 @@ func TestCursorWithParams(t *testing.T) {
 		ruv2Metrics.AddPlanCnt(2)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
 		ruDetails.AddTiKVRUV2(11)
-		weights := execdetails.DefaultRUV2Weights()
+		weights := execdetails.RUV2Weights{
+			RUScale:                 cfg.RUV2.RUScale,
+			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+			ExecutorL1:              cfg.RUV2.ExecutorL1,
+			ExecutorL2:              cfg.RUV2.ExecutorL2,
+			ExecutorL3:              cfg.RUV2.ExecutorL3,
+			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+			PlanCnt:                 cfg.RUV2.PlanCnt,
+			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+			TxnCnt:                  cfg.RUV2.TxnCnt,
+		}
 		baselineTiDBRU := ruv2Metrics.Snapshot(weights).CalculateRUValues(weights)
 
 		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights, true)

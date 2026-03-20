@@ -44,25 +44,6 @@ type RUV2Weights struct {
 	TxnCnt                  float64
 }
 
-// DefaultRUV2Weights returns the built-in default RU v2 weights.
-func DefaultRUV2Weights() RUV2Weights {
-	return RUV2Weights{
-		RUScale: 5697.054498,
-
-		ResultChunkCells:        0.00010000,
-		ExecutorL1:              0.00013278,
-		ExecutorL2:              0.00000383,
-		ExecutorL3:              0.00141739,
-		ExecutorL5InsertRows:    0.00472572,
-		PlanCnt:                 0.15392217,
-		PlanDeriveStatsPaths:    0.24968182,
-		ResourceManagerReadCnt:  0.02072003,
-		ResourceManagerWriteCnt: 0.07179779,
-		SessionParserTotal:      0.19230499,
-		TxnCnt:                  0.03013709,
-	}
-}
-
 // RUV2MetricsCtxKey is used to carry statement-level RUv2 metrics in context.Context.
 var RUV2MetricsCtxKey = ruv2MetricsKeyType{}
 
