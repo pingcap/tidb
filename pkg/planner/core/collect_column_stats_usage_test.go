@@ -341,10 +341,11 @@ func TestCollectHistNeededColumns(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
 	tests := []struct {
-		pruneMode     string
-		sql           string
-		res           []string
-		expandedParts map[string][]string
+		pruneMode            string
+		sql                  string
+		res                  []string
+		expandedParts        map[string][]string
+		dynamicExpandedParts map[string][]string
 	}{
 		{
 			sql: "select * from t where a > 2",
@@ -390,6 +391,15 @@ func TestCollectHistNeededColumns(t *testing.T) {
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
 			res:       []string{"pt1.b full", "pt1.ptn full"},
+			// In failpoint-enabled binaries, forceDynamicPrune keeps the plan on the true dynamic-pruning path.
+			// For this multi-partition query, the selected-partition-stats path is not used, so no expanded
+			// physical partitions are recorded. Without failpoint injection, the mock planner falls back to
+			// static pruning because the mock table has no global stats, and we then observe the expanded
+			// physical partitions stored in expandedParts.
+			expandedParts: map[string][]string{
+				"pt1": {"pt1.p1", "pt1.p2"},
+			},
+			dynamicExpandedParts: map[string][]string{},
 		},
 	}
 
@@ -422,6 +432,46 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, tt.expandedParts, comment)
+		expectedParts := tt.expandedParts
+		if tt.pruneMode == "dynamic" && s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
+			expectedParts = tt.dynamicExpandedParts
+		}
+		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, expectedParts, comment)
 	}
+}
+
+func TestCollectHistNeededColumnsForSingleSelectedPartitionStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
+	s := createPlannerSuite()
+	defer s.Close()
+
+	s.ctx.GetSessionVars().PartitionPruneMode.Store("dynamic")
+	s.ctx.GetSessionVars().EnableSelectedPartitionStats = true
+	s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+
+	sql := "select * from pt1 where ptn < 10 and b > 1"
+	comment := fmt.Sprintf("sql: %s, pruneMode: dynamic, selectedPartitionStats: true", sql)
+
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, comment)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), nodeW)
+	require.NoError(t, err, comment)
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok, comment)
+
+	flags := builder.GetOptFlag()
+	flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
+	lp, err = logicalOptimize(context.Background(), flags, lp)
+	require.NoError(t, err, comment)
+	checkColumnStatsUsageForStatsLoad(t, s.is, lp,
+		[]string{"pt1.b full", "pt1.ptn full"},
+		map[string][]string{"pt1": {"pt1.p1"}},
+		comment,
+	)
 }

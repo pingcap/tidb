@@ -2600,6 +2600,10 @@ var defaultSysVars = []*SysVar{
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableSelectedPartitionStats, Value: BoolToOnOff(DefTiDBOptEnableSelectedPartitionStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSelectedPartitionStats = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, SetSession: func(s *SessionVars, val string) error {
 		s.MultiStatementMode = TiDBOptOnOffWarn(val)
 		return nil

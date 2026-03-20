@@ -53,8 +53,11 @@ type columnStatsUsageCollector struct {
 	// visitedtbls indicates the visited table
 	visitedtbls map[int64]struct{}
 
-	// tblID2PartitionIDs is used for tables with static pruning mode.
-	// Note that we've no longer suggested to use static pruning mode.
+	// tblID2PartitionIDs records extra physical partitions whose stats should be considered for a logical table ID.
+	// It is populated in two cases:
+	// 1. static partition pruning, where one logical table expands to multiple partition children; and
+	// 2. selected partition stats under dynamic pruning, where the datasource stays dynamic but already knows the
+	//    effective partition set.
 	tblID2PartitionIDs map[int64][]int64
 }
 
@@ -135,7 +138,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *log
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	c.visitedPhysTblIDs.Insert(int(tblID))
-	if tblID != ds.PhysicalTableID {
+	if len(ds.StaticPrunedPartitionIDs) > 0 {
+		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.StaticPrunedPartitionIDs...)
+	} else if tblID != ds.PhysicalTableID {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {
@@ -288,9 +293,10 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // The predicate columns are always collected while the histNeeded columns are depending on whether we use sync load.
 // First return value: predicate columns
-// Second return value: the visited table IDs(For partition table, we only record its global meta ID. The meta ID of each partition will be recorded in tblID2PartitionIDs)
-// Third return value: the visited partition IDs. Used for static partition pruning.
-// TODO: remove the third return value when the static partition pruning is totally deprecated.
+// Second return value: the visited table IDs. For partition tables, we only record the logical table ID here.
+// Any extra physical partition IDs that should also be considered will be returned in the third result.
+// Third return value: extra physical partition IDs keyed by logical table ID. This is used both by static
+// partition pruning and by selected partition stats under dynamic pruning.
 func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,

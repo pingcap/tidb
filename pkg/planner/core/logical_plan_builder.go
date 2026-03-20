@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -4176,7 +4177,7 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
-func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, partitionIDs []int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
@@ -4201,7 +4202,30 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if len(partitionIDs) > 0 {
+		usePartitionStats = true
+		selectedPartitionID := partitionIDs[0]
+		singlePartitionSelected := true
+		for _, partitionID := range partitionIDs[1:] {
+			if partitionID != selectedPartitionID {
+				singlePartitionSelected = false
+				break
+			}
+		}
+		if singlePartitionSelected {
+			statsTbl = statsHandle.GetPhysicalTableStats(selectedPartitionID, tblInfo)
+			if statsTbl.Pseudo || !statsTbl.IsInitialized() {
+				// Selected partition stats are only useful when the single-partition stats entry is valid.
+				// If it is pseudo or not initialized yet, fall back to the analyzed global stats instead.
+				usePartitionStats = false
+				statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+			}
+		} else {
+			// Multi-partition selection falls back to the legacy global-stats path. This feature only uses
+			// selected partition stats when the effective partition set is exactly one partition.
+			statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		}
+	} else if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		usePartitionStats = true
@@ -4522,6 +4546,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
+		hasGlobalIndex := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
+			return idx.Global
+		})
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
 		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -4556,6 +4583,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 							fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
 					}
+				} else if b.ctx.GetSessionVars().EnableSelectedPartitionStats && !hasGlobalIndex && len(tn.PartitionNames) == 0 {
+					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 				}
 			}
 		}
@@ -4832,10 +4861,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && b.optFlag&rule.FlagPartitionProcessor == 0 {
-			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
-			// Not using old static prune mode
-			// Single TableReader for all partitions, needs the PhysTblID from storage
+		if tableInfo.Partition != nil && sessionVars.StmtCtx.UseDynamicPruneMode {
+			// UnionScan only needs the hidden physical table ID when the execution still uses
+			// dynamic partition pruning. Static pruning already materializes per-partition children.
 			_ = addExtraPhysTblIDColumn4DS(ds)
 		}
 		result = us
