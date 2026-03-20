@@ -1,6 +1,3 @@
-//go:build !cgo
-// +build !cgo
-
 // Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,41 +31,42 @@ var (
 
 	// ErrNativeFctNameCollision indicates a native function name collision error.
 	//
-	// Keep it defined in non-cgo builds so other packages can depend on it without
-	// needing to care about cgo availability.
+	// Keep it defined even when UDF is disabled so other packages can depend on it
+	// without needing to care about build tags.
 	ErrNativeFctNameCollision = dbterror.ClassExpression.NewStd(mysql.ErrNativeFctNameCollision)
 )
 
 // loadableFuncs stores the loadable functions created by CREATE FUNCTION ... SONAME ...
 // The key is the lowercase function name, and the value is *loadableFuncClass.
 //
-// In non-cgo builds, this should remain empty because loadable functions (UDF)
-// are not supported; it still exists to keep the expression package compiling.
+// Loadable functions (UDF) are intentionally not implemented in this build.
+// Keep the map to make other expression code compile (e.g. constant folding and
+// function resolution paths).
 var loadableFuncs sync.Map
 
 var logLoadableFunctionUnsupportedOnce sync.Once
 
 func logLoadableFunctionUnsupported() {
 	logLoadableFunctionUnsupportedOnce.Do(func() {
-		logutil.BgLogger().Warn("loadable functions (UDF) are disabled because TiDB is built with CGO_ENABLED=0")
+		logutil.BgLogger().Warn("loadable functions (UDF) are not implemented")
 	})
 }
 
 func loadableFunctionUnsupportedErr() error {
-	return errLoadableFunctionNotSupported.FastGenByArgs("loadable functions (UDF) require cgo; rebuild with CGO_ENABLED=1")
+	return errLoadableFunctionNotSupported.FastGenByArgs("loadable functions (UDF)")
 }
 
 // LoadableFunctionDef is the definition for a loadable function.
 //
-// In non-cgo builds it's kept as an opaque placeholder so dependent code (e.g. DDL
-// worker / infoschema reload) can compile, but it cannot be used to execute a UDF.
+// It's kept as an opaque placeholder so dependent code (e.g. DDL worker /
+// infoschema reload) can compile, but it cannot be used to execute a UDF.
 type LoadableFunctionDef struct{}
 
-// Drop releases the shared object handle. In non-cgo builds it's a no-op.
+// Drop releases the shared object handle. It's a no-op when UDF is disabled.
 func (d *LoadableFunctionDef) Drop() {}
 
 // LoadUDF loads a loadable function from a shared object file.
-// Non-cgo builds do not support this feature.
+// This build does not support this feature.
 func LoadUDF(soName, funcName string, funcRetType types.EvalType) (*LoadableFunctionDef, error) {
 	logLoadableFunctionUnsupported()
 	_ = soName
@@ -78,7 +76,7 @@ func LoadUDF(soName, funcName string, funcRetType types.EvalType) (*LoadableFunc
 }
 
 // ValidateLoadableFunctionDef validates the loadable function definition.
-// Non-cgo builds do not support this feature.
+// This build does not support this feature.
 func ValidateLoadableFunctionDef(def *LoadableFunctionDef) error {
 	logLoadableFunctionUnsupported()
 	_ = def
@@ -86,7 +84,7 @@ func ValidateLoadableFunctionDef(def *LoadableFunctionDef) error {
 }
 
 // CreateLoadableFunction registers a loadable function to the system.
-// Non-cgo builds do not support this feature.
+// This build does not support this feature.
 func CreateLoadableFunction(def *LoadableFunctionDef) (exist bool, err error) {
 	logLoadableFunctionUnsupported()
 	_ = def
@@ -127,7 +125,7 @@ func HasLoadableFunction(name string) bool {
 }
 
 // loadableFuncClass is a stub implementation to keep compilation working when
-// cgo is disabled. It should never be used to execute a UDF.
+// UDF is disabled. It should never be used to execute a UDF.
 type loadableFuncClass struct {
 	baseFunctionClass
 }

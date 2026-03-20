@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 )
 
@@ -31,48 +32,7 @@ const maxRoutineCommentLen = 65535
 func (e *executor) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProcedureInfo) error {
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	if stmt.FunctionInfo.IsLoadable {
-		currentUser := ctx.GetSessionVars().User
-		if currentUser != nil {
-			// Align with MySQL: creating loadable UDF requires INSERT privilege on mysql.func.
-			checker := privilege.GetPrivilegeManager(ctx)
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, mysql.SystemDB, "func", "", mysql.InsertPriv) {
-				return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", currentUser.AuthUsername, currentUser.AuthHostname, "func")
-			}
-		}
-
-		dbInfo, ok := is.SchemaByName(pmodel.NewCIStr(mysql.SystemDB))
-		if !ok {
-			return exeerrors.ErrBadDB.GenWithStackByArgs(mysql.SystemDB)
-		}
-
-		funcInfo := &model.LoadableFunctionInfo{
-			Name:       stmt.ProcedureName.Name,
-			ReturnType: stmt.FunctionInfo.LoadableReturnType,
-			SoName:     stmt.FunctionInfo.SoName,
-		}
-		job := &model.Job{
-			Version:        model.GetJobVerInUse(),
-			SchemaID:       dbInfo.ID,
-			SchemaName:     mysql.SystemDB,
-			TableName:      funcInfo.Name.L,
-			Type:           model.ActionCreateProcedure,
-			BinlogInfo:     &model.HistoryInfo{},
-			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-			InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-				Database: mysql.SystemDB,
-				Table:    funcInfo.Name.L,
-			}},
-			SQLMode: ctx.GetSessionVars().SQLMode,
-		}
-		args := &model.CreateProcedureArgs{LoadableFunctionInfo: funcInfo}
-		if err := e.doDDLJob2(ctx, job, args); err != nil {
-			if stmt.IfNotExists && exeerrors.ErrUdfExists.Equal(err) {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				return nil
-			}
-			return errors.Trace(err)
-		}
-		return nil
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("CREATE FUNCTION ... SONAME")
 	}
 
 	procName := stmt.ProcedureName.Name
@@ -300,50 +260,8 @@ func (e *executor) DropProcedure(ctx sessionctx.Context, stmt *ast.DropProcedure
 	return nil
 }
 
-func (e *executor) dropLoadableFunction(ctx sessionctx.Context, stmt *ast.DropProcedureStmt) error {
-	funcName := stmt.Name.Name
-	currentUser := ctx.GetSessionVars().User
-	if currentUser != nil {
-		checker := privilege.GetPrivilegeManager(ctx)
-		// Align with MySQL: dropping loadable UDF requires DELETE privilege on mysql.func.
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, mysql.SystemDB, "func", "", mysql.DeletePriv) {
-			return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", currentUser.AuthUsername, currentUser.AuthHostname, "func")
-		}
-	}
-
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr(mysql.SystemDB))
-	if !ok {
-		return exeerrors.ErrBadDB.GenWithStackByArgs(mysql.SystemDB)
-	}
-	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
-		SchemaID:       dbInfo.ID,
-		SchemaName:     mysql.SystemDB,
-		TableName:      funcName.L,
-		Type:           model.ActionDropProcedure,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: mysql.SystemDB,
-			Table:    funcName.L,
-		}},
-		SQLMode: ctx.GetSessionVars().SQLMode,
-	}
-	args := &model.DropProcedureArgs{
-		Name:             funcName,
-		Type:             stmt.Type(),
-		IfExists:         stmt.IfExists,
-		LoadableFunction: true,
-	}
-	if err := e.doDDLJob2(ctx, job, args); err != nil {
-		if stmt.IfExists && exeerrors.ErrSpDoesNotExist.Equal(err) {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			return nil
-		}
-		return errors.Trace(err)
-	}
-	return nil
+func (e *executor) dropLoadableFunction(sessionctx.Context, *ast.DropProcedureStmt) error {
+	return dbterror.ErrNotSupportedYet.GenWithStackByArgs("DROP FUNCTION (UDF)")
 }
 
 func (e *executor) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedureStmt) error {

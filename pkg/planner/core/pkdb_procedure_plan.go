@@ -96,19 +96,9 @@ func (b *PlanBuilder) ensureRoutineSchema(name *ast.TableName) (string, error) {
 }
 
 func (b *PlanBuilder) preprocessCreateProcedure(ctx context.Context, node *ast.CreateProcedureInfo) error {
-	// CREATE FUNCTION ... SONAME ... (loadable UDF) has no body / params and is stored in mysql.func.
-	// The regular stored routine validation path (buildCallBodyPlan, schema checks, etc.) doesn't apply.
+	// CREATE FUNCTION ... SONAME ... (loadable UDF) is not implemented in this build.
 	if node.FunctionInfo.IsLoadable {
-		currentUser := b.ctx.GetSessionVars().User
-		checker := privilege.GetPrivilegeManager(b.ctx)
-		activeRoles := b.ctx.GetSessionVars().ActiveRoles
-		if currentUser != nil {
-			// Align with MySQL: creating loadable UDF requires INSERT privilege on mysql.func.
-			if checker != nil && !checker.RequestVerification(activeRoles, mysql.SystemDB, "func", "", mysql.InsertPriv) {
-				return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", currentUser.AuthUsername, currentUser.AuthHostname, "func")
-			}
-		}
-		return checkRoutineName(node.ProcedureName.Name.O)
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("CREATE FUNCTION ... SONAME")
 	}
 
 	routineSchema, err := b.ensureRoutineSchema(node.ProcedureName)
@@ -186,42 +176,34 @@ func (b *PlanBuilder) preprocessDropProcedure(node *ast.DropProcedureStmt) error
 		return nil
 	}
 
-	checkDropLoadableFunctionPrivilege := func() error {
-		if currentUser != nil {
-			// Align with MySQL: dropping loadable UDF requires DELETE privilege on mysql.func.
-			if checker != nil && !checker.RequestVerification(activeRoles, mysql.SystemDB, "func", "", mysql.DeletePriv) {
-				return exeerrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", currentUser.AuthUsername, currentUser.AuthHostname, "func")
-			}
-		}
-		return nil
-	}
-
 	// DROP FUNCTION can target either:
 	// 1) stored routine FUNCTION (mysql.routines), or
 	// 2) loadable UDF (mysql.func).
 	//
 	// Keep the schema part untouched for the unqualified DROP FUNCTION case, so the executor can
 	// decide the target consistently (see ddl.executor.DropProcedure).
-		if node.IsFunction {
-			routineSchema := node.Name.Schema.O
-			// Qualified name always targets stored routine.
-			if routineSchema == "" {
-				currentDB := b.ctx.GetSessionVars().CurrentDB
-				if currentDB != "" {
-					// If a stored function exists in current DB, treat it as stored routine; otherwise fall back to UDF.
-					exists, err := b.checkRoutineExists(currentDB, node.Name.Name.O, node.Type())
-					if err != nil {
-						return err
-					}
-					if exists {
-						routineSchema = currentDB
-					}
+	if node.IsFunction {
+		routineSchema := node.Name.Schema.O
+		// Qualified name always targets stored routine.
+		if routineSchema == "" {
+			currentDB := b.ctx.GetSessionVars().CurrentDB
+			if currentDB != "" {
+				// If a stored function exists in current DB, treat it as stored routine; otherwise fall back to UDF.
+				exists, err := b.checkRoutineExists(currentDB, node.Name.Name.O, node.Type())
+				if err != nil {
+					return err
+				}
+				if exists {
+					routineSchema = currentDB
 				}
 			}
+		}
 
 		// Unqualified & no routine found => loadable UDF (mysql.func).
 		if routineSchema == "" {
-			return checkDropLoadableFunctionPrivilege()
+			// Keep building the DDL plan and leave the decision to executor. The executor
+			// will return "not supported yet" if the statement targets a loadable UDF.
+			return nil
 		}
 
 		// Stored routine FUNCTION: require ALTER ROUTINE privilege.
