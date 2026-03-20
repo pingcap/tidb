@@ -261,6 +261,9 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
+	// ignoreTruncateErrForViewPredicateFolding narrows truncate relaxation to
+	// constant predicate folding while expanding a view.
+	ignoreTruncateErrForViewPredicateFolding bool
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
 	// isCreateView indicates whether the query is create view.

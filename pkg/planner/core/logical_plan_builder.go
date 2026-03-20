@@ -975,16 +975,18 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	}
 	cnfExpres := make([]expression.Expression, 0)
 	useCache := b.ctx.GetSessionVars().StmtCtx.UseCache()
+	foldEvalCtx := b.ctx.GetExprCtx().GetEvalCtx()
+	if b.ignoreTruncateErrForViewPredicateFolding {
+		// View definitions are built as SELECTs even when they are expanded inside
+		// an outer DML statement, so only that planner-time predicate folding path
+		// should ignore truncate errors like `WHERE ''`.
+		foldEvalCtx = exprctx.CtxWithHandleTruncateErrLevel(b.ctx.GetExprCtx(), errctx.LevelIgnore).GetEvalCtx()
+	}
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && expression.ConstExprConsiderPlanCache(con, useCache) {
-				// Constant predicate folding during planning should not inherit the
-				// outer statement's truncate handling. For view expansion inside DML,
-				// expressions like `WHERE ''` are planned as part of a SELECT and
-				// should not be rejected as invalid view definitions.
-				exprCtx := exprctx.CtxWithHandleTruncateErrLevel(b.ctx.GetExprCtx(), errctx.LevelIgnore)
-				ret, _, err := expression.EvalBool(exprCtx.GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(foldEvalCtx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -5189,6 +5191,13 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 		b.hintProcessor = originHintProcessor
 		b.hintState = originHintState
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+	}()
+	// Only relax truncate handling while folding constant predicates in this
+	// view expansion. Keep the outer statement semantics unchanged.
+	originIgnoreTruncateErrForViewPredicateFolding := b.ignoreTruncateErrForViewPredicateFolding
+	b.ignoreTruncateErrForViewPredicateFolding = true
+	defer func() {
+		b.ignoreTruncateErrForViewPredicateFolding = originIgnoreTruncateErrForViewPredicateFolding
 	}()
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
