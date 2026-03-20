@@ -443,7 +443,7 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 		}
 	}()
 	crs := resultset.WrapWithRowContainerCursor(rs, reader)
-	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx, true))
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	if cl, ok := crs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
@@ -466,12 +466,12 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
 	// The execute phase may already have accumulated RU before the first cursor fetch arrives.
 	// Seed the tracker from the current totals so FETCH/CLOSE only reports post-execute deltas.
-	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx, true))
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return true, err
 }
 
-func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context, baselineReported bool) *resultset.CursorRUV2Tracker {
+func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
 	if ruv2Metrics == nil && ruDetails == nil {
@@ -484,7 +484,7 @@ func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context, baselineReport
 		reporter = dctx.RUConsumptionReporter
 		resourceGroupName = dctx.ResourceGroupName
 	}
-	return resultset.NewCursorRUV2Tracker(reporter, resourceGroupName, ruv2Metrics, ruDetails, cc.ctx.GetSessionVars().RUV2Weights(), baselineReported)
+	return resultset.NewCursorRUV2Tracker(reporter, resourceGroupName, ruv2Metrics, ruDetails, cc.ctx.GetSessionVars().RUV2Weights())
 }
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between

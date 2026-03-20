@@ -85,7 +85,6 @@ func NewCursorRUV2Tracker(
 	metrics *execdetails.RUV2Metrics,
 	ruDetails *clientutil.RUDetails,
 	weights execdetails.RUV2Weights,
-	baselineReported bool,
 ) *CursorRUV2Tracker {
 	if metrics == nil && ruDetails == nil {
 		return nil
@@ -97,13 +96,11 @@ func NewCursorRUV2Tracker(
 		ruDetails:         ruDetails,
 		weights:           weights,
 	}
-	if baselineReported {
-		if metrics != nil {
-			tracker.reportedTiDBRU = metrics.CalculateRUValues(weights)
-		}
-		if ruDetails != nil {
-			tracker.reportedTiKVRUV2 = ruDetails.TiKVRUV2()
-		}
+	if metrics != nil {
+		tracker.reportedTiDBRU = metrics.CalculateRUValues(weights)
+	}
+	if ruDetails != nil {
+		tracker.reportedTiKVRUV2 = ruDetails.TiKVRUV2()
 	}
 	return tracker
 }

@@ -193,7 +193,7 @@ func TestCursorWithParams(t *testing.T) {
 		}
 		baselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
 
-		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights, true)
+		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights)
 		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
 		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
 		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
@@ -208,15 +208,6 @@ func TestCursorWithParams(t *testing.T) {
 		require.Equal(t, "rg1", reporter.tikvGroup)
 		require.Equal(t, float64(7), reporter.tikvRUV2)
 
-		trackerNoBaseline := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights, false)
-		rsNoBaseline := resultset.New(&mockCursorTrackerRecordSet{}, nil)
-		resultset.AttachCursorRUV2Tracker(rsNoBaseline, trackerNoBaseline)
-		reporter.tidbRUV2 = 0
-		reporter.tikvRUV2 = 0
-		resultset.ReportCursorRUV2Delta(rsNoBaseline, 4)
-		expectedTotal := ruv2Metrics.CalculateRUValues(weights)
-		require.Equal(t, float64(expectedTotal), reporter.tidbRUV2)
-		require.Equal(t, ruDetails.TiKVRUV2(), reporter.tikvRUV2)
 	})
 
 	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
