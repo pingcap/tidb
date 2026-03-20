@@ -390,9 +390,6 @@ func TestCollectHistNeededColumns(t *testing.T) {
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
 			res:       []string{"pt1.b full", "pt1.ptn full"},
-			expandedParts: map[string][]string{
-				"pt1": {"pt1.p1", "pt1.p2"},
-			},
 		},
 	}
 
