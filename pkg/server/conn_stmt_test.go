@@ -207,7 +207,6 @@ func TestCursorWithParams(t *testing.T) {
 		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
 		require.Equal(t, "rg1", reporter.tikvGroup)
 		require.Equal(t, float64(7), reporter.tikvRUV2)
-
 	})
 
 	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
