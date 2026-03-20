@@ -106,8 +106,8 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/afero v1.11.0
-	github.com/spf13/cobra v1.8.1
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/cobra v1.9.1
+	github.com/spf13/pflag v1.0.6
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.10.0
@@ -154,6 +154,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
+	git.pingcap.net/pingkai/tigateway v0.0.0-20260122130635-3c63f1ad0439 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/antchfx/xpath v1.3.5 // indirect
 	github.com/cockroachdb/errors v1.11.3 // indirect
@@ -195,7 +196,7 @@ require (
 	github.com/apache/thrift v0.21.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
-	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chavacava/garif v0.1.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
@@ -325,6 +326,12 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 	stathat.com/c/consistent v1.0.0 // indirect
 )
+
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260319090131-1b48a0dae99e
+
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204
+
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260320025932-85bedded2396
 
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.

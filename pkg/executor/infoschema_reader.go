@@ -247,6 +247,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromSchemaPrivileges(ctx, sctx)
 		case infoschema.TableRegions:
 			err = e.setDataForTableRegions(ctx, sctx)
+		case infoschema.TableLogReplStatusGlobal:
+			err = e.setDataForLogReplStatusGlobal(ctx, sctx)
+		case infoschema.TableLogReplClusterStatusGlobal:
+			err = e.setDataForLogReplClusterStatusGlobal(ctx, sctx)
+		case infoschema.TableLogReplWorkflowHistoryGlobal:
+			err = e.setDataForLogReplWorkflowHistoryGlobal(ctx, sctx)
+		case infoschema.TableLogReplStatusLocal:
+			err = e.setDataForLogReplStatusLocal(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1677,6 +1685,13 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx ses
 		return err
 	}
 	for _, storeStat := range storesStat.Stores {
+		// skip display replicator store
+		if slices.ContainsFunc(storeStat.Store.Labels, func(l pd.StoreLabel) bool {
+			return l.Key == placement.EngineLabelKey && l.Value == placement.EngineLabelReplicator
+		}) {
+			continue
+		}
+
 		row := make([]types.Datum, len(infoschema.TableTiKVStoreStatusCols))
 		row[0].SetInt64(storeStat.Store.ID)
 		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
@@ -1861,6 +1876,11 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
+		// skip display replicator server
+		if server.ServerType == tikvrpc.Replicator.Name() {
+			continue
+		}
+
 		upTimeStr := ""
 		startTimeNative := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 		if server.StartTimestamp > 0 {

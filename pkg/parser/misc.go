@@ -996,6 +996,22 @@ var tokenMap = map[string]int{
 	"FAILED_LOGIN_ATTEMPTS":          failedLoginAttempts,
 	"PASSWORD_LOCK_TIME":             passwordLockTime,
 	"REUSE":                          reuse,
+
+	// pkdb
+	"ACTIVATE":             activate,
+	"SWITCHOVER":           switchover,
+	"STANDBY":              standby,
+	"CLUSTER_ID":           clusterId,
+	"MAXIMUM_AVAILABILITY": maximumAvailability,
+	"MAXIMUM_PERFORMANCE":  maximumPerformance,
+	"MAXIMUM_PROTECTION":   maximumProtection,
+	"PROTECTION_MODE":      protectionMode,
+	"SOURCE_HOST":          sourceHost,
+	"SOURCE_PORT":          sourcePort,
+	"SOURCE_USER":          sourceUser,
+	"SOURCE_PASSWORD":      sourcePassword,
+	"DEGRADE_TIMEOUT":      degradeTimeout,
+	"FORCE_COMMIT":         forceCommit,
 }
 
 // See https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html for details.

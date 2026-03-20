@@ -5001,6 +5001,14 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
 		case infoschema.TableRegions:
 			p.Extractor = &TableRegionsExtractor{}
+		case infoschema.TableLogReplStatusGlobal:
+			p.Extractor = &LogReplStatusGlobalExtractor{}
+		case infoschema.TableLogReplClusterStatusGlobal:
+			p.Extractor = &LogReplClusterStatusGlobalExtractor{}
+		case infoschema.TableLogReplWorkflowHistoryGlobal:
+			p.Extractor = &LogReplWorkflowHistoryGlobalExtractor{}
+		case infoschema.TableLogReplStatusLocal:
+			p.Extractor = &LogReplStatusLocalExtractor{}
 		}
 	}
 	return p, nil

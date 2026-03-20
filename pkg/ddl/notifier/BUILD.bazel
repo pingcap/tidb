@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/session",
+        "//pkg/domain/pkdb_repl",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/owner",

@@ -336,6 +336,10 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	case *plannercore.GetDiagnostics:
 		return b.buildGetDiagnosticsExec(v)
 	default:
+		e := b.pkdbBuild(p)
+		if e != nil {
+			return e
+		}
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
 		}
@@ -2433,7 +2437,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
 			strings.ToLower(infoschema.TableSchemaPrivileges),
-			strings.ToLower(infoschema.TableRegions):
+			strings.ToLower(infoschema.TableRegions),
+			strings.ToLower(infoschema.TableLogReplStatusGlobal),
+			strings.ToLower(infoschema.TableLogReplClusterStatusGlobal),
+			strings.ToLower(infoschema.TableLogReplWorkflowHistoryGlobal),
+			strings.ToLower(infoschema.TableLogReplStatusLocal):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

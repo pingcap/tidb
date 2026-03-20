@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1853,7 +1854,10 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	case ast.AdminLBACEnable:
 		ret = &Simple{Statement: as}
 	default:
-		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
+		ret, err = b.pkdbBuildAdmin(ctx, as)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Admin command can only be executed by administrator.
@@ -4060,7 +4064,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			p.StaleTxnStartTS = readTS
 			// consume read ts here
 			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-		} else if b.ctx.GetSessionVars().EnableExternalTSRead && !b.ctx.GetSessionVars().InRestrictedSQL {
+		} else if (b.ctx.GetSessionVars().EnableExternalTSRead && !b.ctx.GetSessionVars().InRestrictedSQL) || pkdbrepl.IsStandbyMode() {
 			// try to get the stale ts from external timestamp
 			startTS, err := staleread.GetExternalTimestamp(ctx, b.ctx.GetSessionVars().StmtCtx)
 			if err != nil {

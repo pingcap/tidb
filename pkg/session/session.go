@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
@@ -2230,7 +2231,7 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead && !pkdbrepl.IsStandbyMode() || vars.InRestrictedSQL {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"

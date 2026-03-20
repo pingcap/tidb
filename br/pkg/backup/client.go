@@ -42,6 +42,8 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -464,11 +466,30 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	if ts > 0 {
 		backupTS = ts
 	} else {
-		p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
+		pdCli := bc.mgr.GetPDClient()
+
+		var isStandby bool
+		logReplStatus, err := pdCli.GetLogReplLocalStatus(ctx)
 		if err != nil {
-			return 0, errors.Trace(err)
+			s, ok := status.FromError(err)
+			isUnimplemented := ok && s.Code() == codes.Unimplemented
+			if !isUnimplemented {
+				return 0, errors.Trace(err)
+			}
+		} else {
+			isStandby = logReplStatus.GetStatus().GetSourceClusterId() > 0
 		}
-		backupTS = oracle.ComposeTS(p, l)
+
+		if isStandby {
+			backupTS = logReplStatus.GetStatus().GetCheckpointTs()
+		} else {
+			p, l, err := pdCli.GetTS(ctx)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			backupTS = oracle.ComposeTS(p, l)
+		}
+		l := oracle.ExtractLogical(backupTS)
 
 		switch {
 		case duration < 0:

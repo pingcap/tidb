@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -205,6 +206,8 @@ func (m *JobManager) jobLoop() error {
 		m.reportMetrics(se)
 		m.taskManager.reportMetrics()
 		now := se.Now()
+
+		pkdbrepl.CheckStandbyBlocking(m.ctx)
 
 		select {
 		// misc

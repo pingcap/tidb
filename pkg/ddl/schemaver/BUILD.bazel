@@ -11,7 +11,14 @@ go_library(
     deps = [
         "//pkg/ddl/logutil",
         "//pkg/ddl/util",
+<<<<<<< HEAD
         "//pkg/domain/infosync",
+||||||| parent of aba8cebcd5 (Implement log replication (!579))
+        "//pkg/domain/serverinfo",
+=======
+        "//pkg/domain/pkdb_repl",
+        "//pkg/domain/serverinfo",
+>>>>>>> aba8cebcd5 (Implement log replication (!579))
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util",

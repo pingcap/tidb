@@ -1025,6 +1025,7 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 			strings.HasPrefix(tableName, "METRICS_") ||
 			strings.HasPrefix(tableName, "TIFLASH_") ||
 			strings.HasPrefix(tableName, "TIKV_") ||
+			strings.HasPrefix(tableName, "LR_") ||
 			strings.HasPrefix(tableName, "USER_") ||
 			tableName == "TABLE_STORAGE_STATS" ||
 			strings.Contains(tableName, "REGION") {

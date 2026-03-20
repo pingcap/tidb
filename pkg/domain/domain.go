@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -787,12 +788,26 @@ func (do *Domain) Reload() error {
 	defer do.m.Unlock()
 
 	startTime := time.Now()
-	ver, err := do.store.CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return err
+	var version uint64
+	if pkdbrepl.IsStandbyMode() {
+		realStore, ok := do.store.(kv.StorageWithPD)
+		if !ok {
+			return errors.New("standby replication requires pd client")
+		}
+		ts, _, err := realStore.GetPDHTTPClient().GetMinResolvedTSByStoresIDs(context.Background(), nil)
+		if err != nil {
+			return err
+		}
+		version = ts
+	} else {
+		ver, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return err
+		}
+
+		version = ver.Ver
 	}
 
-	version := ver.Ver
 	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version, false)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
@@ -833,7 +848,7 @@ func (do *Domain) Reload() error {
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
-	if sub > (lease/2) && lease > 0 {
+	if sub > (lease/2) && lease > 0 && !pkdbrepl.IsStandbyMode() {
 		logutil.BgLogger().Warn("loading schema takes a long time", zap.Duration("take time", sub))
 	}
 
@@ -1422,6 +1437,11 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
 			do.deferFn.check()
+		case <-pkdbrepl.StandbyInfoSchemaReloadTickCh:
+			err := do.Reload()
+			if err != nil {
+				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+			}
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
@@ -1714,6 +1734,12 @@ func (do *Domain) Init(
 		do.ddlExecutor = checker
 	}
 
+	// special step for log replication. Must use correct standby mode before any
+	// actions, because TiKV may have inconsistent data and we must use min resolved
+	// TS to read inside standby mode even for the first read.
+	pkdbrepl.InitStandby(do.ctx, do.etcdClient)
+	go pkdbrepl.WatchRestart(do.etcdClient, do.exit, do)
+
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
@@ -1817,6 +1843,9 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.auditComponentsLoop, "auditComponentsLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
+	do.wg.Run(func() {
+		pkdbrepl.WatchStandby(do.ctx, do.etcdClient, do)
+	}, "WatchStandby")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
@@ -2398,6 +2427,10 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					bindHandle.CaptureBaselines()
 				}
 			case <-gcBindTicker.C:
+				// GCBinding deletes rows from mysql.bind_info and should be skipped in standby mode.
+				if pkdbrepl.IsStandbyMode() {
+					continue
+				}
 				if !owner.IsOwner() {
 					continue
 				}
@@ -3002,6 +3035,9 @@ func (do *Domain) gcStatsWorker() {
 			do.gcStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
+			if pkdbrepl.IsStandbyMode() {
+				continue
+			}
 			if !do.statsOwner.IsOwner() {
 				continue
 			}
@@ -3078,6 +3114,7 @@ func (do *Domain) autoAnalyzeWorker() {
 	for {
 		select {
 		case <-analyzeTicker.C:
+			pkdbrepl.CheckStandbyBlocking(do.ctx)
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			} else if !variable.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {

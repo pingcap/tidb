@@ -680,6 +680,10 @@ type createFunctionPrefix struct {
 	some                       "SOME"
 	soname                     "SONAME"
 	source                     "SOURCE"
+	sourceHost                 "SOURCE_HOST"
+	sourcePassword             "SOURCE_PASSWORD"
+	sourcePort                 "SOURCE_PORT"
+	sourceUser                 "SOURCE_USER"
 	sqlBufferResult            "SQL_BUFFER_RESULT"
 	sqlCache                   "SQL_CACHE"
 	sqlNoCache                 "SQL_NO_CACHE"
@@ -800,6 +804,7 @@ type createFunctionPrefix struct {
 	follower              "FOLLOWER"
 	followerConstraints   "FOLLOWER_CONSTRAINTS"
 	followers             "FOLLOWERS"
+	forceCommit           "FORCE_COMMIT"
 	fullBackupStorage     "FULL_BACKUP_STORAGE"
 	gcTTL                 "GC_TTL"
 	getFormat             "GET_FORMAT"
@@ -892,6 +897,7 @@ type createFunctionPrefix struct {
 	watch                 "WATCH"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
+	activate                   "ACTIVATE"
 	admin                      "ADMIN"
 	batch                      "BATCH"
 	buckets                    "BUCKETS"
@@ -925,10 +931,12 @@ type createFunctionPrefix struct {
 	builtinVarSamp
 	cancel                     "CANCEL"
 	cardinality                "CARDINALITY"
+	clusterId                  "CLUSTER_ID"
 	cmSketch                   "CMSKETCH"
 	columnStatsUsage           "COLUMN_STATS_USAGE"
 	correlation                "CORRELATION"
 	ddl                        "DDL"
+	degradeTimeout             "DEGRADE_TIMEOUT"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
 	distribute                 "DISTRIBUTE"
@@ -938,10 +946,14 @@ type createFunctionPrefix struct {
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
 	jobs                       "JOBS"
+	maximumAvailability        "MAXIMUM_AVAILABILITY"
+	maximumPerformance         "MAXIMUM_PERFORMANCE"
+	maximumProtection          "MAXIMUM_PROTECTION"
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
+	protectionMode             "PROTECTION_MODE"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -950,6 +962,7 @@ type createFunctionPrefix struct {
 	samples                    "SAMPLES"
 	sessionStates              "SESSION_STATES"
 	split                      "SPLIT"
+	standby                    "STANDBY"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
@@ -959,6 +972,7 @@ type createFunctionPrefix struct {
 	statsLocked                "STATS_LOCKED"
 	statsMeta                  "STATS_META"
 	statsTopN                  "STATS_TOPN"
+	switchover                 "SWITCHOVER"
 	tidb                       "TIDB"
 	tiFlash                    "TIFLASH"
 	topn                       "TOPN"
@@ -1671,6 +1685,17 @@ type createFunctionPrefix struct {
 	StatementInformation                   "The diagnostics statement information"
 	ConditionInformation                   "The diagnostics condition information"
 	DiagnosticsInformationItemName         "The diagnostics condition information name"
+	AdminCreateLogReplication              "Admin create log replication statement"
+	AdminAlterLogReplication               "Admin alter log replication statement"
+	AdminPauseLogReplication               "Admin pause log replication statement"
+	AdminResumeLogReplication              "Admin resume log replication statement"
+	AdminDropLogReplication                "Admin drop log replication statement"
+	AdminSwitchOverPrimary                 "Admin switchover primary statement"
+	AdminActivateStandby                   "Admin activate standby statement"
+	ActivateStandbyMode                    "Activate standby mode"
+	LogReplicationOptList                  "Log replication option list"
+	LogReplicationOpt                      "Log replication option"
+	ProtectionMode                         "Log replication protection mode"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -7195,6 +7220,10 @@ UnReservedKeyword:
 |	"IPC"
 |	"SWAPS"
 |	"SOURCE"
+|	"SOURCE_HOST"
+|	"SOURCE_PORT"
+|	"SOURCE_USER"
+|	"SOURCE_PASSWORD"
 |	"TRADITIONAL"
 |	"SQL_BUFFER_RESULT"
 |	"DIRECTORY"
@@ -7369,7 +7398,8 @@ UnReservedKeyword:
 |	"SECURITYLABEL"
 
 TiDBKeyword:
-	"ADMIN"
+	"ACTIVATE"
+|	"ADMIN"
 |	"BATCH"
 |	"BUCKETS"
 |	"BUILTINS"
@@ -7391,6 +7421,7 @@ TiDBKeyword:
 |	"SAMPLES"
 |	"SAMPLERATE"
 |	"SESSION_STATES"
+|	"STANDBY"
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_BUCKETS"
@@ -7413,6 +7444,13 @@ TiDBKeyword:
 |	"RESET"
 |	"DRY"
 |	"RUN"
+|	"CLUSTER_ID"
+|	"SWITCHOVER"
+|	"MAXIMUM_AVAILABILITY"
+|	"MAXIMUM_PERFORMANCE"
+|	"MAXIMUM_PROTECTION"
+|	"PROTECTION_MODE"
+|	"DEGRADE_TIMEOUT"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -7488,6 +7526,7 @@ NotKeywordToken:
 |	"STALENESS"
 |	"STRONG"
 |	"FLASHBACK"
+|	"FORCE_COMMIT"
 |	"JSON_OBJECTAGG"
 |	"JSON_ARRAYAGG"
 |	"TLS"
@@ -11804,6 +11843,55 @@ AdminStmt:
 			Tp:              ast.AdminAlterDDLJob,
 			JobNumber:       $5.(int64),
 			AlterJobOptions: $6.([]*ast.AlterJobOption),
+		}
+	}
+|	"ADMIN" AdminCreateLogReplication
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                   ast.AdminCreateLogReplication,
+			CreateLogReplication: $2.(*ast.CreateLogReplication),
+		}
+	}
+|	"ADMIN" AdminAlterLogReplication
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                  ast.AdminAlterLogReplication,
+			AlterLogReplication: $2.(*ast.AlterLogReplication),
+		}
+	}
+|	"ADMIN" AdminPauseLogReplication
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                  ast.AdminPauseLogReplication,
+			PauseLogReplication: $2.(*ast.PauseLogReplication),
+		}
+	}
+|	"ADMIN" AdminResumeLogReplication
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                   ast.AdminResumeLogReplication,
+			ResumeLogReplication: $2.(*ast.ResumeLogReplication),
+		}
+	}
+|	"ADMIN" AdminDropLogReplication
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                 ast.AdminDropLogReplication,
+			DropLogReplication: $2.(*ast.DropLogReplication),
+		}
+	}
+|	"ADMIN" AdminSwitchOverPrimary
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                ast.AdminSwitchOverPrimary,
+			SwitchOverPrimary: $2.(*ast.SwitchOverPrimary),
+		}
+	}
+|	"ADMIN" AdminActivateStandby
+	{
+		$$ = &ast.AdminStmt{
+			Tp:              ast.AdminActivateStandby,
+			ActivateStandby: $2.(*ast.ActivateStandby),
 		}
 	}
 
@@ -18076,5 +18164,149 @@ DiagnosticsInformationItemName:
 |	"RETURNED_SQLSTATE"
 	{
 		$$ = ast.TIRETURNEDSQLSTATE
+	}
+
+AdminCreateLogReplication:
+	"CREATE" "LOG" "REPLICATION" Identifier LogReplicationOptList
+	{
+		$$ = &ast.CreateLogReplication{
+			Name: model.NewCIStr($4),
+			Opts: $5.([]*ast.LogReplicationOpt),
+		}
+	}
+
+AdminAlterLogReplication:
+	"ALTER" "LOG" "REPLICATION" Identifier LogReplicationOptList
+	{
+		$$ = &ast.AlterLogReplication{
+			Name: model.NewCIStr($4),
+			Opts: $5.([]*ast.LogReplicationOpt),
+		}
+	}
+|	"ALTER" "LOG" "REPLICATION" Identifier "CHANGE" "SOURCE" "TO" LengthNum
+	{
+		v := $8.(uint64)
+		$$ = &ast.AlterLogReplication{
+			Name:               model.NewCIStr($4),
+			NewSourceClusterID: &v,
+		}
+	}
+
+AdminPauseLogReplication:
+	"PAUSE" "LOG" "REPLICATION" Identifier
+	{
+		$$ = &ast.PauseLogReplication{
+			Name: model.NewCIStr($4),
+		}
+	}
+
+AdminResumeLogReplication:
+	"RESUME" "LOG" "REPLICATION" Identifier
+	{
+		$$ = &ast.ResumeLogReplication{
+			Name: model.NewCIStr($4),
+		}
+	}
+
+AdminDropLogReplication:
+	"DROP" "LOG" "REPLICATION" Identifier
+	{
+		$$ = &ast.DropLogReplication{
+			Name: model.NewCIStr($4),
+		}
+	}
+
+AdminSwitchOverPrimary:
+	"SWITCHOVER" "PRIMARY" "TO" LengthNum
+	{
+		$$ = &ast.SwitchOverPrimary{
+			NewPrimaryClusterID: $4.(uint64),
+		}
+	}
+
+AdminActivateStandby:
+	"ACTIVATE" "STANDBY" "MODE" "=" ActivateStandbyMode
+	{
+		$$ = &ast.ActivateStandby{
+			Mode: $5.(ast.ActivateStandbyMode),
+		}
+	}
+
+ActivateStandbyMode:
+	"FLASHBACK"
+	{
+		$$ = ast.ActivateStandbyModeFlashback
+	}
+|	"FORCE_COMMIT"
+	{
+		$$ = ast.ActivateStandbyModeForceCommit
+	}
+
+LogReplicationOptList:
+	LogReplicationOpt
+	{
+		$$ = []*ast.LogReplicationOpt{$1.(*ast.LogReplicationOpt)}
+	}
+|	LogReplicationOptList LogReplicationOpt
+	{
+		$$ = append($1.([]*ast.LogReplicationOpt), $2.(*ast.LogReplicationOpt))
+	}
+
+LogReplicationOpt:
+	"SOURCE_HOST" EqOpt stringLit
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:    ast.LogReplicationOptSourceHost,
+			Value: $3,
+		}
+	}
+|	"SOURCE_PORT" EqOpt LengthNum
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:        ast.LogReplicationOptSourcePort,
+			UintValue: $3.(uint64),
+		}
+	}
+|	"SOURCE_USER" EqOpt stringLit
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:    ast.LogReplicationOptSourceUser,
+			Value: $3,
+		}
+	}
+|	"SOURCE_PASSWORD" EqOpt stringLit
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:    ast.LogReplicationOptSourcePassword,
+			Value: $3,
+		}
+	}
+|	"PROTECTION_MODE" EqOpt ProtectionMode
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:        ast.LogReplicationOptProtectionMode,
+			UintValue: uint64($3.(ast.ProtectionMode)),
+		}
+	}
+|	"DEGRADE_TIMEOUT" EqOpt stringLit
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:    ast.LogReplicationOptDegradeTimeout,
+			Value: $3,
+		}
+	}
+
+ProtectionMode:
+	"MAXIMUM_AVAILABILITY"
+	{
+		$$ = ast.ProtectionModeMaximumAvailability
+	}
+|	"MAXIMUM_PERFORMANCE"
+	{
+		$$ = ast.ProtectionModeMaximumPerformance
+	}
+|	"MAXIMUM_PROTECTION"
+	{
+		$$ = ast.ProtectionModeMaximumProtection
 	}
 %%
