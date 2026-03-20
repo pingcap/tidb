@@ -155,5 +155,104 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 		tk.MustQuery("select count(*) from t_outer_l right join t_outer_r using(id) where t_outer_l.id is null").Check(testkit.Rows(
 			"1",
 		))
+
+		issue65886SourceSQL := prepareIssue65886RegressionSchema(tk)
+		for _, tc := range []struct {
+			sql      string
+			expected []string
+		}{
+			{
+				sql:      "select /* issue:65886-view */ count(*) as cnt, sum(sum1) as sum1 from issue65886_v85 where sum1 > 20 and sum1 < 74",
+				expected: []string{"0 <nil>"},
+			},
+			{
+				sql: "select /* issue:65886-derived */ count(*) as cnt, sum(sum1) as sum1 from (" +
+					issue65886SourceSQL + ") issue65886_dt where sum1 > 20 and sum1 < 74",
+				expected: []string{"0 <nil>"},
+			},
+			{
+				sql: "select /* issue:65886-subquery */ (select count(*) from (" +
+					issue65886SourceSQL + ") issue65886_sq where sum1 > 20 and sum1 < 74)",
+				expected: []string{"0"},
+			},
+			{
+				sql: "with issue65886_cte as (" + issue65886SourceSQL +
+					") select /* issue:65886-cte */ count(*) as cnt, sum(sum1) as sum1 from issue65886_cte where sum1 > 20 and sum1 < 74",
+				expected: []string{"0 <nil>"},
+			},
+		} {
+			tk.MustQuery(tc.sql).Check(testkit.Rows(tc.expected...))
+		}
 	})
+}
+
+func prepareIssue65886RegressionSchema(tk *testkit.TestKit) string {
+	tk.MustExec("drop view if exists issue65886_v85, issue65886_v45, issue65886_v26, issue65886_v0")
+	tk.MustExec("drop table if exists issue65886_t0, issue65886_t2, issue65886_t3, issue65886_t4")
+	tk.MustExec(`create table issue65886_t0 (
+  id bigint not null,
+  k0 int not null,
+  k1 bigint not null,
+  k2 int not null,
+  k3 varchar(64) not null,
+  p0 varchar(64) not null,
+  p1 int not null,
+  primary key (id)
+)`)
+	tk.MustExec(`create table issue65886_t2 (
+  id bigint not null,
+  k1 bigint not null,
+  k0 int not null,
+  d0 int not null,
+  d1 double not null,
+  primary key (id)
+)`)
+	tk.MustExec(`create table issue65886_t3 (
+  id bigint not null,
+  k2 int not null,
+  k0 int not null,
+  d0 tinyint(1) not null,
+  d1 double not null,
+  primary key (id)
+)`)
+	tk.MustExec(`create table issue65886_t4 (
+  id bigint not null,
+  k3 varchar(64) not null,
+  k0 int not null,
+  d0 float not null,
+  d1 bigint not null,
+  primary key (id)
+)`)
+	tk.MustExec(`create algorithm=undefined sql security definer view issue65886_v0 (c0, c1) as
+select 28.17 as c0, _utf8mb4's41' as c1
+from ((issue65886_t0 left join issue65886_t4 using (k3, k0)) right join issue65886_t3 on (issue65886_t0.k0 = issue65886_t3.k0))
+right join issue65886_t2 on (issue65886_t0.k1 = issue65886_t2.k1)
+where (issue65886_t0.k1 < issue65886_t3.k2)
+order by issue65886_t2.id, issue65886_t0.k0`)
+	tk.MustExec(`create algorithm=undefined sql security definer view issue65886_v26 (c0, c1, c2) as
+select
+  (issue65886_t4.d1 + issue65886_t3.k2) as c0,
+  _utf8mb4'2024-01-25 12:10:00' as c1,
+  (select count(1) as cnt from issue65886_v0 where (issue65886_v0.c0 = issue65886_t0.k2) order by count(1) limit 7) as c2
+from (issue65886_t0 left join issue65886_t3 on (issue65886_t0.k0 = issue65886_t3.k0))
+join issue65886_t4 on (issue65886_t0.k3 = issue65886_t4.k3)
+where ((issue65886_t0.k3 in (select issue65886_t4.k3 as c0 from issue65886_t4 where (issue65886_t4.k0 = issue65886_t0.k0))) and (issue65886_t0.k1 in (18, 76)))`)
+	tk.MustExec(`create algorithm=undefined sql security definer view issue65886_v45 (c0) as
+select 5.92 as c0
+from ((issue65886_t0 right join issue65886_t3 on (issue65886_t0.k2 = issue65886_t3.k2)) left join issue65886_t4 on (issue65886_t0.k3 = issue65886_t4.k3))
+right join issue65886_t2 on (issue65886_t0.k1 = issue65886_t2.k1)
+where (issue65886_t0.k0 <= issue65886_t3.k0)`)
+	sourceSQL := `select
+  issue65886_t0.k2 as g0,
+  count(1) as cnt,
+  sum(issue65886_t2.d0) as sum1
+from (issue65886_t0 left join issue65886_t4 on (issue65886_t0.k0 = issue65886_t4.k0))
+left join issue65886_t2 using (k1)
+where
+  ((issue65886_t4.k0 < issue65886_t2.k1)
+  and (not (issue65886_t0.k0 in (select issue65886_v45.c0 as c0 from issue65886_v45 where (issue65886_v45.c0 = issue65886_t0.k2)))
+  and not (issue65886_t0.k2 in (select issue65886_v26.c2 as c0 from issue65886_v26 where (issue65886_v26.c0 = issue65886_t0.k3) limit 5))))
+group by issue65886_t0.k2`
+	tk.MustExec(`create algorithm=undefined sql security definer view issue65886_v85 (g0, cnt, sum1) as ` + sourceSQL)
+	return sourceSQL
 }

@@ -1283,30 +1283,40 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	for _, naeqCond := range p.NAEQConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
 	}
-	lChild := p.Children()[0]
-	rChild := p.Children()[1]
-	lSchema := lChild.Schema()
-	rSchema := rChild.Schema()
-	var lFullSchema, rFullSchema *expression.Schema
-	// parentused col = t2.a
-	// leftChild schema = t1.a(t2.a) + and others
-	// rightChild schema = t3 related + and others
-	if join, ok := lChild.(*LogicalJoin); ok {
-		lFullSchema = join.FullSchema
-	}
-	if join, ok := rChild.(*LogicalJoin); ok {
-		rFullSchema = join.FullSchema
-	}
 	for _, col := range parentUsedCols {
-		if (lSchema != nil && lSchema.Contains(col)) ||
-			(lFullSchema != nil && lFullSchema.Contains(col)) {
+		if planCanResolveUsedCol(p.Children()[0], col) {
 			leftCols = append(leftCols, col)
-		} else if (rSchema != nil && rSchema.Contains(col)) ||
-			(rFullSchema != nil && rFullSchema.Contains(col)) {
+		} else if planCanResolveUsedCol(p.Children()[1], col) {
 			rightCols = append(rightCols, col)
 		}
 	}
 	return leftCols, rightCols
+}
+
+// planCanResolveUsedCol walks through unary wrappers and join FullSchema so
+// pruning keeps redundant USING/NATURAL JOIN columns needed by upper filters.
+func planCanResolveUsedCol(p base.LogicalPlan, col *expression.Column) bool {
+	if p == nil || col == nil {
+		return false
+	}
+	if schema := p.Schema(); schema != nil && schema.Contains(col) {
+		return true
+	}
+	switch x := p.(type) {
+	case *LogicalSelection, *LogicalLimit, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return planCanResolveUsedCol(x.Children()[0], col)
+	case *LogicalApply:
+		for _, child := range x.Children() {
+			if planCanResolveUsedCol(child, col) {
+				return true
+			}
+		}
+	case *LogicalJoin:
+		if x.FullSchema != nil && x.FullSchema.Contains(col) {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeSchema merge the schema of left and right child of join.
