@@ -344,10 +344,10 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
 	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-			is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, isSnapshot, startTS)
-			if err == nil {
-				infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
-				isV2, _ := infoschema.IsV2(is)
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, isSnapshot, startTS)
+		if err == nil {
+			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
+			isV2, _ := infoschema.IsV2(is)
 			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
@@ -401,12 +401,12 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// Not adding snapshot schema to history can avoid such cases.
 		data = infoschema.NewData()
 	}
-		builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2).
-			WithLoadableFunctionReload(!isSnapshot)
-		err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
-		if err != nil {
-			return nil, false, currentSchemaVersion, nil, err
-		}
+	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2).
+		WithLoadableFunctionReload(!isSnapshot)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
@@ -2217,6 +2217,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				return
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
+			case <-pkdbrepl.StandbyUserReloadTickCh:
 			}
 			if !ok {
 				logutil.BgLogger().Warn("load privilege loop watch channel closed")

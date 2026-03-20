@@ -47,8 +47,11 @@ var (
 	// StandbyUnsafeDestroyTickCh will be sent after standby mode is enabled, to
 	// trigger unsafe destroy range check.
 	StandbyUnsafeDestroyTickCh = make(chan struct{}, 1)
-	standbyTickWg              sync.WaitGroup
-	standbyTickDone            chan struct{}
+	// StandbyUserReloadTickCh will be sent after standby mode is enabled, to trigger
+	// user reload.
+	StandbyUserReloadTickCh = make(chan struct{}, 1)
+	standbyTickWg           sync.WaitGroup
+	standbyTickDone         chan struct{}
 )
 
 // enableStandbyMode should not be concurrently called with disableStandbyMode.
@@ -68,6 +71,7 @@ func enableStandbyMode() {
 		defer infoSchemaTicker.Stop()
 		unsafeDestroyTicker := time.NewTicker(50 * time.Second)
 		defer unsafeDestroyTicker.Stop()
+		userReloadTicker := time.NewTicker(10 * time.Second)
 
 		for {
 			select {
@@ -81,6 +85,11 @@ func enableStandbyMode() {
 			case <-unsafeDestroyTicker.C:
 				select {
 				case StandbyUnsafeDestroyTickCh <- struct{}{}:
+				default:
+				}
+			case <-userReloadTicker.C:
+				select {
+				case StandbyUserReloadTickCh <- struct{}{}:
 				default:
 				}
 			}
