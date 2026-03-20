@@ -19,10 +19,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,4 +165,43 @@ func TestHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func TestCompareCandidatesPreferSaferEqualityPathForIncomparableRisk(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	saferEqPath := &candidatePath{
+		path: &plannerutil.AccessPath{
+			Index:               &model.IndexInfo{},
+			CountAfterAccess:    3.88624413760642,
+			MinCountAfterAccess: 3.88624413760642,
+			MaxCountAfterAccess: 3.88624413760642,
+			CountAfterIndex:     3.88624413760642,
+			EqOrInCondCount:     1,
+		},
+		accessCondsColMap: plannerutil.Col2Len{1: types.UnspecifiedLength},
+		indexCondsColMap:  plannerutil.Col2Len{1: types.UnspecifiedLength},
+		matchPropResult:   property.PropNotMatched,
+	}
+	riskyRangePath := &candidatePath{
+		path: &plannerutil.AccessPath{
+			Index:               &model.IndexInfo{},
+			CountAfterAccess:    1.1198724103369881,
+			MinCountAfterAccess: 1,
+			MaxCountAfterAccess: 1277018,
+			CountAfterIndex:     1.1198724103369881,
+			EqOrInCondCount:     0,
+		},
+		accessCondsColMap: plannerutil.Col2Len{2: types.UnspecifiedLength},
+		indexCondsColMap:  plannerutil.Col2Len{2: types.UnspecifiedLength},
+		matchPropResult:   property.PropNotMatched,
+	}
+
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	result, missingStats := compareCandidates(ctx.GetPlanCtx(), nil, prop, saferEqPath, riskyRangePath, false)
+	require.Equal(t, 1, result)
+	require.False(t, missingStats)
 }

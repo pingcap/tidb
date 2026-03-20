@@ -996,6 +996,18 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 || !comparable2 {
+		// If only one incomparable path carries out-of-range risk, prefer the safer equality-style
+		// path instead of letting the more optimistic range estimate win on cost later.
+		if lhs.path.MaxCountAfterAccess == lhs.path.CountAfterAccess &&
+			rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess &&
+			eqOrInResult > 0 && leftDidNotLose && totalSum >= 0 {
+			return 1, lhsPseudo
+		}
+		if rhs.path.MaxCountAfterAccess == rhs.path.CountAfterAccess &&
+			lhs.path.MaxCountAfterAccess > lhs.path.CountAfterAccess &&
+			eqOrInResult < 0 && rightDidNotLose && totalSum <= 0 {
+			return -1, rhsPseudo
+		}
 		// These aren't comparable - meaning that they have different combinations of columns in
 		// the access conditions or filters.
 		// One or more predicates could carry high risk - so we want to compare that risk and other
