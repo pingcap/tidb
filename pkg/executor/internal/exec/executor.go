@@ -125,17 +125,6 @@ var ruv2ExecutorMetricByType = map[string]ruv2ExecutorMetric{
 	"*aggregate.StreamAggExec":      {level: 3, label: "StreamAggExec", useCells: false},
 }
 
-func addRUV2ExecutorMetric(ctx context.Context, execType string, useCells bool, delta int64) {
-	if delta == 0 {
-		return
-	}
-	info, ok := ruv2ExecutorMetricByType[execType]
-	if !ok {
-		return
-	}
-	addRUV2ExecutorMetricWithInfo(ctx, info, useCells, delta)
-}
-
 func addRUV2ExecutorMetricWithInfo(ctx context.Context, info ruv2ExecutorMetric, useCells bool, delta int64) {
 	if delta == 0 || info.useCells != useCells {
 		return
