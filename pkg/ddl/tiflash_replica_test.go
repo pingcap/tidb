@@ -160,6 +160,8 @@ func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm sessmgr.M
 		err = srv.Serve(lis)
 		require.NoError(t, err)
 	}()
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
 		conf.AdvertiseAddress = "127.0.0.1"
