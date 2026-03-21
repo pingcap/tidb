@@ -593,7 +593,7 @@ const (
 
 	// CreateTiDBRunawayQueriesTable stores the query which is identified as runaway or quarantined because of in watch list.
 	CreateTiDBRunawayQueriesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
-		resource_group_name varchar(32) not null,
+		resource_group_name varchar(64) not null,
 		start_time TIMESTAMP NOT NULL,
 		repeats int default 1,
 		match_type varchar(12) NOT NULL,
@@ -636,42 +636,40 @@ const (
 	// CreateTiDBRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
 	CreateTiDBRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		resource_group_name varchar(32) not null,
+		resource_group_name varchar(64) not null,
 		start_time datetime(6) NOT NULL,
 		end_time datetime(6),
 		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
 		source varchar(512) NOT NULL,
 		action bigint(10),
-		switch_group_name VARCHAR(32) DEFAULT '',
+		switch_group_name VARCHAR(64) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
-		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateTiDBRunawayWatchDoneTable stores the condition which is used to check whether query should be quarantined.
 	CreateTiDBRunawayWatchDoneTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch_done (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		record_id BIGINT(20) not null,
-		resource_group_name varchar(32) not null,
+		resource_group_name varchar(64) not null,
 		start_time datetime(6) NOT NULL,
 		end_time datetime(6),
 		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
 		source varchar(512) NOT NULL,
 		action bigint(10),
-		switch_group_name VARCHAR(32) DEFAULT '',
+		switch_group_name VARCHAR(64) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL,
-		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
+		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
 	CreateRequestUnitByGroupTable = `CREATE TABLE IF NOT EXISTS mysql.request_unit_by_group (
 		start_time TIMESTAMP(6) NOT NULL,
 		end_time TIMESTAMP(6) NOT NULL,
-		resource_group VARCHAR(32) NOT null,
+		resource_group VARCHAR(64) NOT null,
 		total_ru bigint(64) UNSIGNED NOT NULL,
 		PRIMARY KEY (start_time, end_time, resource_group),
 		KEY (resource_group)
