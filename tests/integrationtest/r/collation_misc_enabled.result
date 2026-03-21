@@ -60,10 +60,10 @@ utf8_bin
 use cd_test_latin1;
 select @@character_set_database;
 @@character_set_database
-utf8
+latin1
 select @@collation_database;
 @@collation_database
-utf8_bin
+latin1_swedish_ci
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 with cte as (select cast('2010-09-09' as date) a union select  '2010-09-09  ') select count(*) from cte;
 count(*)
@@ -97,6 +97,7 @@ gb18030	248	1
 gbk	87	1
 gbk	28	1
 latin1	47	1
+latin1	8	1
 utf8	83	1
 utf8	33	1
 utf8	192	8
@@ -126,6 +127,7 @@ gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+latin1_swedish_ci	latin1	8		Yes	1	PAD SPACE
 utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
@@ -220,3 +222,98 @@ id	task	access object	operator info
 IndexReader	root		index:Selection
 └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
   └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["7dce58ba-ba84-4297-94cf-c23cf3a39ed3","7dce58ba-ba84-4297-94cf-c23cf3a39ed3"], keep order:false, stats:pseudo
+drop database if exists cd_test_latin1_swedish_ci;
+create database cd_test_latin1_swedish_ci character set latin1 collate latin1_swedish_ci;
+use cd_test_latin1_swedish_ci;
+select @@character_set_database;
+@@character_set_database
+latin1
+select @@collation_database;
+@@collation_database
+latin1_swedish_ci
+drop table if exists t;
+create table t(id int primary key, val varchar(256) charset latin1 collate latin1_swedish_ci, key idx_a(val));
+insert into t values
+(33, '!'),
+(3290422, '256'),
+(13106, '32'),
+(1, 'ÀÁÂÃàáâãÇçÐðÈÉÊËèéêëÌÍÎÏìíîïÑñÒÓÔÕòóôõÙÚÛùúûÜÝüý'),
+(2, 'aaaaaaaaccddeeeeeeeeiiiiiiiinnoooooooouuuuuuyyyy'),
+(6385252, 'and'),
+(4289652, 'Att'),
+(90, 'Z'),
+(91, '['),
+(197, 'Å'),
+(15035233, 'åka'),
+(23387, '[['),
+(92, '\\'),
+(14972001, 'äta'),
+(15103073, 'æta'),
+(23644, '\\\\'),
+(93, ']'),
+(63084, 'öl'),
+(23901, ']]'),
+(95, '_'),
+(216, 'Ø'),
+(248, 'ø'),
+(222, 'Þ'),
+(254, 'þ'),
+(255, 'ÿ');
+select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
+id	eq_prev	w
+33	NULL	21
+3290422	0	323536
+13106	0	3332
+1	0	414141414141414143434444454545454545454549494949494949494E4E4F4F4F4F4F4F4F4F55555555555559595959
+2	1	414141414141414143434444454545454545454549494949494949494E4E4F4F4F4F4F4F4F4F55555555555559595959
+6385252	0	414E44
+4289652	0	415454
+90	0	5A
+91	0	5B
+197	1	5B
+15035233	0	5B4B41
+23387	0	5B5B
+92	0	5C
+14972001	0	5C5441
+15103073	1	5C5441
+23644	0	5C5C
+93	0	5D
+63084	0	5D4C
+23901	0	5D5D
+95	0	5F
+216	0	D8
+248	1	D8
+222	0	DE
+254	1	DE
+255	0	FF
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
+id	task	access object	operator info
+IndexReader	root		index:IndexRangeScan
+└─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:["Z","Z"], keep order:true, stats:pseudo
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
+id	val
+90	Z
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
+id	task	access object	operator info
+Sort	root		cd_test_latin1_swedish_ci.t.id
+└─IndexReader	root		index:Selection
+  └─Selection	cop[tikv]		like(cd_test_latin1_swedish_ci.t.val, "Ä__", 92)
+    └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:["\\","]"), keep order:false, stats:pseudo
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
+id	val
+14972001	äta
+15103073	æta
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+id	task	access object	operator info
+Sort	root		cd_test_latin1_swedish_ci.t.id
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:("_",+inf], keep order:false, stats:pseudo
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+id	val
+216	Ø
+222	Þ
+248	ø
+254	þ
+255	ÿ
+use test;
+drop database cd_test_latin1_swedish_ci;
