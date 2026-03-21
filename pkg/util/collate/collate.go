@@ -305,7 +305,7 @@ func IsDefaultCollationForUTF8MB4(collate string) bool {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
-		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci"
+		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci" || collate == "latin1_swedish_ci"
 }
 
 // ConvertAndGetBinCollation converts collation to binary collation
@@ -325,6 +325,8 @@ func ConvertAndGetBinCollation(collate string) string {
 		return "gbk_bin"
 	case "gb18030_chinese_ci":
 		return "gb18030_bin"
+	case "latin1_swedish_ci":
+		return "latin1_bin"
 	}
 
 	return collate
@@ -435,6 +437,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("latin1_bin")] = &binPaddingCollator{}
+	newCollatorMap["latin1_swedish_ci"] = &latin1Collator{weights: &latin1SwedishCIByteWeightTable}
+	newCollatorIDMap[CollationName2ID("latin1_swedish_ci")] = &latin1Collator{weights: &latin1SwedishCIByteWeightTable}
 	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}

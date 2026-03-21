@@ -172,6 +172,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollator("binary"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &latin1Collator{}, GetCollator("latin1_swedish_ci"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8mb4_general_ci"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8_general_ci"))
 	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8mb4_unicode_ci"))
@@ -183,6 +184,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollatorByID(63))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(83))
+	require.IsType(t, &latin1Collator{}, GetCollatorByID(8))
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(45))
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(33))
 	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(224))
@@ -195,6 +197,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &derivedBinCollator{}, GetCollator("binary"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_bin"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("latin1_swedish_ci"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_general_ci"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_general_ci"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_unicode_ci"))
@@ -205,6 +208,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(63))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(46))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(83))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(8))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(45))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(33))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(224))
@@ -218,6 +222,28 @@ func TestGetCollator(t *testing.T) {
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &gbkBinCollator{}, GetCollatorByID(87))
+}
+
+func TestLatin1SwedishCIClassification(t *testing.T) {
+	require.True(t, IsCICollation("latin1_swedish_ci"))
+	require.Equal(t, "latin1_bin", ConvertAndGetBinCollation("latin1_swedish_ci"))
+}
+
+func TestLatin1SwedishCIOrdering(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	collator := GetCollator("latin1_swedish_ci")
+
+	require.Less(t, collator.Compare("1", "a"), 0)
+	require.Equal(t, 0, collator.Compare("a", "A"))
+	require.Less(t, collator.Compare("A", "y"), 0)
+	require.Equal(t, 0, collator.Compare("y", "ü"))
+	require.Less(t, collator.Compare("z", "å"), 0)
+	require.Less(t, collator.Compare("å", "ä"), 0)
+	require.Equal(t, 0, collator.Compare("ä", "æ"))
+	require.Less(t, collator.Compare("æ", "ö"), 0)
+	require.Less(t, collator.Compare("ö", "~"), 0)
 }
 
 type collator interface {
