@@ -2731,20 +2731,18 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 			}
 		}
 	case *logicalop.LogicalApply:
-		// LogicalApply embeds LogicalJoin, so it also has FullSchema/FullNames for USING/NATURAL joins
-		if x.FullSchema != nil {
-			idx, err := expression.FindFieldName(x.FullNames, v)
-			if err != nil {
-				return nil, nil, err
-			}
-			if idx >= 0 {
-				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
-			}
-		} else {
-			// No FullSchema at the Apply level (non-LATERAL or LATERAL without USING/NATURAL).
-			// Treat Apply as a transparent wrapper and recurse into the outer (left) child,
-			// which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+		// LogicalApply embeds LogicalJoin, so it also has FullSchema/FullNames for USING/NATURAL joins.
+		// When FullSchema is nil, treat Apply as a transparent wrapper and recurse into the outer
+		// (left) child, which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+		if x.FullSchema == nil {
 			return findFieldNameFromNaturalUsingJoin(x.Children()[0], v)
+		}
+		idx, err := expression.FindFieldName(x.FullNames, v)
+		if err != nil {
+			return nil, nil, err
+		}
+		if idx >= 0 {
+			return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 		}
 	}
 	return nil, nil, nil

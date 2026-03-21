@@ -28,24 +28,26 @@ a	b
 drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
-explain format='brief' select * from t1, lateral (select b from t2 where t2.a = t1.a) as lat;
+explain format='brief' select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat;
 id	estRows	task	access object	operator info
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-explain format='brief' select * from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+Apply	<estRows>	root		CARTESIAN inner join
+├─TableReader(Build)	<estRows>	root		data:TableFullScan
+│ └─TableFullScan	<estRows>	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Limit(Probe)	<estRows>	root		offset:0, count:1
+  └─TableReader	<estRows>	root		data:Limit
+    └─Limit	<estRows>	cop[tikv]		offset:0, count:1
+      └─Selection	<estRows>	cop[tikv]		eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)
+        └─TableFullScan	<estRows>	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='brief' select * from t1 join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
 id	estRows	task	access object	operator info
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
-<id>	<estRows>	<task>	<access_object>	<operator_info>
+Apply	<estRows>	root		CARTESIAN inner join
+├─TableReader(Build)	<estRows>	root		data:TableFullScan
+│ └─TableFullScan	<estRows>	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Limit(Probe)	<estRows>	root		offset:0, count:1
+  └─TableReader	<estRows>	root		data:Limit
+    └─Limit	<estRows>	cop[tikv]		offset:0, count:1
+      └─Selection	<estRows>	cop[tikv]		eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)
+        └─TableFullScan	<estRows>	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t2;
 create table t2 (a int, b varchar(10));
 insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');

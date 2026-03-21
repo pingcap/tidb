@@ -7942,6 +7942,7 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 		}
 		for i, n := range def.ColNameList {
 			clonedNames[i].ColName = n
+			clonedNames[i].OrigColName = n
 		}
 	}
 	p.SetOutputNames(clonedNames)

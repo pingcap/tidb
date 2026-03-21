@@ -31,13 +31,13 @@ drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
 
-## Verify Apply operator is used for LATERAL (comma syntax)
---replace_column 1 <id> 2 <estRows> 3 <task> 4 <access_object> 5 <operator_info>
-explain format='brief' select * from t1, lateral (select b from t2 where t2.a = t1.a) as lat;
+## Verify Apply operator is used for LATERAL (comma syntax); LIMIT prevents decorrelation
+--replace_column 2 <estRows>
+explain format='brief' select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat;
 
-## Verify Apply operator for INNER JOIN LATERAL
---replace_column 1 <id> 2 <estRows> 3 <task> 4 <access_object> 5 <operator_info>
-explain format='brief' select * from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+## Verify Apply operator for INNER JOIN LATERAL; LIMIT prevents decorrelation
+--replace_column 2 <estRows>
+explain format='brief' select * from t1 join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
 
 # TestLateralJoinWithRecursiveCTE
 drop table if exists t2;
