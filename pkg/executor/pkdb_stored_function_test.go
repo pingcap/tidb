@@ -15,9 +15,13 @@
 package executor_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,4 +56,131 @@ func TestStoredFunctionReturnValueLeakAcrossRows(t *testing.T) {
 		t.Fatalf("expected \"ended without RETURN\" error on 2nd row, but query succeeded with rows %v", rows)
 	}
 	require.Contains(t, err.Error(), "ended without RETURN")
+}
+
+func TestStoredFunctionUsesStoredSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop function if exists sf_sql_mode")
+	tk.MustExec("create function sf_sql_mode(s char(20)) returns char(50) return concat('hello, ', s, '!')")
+	tk.MustQuery("select sf_sql_mode('world')").Check(testkit.Rows("hello, world!"))
+}
+
+func TestStoredFunctionZeroWidthDecimalZerofillUsesDefaultPrecision(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop function if exists sf_decimal_zerofill")
+	tk.MustExec(`create function sf_decimal_zerofill(f1 decimal(0) unsigned zerofill)
+returns decimal(0) unsigned zerofill
+begin
+	set f1 = (f1 / 2);
+	set f1 = (f1 * 2);
+	set f1 = (f1 - 10);
+	set f1 = (f1 + 10);
+	return f1;
+end`)
+
+	tk.MustQuery("select sf_decimal_zerofill(999999999)").Check(testkit.Rows("1000000000"))
+}
+
+func TestStoredFunctionDateReturnCanBePassedToProcedureArgument(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_sf_date_arg")
+	tk.MustExec("create table t_sf_date_arg(id int primary key, hire_date date)")
+	tk.MustExec("insert into t_sf_date_arg values (101, '2020-01-01')")
+
+	tk.MustExec("drop function if exists sf_to_date")
+	tk.MustExec(`create function sf_to_date(date_str varchar(20), format_str varchar(20))
+returns date
+begin
+	set format_str = replace(replace(replace(format_str, 'YYYY', '%Y'), 'MM', '%m'), 'DD', '%d');
+	return str_to_date(date_str, format_str);
+end`)
+	tk.MustExec("drop function if exists sf_date_literal")
+	tk.MustExec(`create function sf_date_literal()
+returns date
+begin
+	return str_to_date('2024-01-01', '%Y-%m-%d');
+end`)
+
+	tk.MustExec("drop procedure if exists sp_update_hire_date")
+	tk.MustExec(`create procedure sp_update_hire_date(in emp_id int, in new_hire_date date)
+begin
+	update t_sf_date_arg set hire_date = new_hire_date where id = emp_id;
+end`)
+
+	tk.MustExec("drop procedure if exists sp_capture_hire_date")
+	tk.MustExec(`create procedure sp_capture_hire_date(in new_hire_date date)
+begin
+	set @captured_hire_date = new_hire_date;
+end`)
+
+	tk.MustQuery("select sf_to_date('2024-01-01', 'YYYY-MM-DD')").Check(testkit.Rows("2024-01-01"))
+	tk.MustQuery("select (sf_to_date('2024-01-01', 'YYYY-MM-DD'))").Check(testkit.Rows("2024-01-01"))
+	d, err := plannercore.GetExprValue(context.Background(), plannercore.NewCacheExpr(true, "sf_to_date('2024-01-01', 'YYYY-MM-DD')", nil), types.NewFieldType(mysql.TypeDate), tk.Session(), "", nil)
+	require.NoError(t, err)
+	require.Equal(t, "2024-01-01", d.GetMysqlTime().String())
+	tk.MustExec("set @captured_hire_date = null")
+	tk.MustExec("call sp_capture_hire_date('2024-01-01')")
+	tk.MustQuery("select @captured_hire_date").Check(testkit.Rows("2024-01-01"))
+	tk.MustExec("set @captured_hire_date = null")
+	tk.MustExec("call sp_capture_hire_date(sf_date_literal())")
+	tk.MustQuery("select @captured_hire_date").Check(testkit.Rows("2024-01-01"))
+	tk.MustExec("set @captured_hire_date = null")
+	tk.MustExec("call sp_capture_hire_date(sf_to_date('2024-01-01', 'YYYY-MM-DD'))")
+	tk.MustQuery("select @captured_hire_date").Check(testkit.Rows("2024-01-01"))
+	tk.MustExec("call sp_update_hire_date(101, sf_to_date('2024-01-01', 'YYYY-MM-DD'))")
+	tk.MustQuery("select hire_date from t_sf_date_arg where id = 101").Check(testkit.Rows("2024-01-01"))
+}
+
+func TestStoredFunctionDecimalReturnCanPopulateProcedureVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_sf_decimal_ctx")
+	tk.MustExec("create table t_sf_decimal_ctx(id int primary key, department_id int, salary decimal(8,2))")
+	tk.MustExec("insert into t_sf_decimal_ctx values (101, 60, 5000.00), (102, 60, 6000.00), (104, 60, 5500.00), (105, 60, 4500.00)")
+
+	tk.MustExec("drop function if exists fn_get_department_avg_salary")
+	tk.MustExec(`create function fn_get_department_avg_salary(dept_id int)
+returns decimal(8,2)
+begin
+	declare avg_salary decimal(8,2);
+	select avg(salary) into avg_salary from t_sf_decimal_ctx where department_id = dept_id;
+	return avg_salary;
+end`)
+
+	tk.MustExec("drop procedure if exists sp_adjust_salary_by_department")
+	tk.MustExec(`create procedure sp_adjust_salary_by_department(in dept_id int)
+begin
+	declare avg_sal decimal(8,2);
+	set @captured_direct_avg = fn_get_department_avg_salary(dept_id);
+	set avg_sal = fn_get_department_avg_salary(dept_id);
+	set @captured_avg_sal = avg_sal;
+	update t_sf_decimal_ctx set salary = salary * 1.1 where department_id = dept_id and salary < avg_sal;
+end`)
+
+	tk.MustExec("set @captured_avg_sal = null")
+	tk.MustExec("set @captured_direct_avg = null")
+	tk.MustExec("call sp_adjust_salary_by_department(60)")
+	tk.MustQuery("select @captured_direct_avg").Check(testkit.Rows("5250.00"))
+	tk.MustQuery("select @captured_avg_sal").Check(testkit.Rows("5250.00"))
+	tk.MustQuery("select id, salary from t_sf_decimal_ctx order by id").Check(testkit.Rows(
+		"101 5500.00",
+		"102 6000.00",
+		"104 5500.00",
+		"105 4950.00",
+	))
 }

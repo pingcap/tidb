@@ -221,7 +221,8 @@ func newFunctionImpl(ctx BuildContext, fold int, schema, funcName string, retTyp
 			Name:    [2]string{schema, funcName},
 			RetType: info.RetType,
 		}
-	} else {
+	}
+	if fc == nil {
 		switch funcName {
 		case ast.Cast:
 			return BuildCastFunction(ctx, args[0], retType), nil

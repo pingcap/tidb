@@ -154,7 +154,7 @@ func (v *triggerStmtValidator) Leave(in ast.Node) (ast.Node, bool) {
 					v.err = dbterror.ErrTrgCantChangeRow.FastGenByArgs(parts[0], "")
 					return in, false
 				}
-				colNameToCheck = parts[1]
+				colNameToCheck = strings.ToLower(strings.Trim(parts[1], "`"))
 			case "new":
 				if ti.Event == ast.TriggerEventDelete {
 					v.err = dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs(parts[0], ti.Event.String())
@@ -164,7 +164,7 @@ func (v *triggerStmtValidator) Leave(in ast.Node) (ast.Node, bool) {
 					v.err = dbterror.ErrTrgCantChangeRow.FastGenByArgs(parts[0], ti.Event.String())
 					return in, false
 				}
-				colNameToCheck = parts[1]
+				colNameToCheck = strings.ToLower(strings.Trim(parts[1], "`"))
 			default:
 			}
 		}

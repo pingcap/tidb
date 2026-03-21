@@ -627,6 +627,20 @@ func (b *PlanBuilder) setDefaultLengthAndCharset(tp *types.FieldType, collate st
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CharsetBin)
 	}
+	if tp.GetType() == mysql.TypeNewDecimal && tp.GetDecimal() == types.UnspecifiedLength {
+		if tp.GetFlen() == 0 || tp.GetFlen() == types.UnspecifiedLength {
+			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(tp.GetType())
+			tp.SetFlen(defaultFlen)
+		}
+		tp.SetDecimal(0)
+		return tp, nil
+	}
+	if useDefaultLengthForRoutineNumeric(tp) {
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.GetType())
+		tp.SetFlen(defaultFlen)
+		tp.SetDecimal(defaultDecimal)
+		return tp, nil
+	}
 	if tp.GetFlen() != types.UnspecifiedLength || tp.GetDecimal() != types.UnspecifiedLength {
 		return tp, nil
 	}
@@ -634,6 +648,17 @@ func (b *PlanBuilder) setDefaultLengthAndCharset(tp *types.FieldType, collate st
 	tp.SetFlen(defaultFlen)
 	tp.SetDecimal(defaultDecimal)
 	return tp, nil
+}
+
+func useDefaultLengthForRoutineNumeric(tp *types.FieldType) bool {
+	switch tp.GetType() {
+	case mysql.TypeNewDecimal:
+		return tp.GetFlen() == 0 && (tp.GetDecimal() == 0 || tp.GetDecimal() == types.UnspecifiedLength)
+	case mysql.TypeFloat, mysql.TypeDouble:
+		return tp.GetFlen() == 0 && tp.GetDecimal() == types.UnspecifiedLength
+	default:
+		return false
+	}
 }
 
 // typesNeedCharset check if tp need charset.

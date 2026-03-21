@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -120,6 +121,12 @@ func (e *ProcedureExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 func (e *ProcedureExec) triggerCallProcedure(ctx context.Context) (err error) {
 	e.Ctx().GetSessionVars().SetInCallProcedure()
 	defer func() {
+		if e.isFunction && e.parentContext != nil {
+			restoreErr := e.Ctx().GetSessionVars().SetProcedureContext(e.parentContext)
+			if err == nil && restoreErr != nil {
+				err = restoreErr
+			}
+		}
 		e.Ctx().GetSessionVars().OutCallProcedure(err != nil)
 	}()
 	mockCallStmt := &ast.CallStmt{
@@ -493,10 +500,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
 				return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
-			var exec plannercore.ProcedureCompileAndExec
-			if e.Ctx().GetSessionVars().StmtCtx.TriggerCtx.InTrigger || e.isFunction {
-				exec = e.executeWithSameContext
-			}
+			exec := plannercore.ProcedureCompileAndExec(e.executeWithSameContext)
 			if e.Ctx().GetSessionVars().InOtherCall() {
 				e.Ctx().GetSessionVars().SetProcedureContext(e.parentContext)
 				datum, err := plannercore.GetExprValue(ctx, plannercore.NewCacheExpr(true, plannercore.ExprNodeToString(s.Procedure.Args[i]), nil),
@@ -510,8 +514,11 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 					return err
 				}
 			} else {
+				e.Ctx().GetSessionVars().OutCallTemp()
 				datum, err := plannercore.GetExprValue(ctx, plannercore.NewCacheExpr(true, plannercore.ExprNodeToString(s.Procedure.Args[i]), nil),
 					param.DeclType, e.Ctx(), param.DeclName, exec)
+				e.Ctx().GetSessionVars().RecoveryCall()
+				e.Ctx().GetSessionVars().SetProcedureContext(e.procedurePlan.ProcedureCtx)
 				if err != nil {
 					return err
 				}
@@ -1109,6 +1116,17 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
 	)
+
+	if sc.MemTracker == nil {
+		sc.InitMemTracker(memory.LabelForSQLText, -1)
+		sc.MemTracker.AttachTo(vars.MemTracker)
+	}
+	if sc.DiskTracker == nil {
+		sc.InitDiskTracker(memory.LabelForSQLText, -1)
+		if vars.DiskTracker != nil {
+			sc.DiskTracker.AttachTo(vars.DiskTracker)
+		}
+	}
 
 	return restore
 }

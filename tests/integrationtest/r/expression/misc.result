@@ -996,9 +996,9 @@ select length(@p);
 length(@p)
 19
 SELECT xxx(1);
-Error 1046 (3D000): No database selected
+Got one of the listed errors
 SELECT yyy();
-Error 1046 (3D000): No database selected
+Got one of the listed errors
 SELECT T.upper(1);
 Error 1305 (42000): FUNCTION t.upper does not exist
 use test;

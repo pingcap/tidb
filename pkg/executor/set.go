@@ -468,19 +468,30 @@ func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) 
 }
 
 func (e *SetExecutor) setSPVariable(name string, v *expression.VarAssignment) (bool, error) {
-	if !e.Ctx().GetSessionVars().GetCallProcedure() {
+	sessVars := e.Ctx().GetSessionVars()
+	if !sessVars.GetCallProcedure() {
 		return true, nil
 	}
-	_, _, notFind := e.Ctx().GetSessionVars().GetProcedureVariable(name)
+	_, _, notFind := sessVars.GetProcedureVariable(name)
 	if notFind {
 		return true, nil
 	}
+	var originalCtx *variable.ProcedureContext
+	if pCtx := sessVars.GetProcedureContext(); pCtx != nil {
+		originalCtx = pCtx.Context
+	}
 	datum, err := v.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if originalCtx != nil {
+		restoreErr := sessVars.SetProcedureContext(originalCtx)
+		if err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}
 	if err != nil {
 		return false, err
 	}
-	sc := e.Ctx().GetSessionVars().StmtCtx
+	sc := sessVars.StmtCtx
 	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-	err = core.UpdateVariableVar(name, datum, e.Ctx().GetSessionVars())
+	err = core.UpdateVariableVar(name, datum, sessVars)
 	return false, err
 }

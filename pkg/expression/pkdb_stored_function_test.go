@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -125,4 +126,20 @@ func TestSchemaQualifiedStoredFunctionResolvesFirst(t *testing.T) {
 	_, ok = sf.Function.(*storedFuncSig)
 	require.True(t, ok)
 	require.Equal(t, mysql.TypeLonglong, sf.GetType(buildCtx.GetEvalCtx()).GetType())
+}
+
+func TestSchemaQualifiedBuiltinFallsBackWhenStoredFunctionMissing(t *testing.T) {
+	sctx := mock.NewContext()
+	buildCtx := sessionexpr.NewExprContext(sctx)
+
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.StoredFuncName = map[[2]string]*types.FieldType{}
+	sc.UserFuncCtx.Unlock()
+
+	arg := &Constant{Value: types.NewIntDatum(1), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	expr, err := newFunctionImpl(buildCtx, 0, "test", ast.Upper, types.NewFieldType(mysql.TypeUnspecified), nil, arg)
+	require.Nil(t, expr)
+	require.ErrorIs(t, err, exeerrors.ErrSpDoesNotExist)
+	require.ErrorContains(t, err, "FUNCTION test.upper does not exist")
 }

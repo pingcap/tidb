@@ -172,7 +172,9 @@ type StoreParameter struct {
 	OmitParamStatus bool
 }
 
-func restoreRoutineFieldType(ctx *format.RestoreCtx, origin *types.FieldType) error {
+// RestoreRoutineFieldType restores a stored routine field type in a form that can round-trip
+// through SHOW CREATE / mysql.routines without reintroducing implicit widths or collations.
+func RestoreRoutineFieldType(ctx *format.RestoreCtx, origin *types.FieldType) error {
 	ft := origin.Clone()
 	switch ft.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
@@ -238,7 +240,7 @@ func (n *StoreParameter) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ParamName)
 	ctx.WritePlain(" ")
-	return restoreRoutineFieldType(ctx, n.ParamType)
+	return RestoreRoutineFieldType(ctx, n.ParamType)
 }
 
 // Accept implements Node Accept interface.
@@ -539,7 +541,7 @@ func (n *CreateProcedureInfo) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WritePlain(") ")
 		ctx.WriteKeyWord("RETURNS ")
-		err = restoreRoutineFieldType(ctx, n.FunctionInfo.RetType)
+		err = RestoreRoutineFieldType(ctx, n.FunctionInfo.RetType)
 		if err != nil {
 			return err
 		}

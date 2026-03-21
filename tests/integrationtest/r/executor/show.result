@@ -552,10 +552,10 @@ select 1;
 1
 1
 create invalid;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid" 
 show errors;
 Level	Code	Message
-Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid" 
 show tables;
 Error 1046 (3D000): No database selected
 show tables;

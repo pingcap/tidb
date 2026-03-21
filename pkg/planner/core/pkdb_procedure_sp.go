@@ -1899,7 +1899,15 @@ func (curInfo *procedurceCurInfo) CloseCurs() error {
 func (b *PlanBuilder) buildCallBodyPlan(ctx context.Context, stmtNodes *ast.CreateProcedureInfo, collate string) error {
 	b.ctx.GetSessionVars().SetInCallProcedure()
 	defer b.ctx.GetSessionVars().OutCallProcedure(false)
-	b.storedFuncRetType = stmtNodes.FunctionInfo.RetType
+	if stmtNodes.FunctionInfo.RetType != nil {
+		retType, err := b.setDefaultLengthAndCharset(stmtNodes.FunctionInfo.RetType, collate)
+		if err != nil {
+			return err
+		}
+		b.storedFuncRetType = retType
+	} else {
+		b.storedFuncRetType = nil
+	}
 	return b.procedureNodePlan(ctx, stmtNodes.ProcedureBody, collate)
 }
 

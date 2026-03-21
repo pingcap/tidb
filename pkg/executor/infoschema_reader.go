@@ -1090,7 +1090,9 @@ func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx session
 			continue
 		}
 		routineType := chunkRow.GetEnum(2)
-		if routineType.String() != "PROCEDURE" {
+		switch routineType.String() {
+		case "PROCEDURE", "FUNCTION":
+		default:
 			return errors.Errorf("Not support %s", routineType.String())
 		}
 		routeSchema := chunkRow.GetString(0)
@@ -1112,7 +1114,6 @@ func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx session
 		if isDeterministic == 1 {
 			deterministicStatus = "YES"
 		}
-		// unspport function
 		row := types.MakeDatums(name, "def", routeSchema, name, routineType.String(), "", nil, nil, nil, nil, nil, nil, nil, nil, "SQL",
 			definitionUtf8, nil, externalLanguage, "SQL", deterministicStatus, sqlDataAccess.String(), nil, securityType.String(), created,
 			lastAltered, sqlMode.String(), comment, definer, characterSetClient, connectionCollation, schemaCollation)

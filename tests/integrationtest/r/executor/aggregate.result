@@ -700,7 +700,7 @@ select approx_count_distinct(c,d) from t;
 approx_count_distinct(c,d)
 5
 select count(c,d) from t;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t" 
 select d*2 as ee, sum(c) from t group by ee order by ee;
 ee	sum(c)
 2	2

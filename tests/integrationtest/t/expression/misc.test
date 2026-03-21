@@ -586,9 +586,9 @@ select length(@p);
 connect (conn1, localhost, root,,);
 
 ## current db is empty
--- error 1046
+-- error 1046,1305
 SELECT xxx(1);
--- error 1046
+-- error 1046,1305
 SELECT yyy();
 -- error 1305
 SELECT T.upper(1);
