@@ -264,6 +264,9 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()
 	items.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
+	if sessVars.ConnectionInfo != nil && len(sessVars.ConnectionInfo.Attributes) > 0 {
+		items.SessionConnectAttrs = sessVars.ConnectionInfo.Attributes
+	}
 
 	if a.retryCount > 0 {
 		items.ExecRetryTime = items.TimeTotal - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
