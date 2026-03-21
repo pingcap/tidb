@@ -19,7 +19,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -337,6 +339,46 @@ func TestScanRanges(t *testing.T) {
 	assert.Equal(t, []byte("c"), shardInfos[1].Shard.StartKey)
 	assert.Equal(t, []byte("d"), shardInfos[1].Shard.EndKey)
 	assert.Equal(t, []string{"addr2"}, shardInfos[1].LocalCacheAddrs)
+}
+
+func TestScanRangesTimeout(t *testing.T) {
+	originalCfg := *tidbconfig.GetGlobalConfig()
+	cfg := originalCfg
+	cfg.PDClient.PDServerTimeout = 1
+	tidbconfig.StoreGlobalConfig(&cfg)
+	defer tidbconfig.StoreGlobalConfig(&originalCfg)
+
+	mockClient := new(MockMetaServiceClient)
+	ctx := newTestTiCIManagerCtx(mockClient)
+	tableID, indexID := int64(1), int64(2)
+	keyRanges := []kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+	}
+
+	mockClient.
+		On("GetShardLocalCacheInfo", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			reqCtx, ok := args.Get(0).(context.Context)
+			require.True(t, ok)
+			<-reqCtx.Done()
+		}).
+		Return(&GetShardLocalCacheResponse{}, context.DeadlineExceeded).
+		Once()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ctx.ScanRanges(context.Background(), tableID, indexID, keyRanges, 100)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("ScanRanges did not return within timeout")
+	}
+
+	mockClient.AssertExpectations(t)
 }
 
 func TestModelTableToTiCITableInfo(t *testing.T) {
