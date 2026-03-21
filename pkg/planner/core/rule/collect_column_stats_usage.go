@@ -149,7 +149,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	c.visitedPhysTblIDs.Insert(int(tblID))
-	if tblID != ds.PhysicalTableID {
+	if len(ds.StaticPrunedPartitionIDs) > 0 {
+		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.StaticPrunedPartitionIDs...)
+	} else if tblID != ds.PhysicalTableID {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {

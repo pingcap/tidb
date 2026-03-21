@@ -851,6 +851,8 @@ const (
 
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
+	// TiDBOptEnableSelectedPartitionStats indicates whether to use selected partition stats under dynamic partition pruning.
+	TiDBOptEnableSelectedPartitionStats = "tidb_opt_enable_selected_partition_stats"
 
 	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
 	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
@@ -1578,6 +1580,7 @@ const (
 	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
+	DefTiDBOptEnableSelectedPartitionStats            = false
 	DefTiDBRegardNULLAsPoint                          = true
 	DefEnablePlacementCheck                           = true
 	DefTimestamp                                      = "0"

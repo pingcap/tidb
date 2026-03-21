@@ -23,10 +23,27 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAggregateSelectedPartitionCounts(t *testing.T) {
+	realtimeCount, modifyCount, ok := cardinality.AggregateSelectedPartitionCounts([]*statistics.Table{
+		{HistColl: *statistics.NewHistColl(1, 10, 2, 0, 0)},
+		{HistColl: *statistics.NewHistColl(2, 30, 4, 0, 0)},
+	})
+	require.True(t, ok)
+	require.Equal(t, int64(40), realtimeCount)
+	require.Equal(t, int64(6), modifyCount)
+
+	_, _, ok = cardinality.AggregateSelectedPartitionCounts([]*statistics.Table{
+		{HistColl: *statistics.NewHistColl(1, 10, 2, 0, 0)},
+		{HistColl: statistics.PseudoHistColl(2, false)},
+	})
+	require.False(t, ok)
+}
 
 func TestScaleNDV(t *testing.T) {
 	store := testkit.CreateMockStore(t)

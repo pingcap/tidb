@@ -877,6 +877,10 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource) (base.LogicalPlan, 
 	if pi == nil {
 		return ds, nil
 	}
+	ds.StaticPrunedPartitionIDs = nil
+	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuild {
+		return ds, nil
+	}
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// Now, PushDownNot have be done in the ApplyPredicateSimplification
@@ -904,6 +908,11 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource) (base.LogicalPlan, 
 	}
 
 	return s.makeUnionAllChildren(ds, pi, GetFullRange(len(pi.Definitions)))
+}
+
+func setStaticPartitionPruneInfo(ds *logicalop.DataSource) {
+	ds.SCtx().GetSessionVars().StmtCtx.StaticPartitionPrune = true
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("static partition prune mode used")
 }
 
 // FindByName checks whether object name exists in list.
@@ -1885,7 +1894,6 @@ func (*PartitionProcessor) checkHintsApplicable(ds *logicalop.DataSource, partit
 }
 
 func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *model.PartitionInfo, or PartitionRangeOR) (base.LogicalPlan, error) {
-	children := make([]base.LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
 	for _, r := range or {
@@ -1904,36 +1912,60 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 			if _, found := usedDefinition[pi.Definitions[partIdx].ID]; found {
 				continue
 			}
-			// Not a deep copy.
-			newDataSource := *ds
-			newDataSource.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
-			newDataSource.SetSchema(ds.Schema().Clone())
-			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
-			copy(newDataSource.Columns, ds.Columns)
-			newDataSource.PartitionDefIdx = &partIdx
-			newDataSource.PhysicalTableID = pi.Definitions[partIdx].ID
-
-			// There are many expression nodes in the plan tree use the original datasource
-			// id as FromID. So we set the id of the newDataSource with the original one to
-			// avoid traversing the whole plan tree to update the references.
-			newDataSource.SetID(ds.ID())
-			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[partIdx].Name)
-			partitionNameSet.Insert(pi.Definitions[partIdx].Name.L)
-			if err != nil {
-				return nil, err
-			}
-			children = append(children, &newDataSource)
 			usedDefinition[pi.Definitions[partIdx].ID] = pi.Definitions[partIdx]
+			partitionNameSet.Insert(pi.Definitions[partIdx].Name.L)
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
 
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
-	if len(children) == 0 {
+	prunedPartitionIDs := make([]int64, 0, len(usedDefinition))
+	for partitionID := range usedDefinition {
+		prunedPartitionIDs = append(prunedPartitionIDs, partitionID)
+	}
+	slices.Sort(prunedPartitionIDs)
+	staticPruned := len(prunedPartitionIDs) < len(pi.Definitions)
+	if staticPruned && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && ds.SCtx().GetSessionVars().EnableSelectedPartitionStats {
+		setStaticPartitionPruneInfo(ds)
+	}
+	if len(prunedPartitionIDs) == 0 {
 		// No result after table pruning.
 		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		tableDual.SetSchema(ds.Schema())
 		return tableDual, nil
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		if ds.SCtx().GetSessionVars().EnableSelectedPartitionStats && staticPruned && len(prunedPartitionIDs) > 0 {
+			ds.StaticPrunedPartitionIDs = prunedPartitionIDs
+		}
+		return ds, nil
+	}
+	children := make([]base.LogicalPlan, 0, len(prunedPartitionIDs))
+	for _, partitionID := range prunedPartitionIDs {
+		definition := usedDefinition[partitionID]
+		partIdx := slices.IndexFunc(pi.Definitions, func(def model.PartitionDefinition) bool {
+			return def.ID == partitionID
+		})
+		if partIdx < 0 {
+			continue
+		}
+		// Not a deep copy.
+		newDataSource := *ds
+		newDataSource.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
+		newDataSource.SetSchema(ds.Schema().Clone())
+		newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
+		copy(newDataSource.Columns, ds.Columns)
+		newDataSource.PartitionDefIdx = &partIdx
+		newDataSource.PhysicalTableID = partitionID
+
+		// There are many expression nodes in the plan tree use the original datasource
+		// id as FromID. So we set the id of the newDataSource with the original one to
+		// avoid traversing the whole plan tree to update the references.
+		newDataSource.SetID(ds.ID())
+		err := s.resolveOptimizeHint(&newDataSource, definition.Name)
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, &newDataSource)
 	}
 	if len(children) == 1 {
 		// No need for the union all.

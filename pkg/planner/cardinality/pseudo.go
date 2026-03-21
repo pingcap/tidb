@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	statsutil "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -36,6 +37,22 @@ const (
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
+}
+
+func init() {
+	statsutil.AggregateSelectedPartitionCounts = AggregateSelectedPartitionCounts
+}
+
+// AggregateSelectedPartitionCounts aggregates the realtime and modify count from selected partitions.
+func AggregateSelectedPartitionCounts(partitionStats []*statistics.Table) (realtimeCount, modifyCount int64, ok bool) {
+	for _, partStats := range partitionStats {
+		if partStats == nil || partStats.Pseudo {
+			return 0, 0, false
+		}
+		realtimeCount += partStats.RealtimeCount
+		modifyCount += partStats.ModifyCount
+	}
+	return realtimeCount, modifyCount, true
 }
 
 func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {

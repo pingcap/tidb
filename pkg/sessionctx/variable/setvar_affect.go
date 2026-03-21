@@ -107,6 +107,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_enable_index_merge_join":                    {},
 	"tidb_enable_ordered_result_mode":                 {},
 	"tidb_enable_pseudo_for_outdated_stats":           {},
+	"tidb_opt_enable_selected_partition_stats":        {},
 	"tidb_stats_load_sync_wait":                       {},
 	"tidb_cost_model_version":                         {},
 	"tidb_index_join_double_read_penalty_cost_rate":   {},

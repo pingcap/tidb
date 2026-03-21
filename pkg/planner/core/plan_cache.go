@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -306,6 +307,12 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 			return nil, false, err
 		}
 	}
+	if skip, err := shouldSkipCachedPlanForStaticPartitionPruning(sctx, plan); err != nil {
+		return nil, false, err
+	} else if skip {
+		stmtCtx.SetSkipPlanCache("static partition prune mode used")
+		return nil, false, nil
+	}
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, false, nil
 	}
@@ -321,6 +328,174 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *stmtHints
 	return plan, true, nil
+}
+
+func shouldSkipCachedPlanForStaticPartitionPruning(sctx sessionctx.Context, plan base.Plan) (bool, error) {
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() || !sctx.GetSessionVars().EnableSelectedPartitionStats {
+		return false, nil
+	}
+	switch p := plan.(type) {
+	case *physicalop.Update:
+		if p.SelectPlan == nil {
+			return false, nil
+		}
+		return cachedPlanUsesStaticPartitionPruning(sctx, p.SelectPlan)
+	case *physicalop.Delete:
+		if p.SelectPlan == nil {
+			return false, nil
+		}
+		return cachedPlanUsesStaticPartitionPruning(sctx, p.SelectPlan)
+	case base.PhysicalPlan:
+		return cachedPlanUsesStaticPartitionPruning(sctx, p)
+	default:
+		return false, nil
+	}
+}
+
+func cachedPlanUsesStaticPartitionPruning(sctx sessionctx.Context, plan base.PhysicalPlan) (bool, error) {
+	switch p := plan.(type) {
+	case *physicalop.PointGetPlan:
+		if skip, err := pointGetUsesSubsetPartition(sctx, p); err != nil || skip {
+			return skip, err
+		}
+	case *physicalop.BatchPointGetPlan:
+		if skip, err := batchPointGetUsesSubsetPartition(sctx, p); err != nil || skip {
+			return skip, err
+		}
+	case *physicalop.PhysicalTableReader:
+		if ts := findPhysicalTableScan(p.TablePlans); ts != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), ts.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	case *physicalop.PhysicalIndexReader:
+		if is := findPhysicalIndexScan(p.IndexPlans); is != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), is.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	case *physicalop.PhysicalIndexLookUpReader:
+		if ts := findPhysicalTableScan(p.TablePlans); ts != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), ts.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	case *physicalop.PhysicalIndexMergeReader:
+		if ts := findPhysicalTableScan(p.TablePlans); ts != nil {
+			if skip, err := dynamicPartitionAccessUsesSubset(sctx.GetPlanCtx(), ts.Table, p.PlanPartInfo); err != nil || skip {
+				return skip, err
+			}
+		}
+	}
+	for _, child := range plan.Children() {
+		if skip, err := cachedPlanUsesStaticPartitionPruning(sctx, child); err != nil || skip {
+			return skip, err
+		}
+	}
+	return false, nil
+}
+
+func findPhysicalTableScan(plans []base.PhysicalPlan) *physicalop.PhysicalTableScan {
+	for i := len(plans) - 1; i >= 0; i-- {
+		if ts, ok := plans[i].(*physicalop.PhysicalTableScan); ok {
+			return ts
+		}
+	}
+	return nil
+}
+
+func findPhysicalIndexScan(plans []base.PhysicalPlan) *physicalop.PhysicalIndexScan {
+	for i := len(plans) - 1; i >= 0; i-- {
+		if is, ok := plans[i].(*physicalop.PhysicalIndexScan); ok {
+			return is
+		}
+	}
+	return nil
+}
+
+func dynamicPartitionAccessUsesSubset(
+	sctx base.PlanContext,
+	tblInfo *model.TableInfo,
+	partInfo *physicalop.PhysPlanPartInfo,
+) (bool, error) {
+	if tblInfo == nil || tblInfo.GetPartitionInfo() == nil || partInfo == nil {
+		return false, nil
+	}
+	accessObj := physicalop.GetDynamicAccessPartition(sctx, tblInfo, partInfo, "")
+	if accessObj == nil || len(accessObj.Err) > 0 {
+		return false, nil
+	}
+	return !accessObj.AllPartitions, nil
+}
+
+func pointGetUsesSubsetPartition(sctx sessionctx.Context, plan *physicalop.PointGetPlan) (bool, error) {
+	if plan == nil || plan.TblInfo == nil {
+		return false, nil
+	}
+	pi := plan.TblInfo.GetPartitionInfo()
+	if pi == nil || (plan.IndexInfo != nil && plan.IndexInfo.Global) {
+		return false, nil
+	}
+	clonedPlan, ok := plan.CloneForPlanCache(sctx.GetPlanCtx())
+	if !ok {
+		return false, nil
+	}
+	clonedPointGet, ok := clonedPlan.(*physicalop.PointGetPlan)
+	if !ok {
+		return false, nil
+	}
+	if err := buildRangesForPointGet(sctx.GetPlanCtx(), clonedPointGet); err != nil {
+		return false, nil
+	}
+	noMatch, err := clonedPointGet.PrunePartitions(sctx)
+	if err != nil {
+		return false, nil
+	}
+	if noMatch {
+		return true, nil
+	}
+	return clonedPointGet.PartitionIdx != nil, nil
+}
+
+func batchPointGetUsesSubsetPartition(sctx sessionctx.Context, plan *physicalop.BatchPointGetPlan) (bool, error) {
+	if plan == nil || plan.TblInfo == nil {
+		return false, nil
+	}
+	pi := plan.TblInfo.GetPartitionInfo()
+	if pi == nil || (plan.IndexInfo != nil && plan.IndexInfo.Global) {
+		return false, nil
+	}
+	clonedPlan, ok := plan.CloneForPlanCache(sctx.GetPlanCtx())
+	if !ok {
+		return false, nil
+	}
+	clonedBatchPointGet, ok := clonedPlan.(*physicalop.BatchPointGetPlan)
+	if !ok {
+		return false, nil
+	}
+	if err := buildRangesForBatchGet(sctx.GetPlanCtx(), clonedBatchPointGet); err != nil {
+		return false, nil
+	}
+	_, noMatch, err := clonedBatchPointGet.PrunePartitionsAndValues(sctx)
+	if err != nil {
+		return false, nil
+	}
+	if noMatch {
+		return true, nil
+	}
+	if clonedBatchPointGet.SinglePartition {
+		return len(clonedBatchPointGet.PartitionIdxs) > 0, nil
+	}
+	if len(clonedBatchPointGet.PartitionIdxs) == 0 {
+		return false, nil
+	}
+	usedPartitions := make(map[int]struct{}, len(clonedBatchPointGet.PartitionIdxs))
+	for _, idx := range clonedBatchPointGet.PartitionIdxs {
+		if idx >= 0 {
+			usedPartitions[idx] = struct{}{}
+		}
+	}
+	return len(usedPartitions) < len(pi.Definitions), nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement

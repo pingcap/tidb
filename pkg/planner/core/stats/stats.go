@@ -30,6 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+// AggregateSelectedPartitionCounts aggregates selected partition counts when planner/cardinality registers the helper.
+var AggregateSelectedPartitionCounts func(partitionStats []*statistics.Table) (realtimeCount, modifyCount int64, ok bool)
+
 // GetTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable
 // that will be used to record used stats.
 func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
@@ -56,8 +59,10 @@ func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
+// When partitionIDs is non-empty, the selected partitions' row counts are aggregated for
+// cardinality estimation instead of using the partition table global row count.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
-func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, partitionIDs []int64) *statistics.Table {
 	var statsHandle *handle.Handle
 	dom := domain.GetDomain(ctx)
 	if dom != nil {
@@ -65,12 +70,37 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	}
 	var pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
+	selectedPartitionCountsOverridden := false
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if len(partitionIDs) > 0 {
+		uniquePartitionStats := make([]*statistics.Table, 0, len(partitionIDs))
+		seen := make(map[int64]struct{}, len(partitionIDs))
+		for _, partitionID := range partitionIDs {
+			if _, ok := seen[partitionID]; ok {
+				continue
+			}
+			seen[partitionID] = struct{}{}
+			uniquePartitionStats = append(uniquePartitionStats, statsHandle.GetPhysicalTableStats(partitionID, tblInfo))
+		}
+		if len(uniquePartitionStats) == 1 {
+			statsTbl = uniquePartitionStats[0]
+		} else {
+			// Reuse the global stats objects and only narrow the table-level counts to the selected partitions.
+			statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+			if AggregateSelectedPartitionCounts != nil {
+				if realtimeCount, modifyCount, ok := AggregateSelectedPartitionCounts(uniquePartitionStats); ok {
+					statsTbl = statsTbl.CopyAs(statistics.MetaOnly)
+					statsTbl.RealtimeCount = realtimeCount
+					statsTbl.ModifyCount = modifyCount
+					selectedPartitionCountsOverridden = true
+				}
+			}
+		}
+	} else if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
@@ -83,6 +113,10 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
 	if ctx.GetSessionVars().GetOptObjective() == vardef.OptObjectiveDeterminate {
 		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		if selectedPartitionCountsOverridden {
+			// The selected-partition row count is planner-synthesized, so keep it instead of restoring the global analyze count.
+			analyzeCount = statsTbl.RealtimeCount
+		}
 		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
 			// Here is a case that we need specially care about:
@@ -132,7 +166,7 @@ func LoadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 	}
 
 	pctx := ctx.GetPlanCtx()
-	tableStats := GetStatsTable(pctx, tblInfo, pid)
+	tableStats := GetStatsTable(pctx, tblInfo, pid, nil)
 
 	name := tblInfo.Name.O
 	partInfo := tblInfo.GetPartitionInfo()

@@ -79,6 +79,8 @@ type LogicalPlanBuildState struct {
 	lockTableIDs         map[int64]struct{}
 	tblInfo2UnionScan    map[*model.TableInfo]bool
 	useDynamicPruneMode  bool
+	inPreparedPlanBuild  bool
+	staticPartitionPrune bool
 	viewDepth            int32
 	colRefFromUpdatePlan intset.FastIntSet
 	// plan cache related stuff
@@ -470,6 +472,10 @@ type StatementContext struct {
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
+	// InPreparedPlanBuild suppresses parameter-value-sensitive planner rewrites while building a prepared statement cache entry.
+	InPreparedPlanBuild bool
+	// StaticPartitionPrune indicates the current planning flow has used static partition pruning information.
+	StaticPartitionPrune bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
 
@@ -615,6 +621,8 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		lockTableIDs:         maps.Clone(sc.LockTableIDs),
 		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		inPreparedPlanBuild:  sc.InPreparedPlanBuild,
+		staticPartitionPrune: sc.StaticPartitionPrune,
 		viewDepth:            sc.ViewDepth,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
 		planCacheUseCache:    planCacheUseCache,
@@ -635,6 +643,8 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
 	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.InPreparedPlanBuild = state.inPreparedPlanBuild
+	sc.StaticPartitionPrune = state.staticPartitionPrune
 	sc.ViewDepth = state.viewDepth
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)

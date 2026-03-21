@@ -532,7 +532,7 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 
 func initStats(ds *logicalop.DataSource) {
 	if ds.StatisticTable == nil {
-		ds.StatisticTable = stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
+		ds.StatisticTable = stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID, ds.StaticPrunedPartitionIDs)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.StatisticTable.RealtimeCount),

@@ -87,6 +87,8 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64 `hash64-equals:"true"`
+	// StaticPrunedPartitionIDs records the partitions selected by static pruning while keeping the datasource dynamic.
+	StaticPrunedPartitionIDs []int64
 	// PartitionNames records the explicit partition list from AST and is treated as read-only after plan build.
 	PartitionNames []ast.CIStr
 

@@ -656,3 +656,70 @@ func TestPartialStatsInExplain(t *testing.T) {
 		}
 	})
 }
+
+func TestDynamicPartitionPruneUsesMergedPartitionStats(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		p := parser.New()
+		ctx := testKit.Session().(sessionctx.Context)
+
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists pt")
+		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+		testKit.MustExec("set @@session.tidb_analyze_version = 2")
+		testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+		testKit.MustExec(
+			"create table pt(a int, b int) partition by range(a) (" +
+				"partition p0 values less than (100)," +
+				"partition p1 values less than (200)," +
+				"partition p2 values less than maxvalue)",
+		)
+
+		rows := make([]string, 0, 1200)
+		for i := 0; i < 1200; i++ {
+			rows = append(rows, fmt.Sprintf("(%d,%d)", i, i))
+		}
+		const batchSize = 200
+		for start := 0; start < len(rows); start += batchSize {
+			end := min(start+batchSize, len(rows))
+			testKit.MustExec("insert into pt values " + strings.Join(rows[start:end], ","))
+		}
+
+		oriLease := dom.StatsHandle().Lease()
+		dom.StatsHandle().SetLease(1)
+		defer func() {
+			dom.StatsHandle().SetLease(oriLease)
+		}()
+		testKit.MustExec("analyze table pt all columns")
+		dom.StatsHandle().Clear()
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+		require.NoError(t, err)
+		globalStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+		require.Equal(t, int64(1200), globalStats.RealtimeCount)
+		for _, tc := range []struct {
+			sql              string
+			expectedRowCount int64
+		}{
+			{
+				sql:              "select /*+ set_var(tidb_opt_enable_selected_partition_stats=0) */ * from pt where a < 200",
+				expectedRowCount: 1200,
+			},
+			{
+				sql:              "select /*+ set_var(tidb_opt_enable_selected_partition_stats=1) */ * from pt where a < 200",
+				expectedRowCount: 200,
+			},
+		} {
+			stmt, err := p.ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err)
+			require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
+			nodeW := resolve.NewNodeW(stmt)
+			plan, _, err := planner.Optimize(context.Background(), ctx, nodeW, dom.InfoSchema())
+			require.NoError(t, err)
+
+			reader, ok := plan.(*physicalop.PhysicalTableReader)
+			require.True(t, ok)
+			require.Equal(t, tc.expectedRowCount, reader.StatsInfo().HistColl.RealtimeCount)
+		}
+	})
+}

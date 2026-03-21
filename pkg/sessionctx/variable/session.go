@@ -1464,6 +1464,9 @@ type SessionVars struct {
 	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
 	EnablePseudoForOutdatedStats bool
 
+	// EnableSelectedPartitionStats controls whether dynamic partition pruning can use selected partition stats.
+	EnableSelectedPartitionStats bool
+
 	// RegardNULLAsPoint if regard NULL as Point
 	RegardNULLAsPoint bool
 
@@ -2411,6 +2414,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptOrderingIdxSelRatio:           vardef.DefTiDBOptOrderingIdxSelRatio,
 		RegardNULLAsPoint:                vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:          vardef.DefOptEnableProjectionPushDown,
+		EnableSelectedPartitionStats:     vardef.DefTiDBOptEnableSelectedPartitionStats,
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,

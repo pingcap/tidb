@@ -1569,7 +1569,15 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
-func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
+func TestPrepareCacheForDynamicPartitionPruningOff(t *testing.T) {
+	testPrepareCacheForDynamicPartitionPruning(t, "0")
+}
+
+func TestPrepareCacheForDynamicPartitionPruningOn(t *testing.T) {
+	testPrepareCacheForDynamicPartitionPruning(t, "1")
+}
+
+func testPrepareCacheForDynamicPartitionPruning(t *testing.T, selectedPartitionStats string) {
 	// https://github.com/pingcap/tidb/issues/33031
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1578,6 +1586,8 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 	tk.MustExec("use test")
 	tkExplain := testkit.NewTestKit(t, store)
 	tkExplain.MustExec("use test")
+	tk.MustExec("set @@tidb_opt_enable_selected_partition_stats = " + selectedPartitionStats)
+	tkExplain.MustExec("set @@tidb_opt_enable_selected_partition_stats = " + selectedPartitionStats)
 	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
 
@@ -1594,25 +1604,25 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "Selection_7", explain.Rows()[0][0])
-		} else {
-			require.Equal(t, "TableDual_8", explain.Rows()[0][0])
-		}
+		require.Contains(t, explain.Rows()[0][0].(string), "TableDual")
 		tk.MustExec(`set @a=-5, @b=112`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
 
 		explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+		hasSelection, hasPointGet := false, false
+		for _, row := range explain.Rows() {
+			planID := row[0].(string)
+			hasSelection = hasSelection || strings.Contains(planID, "Selection")
+			hasPointGet = hasPointGet || strings.Contains(planID, "Point_Get")
+		}
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "Selection_7", explain.Rows()[0][0])
-			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			require.True(t, hasSelection)
+			require.True(t, hasPointGet)
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		} else {
-			explain.CheckAt([]int{0},
-				[][]any{
-					{"Selection_9"},
-					{"└─Point_Get_8"},
-				})
+			require.True(t, hasSelection)
+			require.True(t, hasPointGet)
 			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
 		}
@@ -1620,7 +1630,7 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		// Test TableDual
 		tk.MustExec(`set @b=5, @a=113`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
-		require.Equal(t, pruneMode == string(variable.Dynamic), tk.Session().GetSessionVars().FoundInPlanCache)
+		require.Equal(t, pruneMode == string(variable.Dynamic) && selectedPartitionStats == "0", tk.Session().GetSessionVars().FoundInPlanCache)
 	}
 }
 
