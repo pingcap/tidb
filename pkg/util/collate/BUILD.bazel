@@ -12,6 +12,7 @@ go_library(
         "gbk_chinese_ci.go",
         "gbk_chinese_ci_data.go",
         "general_ci.go",
+        "latin1.go",
         "pinyin_tidb_as_cs.go",
         "unicode_0400_ci_generated.go",
         "unicode_0400_ci_impl.go",
