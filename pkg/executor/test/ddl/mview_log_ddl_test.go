@@ -511,7 +511,7 @@ func TestPurgeMaterializedViewLogMissingMLog(t *testing.T) {
 	require.ErrorContains(t, err, "materialized view log does not exist")
 }
 
-func TestPurgeMaterializedViewLogUsesMVMaintainMemQuota(t *testing.T) {
+func TestPurgeMaterializedViewLogUsesCurrentSessionMVMaintainMemQuota(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -547,7 +547,7 @@ func TestPurgeMaterializedViewLogUsesMVMaintainMemQuota(t *testing.T) {
 	lastAppliedMaintainQuota = 0
 	mustExecInternal(t, tk, "purge materialized view log on t_purge_quota")
 	require.True(t, applied)
-	require.Equal(t, int64(536870912), lastAppliedMaintainQuota)
+	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
 	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
 }
 

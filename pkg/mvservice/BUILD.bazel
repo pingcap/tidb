@@ -26,6 +26,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/cpu",
@@ -45,6 +46,7 @@ go_test(
         "mvservice_test.go",
         "server_maintainer_test.go",
         "task_handler_test.go",
+        "test_helpers_test.go",
         "time_proxy_test.go",  #keep
         "utils_test.go",
     ],
@@ -60,6 +62,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/core/resolve",
+        "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",

@@ -31,6 +31,7 @@ import (
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -80,14 +81,18 @@ func (recordingSessionPool) Close()                         {}
 
 type recordingSessionContext struct {
 	*mock.Context
-	executedSQL            []string
-	execErrs               map[string]error
-	executedRestrictedSQL  []string
-	executedRestrictedArg  [][]any
-	restrictedRows         map[string][]chunk.Row
-	restrictedErrs         map[string]error
-	restrictedAffectedRows map[string][]uint64
-	restrictedAffectedPos  map[string]int
+	executedSQL             []string
+	execErrs                map[string]error
+	executedRestrictedSQL   []string
+	executedRestrictedArg   [][]any
+	restrictedMaintainQuota []int64
+	restrictedMaxThreads    []int64
+	restrictedStreamCount   []int64
+	restrictedBatchSize     []uint64
+	restrictedRows          map[string][]chunk.Row
+	restrictedErrs          map[string]error
+	restrictedAffectedRows  map[string][]uint64
+	restrictedAffectedPos   map[string]int
 }
 
 type mockCurrentVersionStore struct {
@@ -135,6 +140,10 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	argsCopy := make([]any, len(args))
 	copy(argsCopy, args)
 	s.executedRestrictedArg = append(s.executedRestrictedArg, argsCopy)
+	s.restrictedMaintainQuota = append(s.restrictedMaintainQuota, s.GetSessionVars().MVMaintainMemQuota)
+	s.restrictedMaxThreads = append(s.restrictedMaxThreads, s.GetSessionVars().TiFlashMaxThreads)
+	s.restrictedStreamCount = append(s.restrictedStreamCount, s.GetSessionVars().TiFlashFineGrainedShuffleStreamCount)
+	s.restrictedBatchSize = append(s.restrictedBatchSize, s.GetSessionVars().TiFlashFineGrainedShuffleBatchSize)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
 		if pos < len(seq) {
@@ -1439,6 +1448,54 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	}, se.executedRestrictedSQL)
 }
 
+func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
+	installMockTimeForTest(t)
+
+	se := newRecordingSessionContext()
+	expectedNextRefresh := mvsNow().Add(time.Minute).Round(0)
+	se.restrictedRows[testSQLFindMVNextTime] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(expectedNextRefresh.Unix()),
+		}).ToRow(),
+	}
+	mvTable := &meta.TableInfo{
+		ID:    101,
+		Name:  pmodel.NewCIStr("mv1"),
+		State: meta.StatePublic,
+	}
+	withMockInfoSchema(t, mvTable)
+	pool := recordingSessionPool{se: se}
+
+	vars := se.GetSessionVars()
+	mockGlobalAccessor := variable.NewMockGlobalAccessor4Tests()
+	mockGlobalAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = mockGlobalAccessor
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainMemQuota, "536870912"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMaxTiFlashThreads, "8"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashFineGrainedShuffleStreamCount, "16"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashFineGrainedShuffleBatchSize, "4096"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "2"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, "4"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, "1024"))
+
+	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 101)
+	require.NoError(t, err)
+	require.Equal(t, expectedNextRefresh.Unix(), nextRefresh.Unix())
+	require.Equal(t, []string{
+		testSQLRefreshMV,
+		testSQLFindMVNextTime,
+	}, se.executedRestrictedSQL)
+	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []int64{8, 8}, se.restrictedMaxThreads)
+	require.Equal(t, []int64{16, 16}, se.restrictedStreamCount)
+	require.Equal(t, []uint64{4096, 4096}, se.restrictedBatchSize)
+	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
+	require.Equal(t, int64(2), vars.TiFlashMaxThreads)
+	require.Equal(t, int64(4), vars.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(1024), vars.TiFlashFineGrainedShuffleBatchSize)
+}
+
 func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
 	installMockTimeForTest(t)
 
@@ -1495,6 +1552,32 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	require.Len(t, se.executedRestrictedArg, 2)
 	require.Len(t, se.executedRestrictedArg[0], 2)
 	require.Equal(t, "mv_base", se.executedRestrictedArg[0][1])
+}
+
+func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
+	installMockTimeForTest(t)
+	se := newRecordingSessionContext()
+	nextTimeRows := []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
+		}).ToRow(),
+	}
+	setupPurgeMVLogMetaForTest(t, se, nextTimeRows)
+
+	pool := recordingSessionPool{se: se}
+	vars := se.GetSessionVars()
+	mockGlobalAccessor := variable.NewMockGlobalAccessor4Tests()
+	mockGlobalAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = mockGlobalAccessor
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainMemQuota, "536870912"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+
+	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
+	require.NoError(t, err)
+	require.False(t, nextPurge.IsZero())
+	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
+	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
 }
 
 func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {
