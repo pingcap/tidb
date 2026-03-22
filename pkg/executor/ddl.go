@@ -351,8 +351,13 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)
 	sessionVars := e.Ctx().GetSessionVars()
-	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
+	currentDB := sessionVars.CurrentDBCI
+	if currentDB.L == "" {
+		currentDB = pmodel.NewCIStr(sessionVars.CurrentDB)
+	}
+	if err == nil && model.NameEqual(currentDB, dbName) {
 		sessionVars.CurrentDB = ""
+		sessionVars.CurrentDBCI = pmodel.CIStr{}
 		err = sessionVars.SetSystemVar(variable.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
@@ -446,8 +451,8 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
 		AutoIDs:       autoIDs,
-		OldSchemaName: job.SchemaName,
-		OldTableName:  tblInfo.Name.L,
+		OldSchemaName: job.GetSchemaName(),
+		OldTableName:  tblInfo.Name,
 	}
 	// Call DDL RecoverTable.
 	err = e.ddlExecutor.RecoverTable(e.Ctx(), recoverInfo)
@@ -514,9 +519,13 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if err != nil {
 		return nil, nil, err
 	}
-	schemaName := tableName.Schema.L
+	schemaName := model.NameAsID(tableName.Schema)
 	if schemaName == "" {
-		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+		currentDB := e.Ctx().GetSessionVars().CurrentDBCI
+		if currentDB.L == "" {
+			currentDB = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		}
+		schemaName = model.NameAsID(currentDB)
 	}
 	if schemaName == "" {
 		return nil, nil, errors.Trace(plannererrors.ErrNoDB)
@@ -610,8 +619,8 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
 		AutoIDs:       autoIDs,
-		OldSchemaName: job.SchemaName,
-		OldTableName:  s.Table.Name.L,
+		OldSchemaName: job.GetSchemaName(),
+		OldTableName:  s.Table.Name,
 	}
 	// Call DDL RecoverTable.
 	err = e.ddlExecutor.RecoverTable(e.Ctx(), recoverInfo)

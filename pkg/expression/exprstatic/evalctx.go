@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,7 +75,7 @@ type evalCtxState struct {
 	sqlMode               mysql.SQLMode
 	typeCtx               types.Context
 	errCtx                errctx.Context
-	currentDB             string
+	currentDB             pmodel.CIStr
 	currentTime           *timeOnce
 	maxAllowedPacket      uint64
 	enableRedactLog       string
@@ -135,7 +136,7 @@ func WithErrLevelMap(level errctx.LevelMap) EvalCtxOption {
 }
 
 // WithCurrentDB sets the current database name for the `EvalContext`.
-func WithCurrentDB(db string) EvalCtxOption {
+func WithCurrentDB(db pmodel.CIStr) EvalCtxOption {
 	return func(s *evalCtxState) {
 		s.currentDB = db
 	}
@@ -317,6 +318,11 @@ func (ctx *EvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQ
 
 // CurrentDB return the current database name
 func (ctx *EvalContext) CurrentDB() string {
+	return ctx.currentDB.L
+}
+
+// CurrentDBCI return the current database name
+func (ctx *EvalContext) CurrentDBCI() pmodel.CIStr {
 	return ctx.currentDB
 }
 
@@ -508,7 +514,7 @@ func MakeEvalContextStatic(ctx exprctx.StaticConvertibleEvalContext) *EvalContex
 		WithTypeFlags(typeCtx.Flags()),
 		WithLocation(typeCtx.Location()),
 		WithErrLevelMap(errCtx.LevelMap()),
-		WithCurrentDB(ctx.CurrentDB()),
+		WithCurrentDB(ctx.CurrentDBCI()),
 		WithCurrentTime(func() func() (time.Time, error) {
 			currentTime, currentTimeErr := ctx.CurrentTime()
 

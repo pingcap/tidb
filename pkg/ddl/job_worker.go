@@ -1098,13 +1098,13 @@ func (w *worker) runOneJobStep(
 
 func loadDDLVars(w *worker) error {
 	// Get sessionctx from context resource pool.
-	var ctx sessionctx.Context
-	ctx, err := w.sessPool.Get()
+	var sctx sessionctx.Context
+	sctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.Put(ctx)
-	return util.LoadDDLVars(ctx)
+	defer w.sessPool.Put(sctx)
+	return util.LoadDDLVars(sctx)
 }
 
 func toTError(err error) *terror.Error {

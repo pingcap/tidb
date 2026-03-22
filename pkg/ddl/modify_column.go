@@ -729,7 +729,7 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 		return nil, nil
 	}
 	is := infoCache.GetLatest()
-	referredFKs := is.GetTableReferredForeignKeys(job.SchemaName, tblInfo.Name.L)
+	referredFKs := is.GetTableReferredForeignKeys(job.GetSchemaName(), tblInfo.Name)
 	if len(referredFKs) == 0 {
 		return nil, nil
 	}
@@ -1645,7 +1645,7 @@ func GetModifiableColumnJob(
 		return nil, err
 	}
 
-	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 

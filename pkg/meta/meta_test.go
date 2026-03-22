@@ -1219,7 +1219,7 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	})
 	require.Equal(t, group1[1].Name, group.Name)
 	// referred foreign key
-	referredFk := is.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	referredFk := is.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema, tblInfo.ForeignKeys[0].RefTable)
 	require.Equal(t, len(referredFk), 1)
 	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 	// temp table

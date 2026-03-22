@@ -620,6 +620,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	}
 	e.Ctx().GetSessionVars().CurrentDBChanged = dbname.O != e.Ctx().GetSessionVars().CurrentDB
 	e.Ctx().GetSessionVars().CurrentDB = dbname.O
+	e.Ctx().GetSessionVars().CurrentDBCI = dbname
 	sessionVars := e.Ctx().GetSessionVars()
 	dbCollate := dbinfo.Collate
 	if dbCollate == "" {

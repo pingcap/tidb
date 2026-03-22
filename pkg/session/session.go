@@ -3253,6 +3253,27 @@ type tableBasicInfo struct {
 	id  int64
 }
 
+// loadLowerCaseTableNames loads lower_case_table_names parameter from mysql.tidb.
+func loadLowerCaseTableNames(ctx context.Context, se *session) (int, error) {
+	para, err := se.getTableValue(ctx, mysql.TiDBTable, lowerCaseTableNames)
+	if err != nil {
+		return 0, err
+	}
+	switch para {
+	case "0":
+		return 0, nil
+	case "1":
+		return 1, nil
+	case "2":
+		return 2, nil
+	default:
+		logutil.BgLogger().Warn(
+			"Unexpected value of 'lower_case_table_names' in 'mysql.tidb', use '2' instead",
+			zap.String("value", para))
+		return 2, nil
+	}
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
@@ -3562,6 +3583,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
+	// Set the lower_case_table_names before bootstrap to initialize infoschema cache correctly.
+	// The validity will be checked later before reading system table mysql.tidb.
+	model.SetLowerCaseTableNamesOnBootstrap(cfg.LowerCaseTableNamesOnFirstBootstrap)
+
 	err = InitMDLTable(store)
 	if err != nil {
 		return nil, err
@@ -3632,6 +3657,15 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
+
+	lowerCaseTableNames, err := loadLowerCaseTableNames(ctx, ses[0])
+	if err != nil {
+		return nil, err
+	}
+	if cfg.LowerCaseTableNamesOnFirstBootstrap != lowerCaseTableNames {
+		return nil, fmt.Errorf("lower_case_table_names in config (%d) does not match the value in mysql.tidb (%d)", cfg.LowerCaseTableNamesOnFirstBootstrap, lowerCaseTableNames)
+	}
+	model.SetLowerCaseTableNamesOnBootstrap(lowerCaseTableNames)
 
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
@@ -4867,7 +4901,8 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used on sequence. Fallback to standard mode"))
 			return false
 		}
-		if vars.ForeignKeyChecks && (len(tbl.Meta().ForeignKeys) > 0 || len(is.GetTableReferredForeignKeys(t.DB, t.Table)) > 0) {
+		// TODO(lower_case_table_names): stmtctx.TableEntry should use CIStr for DB and Table.
+		if vars.ForeignKeyChecks && (len(tbl.Meta().ForeignKeys) > 0 || len(is.GetTableReferredForeignKeys(pmodel.NewCIStr(t.DB), pmodel.NewCIStr(t.Table))) > 0) {
 			stmtCtx.AppendWarning(
 				errors.New(
 					"Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode",

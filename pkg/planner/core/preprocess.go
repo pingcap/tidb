@@ -628,14 +628,14 @@ func bindableStmtType(node ast.StmtNode) byte {
 }
 
 func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
-	currentDB := p.sctx.GetSessionVars().CurrentDB
+	currentDB := p.sctx.GetSessionVars().CurrentDBCI
 	if tn.Schema.String() != "" {
-		currentDB = tn.Schema.L
+		currentDB = tn.Schema
 	}
-	if currentDB == "" {
+	if currentDB.L == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := pmodel.NewCIStr(currentDB)
+	sName := currentDB
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -1790,7 +1790,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), tn.Schema, table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -2025,7 +2025,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// This function may return a new table, so we need to check the return value in the `defer` block.
 		if err == nil {
 			if retTbl.Meta().State != model.StatePublic {
-				err = infoschema.ErrTableNotExists.FastGenByArgs(dbName.L, retTbl.Meta().Name.L)
+				err = infoschema.ErrTableNotExists.FastGenByArgs(
+					pmodel.NewCIStr(model.NameAsID(dbName)),
+					retTbl.Meta().Name,
+				)
 				retTbl = nil
 			}
 		}

@@ -1342,7 +1342,7 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 			return errors.Trace(err)
 		}
 		log.Info("execute ddl query",
-			zap.String("db", job.SchemaName),
+			zap.Stringer("db", job.GetSchemaName()),
 			zap.String("query", job.Query),
 			zap.Int64("historySchemaVersion", job.BinlogInfo.SchemaVersion))
 	}

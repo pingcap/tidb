@@ -62,7 +62,7 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -377,10 +377,12 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tbInfo.State = model.StateNone
 
 	metaMut := jobCtx.metaMut
-	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name.L)
+
+	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name)
 	if err == nil && oldTableID > 0 {
 		err = infoschema.ErrTableExists
 	}
+
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -432,7 +434,7 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	}
 }
 
-func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Mutator, schemaID int64, tableName string) (int64, error) {
+func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Mutator, schemaID int64, tableName pmodel.CIStr) (int64, error) {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
@@ -446,19 +448,19 @@ func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Mutator, schemaI
 	return findTableIDFromStore(t, schemaID, tableName)
 }
 
-func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) (int64, error) {
+func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName pmodel.CIStr) (int64, error) {
 	schema, ok := is.SchemaByID(schemaID)
 	if !ok {
 		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	tbl, err := is.TableByName(context.Background(), schema.Name, pmodel.NewCIStr(tableName))
+	tbl, err := is.TableByName(context.Background(), schema.Name, tableName)
 	if err != nil {
 		return 0, err
 	}
 	return tbl.Meta().ID, nil
 }
 
-func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (int64, error) {
+func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName pmodel.CIStr) (int64, error) {
 	tbls, err := t.ListSimpleTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -467,7 +469,7 @@ func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (in
 		return 0, errors.Trace(err)
 	}
 	for _, tbl := range tbls {
-		if tbl.Name.L == tableName {
+		if model.NameEqual(tbl.Name, tableName) {
 			return tbl.ID, nil
 		}
 	}

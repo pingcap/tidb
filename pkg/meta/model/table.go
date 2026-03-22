@@ -88,6 +88,48 @@ var ExtraHandleName = model.NewCIStr("_tidb_rowid")
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
 
+var (
+	lowerCaseTableNames int32 = 2
+	// NameAsID returns the name according to the lower_case_table_names setting.
+	NameAsID = ciStrLower
+	// NameEqual checks whether two table names are equal according to the lower_case_table_names setting.
+	NameEqual = ciStrEqLower
+)
+
+func ciStrLower(s model.CIStr) string {
+	return s.L
+}
+
+func ciStrOrigin(s model.CIStr) string {
+	return s.O
+}
+
+func ciStrEqLower(a, b model.CIStr) bool {
+	return a.L == b.L
+}
+
+func ciStrEqOrigin(a, b model.CIStr) bool {
+	return a.O == b.O
+}
+
+// SetLowerCaseTableNamesOnBootstrap initialize the lowerCaseTableNames value on bootstrap.
+func SetLowerCaseTableNamesOnBootstrap(val int) {
+	lowerCaseTableNames = int32(val)
+	switch val {
+	case 0:
+		NameAsID = ciStrOrigin
+		NameEqual = ciStrEqOrigin
+	case 1, 2:
+		NameAsID = ciStrLower
+		NameEqual = ciStrEqLower
+	}
+}
+
+// GetLowerCaseTableNames loads the lowerCaseTableNames value.
+func GetLowerCaseTableNames() int {
+	return int(lowerCaseTableNames)
+}
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
@@ -601,6 +643,11 @@ func (t *TableInfo) GetNonTempColumns() []*ColumnInfo {
 		result = append(result, col)
 	}
 	return result
+}
+
+// NameAsID returns the name according to the lower_case_table_names setting.
+func (t *TableInfo) NameAsID() string {
+	return NameAsID(t.Name)
 }
 
 // FindFKInfoByName finds FKInfo in fks by lowercase name.

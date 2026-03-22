@@ -600,7 +600,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.NameAsID())
 	oldTableID, newTableID, err := b.getTableIDs(m, diff)
 	if err != nil {
 		return nil, err
@@ -700,7 +700,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m meta.Reader, diff *model.
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.NameAsID())
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -717,7 +717,7 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m meta.Reader, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.NameAsID())
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
 	return nil
 }
@@ -871,8 +871,8 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 	}
 
 	if !b.enableV2 {
-		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
-		tableNames.tables[tblInfo.Name.L] = tbl
+		tableNames := b.infoSchema.schemaMap[dbInfo.NameAsID()]
+		tableNames.tables[tblInfo.NameAsID()] = tbl
 	}
 	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
 
@@ -1136,7 +1136,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 
-		schTbls.tables[t.Name.L] = tbl
+		schTbls.tables[t.NameAsID()] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
 		if len(di.TableName2ID) > 0 {
 			delete(di.TableName2ID, t.Name.L)

@@ -32,11 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -1120,12 +1121,12 @@ var defaultSysVars = []*SysVar{
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			choice := strings.ToUpper(normalizedValue)
-			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
+			if choice != pmodel.AllColumns.String() && choice != pmodel.PredicateColumns.String() {
 				return "", errors.Errorf(
 					"invalid value for %s, it should be either '%s' or '%s'",
 					TiDBAnalyzeColumnOptions,
-					model.AllColumns.String(),
-					model.PredicateColumns.String(),
+					pmodel.AllColumns.String(),
+					pmodel.PredicateColumns.String(),
 				)
 			}
 			return normalizedValue, nil
@@ -3746,6 +3747,9 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(EnableEAL.Load()), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: LowerCaseTableNames, Value: "2", Type: TypeInt, MinValue: 0, MaxValue: 2, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return strconv.Itoa(model.GetLowerCaseTableNames()), nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

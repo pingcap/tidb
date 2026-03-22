@@ -220,7 +220,7 @@ const (
 	// ColumnPrivTable is the table in system db contains column scope privilege info.
 	ColumnPrivTable = "Columns_priv"
 	// GlobalVariablesTable is the table contains global system variables.
-	GlobalVariablesTable = "GLOBAL_VARIABLES"
+	GlobalVariablesTable = "global_variables"
 	// GlobalStatusTable is the table contains global status variables.
 	GlobalStatusTable = "GLOBAL_STATUS"
 	// TiDBTable is the table contains tidb info.
@@ -316,7 +316,7 @@ var Command2Str = map[byte]string{
 	ComResetConnection:  "Reset connect",
 }
 
-// DefaultSQLMode for GLOBAL_VARIABLES
+// DefaultSQLMode for global_variables
 const DefaultSQLMode = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
 
 // DefaultLengthOfMysqlTypes is the map for default physical length of MySQL data types.

@@ -184,10 +184,10 @@ const (
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
-	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
+	// TODO: MySQL puts global_variables table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
+	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.global_variables(
 		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(16383) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
@@ -472,13 +472,13 @@ const (
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
 			session_id,
-			cluster_tidb_trx.start_time,
+			CLUSTER_TIDB_TRX.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
 		FROM mysql.tidb_ddl_job,
 			mysql.tidb_mdl_info,
-			information_schema.cluster_tidb_trx
+			INFORMATION_SCHEMA.CLUSTER_TIDB_TRX
 		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
-			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(CLUSTER_TIDB_TRX.related_table_ids, ',', '|'), '),') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -767,7 +767,7 @@ const (
 			table_schema as object_schema,
 			table_name as object_name,
 			index_name
-		FROM information_schema.cluster_tidb_index_usage
+		FROM INFORMATION_SCHEMA.CLUSTER_TIDB_INDEX_USAGE
 		WHERE
 			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
 			index_name != 'PRIMARY'
@@ -1018,6 +1018,8 @@ const (
 	eeversion13 = 13
 	// eeversion14 add LBAC metadata tables.
 	eeversion14 = 14
+	// eeversion15 adds the support for lower_case_table_names in EE.
+	eeversion15 = 15
 )
 
 const (
@@ -1048,6 +1050,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the lower_case_table_names value.
+	lowerCaseTableNames = "lower_case_table_names"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1447,7 +1451,7 @@ var currentBootstrapVersion int64 = version223
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentEEBootstrapVersion int64 = eeversion14
+var currentEEBootstrapVersion int64 = eeversion15
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1644,6 +1648,7 @@ var (
 		upgradeToEEVer12,
 		upgradeToEEVer13,
 		upgradeToEEVer14,
+		upgradeToEEVer15,
 	}
 )
 
@@ -2239,6 +2244,13 @@ func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
 	}
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, TidbNewCollationEnabled, b, comment, b,
+	)
+}
+
+func writeLowerCaseTableNamesParameter(s sessiontypes.Session, val int) {
+	comment := "lower_case_table_names value. Do not edit it."
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, lowerCaseTableNames, val, comment, val,
 	)
 }
 
@@ -3660,6 +3672,14 @@ func upgradeToEEVer14(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateUserExemptionsTable)
 }
 
+func upgradeToEEVer15(s sessiontypes.Session, ver int64) {
+	if ver >= eeversion15 {
+		return
+	}
+	// Forbid updating lower_case_table_names for existing clusters.
+	writeLowerCaseTableNamesParameter(s, 2)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3953,6 +3973,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
+	writeLowerCaseTableNamesParameter(s, config.GetGlobalConfig().LowerCaseTableNamesOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -416,15 +417,19 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionctx.Con
 	sessionVars := tc.Session.GetSessionVars()
 	savedPreparedStmtID := sessionVars.GetNextPreparedStmtID()
 	savedCurrentDB := sessionVars.CurrentDB
+	savedCurrentDBCI := sessionVars.CurrentDBCI
 	defer func() {
 		sessionVars.SetNextPreparedStmtID(savedPreparedStmtID - 1)
 		sessionVars.CurrentDB = savedCurrentDB
+		sessionVars.CurrentDBCI = savedCurrentDBCI
 	}()
 
 	for id, preparedStmtInfo := range sessionStates.PreparedStmts {
 		// Set the next id and currentDB manually.
 		sessionVars.SetNextPreparedStmtID(id - 1)
 		sessionVars.CurrentDB = preparedStmtInfo.StmtDB
+		// TODO(lower_case_table_names): update preparedStmtInfo struct to use StmtDBCI instead of StmtDB string.
+		sessionVars.CurrentDBCI = pmodel.NewCIStr(preparedStmtInfo.StmtDB)
 		if preparedStmtInfo.Name == "" {
 			// Binary protocol: add to sessionVars.PreparedStmts and TiDBContext.stmts.
 			stmt, _, _, err := tc.Prepare(preparedStmtInfo.StmtText)

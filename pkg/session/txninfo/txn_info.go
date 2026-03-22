@@ -239,6 +239,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	DBStr: func(info *TxnInfo) types.Datum {
 		var currentDB string
 		if info.ProcessInfo != nil {
+			// TODO(lower_case_table_names): update to use CurrentDBCI
 			currentDB = info.ProcessInfo.CurrentDB
 		}
 		return types.NewDatum(currentDB)

@@ -3194,3 +3194,46 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
 	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
 }
+
+func TestCaseSensitiveNames(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.LowerCaseTableNamesOnFirstBootstrap = 0
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show variables like \"%lower_case_table_names%\";").Check(testkit.Rows("lower_case_table_names 0"))
+	tk.MustExec("use test;")
+	tk.MustExec("create table tt (a int);")
+	tk.MustExec("create table TT (b int);")
+	tk.MustQuery("show tables;").Check(testkit.Rows("TT", "tt"))
+	tk.MustExec("insert into tt values (1111);")
+	tk.MustExec("insert into TT values (2222);")
+	tk.MustQuery("select * from tt;").Check(testkit.Rows("1111"))
+	tk.MustQuery("select * from TT;").Check(testkit.Rows("2222"))
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("alter table tt modify column a tinyint;")
+	tk.MustQuery("select * from tt;").Check(testkit.Rows("127"))
+	tk.MustQuery("select * from TT;").Check(testkit.Rows("2222"))
+}
+
+func TestCaseInsensitiveNames1(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.LowerCaseTableNamesOnFirstBootstrap = 1
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table tt (a int);")
+	tk.MustGetErrMsg("create table TT (b int);", "[schema:1050]Table 'test.TT' already exists")
+}
+
+func TestCaseInsensitiveNames2(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.LowerCaseTableNamesOnFirstBootstrap = 2
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table tt (a int);")
+	tk.MustGetErrMsg("create table TT (b int);", "[schema:1050]Table 'test.TT' already exists")
+}

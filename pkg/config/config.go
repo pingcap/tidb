@@ -324,6 +324,9 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	// LowerCaseTableNamesOnFirstBootstrap indicates how table names are stored on disk and compared.
+	LowerCaseTableNamesOnFirstBootstrap int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1103,6 +1106,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	LowerCaseTableNamesOnFirstBootstrap:  2,
 }
 
 var (

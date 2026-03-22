@@ -734,10 +734,13 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 	key := is.InfoStore.CiStr2Key(s.Procedure.Schema)
 	if key != e.Ctx().GetSessionVars().CurrentDB {
 		oldDB := e.Ctx().GetSessionVars().CurrentDB
+		oldDBCI := e.Ctx().GetSessionVars().CurrentDBCI
 		defer func() {
 			e.Ctx().GetSessionVars().CurrentDB = oldDB
+			e.Ctx().GetSessionVars().CurrentDBCI = oldDBCI
 		}()
 		e.Ctx().GetSessionVars().CurrentDB = key
+		e.Ctx().GetSessionVars().CurrentDBCI = pmodel.NewCIStr(key)
 	}
 
 	// handle in\out variable.

@@ -1475,7 +1475,7 @@ func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
 // 			{"mysql", "stats_meta", 19},
 // 			{"mysql", "stats_buckets", 23},
 // 			{"mysql", "tidb", 15},
-// 			{"mysql", "GLOBAL_VARIABLES", 13},
+// 			{"mysql", "global_variables", 13},
 // 			{"test", "t2", 2127},
 // 			{"test", "t1", 41},
 // 			{"test", "t3", 2136},
