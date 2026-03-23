@@ -146,7 +146,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.Contains(
 			t,
 			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String(),
-			fmt.Sprintf("RU:%.2f", float64(metrics.TotalRU(weights, 0, 0))),
+			fmt.Sprintf("RU:%.2f", metrics.TotalRU(weights, 0, 0)),
 		)
 
 		recordInsertRows2Metrics(ctx.GetSessionVars())

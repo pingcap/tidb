@@ -98,6 +98,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	InitStmtSummaryMetrics()
 	dxfmetric.InitDistTaskMetrics()
 	ingestmetric.InitIngestMetrics()
 	InitResourceGroupMetrics()
@@ -388,6 +389,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(IndexLookRowsCounter)
 	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 	prometheus.MustRegister(IndexLookUpCopTaskCount)
+
+	// StmtSummary
+	prometheus.MustRegister(StmtSummaryWindowRecordCount)
+	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
 }
 
 // Register registers custom collectors.

@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
@@ -39,9 +40,10 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 24,
+    shard_count = 26,
     deps = [
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
@@ -54,6 +56,8 @@ go_test(
         "//pkg/util/plancodec",
         "//pkg/util/ppcpuusage",
         "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",

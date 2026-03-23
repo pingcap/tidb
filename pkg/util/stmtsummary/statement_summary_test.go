@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -35,12 +36,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
 func fakePlanDigestGenerator() string {
 	return "point_get"
+}
+
+func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, gauge.Write(m))
+	return m.GetGauge().GetValue()
 }
 
 func TestSetUp(t *testing.T) {
@@ -145,6 +155,8 @@ func TestAddStatement(t *testing.T) {
 				MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
 				SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
 				MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+				SumRUV2:           stmtExecInfo1.TotalRUV2,
+				MaxRUV2:           stmtExecInfo1.TotalRUV2,
 			},
 			resourceGroupName: stmtExecInfo1.ResourceGroupName,
 			StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
@@ -252,6 +264,7 @@ func TestAddStatement(t *testing.T) {
 		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 		Succeed:   true,
 		RUDetail:  util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
+		TotalRUV2: 34567,
 		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:     100,
@@ -333,6 +346,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
+	expectedSummaryElement.SumRUV2 += stmtExecInfo2.TotalRUV2
+	expectedSummaryElement.MaxRUV2 = stmtExecInfo2.TotalRUV2
 	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
 	expectedSummaryElement.storageKV = stmtExecInfo2.StmtCtx.IsTiKV.Load()
 	expectedSummaryElement.storageMPP = stmtExecInfo2.StmtCtx.IsTiFlash.Load()
@@ -415,6 +430,7 @@ func TestAddStatement(t *testing.T) {
 		StartTime:         time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
+		TotalRUV2:         123,
 		ResourceGroupName: "rg1",
 		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
@@ -471,6 +487,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
+	expectedSummaryElement.SumRUV2 += stmtExecInfo3.TotalRUV2
 	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
 	expectedSummaryElement.storageKV = stmtExecInfo3.StmtCtx.IsTiKV.Load()
 	expectedSummaryElement.storageMPP = stmtExecInfo3.StmtCtx.IsTiFlash.Load()
@@ -743,6 +760,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		Succeed:           true,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
+		TotalRUV2:         23456,
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
 		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
@@ -900,6 +918,8 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		MaxRequestUnitWriteStr,
 		AvgQueuedRcTimeStr,
 		MaxQueuedRcTimeStr,
+		AvgRequestUnitV2Str,
+		MaxRequestUnitV2Str,
 		ResourceGroupName,
 		AvgTidbCPUTimeStr,
 		AvgTikvCPUTimeStr,
@@ -973,6 +993,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
+		stmtExecInfo1.TotalRUV2, stmtExecInfo1.TotalRUV2,
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
 		isTiKV, isTiFlash}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -1024,6 +1045,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
+		stmtExecInfo1.TotalRUV2, stmtExecInfo1.TotalRUV2,
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
 		0, 0}
 	expectedDatum[4] = stmtExecInfo2.Digest
@@ -1220,6 +1242,65 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 	datums := reader.GetStmtSummaryCurrentRows()
 	// due to evictions happened in cache, an additional record will be appended to the table.
 	require.Equal(t, 2, len(datums))
+}
+
+func TestStmtSummaryMetrics(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	require.NoError(t, ssMap.SetMaxStmtCount(2))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	})
+
+	ssMap.beginTimeForCurInterval = time.Now().Unix() + 60
+	stmtExecInfo := generateAnyExecInfo()
+
+	stmtExecInfo.Digest = "digest1"
+	ssMap.AddStatement(stmtExecInfo)
+	stmtExecInfo.Digest = "digest2"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	stmtExecInfo.Digest = "digest3"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	ssMap.beginTimeForCurInterval = time.Now().Unix() - ssMap.refreshInterval() - 1
+	stmtExecInfo.Digest = "digest3"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	ssMap.Clear()
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+}
+
+func TestStmtSummaryMetricsAfterCapacityChange(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	require.NoError(t, ssMap.SetMaxStmtCount(3))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV1, 0, 0)
+	})
+
+	ssMap.beginTimeForCurInterval = time.Now().Unix() + 60
+	stmtExecInfo := generateAnyExecInfo()
+
+	stmtExecInfo.Digest = "digest1"
+	ssMap.AddStatement(stmtExecInfo)
+	stmtExecInfo.Digest = "digest2"
+	ssMap.AddStatement(stmtExecInfo)
+	stmtExecInfo.Digest = "digest3"
+	ssMap.AddStatement(stmtExecInfo)
+	require.Equal(t, 3.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+
+	require.NoError(t, ssMap.SetMaxStmtCount(1))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV1)))
 }
 
 // Test setting EnableStmtSummary to 0.

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -185,6 +186,14 @@ func TestResolveExprAndReplaceCopyOnWrite(t *testing.T) {
 	replacedRight := replaced.GetArgs()[1].(*expression.Column)
 	require.Equal(t, dstCol.UniqueID, replacedLeft.UniqueID)
 	require.Equal(t, dstCol.UniqueID, replacedRight.UniqueID)
+}
+
+func TestLogicalCTEPreparePossiblePropertiesSkipNilChild(t *testing.T) {
+	ctx := mock.NewContext()
+	cte := logicalop.LogicalCTE{}.Init(ctx, 0)
+	props := cte.PreparePossibleProperties(nil, nil, &base.PossiblePropertiesInfo{HasTiFlash: true})
+	require.NotNil(t, props)
+	require.True(t, props.HasTiFlash)
 }
 
 func TestLogicalProjectionPushDownTopN(t *testing.T) {
