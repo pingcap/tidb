@@ -128,6 +128,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		}()
 
 		MaxMemoryLimitForOverlongType = 0
+		// Keep enough bounded overlong columns so that the same row count flips once MaxChunkSize grows.
 		columns := make([]*expression.Column, 0, 80)
 		for i := range 80 {
 			colType := types.NewFieldType(mysql.TypeVarchar)

@@ -1234,6 +1234,7 @@ func existsOverlongType(plan base.PhysicalPlan) bool {
 		switch column.RetType.GetType() {
 		case mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
+			// These types are still treated as unbounded here, so keep the old conservative behavior.
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
 			// if the column is varchar and the length of
@@ -1263,6 +1264,7 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 		return false
 	}
 
+	// Chunk reuse retains the buffers of a reusable chunk, not the full result set.
 	rowsInReusableChunk := estimatedRows
 	switch plan.(type) {
 	case *physicalop.PointGetPlan:
@@ -1272,6 +1274,7 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 
 	estimatedBytesPerRow := float64(totalFlen)
 	if hasTrustedStats {
+		// Real stats let us use the observed average size instead of the schema worst case.
 		estimatedBytesPerRow = getAvgRowSize(plan.StatsInfo(), overlongColumns)
 		if estimatedBytesPerRow <= 0 {
 			return false
@@ -1291,6 +1294,7 @@ func getEstimatedRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows floa
 		return math.Ceil(statsInfo.RowCount), false
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		// Non-point readers only take the relaxed path when row-count stats are trusted.
 		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
 			return 0, false
 		}
