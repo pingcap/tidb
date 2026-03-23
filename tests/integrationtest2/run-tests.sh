@@ -1018,9 +1018,11 @@ function configure_tici_global_sort_uri()
     local case_dir_name
     local case_name
     local result_dir
+    local sql_stmt
     local sort_uri
 
     sort_uri="s3://${MINIO_BUCKET}/${MINIO_PREFIX}/global-sort?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio"
+    sql_stmt="SET @@global.tidb_cloud_storage_uri='${sort_uri}';"
     case_dir=$(mktemp -d ./t/tici-runtime-XXXXXX)
     case_dir_name=$(basename "$case_dir")
     case_name="${case_dir_name}/set_global_sort_uri"
@@ -1030,9 +1032,12 @@ function configure_tici_global_sort_uri()
     register_temp_path "$result_dir"
 
     cat > "${case_dir}/set_global_sort_uri.test" <<EOF
-SET @@global.tidb_cloud_storage_uri='${sort_uri}';
+${sql_stmt}
 EOF
-    : > "${result_dir}/set_global_sort_uri.result"
+    cat > "${result_dir}/set_global_sort_uri.result" <<EOF
+${sql_stmt}
+
+EOF
 
     run_mysql_tester_setup_case "$case_name"
 
