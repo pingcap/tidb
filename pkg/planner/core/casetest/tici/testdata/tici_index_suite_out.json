@@ -576,6 +576,30 @@
           "TableDual 1.00 root  rows:0"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t7 where match(title, body) against ('hello' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t7.title, test.t7.body), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t7 where match(body, title) against ('hello' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t7.body, test.t7.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t7 where match(title, body) against ('+apple -banana' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:and(istrue_with_null(fts_match_word(\"apple\", test.t7.title, test.t7.body)), not(fts_match_word(\"banana\", test.t7.title, test.t7.body))), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   },
