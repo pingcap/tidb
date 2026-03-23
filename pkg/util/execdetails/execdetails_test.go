@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func defaultRUV2WeightsForTest() RUV2Weights {
@@ -771,4 +772,109 @@ func TestCopRuntimeStats2(t *testing.T) {
 		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
+}
+
+func TestRURuntimeStatsStringV1(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetailsWith(10.5, 20.3, 0),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	// v1: shows RRU + WRU
+	require.Equal(t, "RU:30.80", stats.String())
+}
+
+func TestRURuntimeStatsStringV1NilDetails(t *testing.T) {
+	stats := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	// v1 with nil RUDetails returns empty
+	require.Equal(t, "", stats.String())
+}
+
+func TestRURuntimeStatsStringV2(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetails(),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	stats.RUDetails.AddTiKVRUV2(200)
+	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
+	// v2: shows total RU from v2 metrics (tikvRU + tiflashRU + tidbRU)
+	require.Equal(t, "RU:500.00", stats.String())
+}
+
+func TestRURuntimeStatsStringV2ZeroRU(t *testing.T) {
+	stats := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	// v2 with zero total RU returns empty
+	require.Equal(t, "", stats.String())
+}
+
+func TestRURuntimeStatsStringDefaultVersion(t *testing.T) {
+	// RUVersion=0 (zero value) should fall into v2 default path
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetails(),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+	}
+	stats.RUDetails.AddTiKVRUV2(100)
+	require.Equal(t, "RU:100.00", stats.String())
+}
+
+func TestRURuntimeStatsClonePreservesRUVersion(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetailsWith(10, 20, 0),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	cloned := stats.Clone().(*RURuntimeStats)
+	require.Equal(t, rmclient.RUVersionV1, cloned.RUVersion)
+	// Verify the clone produces the same output
+	require.Equal(t, stats.String(), cloned.String())
+}
+
+func TestRURuntimeStatsCloneNilPreservesZeroVersion(t *testing.T) {
+	var stats *RURuntimeStats
+	cloned := stats.Clone().(*RURuntimeStats)
+	require.Equal(t, rmclient.RUVersion(0), cloned.RUVersion)
+}
+
+func TestRURuntimeStatsMergeRUVersion(t *testing.T) {
+	// Merge takes RUVersion from other when receiver has zero value
+	dst := &RURuntimeStats{
+		Metrics: NewRUV2Metrics(),
+		Weights: defaultRUV2WeightsForTest(),
+	}
+	src := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	dst.Merge(src)
+	require.Equal(t, rmclient.RUVersionV2, dst.RUVersion)
+}
+
+func TestRURuntimeStatsMergeKeepsExistingRUVersion(t *testing.T) {
+	// Merge does NOT override a non-zero RUVersion
+	dst := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	src := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	dst.Merge(src)
+	require.Equal(t, rmclient.RUVersionV1, dst.RUVersion)
 }
