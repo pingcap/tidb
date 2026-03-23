@@ -183,7 +183,7 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 		}
 	}
 
-	p.ReplaceExprColumns(newReplace)
+	p.ReplaceExprColumns(replace)
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {
