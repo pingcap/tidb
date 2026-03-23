@@ -1729,7 +1729,7 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		dctx.RUConsumptionReporter.ReportTiKVRUV2Consumption(dctx.ResourceGroupName, tikvRU)
 	}
 	if tidbRU > 0 {
-		dctx.RUConsumptionReporter.ReportTiDBRUV2Consumption(dctx.ResourceGroupName, float64(tidbRU))
+		dctx.RUConsumptionReporter.ReportTiDBRUV2Consumption(dctx.ResourceGroupName, tidbRU)
 	}
 }
 
