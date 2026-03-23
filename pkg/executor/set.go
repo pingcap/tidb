@@ -181,7 +181,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			return nil
 		})
 		showValStr := valStr
-		if name == vardef.TiDBCloudStorageURI || name == vardef.TiDBExternalStorageURI {
+		if name == vardef.TiDBCloudStorageURI || name == vardef.TiDBReplayerCloudStorageURI {
 			showValStr = ast.RedactURL(showValStr)
 		}
 		logstr := "set global var"

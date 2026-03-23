@@ -1188,8 +1188,8 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
-	// TiDBExternalStorageURI used to set an external storage uri for extstore users.
-	TiDBExternalStorageURI = "tidb_external_storage_uri"
+	// TiDBReplayerCloudStorageURI used to set a cloud storage uri for extstore users.
+	TiDBReplayerCloudStorageURI = "tidb_replayer_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
@@ -1902,7 +1902,7 @@ var (
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
-	ExternalStorageURI              = atomic.NewString("")
+	ReplayerCloudStorageURI         = atomic.NewString("")
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 

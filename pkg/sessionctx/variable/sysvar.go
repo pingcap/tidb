@@ -3020,14 +3020,14 @@ var defaultSysVars = []*SysVar{
 		vardef.CloudStorageURI.Store(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalStorageURI, Value: "", Type: vardef.TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-		externalStorageURI := vardef.ExternalStorageURI.Load()
-		if len(externalStorageURI) > 0 {
-			externalStorageURI = ast.RedactURL(externalStorageURI)
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBReplayerCloudStorageURI, Value: "", Type: vardef.TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		replayerCloudStorageURI := vardef.ReplayerCloudStorageURI.Load()
+		if len(replayerCloudStorageURI) > 0 {
+			replayerCloudStorageURI = ast.RedactURL(replayerCloudStorageURI)
 		}
-		return externalStorageURI, nil
+		return replayerCloudStorageURI, nil
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-		if len(val) > 0 && val != vardef.ExternalStorageURI.Load() {
+		if len(val) > 0 && val != vardef.ReplayerCloudStorageURI.Load() {
 			if err := ValidateCloudStorageURI(ctx, val); err != nil {
 				// convert annotations (second-level message) to message so clientConn.writeError
 				// will print friendly error.
@@ -3037,7 +3037,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 		}
-		vardef.ExternalStorageURI.Store(val)
+		vardef.ReplayerCloudStorageURI.Store(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: vardef.TypeBool,

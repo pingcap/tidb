@@ -61,7 +61,7 @@ func GetGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 
 func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-	uri := vardef.ExternalStorageURI.Load()
+	uri := vardef.ReplayerCloudStorageURI.Load()
 
 	// When classic kernel or external storage URI is not set, use local directory.
 	if kerneltype.IsClassic() || uri == "" {
