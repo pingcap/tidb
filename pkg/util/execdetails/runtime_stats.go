@@ -1011,7 +1011,7 @@ func (e *RURuntimeStats) String() string {
 		}
 		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(float64(totalRU), 'f', 2, 64))
+		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
 		return buf.String()
 	}
 	return ""
