@@ -381,6 +381,23 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
+
+	// Test re-analyzing the loaded v1 stats with analyze version 2.
+	tk.MustExec("insert into analyze_v1_compat values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+	tk.MustExec("analyze table analyze_v1_compat")
+	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where is_index = 0 and table_id = ? order by stats_ver", tableID).
+		Check(testkit.Rows("2"))
+	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where is_index = 1 and table_id = ? order by stats_ver", tableID).
+		Check(testkit.Rows("2"))
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is, tableID))
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.Equal(t, statistics.Version2, statsTbl.StatsVer)
+	require.True(t, statsTbl.GetIdx(idxBID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version2), statsTbl.GetIdx(idxBID).StatsVer)
+	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
+	require.Equal(t, int64(statistics.Version2), statsTbl.GetCol(colCID).StatsVer)
 }
 
 func readAnalyzeV1CompatStatsJSON(t *testing.T) *statsutil.JSONTable {
