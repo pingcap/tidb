@@ -435,6 +435,51 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
+# RU v2 TiDB-side weights for RU value calculation and statement metrics logging.
+[ru-v2]
+# ru-scale is the scale factor used to convert RU v2 float values into scaled integer values.
+# It is intentionally chosen to match legacy RU values for compatibility.
+ru-scale = 5697.054498
+
+# result-chunk-cells is the weight for cells materialized into result chunks.
+result-chunk-cells = 0.00010000
+# executor-l1 covers fast-path executors that scale by cells:
+# BatchPointGet, PointGet, and Limit.
+executor-l1 = 0.00013278
+# executor-l2 covers general executors:
+# HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
+# MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
+# UnionScanExec, and SelectLockExec.
+executor-l2 = 0.00000383
+# executor-l3 covers heavier operators: Sort and StreamAgg.
+executor-l3 = 0.00141739
+# executor-l5-insert-rows is the per-row insert weight. Level 4 is
+# intentionally unused today because only L1/L2/L3 executor groups and this
+# insert-specific tier are currently modeled.
+executor-l5-insert-rows = 0.00472572
+plan-cnt = 0.15392217
+plan-derive-stats-paths = 0.24968182
+resource-manager-read-cnt = 0.02072003
+resource-manager-write-cnt = 0.07179779
+session-parser-total = 0.19230499
+txn-cnt = 0.03013709
+
+# RU v2 TiKV-side weights for TiKV RU value calculation (handled in client-go).
+[tikv-client.ru-v2]
+# ru-scale is the scale factor used to convert RU v2 float values into scaled integer values.
+# It is configured independently from [ru-v2].ru-scale.
+# Keep both values aligned manually if you want TiDB and TiKV RU v2 to use the same scaling.
+ru-scale = 5697.054498
+
+tikv-kv-engine-cache-miss = 0.45975389
+resource-manager-write-cnt-tikv = 0.09642181
+executor-inputs = 0.00003150
+tikv-coprocessor-executor-iterations = 0.05775369
+tikv-coprocessor-response-bytes = 0.00000087
+tikv-raftstore-store-write-trigger-wb-bytes = 0.00006100
+tikv-storage-processed-keys-batch-get = 0.00266791
+tikv-storage-processed-keys-get = 0.01416829
+
 # instance scope variables
 # These options are also available as a system variable for online configuration
 # changes to the system variable do not persist to the cluster. You must make changes

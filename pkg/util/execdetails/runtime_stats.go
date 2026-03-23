@@ -977,18 +977,41 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 	buf.WriteString("}")
 }
 
-// RURuntimeStats is a wrapper of util.RUDetails,
-// which implements the RuntimeStats interface.
+// displayRUVersion controls which RU accounting version produces EXPLAIN output.
+// Currently hardcoded to "v2"; will be switched dynamically based on a runtime
+// toggle once RU v1 / v2 coexistence is fully rolled out.
+var displayRUVersion = "v2"
+
+// RURuntimeStats wraps RU details and statement-level RU v2 metrics for EXPLAIN output.
 type RURuntimeStats struct {
 	*util.RUDetails
+	Metrics *RUV2Metrics
+	Weights RUV2Weights
 }
 
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
-	if e.RUDetails != nil {
+	switch displayRUVersion {
+	case "v1":
+		if e.RUDetails != nil {
+			buf := bytes.NewBuffer(make([]byte, 0, 8))
+			buf.WriteString("RU:")
+			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+			return buf.String()
+		}
+	case "v2":
+		var tiKVRU, tiFlashRU int64
+		if e.RUDetails != nil {
+			tiKVRU = int64(e.RUDetails.TiKVRUV2())
+			tiFlashRU = int64(e.RUDetails.TiflashRU())
+		}
+		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
+		if totalRU == 0 {
+			return ""
+		}
 		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+		buf.WriteString(strconv.FormatFloat(float64(totalRU), 'f', 2, 64))
 		return buf.String()
 	}
 	return ""
@@ -996,16 +1019,35 @@ func (e *RURuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *RURuntimeStats) Clone() RuntimeStats {
-	return &RURuntimeStats{RUDetails: e.RUDetails.Clone()}
+	if e == nil {
+		return &RURuntimeStats{}
+	}
+	var ruDetails *util.RUDetails
+	if e.RUDetails != nil {
+		ruDetails = e.RUDetails.Clone()
+	}
+	return &RURuntimeStats{
+		RUDetails: ruDetails,
+		Metrics:   e.Metrics.Clone(),
+		Weights:   e.Weights,
+	}
 }
 
 // Merge implements the RuntimeStats interface.
 func (e *RURuntimeStats) Merge(other RuntimeStats) {
 	if tmp, ok := other.(*RURuntimeStats); ok {
-		if e.RUDetails != nil {
+		if e.RUDetails != nil && tmp.RUDetails != nil {
 			e.RUDetails.Merge(tmp.RUDetails)
-		} else {
+		} else if e.RUDetails == nil && tmp.RUDetails != nil {
 			e.RUDetails = tmp.RUDetails.Clone()
+		}
+		if e.Metrics != nil {
+			e.Metrics.Merge(tmp.Metrics)
+		} else {
+			e.Metrics = tmp.Metrics.Clone()
+		}
+		if e.Weights == (RUV2Weights{}) {
+			e.Weights = tmp.Weights
 		}
 	}
 }

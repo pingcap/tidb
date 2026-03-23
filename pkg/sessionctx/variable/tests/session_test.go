@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -364,6 +365,9 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
 	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
 		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
+	seVar.RUV2Metrics = execdetails.NewRUV2Metrics()
+	seVar.RUV2Metrics.AddResultChunkCells(11)
+	seVar.RUV2Metrics.AddPlanCnt(2)
 	actual := executor.PrepareSlowLogItemsForRules(ctx, vardef.GlobalSlowLogRules.Load(), seVar)
 	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
 	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
@@ -393,7 +397,55 @@ func TestSlowLogFormat(t *testing.T) {
 	require.NoError(t, err)
 
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	logItems.RUV2Metrics = seVar.RUV2Metrics.Clone()
 	compareSlowLogItems(t, logItems, actual)
+}
+
+func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
+	seVar := variable.NewSessionVars(nil)
+	logItems := &variable.SlowQueryLogItems{
+		SQL:         "select 1",
+		Digest:      "digest",
+		TimeTotal:   time.Second,
+		Succ:        true,
+		ExecDetail:  &execdetails.ExecDetails{},
+		UsedStats:   &stmtctx.UsedStatsInfo{},
+		RUDetails:   util.NewRUDetailsWith(0, 0, 0),
+		RUV2Metrics: execdetails.NewRUV2Metrics(),
+	}
+	logItems.RUDetails.AddTiKVRUV2(100)
+	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
+
+	logString := seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, "# RUv2_metrics: total_ru:150, tidb_ru:0, tikv_ru:100, tiflash_ru:50")
+
+	t.Run("default session weights come from config defaults", func(t *testing.T) {
+		original := config.GetGlobalConfig()
+		t.Cleanup(func() {
+			if original != nil {
+				config.StoreGlobalConfig(original)
+			}
+		})
+
+		cfg := config.NewConfig()
+		cfg.RUV2 = config.DefaultRUV2Config()
+		config.StoreGlobalConfig(cfg)
+
+		require.Equal(t, execdetails.RUV2Weights{
+			RUScale:                 cfg.RUV2.RUScale,
+			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+			ExecutorL1:              cfg.RUV2.ExecutorL1,
+			ExecutorL2:              cfg.RUV2.ExecutorL2,
+			ExecutorL3:              cfg.RUV2.ExecutorL3,
+			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+			PlanCnt:                 cfg.RUV2.PlanCnt,
+			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+			TxnCnt:                  cfg.RUV2.TxnCnt,
+		}, variable.NewSessionVars(nil).RUV2Weights())
+	})
 }
 
 func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
@@ -406,7 +458,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "RUV2Metrics", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {

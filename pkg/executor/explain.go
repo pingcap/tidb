@@ -134,10 +134,21 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	}
 	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
 	if e.explain.Analyze && e.analyzeExec != nil && e.executed {
+		recordInsertRows2Metrics(e.Ctx().GetSessionVars())
 		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
-		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
-			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-			coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
+		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+			var ruDetails *clientutil.RUDetails
+			if ruDetailsRaw != nil {
+				ruDetails = ruDetailsRaw.(*clientutil.RUDetails).Clone()
+			}
+			ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+			if ruDetails != nil || ruv2Metrics != nil {
+				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
+					RUDetails: ruDetails,
+					Metrics:   ruv2Metrics.Clone(),
+					Weights:   e.Ctx().GetSessionVars().RUV2Weights(),
+				})
+			}
 		}
 	}
 	return err

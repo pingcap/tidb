@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
@@ -196,6 +197,10 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 		} else {
 			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
+	}
+	metrics.RUV2TxnCnt.Inc()
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddTxnCnt(1)
 	}
 }
 

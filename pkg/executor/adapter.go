@@ -1591,6 +1591,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
+	a.recordInsertRows2Metrics()
+	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1674,6 +1676,60 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 		case "NTDML-Replace":
 			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		}
+	}
+}
+
+func (a *ExecStmt) recordInsertRows2Metrics() {
+	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
+}
+
+func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx.StmtType != "Insert" {
+		return
+	}
+	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
+	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
+	if stmtCtx.InsertRowsAsRUV2Recorded {
+		return
+	}
+
+	affectedRows := stmtCtx.AffectedRows()
+	if affectedRows <= 0 {
+		return
+	}
+
+	metrics.RUV2ExecutorL5InsertRows.Add(float64(affectedRows))
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
+	}
+	stmtCtx.InsertRowsAsRUV2Recorded = true
+}
+
+func (a *ExecStmt) finalizeStatementRUV2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.RUV2Metrics == nil {
+		return
+	}
+
+	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
+	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
+	if ruDetail == nil {
+		return
+	}
+
+	weights := sessVars.RUV2Weights()
+	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
+
+	dctx := a.Ctx.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	if tikvRU := ruDetail.TiKVRUV2(); tikvRU > 0 {
+		dctx.RUConsumptionReporter.ReportTiKVRUV2Consumption(dctx.ResourceGroupName, tikvRU)
+	}
+	if tidbRU > 0 {
+		dctx.RUConsumptionReporter.ReportTiDBRUV2Consumption(dctx.ResourceGroupName, float64(tidbRU))
 	}
 }
 

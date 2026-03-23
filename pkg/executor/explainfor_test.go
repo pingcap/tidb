@@ -75,8 +75,8 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan(?:_\d+)? N/A N/A\n`+
-			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1  keep order:false, stats:pseudo N/A N/A`,
+		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0(?:, RU:\d+\.\d+)? data:TableFullScan(?:_\d+)? N/A N/A\n`+
+			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1 .* keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")

@@ -21,6 +21,7 @@ go_library(
         "rawkv.go",
         "resource_group.go",
         "resourcemanager.go",
+        "ru_v2.go",
         "server.go",
         "session.go",
         "sli.go",

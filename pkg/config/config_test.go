@@ -1046,6 +1046,11 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 }
 
 func TestConflictInstanceConfig(t *testing.T) {
+	t.Cleanup(func() {
+		ConflictOptions = nil
+		DeprecatedOptions = nil
+	})
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1104,6 +1109,11 @@ func TestConflictInstanceConfig(t *testing.T) {
 }
 
 func TestDeprecatedConfig(t *testing.T) {
+	t.Cleanup(func() {
+		ConflictOptions = nil
+		DeprecatedOptions = nil
+	})
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1479,4 +1489,13 @@ func TestMetering(t *testing.T) {
 	require.Equal(t, "test-bucket", mcfg.Bucket)
 	require.Equal(t, "test-prefix", mcfg.Prefix)
 	require.Equal(t, "test-region", mcfg.Region)
+}
+
+func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
+	conf := NewConfig()
+	conf.RUV2.RUScale = 123
+	conf.TiKVClient.RUV2.RUScale = 0
+
+	tikvConf := conf.GetTiKVConfig()
+	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }
