@@ -3020,6 +3020,26 @@ var defaultSysVars = []*SysVar{
 		vardef.CloudStorageURI.Store(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalStorageURI, Value: "", Type: vardef.TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		externalStorageURI := vardef.ExternalStorageURI.Load()
+		if len(externalStorageURI) > 0 {
+			externalStorageURI = ast.RedactURL(externalStorageURI)
+		}
+		return externalStorageURI, nil
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		if len(val) > 0 && val != vardef.ExternalStorageURI.Load() {
+			if err := ValidateCloudStorageURI(ctx, val); err != nil {
+				// convert annotations (second-level message) to message so clientConn.writeError
+				// will print friendly error.
+				if goerr.As(err, new(*errors.Error)) {
+					err = errors.New(err.Error())
+				}
+				return err
+			}
+		}
+		vardef.ExternalStorageURI.Store(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -185,12 +186,14 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 	origLogFile := config.GetGlobalConfig().Log.File.Filename
 	origTempDir := config.GetGlobalConfig().TempDir
 	origCloudStorageURI := vardef.CloudStorageURI.Load()
+	origExternalStorageURI := vardef.ExternalStorageURI.Load()
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Log.File.Filename = origLogFile
 			conf.TempDir = origTempDir
 		})
 		vardef.CloudStorageURI.Store(origCloudStorageURI)
+		vardef.ExternalStorageURI.Store(origExternalStorageURI)
 		SetGlobalExtStorageForTest(nil)
 		testLocalPathFS = nil
 	}()
@@ -216,6 +219,27 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 
 	uri := s.URI()
 	require.Contains(t, uri, logDir, "storage URI should use log dir when writable")
+
+	t.Run("configured external storage uri", func(t *testing.T) {
+		configuredDir := t.TempDir()
+		cloudDir := t.TempDir()
+		vardef.CloudStorageURI.Store("file://" + cloudDir)
+		vardef.ExternalStorageURI.Store("file://" + configuredDir)
+		SetGlobalExtStorageForTest(nil)
+
+		s, err := GetGlobalExtStorage(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, s)
+		defer s.Close()
+
+		uri := s.URI()
+		if kerneltype.IsClassic() {
+			require.NotContains(t, uri, configuredDir, "classic kernel should keep existing local extstore behavior")
+		} else {
+			require.Contains(t, uri, configuredDir, "storage URI should use tidb_external_storage_uri when configured")
+		}
+		require.NotContains(t, uri, cloudDir, "storage URI should ignore tidb_cloud_storage_uri for extstore")
+	})
 }
 
 func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
@@ -224,12 +248,14 @@ func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
 	origLogFile := config.GetGlobalConfig().Log.File.Filename
 	origTempDir := config.GetGlobalConfig().TempDir
 	origCloudStorageURI := vardef.CloudStorageURI.Load()
+	origExternalStorageURI := vardef.ExternalStorageURI.Load()
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Log.File.Filename = origLogFile
 			conf.TempDir = origTempDir
 		})
 		vardef.CloudStorageURI.Store(origCloudStorageURI)
+		vardef.ExternalStorageURI.Store(origExternalStorageURI)
 		SetGlobalExtStorageForTest(nil)
 		testLocalPathFS = nil
 	}()

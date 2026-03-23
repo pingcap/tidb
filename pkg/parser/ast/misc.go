@@ -967,6 +967,8 @@ const (
 	SetCharset = "SetCharset"
 	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// TiDBExternalStorageURI is the const for set tidb_external_storage_uri stmt.
+	TiDBExternalStorageURI = "tidb_external_storage_uri"
 	// CloudStorageURI is similar to above tidb var, but it's used in import into
 	// to set a separate param for a single import job.
 	CloudStorageURI = "cloud_storage_uri"
@@ -1011,7 +1013,7 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if n.Name == TiDBCloudStorageURI {
+	if n.Name == TiDBCloudStorageURI || n.Name == TiDBExternalStorageURI {
 		// need to redact the url for safety when `show processlist;`
 		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
 	} else if err := n.Value.Restore(ctx); err != nil {

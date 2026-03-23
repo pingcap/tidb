@@ -61,9 +61,9 @@ func GetGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 
 func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-	uri := vardef.CloudStorageURI.Load()
+	uri := vardef.ExternalStorageURI.Load()
 
-	// When classic kernel or cloud storage URI is not set, use local directory.
+	// When classic kernel or external storage URI is not set, use local directory.
 	if kerneltype.IsClassic() || uri == "" {
 		localPath := getLocalPathDirName()
 		if absPath, err := filepath.Abs(localPath); err == nil {

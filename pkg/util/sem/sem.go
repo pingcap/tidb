@@ -159,6 +159,7 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		vardef.TiDBTopSQLMaxMetaCount,
 		vardef.TiDBServiceScope,
 		vardef.TiDBCloudStorageURI,
+		vardef.TiDBExternalStorageURI,
 		vardef.TiDBStmtSummaryMaxStmtCount,
 		vardef.TiDBServerMemoryLimit,
 		vardef.TiDBServerMemoryLimitGCTrigger,

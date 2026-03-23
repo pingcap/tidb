@@ -105,6 +105,7 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(vardef.TiDBTopSQLMaxTimeSeriesCount))
 	assert.True(IsInvisibleSysVar(vardef.TiDBServiceScope))
 	assert.True(IsInvisibleSysVar(vardef.TiDBCloudStorageURI))
+	assert.True(IsInvisibleSysVar(vardef.TiDBExternalStorageURI))
 	assert.True(IsInvisibleSysVar(vardef.TiDBStmtSummaryMaxStmtCount))
 	assert.True(IsInvisibleSysVar(vardef.TiDBServerMemoryLimit))
 	assert.True(IsInvisibleSysVar(vardef.TiDBServerMemoryLimitGCTrigger))
