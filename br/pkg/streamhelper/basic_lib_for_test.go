@@ -108,6 +108,7 @@ type fakeCluster struct {
 	onGetClient               func(uint64) error
 	onClearCache              func(uint64) error
 	serviceGCSafePoint        uint64
+	serviceGCSafePointSet     bool
 	serviceGCSafePointDeleted bool
 	currentTS                 uint64
 }
@@ -279,6 +280,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
+	f.serviceGCSafePointSet = true
 	return at, nil
 }
 
@@ -880,14 +882,14 @@ func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limi
 	return result, nil
 }
 
-func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (p *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),
 	}, nil
 }
 
-func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
+func (p *mockPDClient) GetAllStores(ctx context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	// only used for GetRegionCache once in resolve lock
 	return []*metapb.Store{
 		{

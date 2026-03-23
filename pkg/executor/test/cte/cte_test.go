@@ -261,7 +261,7 @@ WHERE
     FROM
       w
   );`).Check(testkit.Rows(
-		"Projection 9990.00 root  1->Column#17",
+		"Projection 9990.00 root  1->Column#22",
 		"└─IndexJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
 		"  ├─HashAgg(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
 		"  │ └─Selection 12800.00 root  not(isnull(test.p.groupid))",

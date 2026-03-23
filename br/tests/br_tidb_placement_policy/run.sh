@@ -53,6 +53,7 @@ run_sql "DROP PLACEMENT POLICY tworeplicas;"
 
 # restore with tidb-placement-policy
 echo "restore with tidb-placement start..."
+export BR_LOG_TO_TERM=1
 run_br restore db --db $DB -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR
 
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY fivereplicas" | wc -l)

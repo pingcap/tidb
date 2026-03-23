@@ -78,6 +78,8 @@ type Storage struct {
 	accessRec    *recording.AccessStats
 }
 
+var _ storeapi.Storage = &Storage{}
+
 // NewStorage creates a new Storage instance.
 func NewStorage(
 	s3Cli PrefixClient,
@@ -105,16 +107,24 @@ func (rs *Storage) GetOptions() *backuppb.S3 {
 
 // CopyFrom implements the Storage interface.
 func (rs *Storage) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec storeapi.CopySpec) error {
-	srcStore, ok := inStore.(*Storage)
+	// OSS store wraps this type, so we check by interface.
+	srcStore, ok := inStore.(interface {
+		GetBucketPrefix() storeapi.BucketPrefix
+	})
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom is only supported by S3 storage, get %T", inStore)
 	}
 
 	return rs.s3Cli.CopyObject(ctx, &CopyInput{
-		FromLoc: srcStore.bucketPrefix,
+		FromLoc: srcStore.GetBucketPrefix(),
 		FromKey: spec.From,
 		ToKey:   spec.To,
 	})
+}
+
+// GetBucketPrefix gets the bucket prefix of the storage.
+func (rs *Storage) GetBucketPrefix() storeapi.BucketPrefix {
+	return rs.bucketPrefix
 }
 
 // S3BackendOptions contains options for s3 storage.
@@ -394,13 +404,14 @@ func (rs *Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn fun
 	if opt.ListCount > 0 {
 		maxKeys = int(opt.ListCount)
 	}
+	initialStartAfter := opt.StartAfter
 
 	var (
-		marker    *string
-		cliPrefix = rs.bucketPrefix.PrefixStr()
+		continuationToken *string
+		cliPrefix         = rs.bucketPrefix.PrefixStr()
 	)
 	for {
-		res, err := rs.s3Cli.ListObjects(ctx, prefix, marker, maxKeys)
+		res, err := rs.s3Cli.ListObjects(ctx, prefix, initialStartAfter, continuationToken, maxKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -422,7 +433,8 @@ func (rs *Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn fun
 				return errors.Trace(err)
 			}
 		}
-		marker = res.NextMarker
+		continuationToken = res.NextContinuationToken
+		initialStartAfter = ""
 		if !res.IsTruncated {
 			break
 		}
@@ -619,6 +631,19 @@ func (rs *Storage) Rename(ctx context.Context, oldFileName, newFileName string) 
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// presignableClient is an optional interface for PrefixClient implementations that support presigning.
+type presignableClient interface {
+	PresignObject(ctx context.Context, name string, expire time.Duration) (string, error)
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	if pc, ok := rs.s3Cli.(presignableClient); ok {
+		return pc.PresignObject(ctx, fileName, expire)
+	}
+	return "", errors.New("S3-compatible storage does not support PresignFile")
 }
 
 // Close implements Storage interface.

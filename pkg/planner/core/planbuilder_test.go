@@ -42,8 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -128,6 +129,34 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
+
+	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
+		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
+		longPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no_delete_flag")}}
+		paths := []*util.AccessPath{shortPath, longPath}
+
+		tblInfo := &model.TableInfo{
+			Indices: []*model.IndexInfo{shortPath.Index, longPath.Index},
+		}
+
+		ignored := []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete_flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained := removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("Idx_Contract_Sys_No_Delete_Flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+	})
 }
 
 func TestRewriterPool(t *testing.T) {
@@ -160,6 +189,39 @@ func TestRewriterPool(t *testing.T) {
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
+}
+
+func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+
+	valueExpr, ok := ast.NewValueExpr(1, "", "").(*driver.ValueExpr)
+	require.True(t, ok)
+	valueExpr.Type.AddFlag(mysql.NotNullFlag)
+
+	col := &table.Column{
+		ColumnInfo: &model.ColumnInfo{
+			Name:      ast.NewCIStr("a"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	expr, err := builder.getInsertColExpr(context.TODO(), &physicalop.Insert{}, nil, col, valueExpr, nil)
+	require.NoError(t, err)
+
+	constExpr, ok := expr.(*expression.Constant)
+	require.True(t, ok)
+	require.NotSame(t, valueExpr.GetType(), constExpr.RetType)
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
+
+	constExpr.RetType.SetType(mysql.TypeString)
+	constExpr.RetType.DelFlag(mysql.NotNullFlag)
+
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
 }
 
 func TestDisableFold(t *testing.T) {
@@ -582,13 +644,10 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 	return nil
 }
 
-func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
-	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
-
+func TestHandleAnalyzeOptions(t *testing.T) {
 	tests := []struct {
 		name        string
 		opts        []ast.AnalyzeOpt
-		statsVer    int
 		ExpectedErr string
 	}{
 		{
@@ -599,19 +658,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(100000+1, "", ""),
 				},
 			},
-			statsVer:    statistics.Version1,
 			ExpectedErr: "Value of analyze option TOPN should not be larger than 100000",
-		},
-		{
-			name: "Use SampleRate option in stats version 1",
-			opts: []ast.AnalyzeOpt{
-				{
-					Type:  ast.AnalyzeOptSampleRate,
-					Value: ast.NewValueExpr(1, "", ""),
-				},
-			},
-			statsVer:    statistics.Version1,
-			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
 		},
 		{
 			name: "Too big SampleRate option",
@@ -621,7 +668,6 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(2, "", ""),
 				},
 			},
-			statsVer:    statistics.Version2,
 			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
 		},
 		{
@@ -632,7 +678,6 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(100000+1, "", ""),
 				},
 			},
-			statsVer:    2,
 			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 100000",
 		},
 		{
@@ -647,44 +692,18 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(0.1, "", ""),
 				},
 			},
-			statsVer:    statistics.Version2,
 			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
-		},
-		{
-			name: "Too big CMSketchDepth and CMSketchWidth option",
-			opts: []ast.AnalyzeOpt{
-				{
-					Type:  ast.AnalyzeOptCMSketchDepth,
-					Value: ast.NewValueExpr(1024, "", ""),
-				},
-				{
-					Type:  ast.AnalyzeOptCMSketchWidth,
-					Value: ast.NewValueExpr(2048, "", ""),
-				},
-			},
-			statsVer:    statistics.Version1,
-			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleAnalyzeOptions(tt.opts, tt.statsVer)
+			_, err := handleAnalyzeOptions(tt.opts)
 			if tt.ExpectedErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.ExpectedErr)
 			} else {
 				require.NoError(t, err)
-			}
-
-			if tt.statsVer == statistics.Version2 {
-				_, err := handleAnalyzeOptionsV2(tt.opts)
-				if tt.ExpectedErr != "" {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), tt.ExpectedErr)
-				} else {
-					require.NoError(t, err)
-				}
 			}
 		})
 	}
@@ -1112,16 +1131,27 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
-	u, err := url.Parse("S3://bucket?External-id=abc")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+	for _, str := range []string{
+		"S3://bucket?External-id=abc",
+		"oss://bucket?External-id=abc",
+		"oSS://bucket?External-id=abc",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO with explicit external ID")
+	}
 
-	u, err = url.Parse("s3://bucket")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.NoError(t, err)
+	for _, str := range []string{
+		"s3://bucket",
+		"oss://bucket",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.NoError(t, err)
+	}
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {

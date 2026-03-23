@@ -143,7 +143,7 @@ func testRandomFail(t *testing.T, ctx *mock.Context, joinType base.JoinType, par
 	executeHashJoinExecForRandomFailTest(t, hashJoinExec)
 }
 
-func TestOuterJoinSpillBasic(t *testing.T) {
+func TestOuterJoinSpillBasic1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
@@ -188,15 +188,62 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 
 	spillChunkSize = 100
 
-	joinTypes := make([]base.JoinType, 0)
-	joinTypes = append(joinTypes, base.LeftOuterJoin)
-	joinTypes = append(joinTypes, base.RightOuterJoin)
-
-	for _, joinType := range joinTypes {
-		for _, param := range params {
-			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
-		}
+	for _, param := range params {
+		testSpill(t, ctx, base.LeftOuterJoin, leftDataSource, rightDataSource, param)
 	}
+
+	util.CheckNoLeakFiles(t, testFuncName)
+}
+
+func TestOuterJoinSpillBasic2(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: intTp},
+		{Index: 3, RetType: stringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+		{Index: 2, RetType: stringTp},
+	}
+
+	params := []spillTestParam{
+		// Normal case
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
+		// rightUsed is empty
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{2000000, 2000000, 3300000, 200000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 2000000, 5300000, 400000, 10000}, testFuncName},
+		// leftUsed is empty
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 2000000, 3300000, 200000, 10000}, testFuncName},
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
+
+	spillChunkSize = 100
+
+	for _, param := range params {
+		testSpill(t, ctx, base.RightOuterJoin, leftDataSource, rightDataSource, param)
+	}
+
 	util.CheckNoLeakFiles(t, testFuncName)
 }
 

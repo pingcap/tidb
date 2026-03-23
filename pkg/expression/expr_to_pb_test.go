@@ -544,6 +544,11 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// json_object
+	function, err = NewFunction(mock.NewContext(), ast.JSONObject, types.NewFieldType(mysql.TypeJSON), stringColumn, jsonColumn, stringColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// json_depth
 	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)

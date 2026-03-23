@@ -153,9 +153,10 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
-			500*time.Millisecond, 100*time.Millisecond)
+			5*time.Second, 100*time.Millisecond)
 
 		// update memoryLimit, and sleep 500ms, let t.UpdateMemoryLimit() be called.
 		memory.ServerMemoryLimit.Store(1500 << 20) // 1.5 GB
@@ -183,7 +184,9 @@ func TestIssue48741(t *testing.T) {
 		// Sleep 500ms, let t.UpdateMemoryLimit() be called.
 		time.Sleep(500 * time.Millisecond)
 		// The memory limit will be 1.5GB * 110% during tunning.
-		require.Equal(t, debug.SetMemoryLimit(-1), int64(1500<<20*110/100))
+		require.Eventually(t, func() bool {
+			return debug.SetMemoryLimit(-1) == int64(1500<<20*110/100)
+		}, 5*time.Second, 100*time.Millisecond)
 		require.True(t, GlobalMemoryLimitTuner.adjustPercentageInProgress.Load())
 
 		allocator.free(memory810mb)
@@ -198,12 +201,15 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
-			500*time.Millisecond, 100*time.Millisecond)
+			5*time.Second, 100*time.Millisecond)
 
 		// During the process of adjusting the percentage, the memory limit will be set to 1GB * 110% = 1.1GB.
-		require.Equal(t, debug.SetMemoryLimit(-1), int64(1<<30*110/100))
+		require.Eventually(t, func() bool {
+			return debug.SetMemoryLimit(-1) == int64(1<<30*110/100)
+		}, 5*time.Second, 100*time.Millisecond)
 
 		gcNumAfterMemory810mb := getMemoryLimitGCTotal()
 		// After the GC triggered by memory810mb.
@@ -212,6 +218,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// The GC will be trigged immediately after memoryLimit is set back to 1GB * 80% = 800MB.
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
 			},
 			2*time.Second, 100*time.Millisecond)

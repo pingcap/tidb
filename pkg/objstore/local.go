@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -293,6 +294,13 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.Writer
 // Rename implements Storage interface.
 func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) error {
 	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
+}
+
+// PresignFile implements storeapi.Storage interface.
+// For local storage, returns the file name only (basename) since presigned URL is not applicable.
+func (l *LocalStorage) PresignFile(_ context.Context, fileName string, _ time.Duration) (string, error) {
+	_, fileNameOnly := filepath.Split(fileName)
+	return fileNameOnly, nil
 }
 
 // Close implements Storage interface.

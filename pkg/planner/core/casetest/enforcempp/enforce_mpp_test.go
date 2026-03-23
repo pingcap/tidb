@@ -18,7 +18,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -86,11 +85,8 @@ func TestEnforceMPP(t *testing.T) {
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 			})
-			require.Eventually(t,
-				func() bool {
-					res := testKit.MustQuery(tt)
-					return res.Equal(testkit.Rows(output[i].Plan...))
-				}, 1*time.Second, 100*time.Millisecond)
+			res := testKit.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())))
 		}
 	})
@@ -435,7 +431,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 
 // todo: some post optimization after resolveIndices will inject another projection below agg, which change the column name used in higher operator,
 //
-//	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
+//	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: explain format = 'plan_tree' select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test;")
@@ -603,7 +599,7 @@ func TestRollupMPP(t *testing.T) {
 		require.NoError(t, err)
 
 		// error test
-		err = testKit.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+		err = testKit.ExecToErr("explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
 		require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
 
 		var input []string

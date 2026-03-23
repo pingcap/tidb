@@ -629,6 +629,7 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
 			}
+			setGlobalIndexVersion(tbInfo, tbInfo.Indices[idxOffset])
 			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
 			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
 		}
@@ -3293,6 +3294,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.DDLChangedIndex[index.ID] = false
 			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 			newIndex.Global = newGlobal
+			setGlobalIndexVersion(tblInfo, newIndex)
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
 		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {
@@ -4124,15 +4126,22 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 		if reorgInfo.PhysicalTableID != 0 {
 			reorgInfo.currElement = reorgInfo.elements[0]
-			pid := pi.Definitions[0].ID
-			if _, err = findNextPartitionID(pid, pi.DroppingDefinitions); err == nil {
-				// Skip all dropped partitions
-				pid, err = findNextNonTouchedPartitionID(pid, pi)
-				if err != nil {
-					return errors.Trace(err)
+			// Find the first non-touched partition: one that is NOT in
+			// AddingDefinitions (newly created, already indexed above) and
+			// NOT in DroppingDefinitions (being removed).
+			pid := int64(0)
+			for _, def := range pi.Definitions {
+				if _, addErr := findNextPartitionID(def.ID, pi.AddingDefinitions); addErr == nil {
+					continue
 				}
+				if _, dropErr := findNextPartitionID(def.ID, pi.DroppingDefinitions); dropErr == nil {
+					continue
+				}
+				pid = def.ID
+				break
 			}
-			// if pid == 0 => All partitions will be dropped, nothing more to add to global indexes.
+
+			// if pid == 0 => All partitions will be dropped/added, nothing more to add to global indexes.
 			reorgInfo.PhysicalTableID = pid
 		}
 		if reorgInfo.PhysicalTableID != 0 {

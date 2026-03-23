@@ -74,9 +74,7 @@ type AnalyzeResult struct {
 
 // DestroyAndPutToPool destroys the result and put it to the pool.
 func (a *AnalyzeResult) DestroyAndPutToPool() {
-	for _, f := range a.Fms {
-		f.DestroyAndPutToPool()
-	}
+	a.Fms = nil // Release for GC.
 	for _, h := range a.Hist {
 		h.DestroyAndPutToPool()
 	}
@@ -84,9 +82,8 @@ func (a *AnalyzeResult) DestroyAndPutToPool() {
 
 // AnalyzeResults represents the analyze results of a task.
 type AnalyzeResults struct {
-	Err      error
-	ExtStats *ExtendedStatsColl
-	Job      *AnalyzeJob
+	Err error
+	Job *AnalyzeJob
 	// Ars: combine the analyze result of all columns and the analyze result of indexes.
 	// (In stats version2)
 	// For example:

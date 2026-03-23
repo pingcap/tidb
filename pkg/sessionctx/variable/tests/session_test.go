@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -244,7 +245,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
 # Digest: e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7
-# Stats: t1:123[1000;0][ID 1:allLoaded,ID 2:allLoaded][ID 2:allEvicted,ID 3:onlyCmsEvicted],t2:pseudo[10000;0]
+# Stats: t1:stats_meta_version=123[realtime_count=1000;modify_count=0][ID 1:allLoaded,ID 2:allLoaded][ID 2:allEvicted,ID 3:onlyCmsEvicted],t2:stats_meta_version=pseudo[realtime_count=10000;modify_count=0]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
@@ -364,6 +365,9 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
 	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
 		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
+	seVar.RUV2Metrics = execdetails.NewRUV2Metrics()
+	seVar.RUV2Metrics.AddResultChunkCells(11)
+	seVar.RUV2Metrics.AddPlanCnt(2)
 	actual := executor.PrepareSlowLogItemsForRules(ctx, vardef.GlobalSlowLogRules.Load(), seVar)
 	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
 	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
@@ -393,7 +397,55 @@ func TestSlowLogFormat(t *testing.T) {
 	require.NoError(t, err)
 
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	logItems.RUV2Metrics = seVar.RUV2Metrics.Clone()
 	compareSlowLogItems(t, logItems, actual)
+}
+
+func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
+	seVar := variable.NewSessionVars(nil)
+	logItems := &variable.SlowQueryLogItems{
+		SQL:         "select 1",
+		Digest:      "digest",
+		TimeTotal:   time.Second,
+		Succ:        true,
+		ExecDetail:  &execdetails.ExecDetails{},
+		UsedStats:   &stmtctx.UsedStatsInfo{},
+		RUDetails:   util.NewRUDetailsWith(0, 0, 0),
+		RUV2Metrics: execdetails.NewRUV2Metrics(),
+	}
+	logItems.RUDetails.AddTiKVRUV2(100)
+	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
+
+	logString := seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, "# RUv2_metrics: total_ru:150, tidb_ru:0, tikv_ru:100, tiflash_ru:50")
+
+	t.Run("default session weights come from config defaults", func(t *testing.T) {
+		original := config.GetGlobalConfig()
+		t.Cleanup(func() {
+			if original != nil {
+				config.StoreGlobalConfig(original)
+			}
+		})
+
+		cfg := config.NewConfig()
+		cfg.RUV2 = config.DefaultRUV2Config()
+		config.StoreGlobalConfig(cfg)
+
+		require.Equal(t, execdetails.RUV2Weights{
+			RUScale:                 cfg.RUV2.RUScale,
+			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+			ExecutorL1:              cfg.RUV2.ExecutorL1,
+			ExecutorL2:              cfg.RUV2.ExecutorL2,
+			ExecutorL3:              cfg.RUV2.ExecutorL3,
+			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+			PlanCnt:                 cfg.RUV2.PlanCnt,
+			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+			TxnCnt:                  cfg.RUV2.TxnCnt,
+		}, variable.NewSessionVars(nil).RUV2Weights())
+	})
 }
 
 func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
@@ -406,7 +458,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "RUV2Metrics", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {
@@ -454,7 +506,6 @@ func TestTableDeltaClone(t *testing.T) {
 		Delta:    1,
 		Count:    2,
 		InitTime: time.Now(),
-		TableID:  5,
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
@@ -473,7 +524,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 					Delta:    1,
 					Count:    2,
 					InitTime: time.Now(),
-					TableID:  5,
 				},
 			},
 		},
@@ -494,7 +544,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    6,
 		Count:    7,
 		InitTime: time.Now(),
-		TableID:  9,
 	}
 	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
 	tc.FlushStmtPessimisticLockCache()
@@ -510,7 +559,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    10,
 		Count:    11,
 		InitTime: time.Now(),
-		TableID:  13,
 	}
 	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
 	tc.FlushStmtPessimisticLockCache()
@@ -724,48 +772,52 @@ func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 	tk.MustExec("use test")
 
 	// Test default value
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
 
 	// Test session scope
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@session.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = COST")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustQuery("select @@session.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
 	// Global should not be affected
-	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
 
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = OFF")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DISABLE")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
 
 	// Test global scope
-	tk.MustExec("set @@global.tidb_opt_partial_ordered_index_for_topn = ON")
-	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_opt_partial_ordered_index_for_topn = COST")
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
 	// New session should inherit global value
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk1.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
 
 	// Session value should override global value
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = OFF")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
-	// Global should still be ON
-	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DISABLE")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	// Global should still be COST
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
 
-	// Test different value formats (only 0, 1, ON, OFF are allowed)
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 1")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 0")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'ON'")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'OFF'")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'on'")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'off'")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	// Test case-insensitive values (only DISABLE, COST are allowed)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'cost'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'disable'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'Cost'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'Disable'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'COST'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
 
-	// Test disallowed values
+	// Test disallowed values (old values and invalid values)
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'ON'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'OFF'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 0"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 1"))
 	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'true'"))
 	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'false'"))
 	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 2"))
@@ -775,9 +827,9 @@ func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 
 	// Verify the field is accessible in SessionVars
 	vars := tk.Session().GetSessionVars()
-	require.False(t, vars.OptPartialOrderedIndexForTopN)
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
-	require.True(t, vars.OptPartialOrderedIndexForTopN)
+	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = COST")
+	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
 }
 
 func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
@@ -787,39 +839,55 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.True(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
 	require.True(t, sv.IsHintUpdatableVerified)
-	require.Equal(t, vardef.TypeBool, sv.Type)
-	require.Equal(t, "OFF", sv.Value) // Default is false
+	require.Equal(t, vardef.TypeEnum, sv.Type)
+	require.Equal(t, "DISABLE", sv.Value) // Default is DISABLE
 
 	// Test validation
 	vars := variable.NewSessionVars(nil)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 
-	// Test allowed values: 0, 1, ON, OFF (case-insensitive)
-	val, err := sv.Validate(vars, "ON", vardef.ScopeSession)
+	// Test allowed values: DISABLE, COST (case-insensitive)
+	val, err := sv.Validate(vars, "COST", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "ON", val)
+	require.Equal(t, "COST", val)
 
-	val, err = sv.Validate(vars, "on", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "cost", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "ON", val)
+	require.Equal(t, "COST", val)
 
-	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "DISABLE", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "DISABLE", val)
 
-	val, err = sv.Validate(vars, "off", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "disable", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "DISABLE", val)
 
-	val, err = sv.Validate(vars, "1", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "Cost", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "ON", val)
+	require.Equal(t, "COST", val)
 
-	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "Disable", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "DISABLE", val)
 
-	// Test disallowed values
+	// Test disallowed values (old ON/OFF values and others)
+	_, err = sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "1", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
 	_, err = sv.Validate(vars, "true", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
@@ -845,13 +913,13 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.Contains(t, err.Error(), "can't be set to the value of")
 
 	// Test SetSession function
-	err = sv.SetSessionFromHook(vars, "ON")
+	err = sv.SetSessionFromHook(vars, "COST")
 	require.NoError(t, err)
-	require.True(t, vars.OptPartialOrderedIndexForTopN)
+	require.True(t, vars.IsPartialOrderedIndexForTopNEnabled())
 
-	err = sv.SetSessionFromHook(vars, "OFF")
+	err = sv.SetSessionFromHook(vars, "DISABLE")
 	require.NoError(t, err)
-	require.False(t, vars.OptPartialOrderedIndexForTopN)
+	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }
 
 func TestSetTiDBCloudStorageURI(t *testing.T) {

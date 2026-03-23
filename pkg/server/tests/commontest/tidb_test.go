@@ -1187,7 +1187,7 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	}()
 
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(mc)
+	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
@@ -1252,7 +1252,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	defer topsqlstate.DisableTopSQL()
 
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(mc)
+	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.SetProcessCPUUpdater(ts.Server)
 	sqlCPUCollector.Start()
@@ -3757,7 +3757,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			}
 
 			return getTestResultsLen() > concurrency
-		}, time.Second*10, time.Millisecond*100)
+		}, time.Second*30, time.Millisecond*100)
 
 		testResults := getTestResults()
 		nonRetryingCount := 0

@@ -1272,6 +1272,7 @@ func prepare4IndexInnerHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 			ColLens:       colLens,
 			KeyCols:       tc.InnerJoinKeyIdx,
 			HashCols:      tc.InnerHashKeyIdx,
+			HashIsNullEQ:  make([]bool, len(tc.InnerHashKeyIdx)),
 		},
 		WorkerWg:      new(sync.WaitGroup),
 		Joiner:        join.NewJoiner(tc.Ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false),

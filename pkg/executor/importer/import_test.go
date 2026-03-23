@@ -58,7 +58,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	vardef.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket")
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
@@ -69,6 +69,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey)
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
@@ -78,7 +79,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	}
 
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
+	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
@@ -138,6 +139,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
@@ -153,10 +155,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
+	sqlCapture := sql + ", " + onDupKeyOption + "='capture'"
+	stmt, err = p.ParseOneStmt(sqlCapture, "", "")
+	require.NoError(t, err, sqlCapture)
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
+	require.NoError(t, err, sqlCapture)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlCapture)
+	require.Equal(t, OnDupKeyModeCapture, plan.OnDupKey, sqlCapture)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
@@ -174,6 +180,21 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
+	// override with azure
+	sql3a := sql + ", " + cloudStorageURIOption + "='azure://container/path2'"
+	stmt, err = p.ParseOneStmt(sql3a, "", "")
+	require.NoError(t, err, sql3a)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3a)
+	require.Equal(t, "azure://container/path2", plan.CloudStorageURI, sql3a)
+	sql3b := sql + ", " + cloudStorageURIOption + "='azblob://container/path3'"
+	stmt, err = p.ParseOneStmt(sql3b, "", "")
+	require.NoError(t, err, sql3b)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3b)
+	require.Equal(t, "azblob://container/path3", plan.CloudStorageURI, sql3b)
 	// override with empty string, force use local sort
 	sql4 := sql + ", " + cloudStorageURIOption + "=''"
 	stmt, err = p.ParseOneStmt(sql4, "", "")
@@ -182,6 +203,37 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql4)
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
+}
+
+func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	sql := "import into t from '/file.csv' with on_duplicate_key='capture'"
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	vardef.CloudStorageURI.Store("")
+	plan := &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+	require.ErrorContains(t, err, onDupKeyOption)
+	require.ErrorContains(t, err, "local sort")
 }
 
 func TestAdjustOptions(t *testing.T) {
@@ -205,6 +257,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.CloudStorageURI = "s3://bucket/path"
 	plan.adjustOptions(16)
 	require.True(t, plan.DisableTiKVImportMode)
+}
+
+func TestGetConflictHandlingMode(t *testing.T) {
+	plan := &Plan{}
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
+
+	plan.OnDupKey = OnDupKeyModeCapture
+	require.Equal(t, OnDupKeyModeCapture, plan.GetOnDupKeyMode())
+
+	plan.OnDupKey = OnDupKeyModeError
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -247,21 +310,21 @@ func TestInitParameters(t *testing.T) {
 	// test redacted
 	p := &Plan{
 		Format: DataFormatCSV,
-		Path:   "s3://bucket/path?access-key=111111&secret-access-key=222222",
+		Path:   "azure://bucket/path?account-name=test-account&sas-token=111111",
 	}
 	require.NoError(t, p.initParameters(&plannercore.ImportInto{
 		Options: []*plannercore.LoadDataOpt{
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
-					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaaaaa&secret-access-key=bbbbbb"),
+					Value: types.NewStringDatum("azblob://this-is-for-storage/path?account-name=test-account&sas_token=bbbbbb"),
 				},
 			},
 		},
 	}))
-	urlEqual(t, "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx", p.Parameters.FileLocation)
+	urlEqual(t, "azure://bucket/path?account-name=test-account&sas-token=xxxxxx", p.Parameters.FileLocation)
 	require.Len(t, p.Parameters.Options, 1)
-	urlEqual(t, "s3://this-is-for-storage/path?access-key=xxxxxx&secret-access-key=xxxxxx",
+	urlEqual(t, "azblob://this-is-for-storage/path?account-name=test-account&sas_token=xxxxxx",
 		p.Parameters.Options[cloudStorageURIOption].(string))
 
 	// test other options

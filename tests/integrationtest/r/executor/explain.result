@@ -154,10 +154,10 @@ explain analyze format = 'plan_cache' select * from t;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
-explain select * from t;
-id	estRows	task	access object	operator info
-TableReader_6	10000.00	root		data:TableFullScan_5
-└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -288,18 +288,18 @@ grant select, show view on executor__explain.v2 to 'explain'@'%';
 grant         show view on executor__explain.v1 to 'explain'@'%';
 grant select, show view on executor__explain.t3 to 'explain'@'%';
 grant select, show view on executor__explain.v3 to 'explain'@'%';
-explain select * from v1;
+explain format='plan_tree' select * from v1;
 Error 1142 (42000): SELECT command denied to user 'explain'@'%' for table 'v1'
-explain select * from v2;
+explain format='plan_tree' select * from v2;
 Error 1345 (HY000): EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
-explain select * from t3;
-id	estRows	task	access object	operator info
-TableReader_6	10000.00	root		data:TableFullScan_5
-└─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-explain select * from v3;
-id	estRows	task	access object	operator info
-TableReader_8	10000.00	root		data:TableFullScan_7
-└─TableFullScan_7	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t3;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+explain format='plan_tree' select * from v3;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1(
 id1 varchar(2) DEFAULT '00',

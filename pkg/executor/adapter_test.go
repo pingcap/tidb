@@ -24,8 +24,13 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -40,6 +45,37 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+type mockRUV2ConsumptionReporter struct {
+	tikvGroup string
+	tikvRUV2  float64
+	tidbGroup string
+	tidbRUV2  float64
+}
+
+func (*mockRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockRUV2ConsumptionReporter) ReportTiKVRUV2Consumption(resourceGroupName string, ruv2 float64) {
+	m.tikvGroup = resourceGroupName
+	m.tikvRUV2 = ruv2
+}
+
+func (m *mockRUV2ConsumptionReporter) ReportTiDBRUV2Consumption(resourceGroupName string, ruv2 float64) {
+	m.tidbGroup = resourceGroupName
+	m.tidbRUV2 = ruv2
+}
+
+type mockRUV2ReportingContext struct {
+	*mock.Context
+	reporter resourcegroup.ConsumptionReporter
+}
+
+func (c *mockRUV2ReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	dctx := c.Context.GetDistSQLCtx()
+	dctx.RUConsumptionReporter = c.reporter
+	dctx.ResourceGroupName = c.GetSessionVars().StmtCtx.ResourceGroupName
+	return dctx
+}
 
 func TestFormatSQL(t *testing.T) {
 	val := executor.FormatSQL("aaaa")
@@ -142,8 +178,10 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessTimeStr)].Match(ctx.GetSessionVars(), items, copExec.TimeDetail.ProcessTime.Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.BackoffTimeStr)].Match(ctx.GetSessionVars(), items, copExec.BackoffTime.Seconds()))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.ProcessedKeys))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.TotalKeys))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.ProcessedKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.TotalKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.49))
+	require.False(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.5))
 
 	// fields not in Fields should be zero at this point
 	require.Equal(t, uint64(0), items.ExecRetryCount)
@@ -337,6 +375,26 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		seVars.SessionAlias = "sessA"
 		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
 	})
+
+	t.Run("session rules match by cop_mvcc_read_amplification", func(t *testing.T) {
+		tk.MustExec(`set global tidb_slow_log_rules=""`)
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10"`)
+		seVars := tk.Session().GetSessionVars()
+		items := &variable.SlowQueryLogItems{
+			ExecDetail: &execdetails.ExecDetails{
+				CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &util.ScanDetail{
+						TotalKeys:     100,
+						ProcessedKeys: 10,
+					},
+				},
+			},
+		}
+		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10.01"`)
+		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+	})
 }
 
 func TestWriteSlowLog(t *testing.T) {
@@ -383,6 +441,60 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+}
+
+func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
+	original := config.GetGlobalConfig()
+	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
+	t.Cleanup(func() {
+		if original != nil {
+			config.StoreGlobalConfig(original)
+		}
+		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
+	})
+	variable.GenerateBinaryPlan.Store(false)
+
+	cfg := config.NewConfig()
+	cfg.RUV2 = config.DefaultRUV2Config()
+	cfg.Instance.EnableSlowLog.Store(false)
+	cfg.Instance.RecordPlanInSlowLog = 0
+	config.StoreGlobalConfig(cfg)
+
+	reporter := &mockRUV2ConsumptionReporter{}
+	ctx := &mockRUV2ReportingContext{
+		Context:  mock.NewContext(),
+		reporter: reporter,
+	}
+	sessVars := ctx.GetSessionVars()
+	sessVars.StartTime = time.Now()
+	sessVars.StmtCtx.StmtType = "Select"
+	sessVars.StmtCtx.OriginalSQL = "select 1"
+	sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+	sessVars.StmtCtx.ResourceGroupName = "rg1"
+
+	goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+	require.NotNil(t, sessVars.RUV2Metrics)
+	sessVars.RUV2Metrics.AddResultChunkCells(100)
+	sessVars.RUV2Metrics.AddPlanCnt(2)
+	sessVars.RUV2Metrics.AddSessionParserTotal(3)
+
+	expected := sessVars.RUV2Metrics.CalculateRUValues(sessVars.RUV2Weights())
+	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	ruDetails.AddTiKVRUV2(23456)
+
+	execStmt := &executor.ExecStmt{
+		Ctx:      ctx,
+		GoCtx:    goCtx,
+		StmtNode: &ast.SelectStmt{},
+	}
+	execStmt.FinishExecuteStmt(0, nil, false)
+
+	require.Equal(t, float64(23456), ruDetails.TiKVRUV2())
+	require.Equal(t, "rg1", reporter.tikvGroup)
+	require.Equal(t, float64(23456), reporter.tikvRUV2)
+	require.Equal(t, "rg1", reporter.tidbGroup)
+	require.Equal(t, float64(expected), reporter.tidbRUV2)
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {

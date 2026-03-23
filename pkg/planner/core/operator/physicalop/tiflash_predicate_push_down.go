@@ -47,6 +47,18 @@ type expressionGroup struct {
 	selectivity float64
 }
 
+func compareExpressionGroups(x, y expressionGroup) int {
+	if diff := cmp.Compare(len(x.exprs), len(y.exprs)); diff != 0 {
+		return diff
+	}
+	for i := range x.exprs {
+		if diff := slices.Compare(y.exprs[i].HashCode(), x.exprs[i].HashCode()); diff != 0 {
+			return diff
+		}
+	}
+	return 0
+}
+
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".
 // @param: cols: the columns of a Expression
 // @param: tableColumns: the total number of columns in the tablescan
@@ -105,7 +117,7 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	// Estimate the selectivity of each group and check if it is larger than the selectivityThreshold
 	var exprGroups []expressionGroup
 	for _, group := range groupMap {
-		selectivity, _, err := cardinality.Selectivity(sctx, ts.TblColHists, group, nil)
+		selectivity, err := cardinality.Selectivity(sctx, ts.TblColHists, group, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -115,12 +127,12 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 		}
 	}
 
-	// Sort exprGroups by selectivity in ascending order
+	// Keep the group order deterministic when selectivity and group size tie.
 	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) int {
-		if x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs) {
-			return -1
+		if diff := cmp.Compare(x.selectivity, y.selectivity); diff != 0 {
+			return diff
 		}
-		return cmp.Compare(x.selectivity, y.selectivity)
+		return compareExpressionGroups(x, y)
 	})
 
 	return exprGroups
@@ -201,7 +213,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
-		selectivity, _, err := cardinality.Selectivity(sctx, ts.TblColHists, mergedConds, nil)
+		selectivity, err := cardinality.Selectivity(sctx, ts.TblColHists, mergedConds, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -333,7 +345,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			continue
 		}
 		// 3. The selectivity of the predicate is less than 60%.
-		selectivity, _, err := cardinality.Selectivity(pctx, ts.TblColHists, []expression.Expression{cond}, nil)
+		selectivity, err := cardinality.Selectivity(pctx, ts.TblColHists, []expression.Expression{cond}, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			continue
@@ -376,7 +388,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	// Update the row count of table scan.
 	if len(selectedConditions)+len(ts.LateMaterializationFilterCondition) != 0 {
 		selectedConditions = append(selectedConditions, ts.LateMaterializationFilterCondition...)
-		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.TblColHists, selectedConditions, nil)
+		selectivity, err := cardinality.Selectivity(ts.SCtx(), ts.TblColHists, selectedConditions, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			selectivity = selectivityThreshold

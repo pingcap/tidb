@@ -52,7 +52,7 @@
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
-        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection"
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#15],0,1)->Projection"
       },
       {
         "SQL": "select c from t  limit 1",
@@ -197,7 +197,7 @@
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
-        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection"
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#15],0,1)->Projection"
       },
       {
         "SQL": "select c from t  limit 1",
@@ -294,7 +294,7 @@
     "Cases": [
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.c_str",
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(Column#25,Column#26)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(Column#27,Column#28)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a",
@@ -491,11 +491,11 @@
     "Cases": [
       {
         "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#29,Column#27)"
       },
       {
         "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Sort"
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#29,Column#27)->Sort"
       },
       {
         "SQL": "select * from t where a in (select s.a from t s) order by t.a",
@@ -503,7 +503,7 @@
       },
       {
         "SQL": "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.c,test.t.c)(test.t.d,test.t.d)->Projection->StreamAgg}(Column#39,Column#37)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.c,test.t.c)(test.t.d,test.t.d)->Projection->StreamAgg}(Column#42,Column#40)"
       },
       {
         "SQL": "select * from t where a in (select a from t) order by b",
@@ -653,7 +653,7 @@
       },
       {
         "SQL": "select a from t union all (select c from t) order by a limit 1",
-        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#27],0,1)"
       }
     ]
   },

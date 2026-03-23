@@ -18,9 +18,9 @@ set tidb_enable_ordered_result_mode=1;
 set tidb_opt_limit_push_down_threshold=0;
 drop table if exists t;
 create table t (a int primary key, b int, c int, d int, key(b));
-explain select * from t where a > 0 limit 1;
+explain format = 'brief' select * from t where a > 0 limit 1;
 create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1;
-explain select * from t where a > 0 limit 1;
+explain format = 'brief' select * from t where a > 0 limit 1;
 set tidb_enable_ordered_result_mode=DEFAULT;
 set tidb_opt_limit_push_down_threshold=DEFAULT;
 

@@ -16,15 +16,36 @@ package execdetails
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
+
+func defaultRUV2WeightsForTest() RUV2Weights {
+	cfg := config.DefaultRUV2Config()
+	return RUV2Weights{
+		RUScale:                 cfg.RUScale,
+		ResultChunkCells:        cfg.ResultChunkCells,
+		ExecutorL1:              cfg.ExecutorL1,
+		ExecutorL2:              cfg.ExecutorL2,
+		ExecutorL3:              cfg.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		SessionParserTotal:      cfg.SessionParserTotal,
+		TxnCnt:                  cfg.TxnCnt,
+	}
+}
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
@@ -315,6 +336,96 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.Equal(t, "", zeroCopStats.String())
 }
 
+func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
+	weights := defaultRUV2WeightsForTest()
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddExecutorMetric(1, "TableReader", 5)
+	metrics.AddExecutorMetric(1, "Projection", 7)
+	metrics.AddExecutorMetric(2, "Selection", 11)
+	metrics.AddExecutorMetric(3, "HashJoin", 13)
+	metrics.AddExecutorL5InsertRows(17)
+	metrics.AddPlanCnt(19)
+	metrics.AddPlanDeriveStatsPaths(23)
+	metrics.AddResourceManagerReadCnt(29)
+	metrics.AddResourceManagerWriteCnt(31)
+	metrics.AddSessionParserTotal(37)
+	metrics.AddTxnCnt(41)
+	metrics.AddTiKVKVEngineCacheMiss(43)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchSelection", 53)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 59)
+	metrics.AddTiKVCoprocessorExecutorIterations(61)
+	metrics.AddTiKVCoprocessorResponseBytes(67)
+	metrics.AddTiKVRaftstoreStoreWriteTriggerWB(71)
+	metrics.AddTiKVStorageProcessedKeysBatchGet(73)
+	metrics.AddTiKVStorageProcessedKeysGet(79)
+
+	tidbRU := metrics.CalculateRUValues(weights)
+	tikvRU := int64(157258)
+	tiflashRU := int64(24680)
+	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
+	require.Equal(t, int64(114198), tidbRU)
+	require.Equal(t, int64(157258), tikvRU)
+	require.Equal(t, int64(24680), tiflashRU)
+	require.Equal(t, int64(296136), totalRU)
+
+	t.Run("zero scale stays zero", func(t *testing.T) {
+		zeroScaleWeights := weights
+		zeroScaleWeights.RUScale = 0
+		require.Zero(t, metrics.CalculateRUValues(zeroScaleWeights))
+		require.Equal(t, tikvRU+tiflashRU, metrics.TotalRU(zeroScaleWeights, tikvRU, tiflashRU))
+	})
+}
+
+func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
+	weights := defaultRUV2WeightsForTest()
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddPlanCnt(2)
+
+	baseline := metrics.CalculateRUValues(weights)
+
+	updated := weights
+	updated.ResultChunkCells *= 10
+	updated.PlanCnt *= 10
+
+	require.NotEqual(t, baseline, metrics.CalculateRUValues(updated))
+}
+
+func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
+	weights := defaultRUV2WeightsForTest()
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddResourceManagerWriteCnt(20)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 10)
+	formatted := FormatRUV2Metrics(metrics, weights, 10987, 246)
+
+	require.Contains(t, formatted, "tidb_ru:")
+	require.Contains(t, formatted, "tikv_ru:")
+	require.Contains(t, formatted, "tiflash_ru:")
+	require.Contains(t, formatted, "total_ru:")
+	require.True(t, strings.HasPrefix(formatted, "total_ru:"))
+
+	parts := strings.Split(formatted, ", ")
+	require.Len(t, parts, 7)
+	require.Equal(t, "total_ru:19983", parts[0])
+	require.Equal(t, "tidb_ru:8750", parts[1])
+	require.Equal(t, "tikv_ru:10987", parts[2])
+	require.Equal(t, "tiflash_ru:246", parts[3])
+}
+
+func TestRURuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetails(),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+	}
+	stats.RUDetails.AddTiKVRUV2(200)
+	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
+
+	require.Equal(t, "RU:500.00", stats.String())
+}
+
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats := NewRuntimeStatsColl(nil)
 	tableScanID := 1
@@ -520,6 +631,34 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, " +
 		"scheduler: {process: 0s}}}, lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
+
+	stats.SharedLockKeys = lockDetail.Clone()
+	require.Equal(t, expect+", shared_"+expect, stats.String())
+
+	// Test Clone with SharedLockKeys
+	clonedStats := stats.Clone().(*RuntimeStatsWithCommit)
+	require.Equal(t, stats.String(), clonedStats.String())
+	require.NotNil(t, clonedStats.SharedLockKeys)
+	require.Equal(t, stats.SharedLockKeys.LockKeys, clonedStats.SharedLockKeys.LockKeys)
+
+	// Test Merge with SharedLockKeys
+	stats2 := &RuntimeStatsWithCommit{
+		SharedLockKeys: &util.LockKeysDetails{
+			TotalTime: time.Second,
+			RegionNum: 3,
+			LockKeys:  5,
+		},
+	}
+	stats.Merge(stats2)
+	require.Equal(t, int32(5), stats.SharedLockKeys.RegionNum)
+	require.Equal(t, int32(15), stats.SharedLockKeys.LockKeys)
+
+	// Test Merge into empty SharedLockKeys
+	stats3 := &RuntimeStatsWithCommit{}
+	stats3.Merge(stats2)
+	require.NotNil(t, stats3.SharedLockKeys)
+	require.Equal(t, int32(3), stats3.SharedLockKeys.RegionNum)
+	require.Equal(t, int32(5), stats3.SharedLockKeys.LockKeys)
 }
 
 func TestRootRuntimeStats(t *testing.T) {

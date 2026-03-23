@@ -291,7 +291,7 @@ func main() {
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
-		setVersions()
+		mustInitVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
@@ -365,6 +365,16 @@ func main() {
 		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
+	// UniStore is a mock store for tests. It uses store addresses like "store1" which are not a valid
+	// host:port for gRPC. client-go's store liveness check uses gRPC health check on the store address,
+	// which may mistakenly mark the UniStore as unreachable and make tests hang.
+	// Force the liveness check to always return reachable for UniStore.
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		tikv.EnableFailpoints()
+		if err := failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`); err != nil {
+			logutil.BgLogger().Warn("failed to enable tikvclient/injectLiveness for unistore", zap.Error(err))
+		}
+	}
 	if intest.EnableInternalCheck {
 		logutil.BgLogger().Warn("internal check is enabled, this should NOT happen in the production environment")
 	}
@@ -401,7 +411,7 @@ func main() {
 		executor.Stop()
 		close(exited)
 	})
-	topsql.SetupTopSQL(keyspace.GetKeyspaceNameBytesBySettings(), svr)
+	topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -743,17 +753,52 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 }
 
-func setVersions() {
-	cfg := config.GetGlobalConfig()
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
+func validateVersionConfigPolicy(cfg *config.Config) error {
+	// allow users to set version info is a bad feature, we forbid it in next-gen.
+	if kerneltype.IsNextGen() && (len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0) {
+		return errors.New("config options tidb-edition, tidb-release-version and server-version are not allowed to set in nextgen kernel")
 	}
+	return nil
+}
+
+func deriveRuntimeVersionsFromBuildInfo(releaseVersion string) (normalizedReleaseVersion string, serverVersion string, err error) {
+	normalizedReleaseVersion = mysql.NormalizeTiDBReleaseVersionForNextGen(releaseVersion)
+	serverVersion, err = mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
+	if err != nil {
+		return "", "", errors.Annotate(err, "invalid tidb release version for nextgen kernel")
+	}
+	return normalizedReleaseVersion, serverVersion, nil
+}
+
+func initVersions(cfg *config.Config) error {
+	if err := validateVersionConfigPolicy(cfg); err != nil {
+		return err
+	}
+	if kerneltype.IsNextGen() {
+		normalizedReleaseVersion, serverVersion, err := deriveRuntimeVersionsFromBuildInfo(mysql.TiDBReleaseVersion)
+		if err != nil {
+			return err
+		}
+		mysql.TiDBReleaseVersion = normalizedReleaseVersion
+		mysql.ServerVersion = serverVersion
+		return nil
+	}
+
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
 	}
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	return nil
+}
+
+func mustInitVersions() {
+	cfg := config.GetGlobalConfig()
+	terror.MustNil(initVersions(cfg))
 }
 
 func setGlobalVars() {
@@ -851,20 +896,14 @@ func setGlobalVars() {
 	atomic.StoreUint64(&vardef.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 	atomic.StoreUint64(&vardef.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
-		variable.SetSysVar(vardef.Version, cfg.ServerVersion)
-	}
+	terror.MustNil(initVersions(cfg))
+	variable.SetSysVar(vardef.Version, mysql.ServerVersion)
 
 	if len(cfg.TiDBEdition) > 0 {
-		versioninfo.TiDBEdition = cfg.TiDBEdition
 		variable.SetSysVar(vardef.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(vardef.VersionComment, cfg.VersionComment)
-	}
-	if len(cfg.TiDBReleaseVersion) > 0 {
-		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
 	// set instance variables

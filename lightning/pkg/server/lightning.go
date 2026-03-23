@@ -1206,11 +1206,25 @@ type LightningImporter interface {
 	Close()
 }
 
+type importIntoProgressAdapter struct {
+	s *importer.LightningStatus
+}
+
+func (a *importIntoProgressAdapter) UpdateTotalSize(size int64) {
+	a.s.TotalFileSize.Store(size)
+}
+
+func (a *importIntoProgressAdapter) UpdateFinishedSize(size int64) {
+	a.s.FinishedFileSize.Store(size)
+}
+
 // newImporter creates a new LightningImporter based on the configuration.
 func newImporter(ctx context.Context, cfg *config.Config, param *importer.ControllerParam) (LightningImporter, error) {
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImportInto:
-		return importinto.NewImporter(ctx, cfg, param.DB)
+		return importinto.NewImporter(ctx, cfg, param.DB,
+			importinto.WithProgressUpdater(&importIntoProgressAdapter{s: param.Status}),
+		)
 	case config.BackendLocal, config.BackendTiDB:
 		return importer.NewImportController(ctx, cfg, param)
 	default:

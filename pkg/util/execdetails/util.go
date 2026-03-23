@@ -30,6 +30,7 @@ func ContextWithInitializedExecDetails(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, StmtExecDetailKey, &StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	ctx = context.WithValue(ctx, RUV2MetricsCtxKey, NewRUV2Metrics())
 	return ctx
 }
 

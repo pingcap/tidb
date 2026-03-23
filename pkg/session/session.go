@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -107,6 +108,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	drivertxn "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -968,9 +970,9 @@ func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infosc
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for _, item := range mapper {
-			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
+		for tableID, item := range mapper {
+			if tableID > 0 {
+				s.statsCollector.Update(tableID, item.Delta, item.Count)
 			}
 		}
 	}
@@ -1504,9 +1506,10 @@ const (
 
 var keySQLToken = map[string]int{
 	"select": isSelectSQLToken,
-	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken, "analyze": coreSQLToken,
-	"execute": coreSQLToken, // ignore `prepare` statement because its content will be parsed later
-	"explain": bypassSQLToken, "desc": bypassSQLToken}
+	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken,
+	// ignore prepare / execute statements
+	"explain": bypassSQLToken, "desc": bypassSQLToken, "analyze": bypassSQLToken,
+}
 
 // approximate memory quota related token count for parsing a SQL statement which covers most DML statements
 // 1. ignore comments
@@ -1661,7 +1664,6 @@ func approxCompilePlanMemQuota(sql string, hasSelect bool) int64 {
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	globalMemArbitrator := memory.GlobalMemArbitrator()
-	arbitratorMode := globalMemArbitrator.WorkMode()
 	execUseArbitrator := false
 	parseSQLMemQuota := int64(0)
 	if globalMemArbitrator != nil && s.sessionVars.ConnectionID != 0 {
@@ -1673,21 +1675,10 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	if execUseArbitrator {
 		uid := s.sessionVars.ConnectionID
-		intoErrBeforeExec := func() error {
-			if s.sessionVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable {
-				metrics.GlobalMemArbitratorSubTasks.CancelWaitAverseParse.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixParseSQL, uid)
-			}
-			if arbitratorMode == memory.ArbitratorModeStandard {
-				metrics.GlobalMemArbitratorSubTasks.CancelStandardModeParse.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixParseSQL, uid)
-			}
-			return nil
-		}
 
 		if globalMemArbitrator.AtMemRisk() {
-			if err := intoErrBeforeExec(); err != nil {
-				return nil, nil, err
+			if s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
@@ -1698,14 +1689,8 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			}
 		}
 
-		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
+		globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
 		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
-
-		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
-			if err := intoErrBeforeExec(); err != nil {
-				return nil, nil, err
-			}
-		}
 	}
 
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
@@ -1933,6 +1918,7 @@ func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) 
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	s.resetPendingRUV2SessionParserTotal()
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 
@@ -1965,6 +1951,8 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		metrics.RUV2SessionParserTotal.Inc()
+		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -1975,6 +1963,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
+	s.resetPendingRUV2SessionParserTotal()
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlescape.EscapeSQL(sql, args...)
@@ -2010,11 +1999,13 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		metrics.RUV2SessionParserTotal.Inc()
+		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Reset the goroutine label when internal sql execute finish.
@@ -2024,6 +2015,12 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 		}
 	}
 	return stmts[0], nil
+}
+
+func (s *session) resetPendingRUV2SessionParserTotal() {
+	// Standalone Parse/ParseWithParams calls may never reach ExecuteStmt(), so
+	// clear any leftover parser count before starting a new statement parse.
+	s.sessionVars.RUV2PendingSessionParserTotal.Store(0)
 }
 
 // GetAdvisoryLock acquires an advisory lock of lockName.
@@ -2428,6 +2425,15 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+	if ruv2Metrics == nil {
+		ruv2Metrics = execdetails.NewRUV2Metrics()
+		ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, ruv2Metrics)
+	}
+	sessVars.RUV2Metrics = ruv2Metrics
+	if pending := sessVars.RUV2PendingSessionParserTotal.Swap(0); pending > 0 && ruv2Metrics != nil {
+		ruv2Metrics.AddSessionParserTotal(pending)
+	}
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
@@ -2441,7 +2447,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
 	}
@@ -2517,6 +2523,9 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 
 		if globalMemArbitrator.AtMemRisk() {
+			if s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
+			}
 			if err := intoErrBeforeExec(); err != nil {
 				return nil, err
 			}
@@ -2533,7 +2542,10 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		defer releaseCommonQuota()
 
 		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
-			if err := intoErrBeforeExec(); err != nil {
+			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
+				s.sessionPlanCache.DeleteAll()
+				// one more chance to get quota after clearing plan cache
+			} else if err := intoErrBeforeExec(); err != nil {
 				return nil, err
 			}
 		}
@@ -2623,7 +2635,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		tracker := sessVars.StmtCtx.MemTracker
 		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
-			sessVars.MemQuotaQuery,
 			sessVars.MemTracker.Killer,
 			digestKey,
 			memPriority,
@@ -2636,7 +2647,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 		defer func() { // detach mem-arbitrator and rethrow panic if any
 			if r := recover(); r != nil {
-				tracker.DetachMemArbitrator()
+				tracker.DetachMemArbitrator(true)
 				panic(r)
 			}
 		}()
@@ -3264,6 +3275,8 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			OriginalSQL:            sc.OriginalSQL,
 			KVVars:                 vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
+			RUV2Metrics:            vars.RUV2Metrics,
+			RUV2RPCInterceptor:     drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics),
 			SessionMemTracker:      vars.MemTracker,
 
 			Location:         sc.TimeZone(),
@@ -3316,6 +3329,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	// Ref: https://github.com/pingcap/tidb/issues/61899
 	if dctx.RunawayChecker != sc.RunawayChecker {
 		dctx.RunawayChecker = sc.RunawayChecker
+	}
+	if dctx.RUV2Metrics != vars.RUV2Metrics {
+		dctx.RUV2Metrics = vars.RUV2Metrics
+		dctx.RUV2RPCInterceptor = drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics)
 	}
 
 	return dctx
@@ -4344,6 +4361,12 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
+// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
+func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateWithFilter(store, filter)
+}
+
+// getStartMode gets the start mode according to the bootstrap version.
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
 		return ddl.Bootstrap
@@ -4963,6 +4986,10 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 				session_metrics.StatementPerTransactionOptimisticOKGeneral.Observe(float64(counter))
 			}
 		}
+	}
+	metrics.RUV2TxnCnt.Inc()
+	if s.sessionVars.RUV2Metrics != nil {
+		s.sessionVars.RUV2Metrics.AddTxnCnt(1)
 	}
 }
 

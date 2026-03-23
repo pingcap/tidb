@@ -73,3 +73,60 @@ func TestCalculateRequiredNodes(t *testing.T) {
 		})
 	}
 }
+
+func TestGetNeededNodes(t *testing.T) {
+	cases := []struct {
+		name     string
+		taskType proto.TaskType
+		step     proto.Step
+		maxNodes int
+		expected int
+	}{
+		{
+			name:     "import-collect-conflicts",
+			taskType: proto.ImportInto,
+			step:     proto.ImportStepCollectConflicts,
+			maxNodes: 8,
+			expected: 1,
+		},
+		{
+			name:     "import-conflict-resolution",
+			taskType: proto.ImportInto,
+			step:     proto.ImportStepConflictResolution,
+			maxNodes: 8,
+			expected: 1,
+		},
+		{
+			name:     "import-post-process",
+			taskType: proto.ImportInto,
+			step:     proto.ImportStepPostProcess,
+			maxNodes: 8,
+			expected: 1,
+		},
+		{
+			name:     "import-regular-step",
+			taskType: proto.ImportInto,
+			step:     proto.ImportStepEncodeAndSort,
+			maxNodes: 6,
+			expected: 6,
+		},
+		{
+			name:     "non-import-type",
+			taskType: proto.TaskTypeExample,
+			step:     proto.StepOne,
+			maxNodes: 5,
+			expected: 5,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			task := &proto.TaskBase{
+				Type:         c.taskType,
+				Step:         c.step,
+				MaxNodeCount: c.maxNodes,
+			}
+			require.Equal(t, c.expected, getNeededNodes(task))
+		})
+	}
+}

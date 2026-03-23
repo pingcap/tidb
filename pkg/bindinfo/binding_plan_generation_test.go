@@ -109,7 +109,7 @@ func TestStartState(t *testing.T) {
 	}
 	fixes := []uint64{fixcontrol.Fix44855, fixcontrol.Fix45132, fixcontrol.Fix52869}
 
-	state, err := getStartState(vars, fixes)
+	state, err := getStartState(vars, fixes, 0)
 	require.NoError(t, err)
 	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,true,false,false,0.0000,OFF,1000,OFF")
 }

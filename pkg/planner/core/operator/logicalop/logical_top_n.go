@@ -91,13 +91,10 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) (base.L
 	if err != nil {
 		return nil, err
 	}
-	// If the length of parentUsedCols is 0, it means that the parent plan does not need this plan to output related
-	// results, such as: select count(*) from t
-	// So we set the schema of topN to 0. After inlineprojection, the schema of topN will be set to the shortest column
-	// in its child plan, and this column will not be used later.
-	if len(snapParentUsedCols) == 0 {
-		lt.SetSchema(nil)
-	}
+	// Refresh the schema from the pruned child before inline projection.
+	// TopN may carry stale hidden sort columns or duplicate column slots after child pruning,
+	// and inline projection only needs the parent-visible outputs here.
+	lt.SetSchema(nil)
 	lt.InlineProjection(snapParentUsedCols)
 
 	return lt, nil
