@@ -3781,7 +3781,7 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
+// RedactURL redacts the secret tokens in the URL.
 // if the url is not a valid url, return the original string.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
@@ -3793,17 +3793,32 @@ func RedactURL(str string) string {
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
 	})
+
+	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
 	case "s3", "ks3":
+		redactKeys = map[string]struct{}{
+			"access-key":        {},
+			"secret-access-key": {},
+			"session-token":     {},
+		}
+	case "azure", "azblob":
+		redactKeys = map[string]struct{}{
+			"sas-token": {},
+		}
+	}
+
+	if len(redactKeys) > 0 {
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
+			if _, ok := redactKeys[normalizedKey]; ok {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
+		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
 	}
 	return u.String()
