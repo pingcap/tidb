@@ -400,7 +400,8 @@ func testReaderWithCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chk.GetRow(0).GetDatumRow(field), row.GetDatumRow(field))
 
-	checksumReader := l.dataFile.getReader()
+	checksumReader, releaseReader := l.dataFile.getReader()
+	defer releaseReader()
 
 	// Read all data.
 	data := make([]byte, 1024)
@@ -469,7 +470,8 @@ func testReaderWithCacheNoFlush(t *testing.T) {
 	row, err := l.GetRow(RowPtr{0, 0})
 	require.NoError(t, err)
 	require.Equal(t, chk.GetRow(0).GetDatumRow(field), row.GetDatumRow(field))
-	checksumReader := l.dataFile.getReader()
+	checksumReader, releaseReader := l.dataFile.getReader()
+	defer releaseReader()
 
 	// Read all data.
 	data := make([]byte, 1024)
