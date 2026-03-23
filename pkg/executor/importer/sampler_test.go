@@ -87,6 +87,22 @@ func runCaseFn(t *testing.T, i int, c caseTp) {
 	ratio, err := ctrl.sampleIndexSizeRatio(ctx, c.ksCodec)
 	require.NoError(t, err)
 	require.InDelta(t, c.ratio, ratio, 0.001)
+
+	sampled, err := SampleFileImportKVSize(
+		ctx,
+		ctrl.buildKVSizeSampleConfig(),
+		table,
+		ctrl.dataStore,
+		ctrl.dataFiles,
+		c.ksCodec,
+		ctrl.logger,
+	)
+	require.NoError(t, err)
+	var sampledRatio float64
+	if sampled.DataKVSize > 0 {
+		sampledRatio = float64(sampled.IndexKVSize) / float64(sampled.DataKVSize)
+	}
+	require.InDelta(t, c.ratio, sampledRatio, 0.001)
 }
 
 func TestSampleIndexSizeRatio(t *testing.T) {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -211,7 +210,7 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 	}
 	for _, dbMeta := range dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
-			singleReplicaSize, err := s.estimateOneTableSize(ctx, dbMeta, tblMeta)
+			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta)
 			if err != nil {
 				return nil, err
 			}
@@ -296,7 +295,6 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 
 func (s *fileScanner) estimateOneTableSize(
 	ctx context.Context,
-	dbMeta *mydump.MDDatabaseMeta,
 	tblMeta *mydump.MDTableMeta,
 ) (int64, error) {
 	if len(tblMeta.DataFiles) == 0 {
@@ -316,9 +314,6 @@ func (s *fileScanner) estimateOneTableSize(
 		return 0, err
 	}
 	tableInfo.State = model.StatePublic
-	plan := s.buildEstimatePlan(dbMeta.Name, format)
-	plan.TableInfo = tableInfo
-	plan.DesiredTableInfo = tableInfo
 
 	dataFiles := make([]*mydump.SourceFileMeta, 0, len(tblMeta.DataFiles))
 	for i := range tblMeta.DataFiles {
@@ -327,13 +322,12 @@ func (s *fileScanner) estimateOneTableSize(
 
 	sampledSize, err := execimporter.SampleFileImportKVSize(
 		ctx,
-		plan,
+		s.buildEstimateSampleConfig(format),
 		tables.MockTableFromMeta(tableInfo),
-		&execimporter.ASTArgs{},
 		s.store,
 		dataFiles,
 		nil,
-		execimporter.WithLogger(s.logger.Logger),
+		s.logger.Logger,
 	)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -344,7 +338,7 @@ func (s *fileScanner) estimateOneTableSize(
 	return int64(float64(tblMeta.TotalSize) * float64(sampledSize.TotalKVSize()) / float64(sampledSize.SourceSize)), nil
 }
 
-func (s *fileScanner) buildEstimatePlan(dbName, format string) *execimporter.Plan {
+func (s *fileScanner) buildEstimateSampleConfig(format string) *execimporter.KVSizeSampleConfig {
 	charset := s.config.dataCharacterSet
 	fieldNullDef := append([]string(nil), s.config.csvConfig.FieldNullDefinedBy...)
 	if len(fieldNullDef) == 0 {
@@ -368,12 +362,8 @@ func (s *fileScanner) buildEstimatePlan(dbName, format string) *execimporter.Pla
 		ignoreLines = 1
 	}
 
-	return &execimporter.Plan{
-		DBName:           dbName,
-		Path:             s.sourcePath,
+	return &execimporter.KVSizeSampleConfig{
 		Format:           format,
-		Restrictive:      s.config.sqlMode.HasStrictMode(),
-		Location:         time.Local,
 		SQLMode:          s.config.sqlMode,
 		Charset:          &charset,
 		ImportantSysVars: importantSysVars,
@@ -385,9 +375,7 @@ func (s *fileScanner) buildEstimatePlan(dbName, format string) *execimporter.Pla
 			LinesStartingBy:    s.config.csvConfig.LinesStartingBy,
 			LinesTerminatedBy:  s.config.csvConfig.LinesTerminatedBy,
 		},
-		IgnoreLines:    ignoreLines,
-		InImportInto:   true,
-		DataSourceType: execimporter.DataSourceTypeFile,
+		IgnoreLines: ignoreLines,
 	}
 }
 
