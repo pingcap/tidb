@@ -1031,13 +1031,8 @@ function configure_tici_global_sort_uri()
     register_temp_path "$case_dir"
     register_temp_path "$result_dir"
 
-    cat > "${case_dir}/set_global_sort_uri.test" <<EOF
-${sql_stmt}
-EOF
-    cat > "${result_dir}/set_global_sort_uri.result" <<EOF
-${sql_stmt}
-
-EOF
+    printf '%s\n' "${sql_stmt}" > "${case_dir}/set_global_sort_uri.test"
+    printf '%s\n' "${sql_stmt}" > "${result_dir}/set_global_sort_uri.result"
 
     run_mysql_tester_setup_case "$case_name"
 
