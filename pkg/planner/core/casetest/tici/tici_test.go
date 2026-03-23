@@ -256,6 +256,9 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		"explain format='brief' select * from t6 where match(title) against ('>hello' IN BOOLEAN MODE)",
 		"unsupported operator '>' in BOOLEAN MODE query",
 	)
+	tk.MustQuery(
+		"explain format='brief' select * from t6 where match(title) against ('hello' IN BOOLEAN MODE)",
+	).CheckContain(`search func:fts_match_phrase("hello", test.t6.title)`)
 }
 
 func TestTiCISearchWithPrepare(t *testing.T) {
