@@ -19,8 +19,8 @@ Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
-b	int	YES		NULL	
 a	varchar(10)	YES		NULL	
+b	int	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra

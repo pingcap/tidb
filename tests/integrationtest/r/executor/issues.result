@@ -763,17 +763,18 @@ c_int	c_str	c_decimal
 9	hungry haslett	2.659000
 explain format = 'plan_tree' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
 id	task	access object	operator info
-SelectLock	root		for update 0
-└─HashJoin	root		CARTESIAN inner join, other cond:or(gt(Column, 1), or(ne(executor__issues.t1.c_str, Column), if(ne(Column, 0), NULL, 0)))
-  ├─Selection(Build)	root		ne(Column, 0)
-  │ └─StreamAgg	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
-  │   └─Projection	root		executor__issues.t2.c_str->Column, executor__issues.t2.c_str->Column, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column
-  │     └─TableReader	root	partition:all	data:Selection
-  │       └─Selection	cop[tikv]		lt(executor__issues.t2.c_decimal, 5)
-  │         └─TableFullScan	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	root	partition:all	data:Selection
-    └─Selection	cop[tikv]		if(isnull(executor__issues.t1.c_str), NULL, 1)
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false
+Projection	root		executor__issues.t1.c_int, executor__issues.t1.c_str, executor__issues.t1.c_decimal
+└─SelectLock	root		for update 0
+  └─HashJoin	root		CARTESIAN semi join, left side:TableReader, other cond:or(gt(Column, 1), or(ne(executor__issues.t1.c_str, Column), if(ne(Column, 0), NULL, 0)))
+    ├─Selection(Build)	root		ne(Column, 0)
+    │ └─StreamAgg	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+    │   └─Projection	root		executor__issues.t2.c_str->Column, executor__issues.t2.c_str->Column, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column
+    │     └─TableReader	root	partition:all	data:Selection
+    │       └─Selection	cop[tikv]		lt(executor__issues.t2.c_decimal, 5)
+    │         └─TableFullScan	cop[tikv]	table:t2	keep order:false
+    └─TableReader(Probe)	root	partition:all	data:Selection
+      └─Selection	cop[tikv]		if(isnull(executor__issues.t1.c_str), NULL, 1)
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false
 commit;
 drop table if exists trade, trade_history, status_type;
 set @@foreign_key_checks=0;

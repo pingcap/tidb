@@ -197,7 +197,7 @@ func TestCursorWithParams(t *testing.T) {
 
 		require.Equal(t, "rg1", reporter.group)
 		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
-		require.Equal(t, float64(expectedCursorDelta), reporter.tidbRUV2)
+		require.Equal(t, expectedCursorDelta, reporter.tidbRUV2)
 		require.Equal(t, 0.0, reporter.tikvRUV2)
 		require.Equal(t, 0.0, reporter.tiflashRU)
 

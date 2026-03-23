@@ -361,13 +361,13 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	metrics.AddTiKVStorageProcessedKeysGet(79)
 
 	tidbRU := metrics.CalculateRUValues(weights)
-	tikvRU := int64(157258)
-	tiflashRU := int64(24680)
+	tikvRU := float64(157258)
+	tiflashRU := float64(24680)
 	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
-	require.Equal(t, int64(114198), tidbRU)
-	require.Equal(t, int64(157258), tikvRU)
-	require.Equal(t, int64(24680), tiflashRU)
-	require.Equal(t, int64(296136), totalRU)
+	require.InEpsilon(t, 114198.0, tidbRU, 0.01)
+	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
+	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
+	require.InEpsilon(t, 296136.0, totalRU, 0.01)
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -408,10 +408,10 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 
 	parts := strings.Split(formatted, ", ")
 	require.Len(t, parts, 7)
-	require.Equal(t, "total_ru:19983", parts[0])
-	require.Equal(t, "tidb_ru:8750", parts[1])
-	require.Equal(t, "tikv_ru:10987", parts[2])
-	require.Equal(t, "tiflash_ru:246", parts[3])
+	require.Equal(t, "total_ru:19983.42", parts[0])
+	require.Equal(t, "tidb_ru:8750.42", parts[1])
+	require.Equal(t, "tikv_ru:10987.00", parts[2])
+	require.Equal(t, "tiflash_ru:246.00", parts[3])
 }
 
 func TestRURuntimeStatsStringIncludesTiFlashRU(t *testing.T) {

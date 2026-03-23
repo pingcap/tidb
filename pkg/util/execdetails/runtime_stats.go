@@ -1000,10 +1000,10 @@ func (e *RURuntimeStats) String() string {
 			return buf.String()
 		}
 	case "v2":
-		var tiKVRU, tiFlashRU int64
+		var tiKVRU, tiFlashRU float64
 		if e.RUDetails != nil {
-			tiKVRU = int64(e.RUDetails.TiKVRUV2())
-			tiFlashRU = int64(e.RUDetails.TiflashRU())
+			tiKVRU = e.RUDetails.TiKVRUV2()
+			tiFlashRU = e.RUDetails.TiflashRU()
 		}
 		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
 		if totalRU == 0 {
@@ -1011,7 +1011,7 @@ func (e *RURuntimeStats) String() string {
 		}
 		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(float64(totalRU), 'f', 2, 64))
+		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
 		return buf.String()
 	}
 	return ""
