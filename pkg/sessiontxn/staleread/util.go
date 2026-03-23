@@ -33,6 +33,10 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// minTSO is 2013-01-01T00:00:00Z in milliseconds since epoch.
+// Serves as a reasonable lower bound for any TiDB physical TSO.
+const minTSO = 1356998400000
+
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
 func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
 	sctx.GetSessionVars().StmtCtx.SetStaleTSOProviderIfNotExist(func() (uint64, error) {
@@ -70,9 +74,8 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 		return 0, plannererrors.ErrAsOf.FastGenWithCause("cannot parse AS OF TIMESTAMP expression as datetime or TSO")
 	}
 
-	// 1356998400000 ms = 2013-01-01T00:00:00Z, a reasonable lower bound for any TiDB TSO
 	physicalMS := oracle.ExtractPhysical(tso)
-	if physicalMS <= 1356998400000 {
+	if physicalMS <= minTSO {
 		return 0, plannererrors.ErrAsOf.FastGenWithCause("invalid TSO timestamp: TSO is before 2013-01-01")
 	}
 	// Validate that the TSO does not exceed the current PD timestamp to preserve
