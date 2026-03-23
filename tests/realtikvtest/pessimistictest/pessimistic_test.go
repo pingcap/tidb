@@ -3395,9 +3395,6 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 }
 
 func TestIssue66571(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	test := func(isRetried bool, isPrimaryChanged bool) {
