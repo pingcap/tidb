@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	goerrors "errors"
 	"math/rand"
 	"time"
 
@@ -24,9 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
 
@@ -50,15 +52,61 @@ var (
 	// if total files < maxSampleFileCount, the total file size is small, the
 	// accuracy of the ratio is not that important.
 	maxSampleFileSize int64 = 10 * units.MiB
-	stopIterErr             = goerrors.New("stop iteration")
 )
+
+// SampledKVSizeResult contains the sampled source bytes and encoded KV sizes.
+type SampledKVSizeResult struct {
+	SourceSize  int64
+	DataKVSize  uint64
+	IndexKVSize uint64
+}
+
+// TotalKVSize returns the total encoded KV size in the sample.
+func (r *SampledKVSizeResult) TotalKVSize() int64 {
+	return int64(r.DataKVSize + r.IndexKVSize)
+}
+
+// SampleFileImportKVSize samples source rows with nextgen's KV encoder and returns
+// the sampled source bytes and encoded KV sizes.
+func SampleFileImportKVSize(
+	ctx context.Context,
+	plan *Plan,
+	tbl table.Table,
+	astArgs *ASTArgs,
+	dataStore storeapi.Storage,
+	dataFiles []*mydump.SourceFileMeta,
+	ksCodec []byte,
+	options ...Option,
+) (*SampledKVSizeResult, error) {
+	ctrl, err := NewLoadDataController(plan, tbl, astArgs, options...)
+	if err != nil {
+		return nil, err
+	}
+	ctrl.dataStore = dataStore
+	ctrl.dataFiles = dataFiles
+	return ctrl.sampleKVSize(ctx, ksCodec)
+}
 
 func (e *LoadDataController) sampleIndexSizeRatio(
 	ctx context.Context,
 	ksCodec []byte,
 ) (float64, error) {
-	if len(e.dataFiles) == 0 {
+	result, err := e.sampleKVSize(ctx, ksCodec)
+	if err != nil {
+		return 0, err
+	}
+	if result.DataKVSize == 0 {
 		return 0, nil
+	}
+	return float64(result.IndexKVSize) / float64(result.DataKVSize), nil
+}
+
+func (e *LoadDataController) sampleKVSize(
+	ctx context.Context,
+	ksCodec []byte,
+) (*SampledKVSizeResult, error) {
+	if len(e.dataFiles) == 0 {
+		return &SampledKVSizeResult{}, nil
 	}
 	perm := rand.Perm(len(e.dataFiles))
 	files := make([]*mydump.SourceFileMeta, min(len(e.dataFiles), maxSampleFileCount))
@@ -66,30 +114,26 @@ func (e *LoadDataController) sampleIndexSizeRatio(
 		files[i] = e.dataFiles[perm[i]]
 	}
 	rowsPerFile := totalSampleRowCount / len(files)
-	var (
-		totalDataKVSize, totalIndexKVSize uint64
-		firstErr                          error
-	)
+	result := &SampledKVSizeResult{}
+	var firstErr error
 	for _, file := range files {
-		dataKVSize, indexKVSize, err := e.sampleIndexRatioForOneFile(ctx, file, ksCodec, rowsPerFile)
+		sourceSize, dataKVSize, indexKVSize, err := e.sampleKVSizeForOneFile(ctx, file, ksCodec, rowsPerFile)
 		if firstErr == nil {
 			firstErr = err
 		}
-		totalDataKVSize += dataKVSize
-		totalIndexKVSize += indexKVSize
+		result.SourceSize += sourceSize
+		result.DataKVSize += dataKVSize
+		result.IndexKVSize += indexKVSize
 	}
-	if totalDataKVSize == 0 {
-		return 0, firstErr
-	}
-	return float64(totalIndexKVSize) / float64(totalDataKVSize), firstErr
+	return result, firstErr
 }
 
-func (e *LoadDataController) sampleIndexRatioForOneFile(
+func (e *LoadDataController) sampleKVSizeForOneFile(
 	ctx context.Context,
 	file *mydump.SourceFileMeta,
 	ksCodec []byte,
 	maxRowCount int,
-) (dataKVSize, indexKVSize uint64, err error) {
+) (sourceSize int64, dataKVSize, indexKVSize uint64, err error) {
 	chunk := &checkpoints.ChunkCheckpoint{
 		Key:       checkpoints.ChunkCheckpointKey{Path: file.Path},
 		FileMeta:  *file,
@@ -99,11 +143,11 @@ func (e *LoadDataController) sampleIndexRatioForOneFile(
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
-		return 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
 	}
 	encoder, err := e.getKVEncoder(e.logger, chunk, tbl)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer func() {
 		if err2 := encoder.Close(); err2 != nil {
@@ -112,7 +156,7 @@ func (e *LoadDataController) sampleIndexRatioForOneFile(
 	}()
 	parser, err := e.getParser(ctx, chunk)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer func() {
 		if err2 := parser.Close(); err2 != nil {
@@ -120,26 +164,34 @@ func (e *LoadDataController) sampleIndexRatioForOneFile(
 		}
 	}()
 
-	var count int
-	sendFn := func(context.Context, *encodedKVGroupBatch) error {
-		count++
-		if count >= maxRowCount {
-			return stopIterErr
+	var (
+		count        int
+		readRowCache []types.Datum
+		readFn       = parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey())
+		kvBatch      = newEncodedKVGroupBatch(ksCodec, maxRowCount)
+	)
+	for count < maxRowCount {
+		row, closed, readErr := readFn(ctx, readRowCache)
+		if readErr != nil {
+			return 0, 0, 0, readErr
 		}
-		return nil
+		if closed {
+			break
+		}
+		readRowCache = row.row
+		if rowDelta := row.endOffset - row.startPos; rowDelta > 0 {
+			sourceSize += rowDelta
+		}
+		kvs, encodeErr := encoder.Encode(row.row, row.rowID)
+		row.resetFn()
+		if encodeErr != nil {
+			return 0, 0, 0, common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(chunk.GetKey(), row.startPos)
+		}
+		if _, err = kvBatch.add(kvs); err != nil {
+			return 0, 0, 0, err
+		}
+		count++
 	}
-	chunkEnc := &chunkEncoder{
-		chunkName:     chunk.GetKey(),
-		readFn:        parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
-		sendFn:        sendFn,
-		encoder:       encoder,
-		keyspace:      ksCodec,
-		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(ksCodec),
-	}
-	err = chunkEnc.encodeLoop(ctx)
-	if goerrors.Is(err, stopIterErr) {
-		err = nil
-	}
-	dataKVSize, indexKVSize = chunkEnc.groupChecksum.DataAndIndexSumSize()
-	return dataKVSize, indexKVSize, err
+	dataKVSize, indexKVSize = kvBatch.groupChecksum.DataAndIndexSumSize()
+	return sourceSize, dataKVSize, indexKVSize, nil
 }
