@@ -1176,7 +1176,7 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	}
 }
 
-// checkOverlongColType Check if read field type is long field.
+// checkOverlongColType checks whether the reader output can safely reuse chunks.
 func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
 		return false, false
@@ -1184,12 +1184,12 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipRe
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
-		if existsOverlongType(plan.Schema(), false) {
+		if existsOverlongType(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
 	case *physicalop.PointGetPlan:
-		if existsOverlongType(plan.Schema(), true) {
+		if existsOverlongType(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
@@ -1214,17 +1214,22 @@ var (
 	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
 
-// existsOverlongType Check if exists long type column.
-// If pointGet is true, we will check the total Flen of all columns, if it exceeds maxFlenForOverlongType,
-// we will disable chunk reuse.
-// For a point get, there is only one row, so we can easily estimate the size.
-// However, for a non-point get, there may be many rows, and it is impossible to determine the memory size used.
-// Therefore, we can only forcibly skip the reuse chunk.
-func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
+// existsOverlongType checks whether the reader output should disable chunk reuse.
+// We estimate the retained memory of a reusable chunk instead of the total query output.
+// For readers with non-pseudo stats, we use:
+//
+//	average size of overlong columns * min(estimated row count, MaxChunkSize)
+//
+// For point gets or readers without trusted stats, we fall back to the schema-declared flen.
+// Reuse is kept enabled only when the server memory is large enough and the estimate stays within
+// maxFlenForOverlongType.
+func existsOverlongType(plan base.PhysicalPlan) bool {
+	schema := plan.Schema()
 	if schema == nil {
 		return false
 	}
 	totalFlen := 0
+	overlongColumns := make([]*expression.Column, 0, len(schema.Columns))
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeLongBlob,
@@ -1238,28 +1243,59 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 			if column.RetType.GetFlen() <= 1000 {
 				continue
 			}
-			if pointGet {
-				totalFlen += column.RetType.GetFlen()
-				if checkOverlongTypeForPointGet(totalFlen) {
-					return true
-				}
-				continue
-			}
-			return true
+			totalFlen += column.RetType.GetFlen()
+			overlongColumns = append(overlongColumns, column)
 		}
 	}
-	return false
+	if totalFlen == 0 {
+		return false
+	}
+	return !allowReuseChunkForOverlongType(plan, overlongColumns, totalFlen)
 }
 
-func checkOverlongTypeForPointGet(totalFlen int) bool {
+func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*expression.Column, totalFlen int) bool {
 	totalMemory, err := memory.MemTotal()
-	if err != nil || totalMemory <= 0 {
-		return true
+	if err != nil || totalMemory <= 0 || totalMemory < MaxMemoryLimitForOverlongType {
+		return false
 	}
-	if totalMemory >= MaxMemoryLimitForOverlongType {
-		if totalFlen <= maxFlenForOverlongType {
+	estimatedRows, hasTrustedStats := getEstimatedRowsForOverlongType(plan)
+	if estimatedRows <= 0 {
+		return false
+	}
+
+	rowsInReusableChunk := estimatedRows
+	switch plan.(type) {
+	case *physicalop.PointGetPlan:
+	default:
+		rowsInReusableChunk = min(rowsInReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
+	}
+
+	estimatedBytesPerRow := float64(totalFlen)
+	if hasTrustedStats {
+		estimatedBytesPerRow = getAvgRowSize(plan.StatsInfo(), overlongColumns)
+		if estimatedBytesPerRow <= 0 {
 			return false
 		}
 	}
-	return true
+	return rowsInReusableChunk*estimatedBytesPerRow <= float64(maxFlenForOverlongType)
+}
+
+func getEstimatedRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
+	statsInfo := plan.StatsInfo()
+	if statsInfo == nil || statsInfo.RowCount <= 0 {
+		return 0, false
+	}
+
+	switch plan.(type) {
+	case *physicalop.PointGetPlan:
+		return math.Ceil(statsInfo.RowCount), false
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
+			return 0, false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	default:
+		return 0, false
+	}
 }

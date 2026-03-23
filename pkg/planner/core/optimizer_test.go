@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -112,6 +113,47 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	testJoinKeyTypeConvert(t, bigIntType, bigIntType, bigIntType, false, false)
 	testJoinKeyTypeConvert(t, unsignedBigIntType, bigIntType, decimalType, true, true)
 	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
+
+	t.Run("overlong type chunk reuse uses reusable chunk size", func(t *testing.T) {
+		sctx := coretestsdk.MockContext()
+		defer func() {
+			domain.GetDomain(sctx).StatsHandle().Close()
+		}()
+
+		originMaxMemoryLimitForOverlongType := MaxMemoryLimitForOverlongType
+		originMaxChunkSize := sctx.GetSessionVars().MaxChunkSize
+		defer func() {
+			MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
+		}()
+
+		MaxMemoryLimitForOverlongType = 0
+		columns := make([]*expression.Column, 0, 80)
+		for i := range 80 {
+			colType := types.NewFieldType(mysql.TypeVarchar)
+			colType.SetFlen(1001)
+			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(i + 1)})
+		}
+		readerSchema := expression.NewSchema(columns...)
+		reader := physicalop.PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
+		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
+
+		reader.SCtx().GetSessionVars().MaxChunkSize = 32
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{},
+		})
+		require.False(t, existsOverlongType(reader))
+
+		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
+		require.True(t, existsOverlongType(reader))
+
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{Pseudo: true},
+		})
+		require.True(t, existsOverlongType(reader))
+	})
 }
 
 // Test for core.handleFineGrainedShuffle()
