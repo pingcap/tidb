@@ -770,7 +770,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
-	jsonSumCrc32          "JSON_SUM_CRC32"
+	jsonArrayXorCrc32     "JSON_ARRAY_XOR_CRC32"
 	leader                "LEADER"
 	leaderConstraints     "LEADER_CONSTRAINTS"
 	learner               "LEARNER"
@@ -7736,7 +7736,7 @@ NotKeywordToken:
 |	"FLASHBACK"
 |	"JSON_OBJECTAGG"
 |	"JSON_ARRAYAGG"
-|	"JSON_SUM_CRC32"
+|	"JSON_ARRAY_XOR_CRC32"
 |	"TLS"
 |	"FOLLOWER"
 |	"FOLLOWERS"
@@ -8454,9 +8454,9 @@ SimpleExpr:
 			ExplicitCharSet: explicitCharset,
 		}
 	}
-|	jsonSumCrc32 '(' Expression "AS" CastType "ARRAY" ')'
+|	jsonArrayXorCrc32 '(' Expression "AS" CastType "ARRAY" ',' Expression ')'
 	{
-		/* Copied from CAST function, except that ARRAY is enforced to be true */
+		/* Similar to CAST(expr AS type ARRAY), but with an extra prefix argument */
 		tp := $5.(*types.FieldType)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
 		if tp.GetFlen() == types.UnspecifiedLength {
@@ -8472,9 +8472,10 @@ SimpleExpr:
 			tp.SetCollate(charset.CollationUTF8MB4)
 		}
 		parser.explicitCharset = false
-		$$ = &ast.JSONSumCrc32Expr{
+		$$ = &ast.JSONArrayXorCrc32Expr{
 			Expr:            $3,
 			Tp:              tp,
+			Prefix:          $8,
 			ExplicitCharSet: explicitCharset,
 		}
 	}

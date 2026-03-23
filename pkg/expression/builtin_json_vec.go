@@ -16,6 +16,7 @@ package expression
 
 import (
 	"bytes"
+	"crypto/md5"
 	goJSON "encoding/json"
 	"fmt"
 	"hash/crc32"
@@ -917,15 +918,15 @@ func (b *builtinJSONTypeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	return nil
 }
 
-func (b *builtinJSONSumCRC32Sig) vectorized() bool {
+func (b *builtinJSONArrayXorCRC32Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	ft := b.tp.ArrayType()
-	f := convertJSON2Tp(ft.EvalType())
+func (b *builtinJSONArrayXorCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	ft := b.arrayTp
+	f := convertJSON2String(ft.EvalType())
 	if f == nil {
-		return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
+		return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating xor crc32 of %s", ft.String()))
 	}
 
 	nr := input.NumRows()
@@ -933,27 +934,50 @@ func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-
 	defer b.bufAllocator.put(jsonBuf)
 	if err = b.args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
 		return err
 	}
 
+	prefixBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(prefixBuf)
+	if err = b.args[1].VecEvalString(ctx, input, prefixBuf); err != nil {
+		return err
+	}
+
 	result.ResizeInt64(nr, false)
-	result.MergeNulls(jsonBuf)
+	// If prefix is null, result is null.
+	result.MergeNulls(prefixBuf)
 	i64s := result.Int64s()
+
+	separator := string([]byte{0x02})
 
 	for i := range nr {
 		if result.IsNull(i) {
 			continue
 		}
 
-		jsonItem := jsonBuf.GetJSON(i)
-		if jsonItem.TypeCode != types.JSONTypeCodeArray {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+		prefix := prefixBuf.GetString(i)
+
+		// NULL array → CRC32(MD5(prefix)).
+		if jsonBuf.IsNull(i) {
+			hash := md5.Sum([]byte(prefix))
+			hexStr := fmt.Sprintf("%x", hash)
+			i64s[i] = int64(crc32.ChecksumIEEE([]byte(hexStr)))
+			continue
 		}
 
-		var sum int64
+		jsonItem := jsonBuf.GetJSON(i)
+		if jsonItem.TypeCode != types.JSONTypeCodeArray {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_ARRAY_XOR_CRC32")
+		}
+
+		seen := make(map[string]struct{}, jsonItem.GetElemCount())
+		var xorResult uint32
+
 		for j := range jsonItem.GetElemCount() {
 			item, err := f(fakeSctx, jsonItem.ArrayGetElem(j), ft)
 			if err != nil {
@@ -962,9 +986,17 @@ func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 				}
 				return err
 			}
-			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+			concat := prefix + separator + item
+			hash := md5.Sum([]byte(concat))
+			hexStr := fmt.Sprintf("%x", hash)
+			crc := crc32.ChecksumIEEE([]byte(hexStr))
+
+			if _, ok := seen[item]; !ok {
+				seen[item] = struct{}{}
+				xorResult ^= crc
+			}
 		}
-		i64s[i] = sum
+		i64s[i] = int64(xorResult)
 	}
 
 	return nil

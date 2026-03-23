@@ -119,7 +119,6 @@ go_library(
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/importinto",
-        "//pkg/dxf/operator",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/executor/aggfuncs",

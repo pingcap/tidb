@@ -531,30 +531,48 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 	}
 }
 
+// indexSupportFastCheck checks whether the index supports fast check.
+func indexSupportFastCheck(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) bool {
+	// Columnar index does not support fast check.
+	if idxInfo.IsColumnarIndex() {
+		return false
+	}
+
+	// Partial index (with WHERE condition) does not support fast check: the
+	// checksum query would scan all rows, producing mismatches for rows
+	// excluded by the condition.
+	if idxInfo.HasCondition() {
+		return false
+	}
+
+	for _, col := range idxInfo.Columns {
+		// Prefix index does not support fast check.
+		if col.Length != types.UnspecifiedLength {
+			return false
+		}
+
+		// MV Index array columns: all CAST ARRAY types are supported by
+		// JSON_ARRAY_XOR_CRC32. No type restriction needed.
+	}
+
+	return true
+}
+
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	canUseFastCheck := true
+	supportFastAdminCheck := true
+	tblInfo := v.Table.Meta()
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
-			canUseFastCheck = false
-			break
-		}
-		for _, col := range idx.Columns {
-			if col.Length != types.UnspecifiedLength {
-				canUseFastCheck = false
-				break
-			}
-		}
-		if !canUseFastCheck {
+		if !indexSupportFastCheck(tblInfo, idx) {
+			supportFastAdminCheck = false
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && canUseFastCheck {
+	if b.ctx.GetSessionVars().FastCheckTable && supportFastAdminCheck {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
-			is:           b.is,
 		}
 		return e
 	}

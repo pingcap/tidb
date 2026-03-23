@@ -2558,3 +2558,218 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 	tk.MustExec("admin check table t")
 	require.True(t, called.Load(), "failpoint callback not triggered")
 }
+
+func TestExtractCastArrayExpr(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tc := []struct {
+		sql            string
+		arrayExprIndex int
+	}{
+		{
+			sql:            "CREATE TABLE t (a int, b JSON, KEY mv_idx_binary(a, (( ( CAST(b->'$[*]' AS BINARY(12) ARRAY ) ) ) )))",
+			arrayExprIndex: 1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b JSON, KEY mv_idx_binary((a * 2), ( ( CAST(b->'$[*]' AS BINARY(12) ARRAY ) ) ) ))",
+			arrayExprIndex: 1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, CAST_AS_ARRAY int as (a * 2), case_array JSON, KEY mv_idx_binary(CAST_AS_ARRAY, (a * 2), (( ( CAST(case_array->'$[*]' AS BINARY(12) ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(`CAST_AS_ARRAY` AS CHAR(16)) ) ) )))",
+			arrayExprIndex: -1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(CAST_AS_ARRAY AS CHAR(16)  ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+
+	for _, tt := range tc {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(tt.sql)
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		meta := tbl.Meta()
+
+		for i, col := range meta.Indices[0].Columns {
+			tblCol := meta.Columns[col.Offset]
+			extracted := executor.ExtractCastArrayExpr(tblCol)
+			if i == tt.arrayExprIndex {
+				require.True(t, len(extracted) > 0, "Expected to extract cast array expression, got empty result")
+			} else {
+				require.True(t, len(extracted) == 0, "Expected to extract nothing, got non-empty result")
+			}
+		}
+	}
+}
+
+func TestAdminCheckMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	origBucketSize := executor.CheckTableFastBucketSize.Load()
+	origThreshold := executor.LookupCheckThreshold
+	t.Cleanup(func() {
+		executor.CheckTableFastBucketSize.Store(origBucketSize)
+		executor.LookupCheckThreshold = origThreshold
+	})
+	executor.CheckTableFastBucketSize.Store(4)
+	executor.LookupCheckThreshold = 1
+
+	type testCase struct {
+		indexSQLs     []string
+		insertValue   []string
+		corruptHandle kv.Handle
+		corruptValue  []any
+	}
+
+	testCases := []testCase{
+		{
+			indexSQLs:     []string{"INDEX mvi((CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5.5", "7"]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{"3"},
+		},
+		{
+			indexSQLs:     []string{"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `NULL`},
+			corruptHandle: kv.IntHandle(2),
+			corruptValue:  []any{2, "2", "3"},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{3},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{1, "b", "1"},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			corruptHandle: testutil.MustNewCommonHandle(t, 1, "1"),
+			corruptValue:  []any{3},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			corruptHandle: testutil.MustNewCommonHandle(t, 2, "2"),
+			corruptValue:  []any{2, "2", "3"},
+		},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range testCases {
+		tk.MustExec("DROP TABLE IF EXISTS t")
+		tk.MustExec("CREATE TABLE t(i1 INT, i2 CHAR(16), j JSON)")
+		for _, sql := range tc.indexSQLs {
+			tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD %s", sql))
+		}
+
+		for i, value := range tc.insertValue {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t(i1, i2, j) VALUES (%d, %d, %s)", i, i, value))
+		}
+
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			tk.MustExec("ADMIN CHECK TABLE t")
+		}
+
+		// Make some corrupted index. Build the index information
+		// and simulate inconsistent index values on MVI
+		sctx := mock.NewContext()
+		sctx.Store = store
+		ctx := sctx.GetTableCtx()
+		is := domain.InfoSchema()
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("t")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		for _, idxInfo := range tblInfo.Indices {
+			if idxInfo.Primary {
+				continue
+			}
+
+			indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+			require.NoError(t, err)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			_, err = indexOpr.Create(ctx, txn, types.MakeDatums(tc.corruptValue...), tc.corruptHandle, nil)
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+		}
+
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			err = tk.ExecToErr("admin check table t")
+			require.Error(t, err)
+
+			// The output of error message is different whether fast check is enabled,
+			// and we just check error message for fast check.
+			if fastCheck {
+				require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: t, index: mvi")
+			}
+		}
+	}
+}
+
+func TestAdminCheckMVIndexAllTypes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+
+	cases := []struct {
+		name     string
+		castType string
+		values   []string // JSON values to insert
+	}{
+		{"unsigned", "UNSIGNED", []string{`'[1, 2, 3]'`, `'[0]'`, `'[]'`, `NULL`}},
+		{"signed", "SIGNED", []string{`'[-1, 0, 1]'`, `'[2147483647]'`}},
+		{"char", "CHAR(20)", []string{`'["hello", "world"]'`, `'[""]'`, `'[]'`}},
+		{"binary", "BINARY(16)", []string{`'["abc", "def"]'`}},
+		{"double", "DOUBLE", []string{`'[1.0, 2.5, 0.1]'`, `'[0.0]'`}},
+		{"duplicates", "UNSIGNED", []string{`'[1, 1, 2]'`, `'[3, 3, 3]'`}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("DROP TABLE IF EXISTS t")
+			tk.MustExec(fmt.Sprintf(
+				"CREATE TABLE t (id INT PRIMARY KEY, j JSON, INDEX mvi((CAST(j AS %s ARRAY))))",
+				tc.castType))
+			for i, v := range tc.values {
+				tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, %s)", i+1, v))
+			}
+			// Fast check should pass — no false positives
+			tk.MustExec("ADMIN CHECK TABLE t")
+		})
+	}
+}

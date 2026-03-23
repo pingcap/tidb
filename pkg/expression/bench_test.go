@@ -1484,10 +1484,7 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 	}
 
 	var err error
-	if funcName == ast.JSONSumCrc32 {
-		fc := &jsonSumCRC32FunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, fts[0]}
-		baseFunc, err = fc.getFunction(ctx, cols)
-	} else if funcName == ast.Cast {
+	if funcName == ast.Cast {
 		var fc functionClass
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
