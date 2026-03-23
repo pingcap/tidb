@@ -135,6 +135,7 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 		Available: true,
 	}
 	tk.MustQuery("explain format='brief' select * from t where match(title, body) against ('hello' IN BOOLEAN MODE)").CheckContain("idx_title_body")
+	tk.MustQuery("explain format='brief' select * from t where match(body, title) against ('hello' IN BOOLEAN MODE)").CheckContain("idx_title_body")
 	tk.MustQuery("explain format='brief' select * from t where fts_match_word('hello', title, body)").CheckContain("idx_title_body")
 	tk.MustContainErrMsg(
 		"explain select * from t where match(title) against ('hello' IN BOOLEAN MODE)",

@@ -60,31 +60,26 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 // ExprCoveredByOneTiCIIndex checks whether the given expr is fully covered by one TiCI index.
 // Single-column FTS helper functions (`fts_match_xxx`) only require their matched column to
 // belong to the helper-eligible FTS column set, while multi-column FTS expressions must match
-// the column set of one regular FULLTEXT index definition.
+// the column set of the regular FULLTEXT index definition.
 func ExprCoveredByOneTiCIIndex(
 	expr Expression,
 	ftsCols *intset.FastIntSet,
-	colsInFulltextIdx []intset.FastIntSet,
+	colsInFulltextIdx *intset.FastIntSet,
 	invertedCols *intset.FastIntSet,
 ) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		switch x.FuncName.L {
 		case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
-			if len(x.GetArgs()) > 2 {
-				matchedColSet, ok := collectFTSMatchedColumnSet(x)
-				return ok && matchesFulltextColumnSet(colsInFulltextIdx, matchedColSet)
+			if len(x.GetArgs()) == 2 {
+				arg, ok := x.GetArgs()[1].(*Column)
+				return ok && ftsCols.Has(int(arg.ID))
 			}
-			for i := 1; i < len(x.GetArgs()); i++ {
-				arg, ok := x.GetArgs()[i].(*Column)
-				if !ok || !ftsCols.Has(int(arg.ID)) {
-					return false
-				}
-			}
-			return true
+			matchedColSet, ok := collectFTSMatchedColumnSet(x)
+			return ok && matchedColSet.Equals(*colsInFulltextIdx)
 		case ast.FTSMysqlMatchAgainst:
 			matchedColSet, ok := collectFTSMatchedColumnSet(x)
-			return ok && matchesFulltextColumnSet(colsInFulltextIdx, matchedColSet)
+			return ok && matchedColSet.Equals(*colsInFulltextIdx)
 		}
 		switch x.FuncName.L {
 		case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.IsTruthWithNull:
@@ -127,31 +122,34 @@ func DiagnoseUnmatchedFTSIndexReason(
 		switch x.FuncName.L {
 		case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
 			if len(x.GetArgs()) <= 2 {
-				break
+				return ""
 			}
 			matchedColSet, ok := collectFTSMatchedColumnSet(x)
 			if !ok || matchesFulltextColumnSet(regularFulltextColSets, matchedColSet) {
-				break
+				return ""
 			}
 			if matchesFulltextColumnSet(hybridFulltextColSets, matchedColSet) {
 				return "Multi-column fts_match_xxx is not supported on hybrid fulltext indexes; use multiple single-column fts_match_xxx functions instead"
 			}
+			return ""
 		case ast.FTSMysqlMatchAgainst:
 			if len(x.GetArgs()) <= 2 {
-				break
+				return ""
 			}
 			matchedColSet, ok := collectFTSMatchedColumnSet(x)
 			if !ok || matchesFulltextColumnSet(regularFulltextColSets, matchedColSet) {
-				break
+				return ""
 			}
 			if matchesFulltextColumnSet(hybridFulltextColSets, matchedColSet) {
 				return "Multi-column MATCH AGAINST is not supported on hybrid fulltext indexes; use multiple single-column fts_match_xxx functions instead"
 			}
-		}
-		for _, arg := range x.GetArgs() {
-			reason := DiagnoseUnmatchedFTSIndexReason(arg, regularFulltextColSets, hybridFulltextColSets)
-			if reason != "" {
-				return reason
+			return ""
+		default:
+			for _, arg := range x.GetArgs() {
+				reason := DiagnoseUnmatchedFTSIndexReason(arg, regularFulltextColSets, hybridFulltextColSets)
+				if reason != "" {
+					return reason
+				}
 			}
 		}
 	}
@@ -280,21 +278,18 @@ func rewriteOneMySQLMatchAgainst(
 	if sig.modifier != ast.FulltextSearchModifierBooleanMode {
 		return nil, false, errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
 	}
+	if scalarFunc.GetArgs()[0].(*Constant).Value.IsNull() {
+		return &Constant{
+			Value:   types.NewDatum(nil),
+			RetType: scalarFunc.RetType.Clone(),
+		}, true, nil
+	}
 
 	patternGroup, err := parseMySQLMatchAgainstBooleanMode(scalarFunc, parserType)
 	if err != nil {
 		return nil, false, err
 	}
-	if err := validateMySQLMatchAgainstBooleanGroup(patternGroup); err != nil {
-		return nil, false, err
-	}
-	if matchNothingForMySQLMatchAgainst(patternGroup) {
-		return &Constant{
-			Value:   types.NewIntDatum(0),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}, true, nil
-	}
-	expr, err := rewriteBooleanGroupToFTSExpr(bctx, scalarFunc.GetArgs()[1:], patternGroup)
+	expr, err := rewriteBooleanGroupToFTSExpr(bctx, scalarFunc.GetArgs()[1:], patternGroup, scalarFunc.RetType)
 	if err != nil {
 		return nil, false, err
 	}
@@ -321,15 +316,13 @@ func rewriteBooleanGroupToFTSExpr(
 	bctx BuildContext,
 	matchCols []Expression,
 	group *matchagainst.BooleanGroup,
+	foldedRetType *types.FieldType,
 ) (Expression, error) {
 	if err := validateMySQLMatchAgainstBooleanGroup(group); err != nil {
 		return nil, err
 	}
 	if matchNothingForMySQLMatchAgainst(group) {
-		return &Constant{
-			Value:   types.NewIntDatum(0),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}, nil
+		return buildMatchAgainstConstant(foldedRetType, false), nil
 	}
 
 	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
@@ -380,7 +373,7 @@ func rewriteBooleanClauseToFTSExpr(
 	case *matchagainst.BooleanPhrase:
 		return rewriteSingleQueryToFTSExpr(bctx, ast.FTSMatchPhrase, x.Text(), matchCols), nil
 	case *matchagainst.BooleanGroup:
-		return rewriteBooleanGroupToFTSExpr(bctx, matchCols, x)
+		return rewriteBooleanGroupToFTSExpr(bctx, matchCols, x, types.NewFieldType(mysql.TypeTiny))
 	default:
 		return nil, errors.Errorf("unsupported boolean expression: %T", item.Expr)
 	}
@@ -399,6 +392,29 @@ func rewriteSingleQueryToFTSExpr(
 	})
 	args = append(args, matchCols...)
 	return NewFunctionInternal(bctx, funcName, types.NewFieldType(mysql.TypeDouble), args...)
+}
+
+func buildMatchAgainstConstant(retType *types.FieldType, isNull bool) *Constant {
+	clonedRetType := retType.Clone()
+	if isNull {
+		return &Constant{
+			Value:   types.NewDatum(nil),
+			RetType: clonedRetType,
+		}
+	}
+
+	switch clonedRetType.GetType() {
+	case mysql.TypeFloat, mysql.TypeDouble:
+		return &Constant{
+			Value:   types.NewDatum(float64(0)),
+			RetType: clonedRetType,
+		}
+	default:
+		return &Constant{
+			Value:   types.NewIntDatum(0),
+			RetType: clonedRetType,
+		}
+	}
 }
 
 func validateMySQLMatchAgainstBooleanGroup(group *matchagainst.BooleanGroup) error {

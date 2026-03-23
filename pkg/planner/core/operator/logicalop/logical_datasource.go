@@ -790,21 +790,20 @@ func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFunc
 	return true
 }
 
-func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ftsCols intset.FastIntSet, colsInFulltextIdx []intset.FastIntSet, invertedCols intset.FastIntSet) {
+func (ds *DataSource) collectTiCIIndexCoveredColumns(index *model.IndexInfo) (ftsCols intset.FastIntSet, colsInFulltextIdx intset.FastIntSet, invertedCols intset.FastIntSet) {
 	// ftsCols is used by single-column helper functions.
-	// colsInFulltextIdx records regular FULLTEXT column sets, which are used by
+	// colsInFulltextIdx records the regular FULLTEXT column set, which is used by
 	// MATCH ... AGAINST and multi-column helper functions. Hybrid indexes intentionally
 	// do not contribute to colsInFulltextIdx so their helper functions stay single-column.
 	ftsCols = intset.NewFastIntSet()
+	colsInFulltextIdx = intset.NewFastIntSet()
 	invertedCols = intset.NewFastIntSet()
 	if index.FullTextInfo != nil {
-		fulltextColSet := intset.NewFastIntSet()
 		for _, indexCol := range index.Columns {
 			col := ds.TableInfo.Columns[indexCol.Offset]
 			ftsCols.Insert(int(col.ID))
-			fulltextColSet.Insert(int(col.ID))
+			colsInFulltextIdx.Insert(int(col.ID))
 		}
-		colsInFulltextIdx = append(colsInFulltextIdx, fulltextColSet)
 	}
 	if index.HybridInfo != nil {
 		for _, ftsInfo := range index.HybridInfo.FullText {
@@ -853,13 +852,13 @@ func (ds *DataSource) collectIndexColumnSet(indexCols []*model.IndexColumn) ints
 // pushed-down condition containing an FTS function cannot be covered by this index.
 func (ds *DataSource) collectMatchedExprSetForTiCIIndex(
 	condHasFTSFunc intset.FastIntSet,
-	colsInFulltextIdx []intset.FastIntSet,
+	colsInFulltextIdx intset.FastIntSet,
 	ftsCols, invertedCols intset.FastIntSet,
 	matchedExprSet *intset.FastIntSet,
 ) bool {
 	matchedExprSet.Clear()
 	for i, cond := range ds.PushedDownConds {
-		fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, colsInFulltextIdx, &invertedCols)
+		fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, &colsInFulltextIdx, &invertedCols)
 		if !fullyCovered {
 			// If this expression can not be calculated at TiCI side, check whether it has FTS function.
 			// If yes, we should skip this index path.

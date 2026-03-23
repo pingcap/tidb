@@ -567,11 +567,15 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 		OrigName: "body",
 	}
 
+	var buildMatchAgainstWithDatum func(pattern types.Datum, cols ...*Column) *ScalarFunction
 	buildMatchAgainstWithCols := func(pattern string, cols ...*Column) *ScalarFunction {
+		return buildMatchAgainstWithDatum(types.NewStringDatum(pattern), cols...)
+	}
+	buildMatchAgainstWithDatum = func(pattern types.Datum, cols ...*Column) *ScalarFunction {
 		args := make([]Expression, 0, 1+len(cols))
 		args = append(args,
 			&Constant{
-				Value:   types.NewStringDatum(pattern),
+				Value:   pattern,
 				RetType: types.NewFieldType(mysql.TypeString),
 			},
 		)
@@ -771,7 +775,19 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	require.NoError(t, err)
 	c, ok := expr.(*Constant)
 	require.True(t, ok)
-	require.Equal(t, int64(0), c.Value.GetInt64())
+	require.Equal(t, mysql.TypeDouble, c.RetType.GetType())
+	require.Equal(t, float64(0), c.Value.GetFloat64())
+
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(
+		ctx,
+		buildMatchAgainstWithDatum(types.NewDatum(nil), titleCol),
+		model.FullTextParserTypeStandardV1,
+	)
+	require.NoError(t, err)
+	c, ok = expr.(*Constant)
+	require.True(t, ok)
+	require.True(t, c.Value.IsNull())
+	require.Equal(t, mysql.TypeDouble, c.RetType.GetType())
 
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("hello world"), model.FullTextParserTypeStandardV1)
 	require.Error(t, err)
