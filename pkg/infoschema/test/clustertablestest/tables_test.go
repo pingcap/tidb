@@ -590,6 +590,7 @@ func TestSlowQuery(t *testing.T) {
 			"",
 			"",
 			"",
+			"",
 			"null",
 			"INSERT INTO ...;",
 		},
