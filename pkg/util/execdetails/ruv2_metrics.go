@@ -434,9 +434,10 @@ func (m *RUV2Metrics) IsZero() bool {
 		len(snapshotRUV2LabelCounter(&m.tikvCoprocessorWorkTotal)) == 0
 }
 
-// CalculateRUValues calculates the current TiDB RU from the metrics.
-// The returned value is a scaled integer.
-func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU int64) {
+// CalculateRUValues calculates the current TiDB RU from the metrics using the
+// provided weights. The weights specify how each component is weighted in the
+// RU calculation. Returns the calculated TiDB RU as a float64.
+func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU float64) {
 	if m == nil {
 		return 0
 	}
@@ -444,11 +445,11 @@ func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU int64) {
 }
 
 // TotalRU returns the statement RU v2 total as TiDB + TiKV + TiFlash.
-func (m *RUV2Metrics) TotalRU(weights RUV2Weights, tiKVRU, tiFlashRU int64) int64 {
+func (m *RUV2Metrics) TotalRU(weights RUV2Weights, tiKVRU, tiFlashRU float64) float64 {
 	return m.CalculateRUValues(weights) + tiKVRU + tiFlashRU
 }
 
-func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU int64) {
+func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU float64) {
 	tidbRUFloat :=
 		float64(m.ResultChunkCells())*weights.ResultChunkCells +
 			float64(sumRUV2LabelMap(snapshotRUV2LabelCounter(&m.executorL1)))*weights.ExecutorL1 +
@@ -462,8 +463,7 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 			float64(m.SessionParserTotal())*weights.SessionParserTotal +
 			float64(m.TxnCnt())*weights.TxnCnt
 
-	tidbRU = int64(tidbRUFloat * weights.RUScale)
-	return
+	return tidbRUFloat * weights.RUScale
 }
 
 func sumRUV2LabelMap(values map[string]int64) int64 {
@@ -478,7 +478,7 @@ func sumRUV2LabelMap(values map[string]int64) int64 {
 }
 
 // FormatRUV2Metrics formats RUv2 metrics into a compact string.
-func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU int64) string {
+func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) string {
 	if (metrics == nil || metrics.IsZero()) && tiKVRU == 0 && tiFlashRU == 0 {
 		return ""
 	}
@@ -528,8 +528,8 @@ func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 			parts = append(parts, fmt.Sprintf("%s:%d", key, value))
 		}
 	}
-	appendIntAlways := func(key string, value int64) {
-		parts = append(parts, fmt.Sprintf("%s:%d", key, value))
+	appendFloat64Always := func(key string, value float64) {
+		parts = append(parts, fmt.Sprintf("%s:%.2f", key, value))
 	}
 	appendMap := func(key string, value map[string]int64) {
 		if len(value) == 0 {
@@ -543,10 +543,10 @@ func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 
 	tidbRU := metrics.CalculateRUValues(weights)
 	totalRU := metrics.TotalRU(weights, tiKVRU, tiFlashRU)
-	appendIntAlways("total_ru", totalRU)
-	appendIntAlways("tidb_ru", tidbRU)
-	appendIntAlways("tikv_ru", tiKVRU)
-	appendIntAlways("tiflash_ru", tiFlashRU)
+	appendFloat64Always("total_ru", totalRU)
+	appendFloat64Always("tidb_ru", tidbRU)
+	appendFloat64Always("tikv_ru", tiKVRU)
+	appendFloat64Always("tiflash_ru", tiFlashRU)
 
 	appendInt("result_chunk_cells", resultChunkCells)
 	appendMap("executor_l1", executorL1)

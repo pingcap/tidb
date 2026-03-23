@@ -417,7 +417,7 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
 
 	logString := seVar.SlowLogFormat(logItems)
-	require.Contains(t, logString, "# RUv2_metrics: total_ru:150, tidb_ru:0, tikv_ru:100, tiflash_ru:50")
+	require.Contains(t, logString, "# RUv2_metrics: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00")
 
 	t.Run("default session weights come from config defaults", func(t *testing.T) {
 		original := config.GetGlobalConfig()

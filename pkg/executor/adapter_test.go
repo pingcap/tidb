@@ -494,7 +494,7 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	require.Equal(t, "rg1", reporter.tikvGroup)
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
 	require.Equal(t, "rg1", reporter.tidbGroup)
-	require.Equal(t, float64(expected), reporter.tidbRUV2)
+	require.Equal(t, expected, reporter.tidbRUV2)
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {
