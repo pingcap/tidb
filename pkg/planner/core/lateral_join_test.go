@@ -803,7 +803,7 @@ func TestLateralJoinMySQLCompatibility(t *testing.T) {
 			name:        "RIGHT JOIN LATERAL not yet supported",
 			sql:         "SELECT * FROM t RIGHT JOIN LATERAL (SELECT 1 AS x) AS dt ON true",
 			expectError: true,
-			errorMsg:    "LATERAL with RIGHT JOIN",
+			errorMsg:    "RIGHT JOIN is not supported with LATERAL",
 		},
 		{
 			// LATERAL should see derived table alias columns
