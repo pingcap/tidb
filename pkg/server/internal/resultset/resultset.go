@@ -133,7 +133,7 @@ func (t *CursorRUV2Tracker) reportDelta() {
 			t.reporter.ReportTiKVRUV2Consumption(t.resourceGroupName, deltaTiKVRUV2)
 		}
 		if deltaTiDBRU := currentTiDBRU - t.reportedTiDBRU; deltaTiDBRU > 0 {
-			t.reporter.ReportTiDBRUV2Consumption(t.resourceGroupName, float64(deltaTiDBRU))
+			t.reporter.ReportTiDBRUV2Consumption(t.resourceGroupName, deltaTiDBRU)
 		}
 	}
 
