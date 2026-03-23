@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -72,9 +71,9 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
-	origStatsLease := vardef.GetStatsLease()
-	defer vardef.SetStatsLease(origStatsLease)
-	vardef.SetStatsLease(3 * time.Second)
+	session.SetStatsLease(3 * time.Second)
+	// Here I didn't restore the original stats lease because it's not exposed in this version.
+	// It should be acceptable because most of the tests will set lease to -1 to disable the stats lease.
 
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
