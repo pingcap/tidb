@@ -416,7 +416,7 @@ func writeCheckpointTestMeta(
 
 	logPath := fmt.Sprintf("v1/log/store-%d/flush-%016x.log", storeID, flushTS)
 	metaPath := fmt.Sprintf(
-		"%s/%016x-%016x-%016x-%016x.meta",
+		"%s/%016X-%016X-%016X-%016X.meta",
 		stream.GetStreamBackupMetaPrefix(),
 		flushTS,
 		flushTS,

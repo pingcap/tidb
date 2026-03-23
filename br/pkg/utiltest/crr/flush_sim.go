@@ -57,7 +57,7 @@ func NewFlushSimWithTestContext(pd *PDSim, storage storeapi.Storage, tc *TestCon
 
 func formatTaggedMetaName(flushTS, storeID, minDefaultTS, minTS, maxTS, suffixToken uint64) string {
 	return fmt.Sprintf(
-		"%016x%016x-%c%016x%c%016x%c%016x%c%016x.meta",
+		"%016X%016X-%c%016X%c%016X%c%016X%c%016X.meta",
 		flushTS,
 		storeID,
 		backupmetas.NameMinBeginTsInDefaultCfTag,

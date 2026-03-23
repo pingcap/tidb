@@ -32,7 +32,7 @@ import (
 
 const (
 	metaSuffix       = ".meta"
-	maxStoreIDSuffix = "ffffffffffffffff~"
+	maxStoreIDSuffix = "FFFFFFFFFFFFFFFF~"
 )
 
 var errStopWalkIteration = errors.New("stop walk iteration")
@@ -199,6 +199,6 @@ func metaScanStartAfter(syncedTS uint64) string {
 	}
 	return path.Join(
 		stream.GetStreamBackupMetaPrefix(),
-		fmt.Sprintf("%016x%s", syncedTS, maxStoreIDSuffix),
+		fmt.Sprintf("%016X%s", syncedTS, maxStoreIDSuffix),
 	)
 }
