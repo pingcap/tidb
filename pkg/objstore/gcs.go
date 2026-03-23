@@ -492,29 +492,83 @@ skipHandleTransport:
 
 func prepareGCSHTTPClient(base *http.Client) *http.Client {
 	if base == nil {
-		return &http.Client{Transport: newGCSHTTPTransport()}
+		return &http.Client{Transport: newGCSHTTPTransport(nil)}
 	}
 	cloned := *base
 	switch transport := cloned.Transport.(type) {
 	case nil:
-		cloned.Transport = newGCSHTTPTransport()
+		cloned.Transport = newGCSHTTPTransport(nil)
 	case *http.Transport:
-		clonedTransport := transport.Clone()
-		disableGCSHTTP2(clonedTransport)
-		cloned.Transport = clonedTransport
+		cloned.Transport = newGCSHTTPTransport(transport)
 	}
 	return &cloned
 }
 
-func newGCSHTTPTransport() *http.Transport {
-	transport, _ := http.DefaultTransport.(*http.Transport)
-	if transport == nil {
-		transport = &http.Transport{}
-	} else {
-		transport = transport.Clone()
+func newGCSHTTPTransport(base *http.Transport) *http.Transport {
+	// Avoid Transport.Clone here: disabling HTTP/2 on a cloned default transport
+	// can trigger malformed HTTP/1.x responses against storage.googleapis.com.
+	if base == nil {
+		baseTransport, _ := http.DefaultTransport.(*http.Transport)
+		base = baseTransport
+	}
+
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConnsPerHost: http.DefaultMaxIdleConnsPerHost,
+	}
+	if base != nil {
+		transport = &http.Transport{
+			Proxy:                  base.Proxy,
+			OnProxyConnectResponse: base.OnProxyConnectResponse,
+			DialContext:            base.DialContext,
+			Dial:                   base.Dial,
+			DialTLSContext:         base.DialTLSContext,
+			DialTLS:                base.DialTLS,
+			TLSClientConfig:        cloneGCSHTTPClientTLSConfig(base.TLSClientConfig),
+			TLSHandshakeTimeout:    base.TLSHandshakeTimeout,
+			DisableKeepAlives:      base.DisableKeepAlives,
+			DisableCompression:     base.DisableCompression,
+			MaxIdleConns:           base.MaxIdleConns,
+			MaxIdleConnsPerHost:    base.MaxIdleConnsPerHost,
+			MaxConnsPerHost:        base.MaxConnsPerHost,
+			IdleConnTimeout:        base.IdleConnTimeout,
+			ResponseHeaderTimeout:  base.ResponseHeaderTimeout,
+			ExpectContinueTimeout:  base.ExpectContinueTimeout,
+			ProxyConnectHeader:     base.ProxyConnectHeader.Clone(),
+			GetProxyConnectHeader:  base.GetProxyConnectHeader,
+			MaxResponseHeaderBytes: base.MaxResponseHeaderBytes,
+			WriteBufferSize:        base.WriteBufferSize,
+			ReadBufferSize:         base.ReadBufferSize,
+		}
 	}
 	disableGCSHTTP2(transport)
 	return transport
+}
+
+func cloneGCSHTTPClientTLSConfig(cfg *tls.Config) *tls.Config {
+	if cfg == nil {
+		return nil
+	}
+	cloned := cfg.Clone()
+	if len(cloned.NextProtos) == 0 {
+		return cloned
+	}
+	filtered := make([]string, 0, len(cloned.NextProtos))
+	hasHTTP1 := false
+	for _, proto := range cloned.NextProtos {
+		if proto == "h2" {
+			continue
+		}
+		if proto == "http/1.1" {
+			hasHTTP1 = true
+		}
+		filtered = append(filtered, proto)
+	}
+	if !hasHTTP1 {
+		filtered = append(filtered, "http/1.1")
+	}
+	cloned.NextProtos = filtered
+	return cloned
 }
 
 func disableGCSHTTP2(transport *http.Transport) {
