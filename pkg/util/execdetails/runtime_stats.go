@@ -982,7 +982,7 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 // RUVersion controls which RU accounting version produces output:
 //   - 1 (v1): shows RRU + WRU
 //   - 2 (v2): shows total RU from v2 metrics
-//   - 0 / unknown: defaults to v2
+//   - 0 / unknown: defaults to v1
 type RURuntimeStats struct {
 	*util.RUDetails
 	Metrics   *RUV2Metrics
