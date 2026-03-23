@@ -226,13 +226,14 @@ func rewriteOneMySQLMatchAgainst(
 	for i := 1; i < len(scalarFunc.GetArgs()); i++ {
 		argsBuffer[i] = scalarFunc.GetArgs()[i]
 	}
-	return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, patternGroup)
+	return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, patternGroup, parserType)
 }
 
 func rewriteBooleanGroupToFTSExpr(
 	bctx BuildContext,
 	argsBuffer []Expression,
 	group *matchagainst.BooleanGroup,
+	parserType model.FullTextParserType,
 ) (Expression, error) {
 	if group == nil {
 		return nil, errors.New("invalid nil boolean group")
@@ -255,14 +256,14 @@ func rewriteBooleanGroupToFTSExpr(
 
 	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
 	for _, item := range group.Must {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item, parserType)
 		if err != nil {
 			return nil, err
 		}
 		searchFuncs = append(searchFuncs, f)
 	}
 	for _, item := range group.MustNot {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item, parserType)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +271,7 @@ func rewriteBooleanGroupToFTSExpr(
 		searchFuncs = append(searchFuncs, nf)
 	}
 	for _, item := range group.Should {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item, parserType)
 		if err != nil {
 			return nil, err
 		}
@@ -290,6 +291,7 @@ func rewriteBooleanClauseToFTSExpr(
 	bctx BuildContext,
 	argsBuffer []Expression,
 	item matchagainst.BooleanClause,
+	parserType model.FullTextParserType,
 ) (Expression, error) {
 	switch x := item.Expr.(type) {
 	case *matchagainst.BooleanTerm:
@@ -298,7 +300,11 @@ func rewriteBooleanClauseToFTSExpr(
 			RetType: types.NewFieldType(mysql.TypeString),
 		}
 		if !x.Wildcard {
-			return NewFunctionInternal(bctx, ast.FTSMatchWord, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
+			funcName := ast.FTSMatchWord
+			if parserType == model.FullTextParserTypeNgramV1 {
+				funcName = ast.FTSMatchPhrase
+			}
+			return NewFunctionInternal(bctx, funcName, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
 		}
 		return NewFunctionInternal(bctx, ast.FTSMatchPrefix, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
 	case *matchagainst.BooleanPhrase:
@@ -308,7 +314,7 @@ func rewriteBooleanClauseToFTSExpr(
 		}
 		return NewFunctionInternal(bctx, ast.FTSMatchPhrase, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
 	case *matchagainst.BooleanGroup:
-		return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, x)
+		return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, x, parserType)
 	default:
 		return nil, errors.Errorf("unsupported boolean expression: %T", item.Expr)
 	}
