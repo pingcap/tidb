@@ -305,7 +305,6 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	tk.MustExec("create table analyze_v1_compat(a int, b int, c int, primary key(a), key idx(b))")
 	t.Cleanup(func() {
 		tk.MustExec("set @@tidb_stats_load_sync_wait = default")
-		tk.MustExec("set tidb_opt_objective = default")
 	})
 
 	h := dom.StatsHandle()
@@ -323,6 +322,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 		Check(testkit.Rows("1"))
 
 	h.Clear()
+	// Test init stats.
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl := h.GetPhysicalTableStats(tableID, tblInfo)
 	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
@@ -331,6 +331,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
 
+	// Test ColumnStatsIsInvalid to trigger async load of column stats.
 	statistics.ColumnStatsIsInvalid(statsTbl.GetCol(colCID), tk.Session().GetPlanCtx(), &statsTbl.HistColl, colCID)
 	require.NoError(t, h.LoadNeededHistograms(is))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
@@ -342,8 +343,8 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
 
+	// Test real async load path.
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
-	tk.MustExec("set tidb_opt_objective='determinate'")
 	tk.MustQuery("select * from analyze_v1_compat where c = 200").Check(testkit.Rows())
 	require.Eventually(t, func() bool {
 		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
@@ -365,6 +366,18 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 		}
 		return true
 	}, 5*time.Second, 100*time.Millisecond)
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is, tableID))
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
+
+	// Test sync load path.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustQuery("select * from analyze_v1_compat where c = 200").Check(testkit.Rows())
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
