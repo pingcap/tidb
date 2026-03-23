@@ -1511,6 +1511,13 @@ type SessionVars struct {
 	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
 	EnablePlanCacheForSubquery bool
 
+	// EnablePlanCacheGenericRewrite enables the current narrow rewrite policy
+	// for plan cache. It currently covers non-outer-join constant propagation,
+	// predicate simplification, and ranger same-slot Eq/In fallback. It does not
+	// cover broader join reasoning such as outer-join derivation or null-reject
+	// inference.
+	EnablePlanCacheGenericRewrite bool
+
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
@@ -2310,6 +2317,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashFastScan:                        DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt:          true,
 		ForeignKeyChecks:                       DefTiDBForeignKeyChecks,
+		EnablePlanCacheGenericRewrite:          DefTiDBOptEnablePlanCacheGenericRewrite,
 		HookContext:                            hctx,
 		EnableReuseChunk:                       DefTiDBEnableReusechunk,
 		preUseChunkAlloc:                       DefTiDBUseAlloc,

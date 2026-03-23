@@ -79,3 +79,14 @@ func TestSetVarHintsWithExplain(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
 }
+
+func TestSetVarPlanCacheGenericRewrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_enable_plan_cache_generic_rewrite = off`)
+
+	tk.MustQuery(`select /*+ set_var(tidb_opt_enable_plan_cache_generic_rewrite=1) */ @@tidb_opt_enable_plan_cache_generic_rewrite`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select @@tidb_opt_enable_plan_cache_generic_rewrite`).Check(testkit.Rows("0"))
+}
