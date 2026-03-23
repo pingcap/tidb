@@ -409,8 +409,8 @@ create table if not exists t (
     key ka (id, a),
     key kb (id, b)
 );
-explain format='plan_tree' select /*+ use_index_merge(t, primary, kb) */ * from t where id=1 and (a=1 or b=1);
-explain format='plan_tree' select /*+ use_index_merge(t, ka, kb) */ * from t where id=1 and (a=1 or b=1);
+explain format='brief' select /*+ use_index_merge(t, primary, kb) */ * from t where id=1 and (a=1 or b=1);
+explain format='brief' select /*+ use_index_merge(t, ka, kb) */ * from t where id=1 and (a=1 or b=1);
 drop table if exists t;
 
 # TestIssue52869
