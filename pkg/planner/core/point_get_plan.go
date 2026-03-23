@@ -1276,11 +1276,9 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if err != nil {
 			return nil, true
 		}
-		castToTP := col.GetStaticType()
-		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
-			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
-		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		// Do not inject an implicit CAST for UPDATE assignments in the point-update fast path.
+		// The actual assignment conversion (including negative -> unsigned handling) should follow
+		// statement context flags and is done by table.CastValue during execution.
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
