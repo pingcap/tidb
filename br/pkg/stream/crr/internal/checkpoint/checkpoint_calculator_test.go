@@ -292,6 +292,47 @@ func TestCheckpointCalculatorWaitsForRemovedStoreFiles(t *testing.T) {
 	require.NotEmpty(t, log1Path)
 }
 
+func TestCheckpointCalculatorObservedRemovedStoreStillBoundsSyncedTS(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	meta1Path, log1Path := writeCheckpointTestMeta(t, ctx, upstream, 10, 1)
+	meta2Path, log2Path := writeCheckpointTestMeta(t, ctx, upstream, 20, 2)
+
+	pd := &fakePDMetaReader{}
+	pd.Set(20, 2)
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: upstream,
+			Sync: checkpoint.NewExistenceSyncChecker(fileExistenceMap{
+				meta1Path: true,
+				log1Path:  true,
+				meta2Path: true,
+				log2Path:  true,
+			}),
+		},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		nil,
+	)
+	require.NoError(t, err)
+
+	checkpointTS, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(20), checkpointTS)
+	require.Equal(t, uint64(10), calculator.SyncedTS())
+	require.Equal(
+		t,
+		map[uint64]uint64{
+			1: 10,
+			2: 20,
+		},
+		calculator.StateSnapshot().SyncedByStore,
+	)
+}
+
 type fakePDMetaReader struct {
 	mu         sync.Mutex
 	checkpoint uint64

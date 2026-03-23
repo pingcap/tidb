@@ -31,14 +31,15 @@ replicated. `lastCheckpoint` is the last upstream global checkpoint returned by
 the calculator.
 
 The calculator tracks synced progress per store and publishes the global
-`syncedTS` as the minimum synced `flushTS` across all alive stores. This is
+`syncedTS` as the minimum synced `flushTS` across all observed stores. This is
 necessary because meta file names are globally ordered by
 `(flushTS, storeID, extraTags)`, while `flushTS` is only monotonic within each
 individual store.
 
-Retired stores are excluded from the `syncedTS` minimum, but their already
-published meta/log files must still be observed before a checkpoint can
-advance when they are needed to restore the current upstream checkpoint.
+The alive-store set is used only as an extra blocker: if PD still reports a
+store as alive but the calculator has not observed any flush progress for that
+store yet, `syncedTS` must not advance. Alive stores must never make
+`syncedTS` move faster than the minimum across observed stores.
 
 For example:
 
@@ -52,9 +53,11 @@ As an example:
 0672E0E5956C00020000000000000004-<...>.meta
 |flushTS ------||storeID ------|  ->  flushTS = 0x0672E0E5956C0002, storeID = 4
 
-If one alive store is only known synced through `0x0672E0E5956C0002`, while
+If one observed store is only known synced through `0x0672E0E5956C0002`, while
 another is synced through `0x0672E0E5A0000000`, then the global `syncedTS`
-must stay at `min(0x0672E0E5956C0002, 0x0672E0E5A0000000)`.
+must stay at `min(0x0672E0E5956C0002, 0x0672E0E5A0000000)`. If PD reports an
+additional alive store that has not been observed yet, that missing store must
+block advancement, but it must not raise the minimum.
 
 This algorithm relies on these invariants:
 
