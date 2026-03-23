@@ -434,8 +434,9 @@ func (m *RUV2Metrics) IsZero() bool {
 		len(snapshotRUV2LabelCounter(&m.tikvCoprocessorWorkTotal)) == 0
 }
 
-// CalculateRUValues calculates the current TiDB RU from the metrics.
-// The returned value is a scaled integer.
+// CalculateRUValues calculates the current TiDB RU from the metrics using the
+// provided weights. The weights specify how each component is weighted in the
+// RU calculation. Returns the calculated TiDB RU as a float64.
 func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU float64) {
 	if m == nil {
 		return 0
