@@ -518,7 +518,7 @@ var columnFactoryMap = map[string]columnFactory{
 		return int64(record.MaxRUWaitDuration)
 	},
 	AvgRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(record.SumRUV2, record.ExecCount)
+		return avgSumFloat(record.SumRUV2, record.ExecCount)
 	},
 	MaxRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRUV2

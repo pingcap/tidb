@@ -555,10 +555,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
-	var tiKVRU, tiFlashRU int64
+	var tiKVRU, tiFlashRU float64
 	if logItems.RUDetails != nil {
-		tiKVRU = int64(logItems.RUDetails.TiKVRUV2())
-		tiFlashRU = int64(logItems.RUDetails.TiflashRU())
+		tiKVRU = logItems.RUDetails.TiKVRUV2()
+		tiFlashRU = logItems.RUDetails.TiflashRU()
 	}
 	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
 		writeSlowLogItem(&buf, SlowLogRUV2Metrics, formatted)

@@ -361,13 +361,13 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	metrics.AddTiKVStorageProcessedKeysGet(79)
 
 	tidbRU := metrics.CalculateRUValues(weights)
-	tikvRU := int64(157258)
-	tiflashRU := int64(24680)
+	tikvRU := float64(157258)
+	tiflashRU := float64(24680)
 	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
-	require.Equal(t, int64(114198), tidbRU)
-	require.Equal(t, int64(157258), tikvRU)
-	require.Equal(t, int64(24680), tiflashRU)
-	require.Equal(t, int64(296136), totalRU)
+	require.Equal(t, 114198, tidbRU)
+	require.Equal(t, 157258, tikvRU)
+	require.Equal(t, 24680, tiflashRU)
+	require.Equal(t, 296136, totalRU)
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights

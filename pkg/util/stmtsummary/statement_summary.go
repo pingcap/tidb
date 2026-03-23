@@ -282,7 +282,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
-	TotalRUV2         int64
+	TotalRUV2         float64
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
@@ -1020,12 +1020,12 @@ type StmtRUSummary struct {
 	MaxRRU            float64       `json:"max_rru"`
 	MaxWRU            float64       `json:"max_wru"`
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
-	SumRUV2           int64         `json:"sum_ruv2"`
-	MaxRUV2           int64         `json:"max_ruv2"`
+	SumRUV2           float64       `json:"sum_ruv2"`
+	MaxRUV2           float64       `json:"max_ruv2"`
 }
 
 // Add add a new sample value to the ru summary record.
-func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 int64) {
+func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
 	if info != nil {
 		rru := info.RRU()
 		s.SumRRU += rru

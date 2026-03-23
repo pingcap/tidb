@@ -73,7 +73,7 @@ type CursorRUV2Tracker struct {
 	ruDetails         *clientutil.RUDetails
 	resourceGroupName string
 	weights           execdetails.RUV2Weights
-	reportedTiDBRU    int64
+	reportedTiDBRU    float64
 	reportedTiKVRUV2  float64
 	mu                sync.Mutex
 }
@@ -119,7 +119,7 @@ func (t *CursorRUV2Tracker) reportDelta() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	var currentTiDBRU int64
+	var currentTiDBRU float64
 	if t.metrics != nil {
 		currentTiDBRU = t.metrics.CalculateRUValues(t.weights)
 	}

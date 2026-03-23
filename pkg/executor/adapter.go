@@ -1733,11 +1733,11 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	}
 }
 
-func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) int64 {
-	var tiKVRU, tiFlashRU int64
+func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
+	var tiKVRU, tiFlashRU float64
 	if ruDetail != nil {
-		tiKVRU = int64(ruDetail.TiKVRUV2())
-		tiFlashRU = int64(ruDetail.TiflashRU())
+		tiKVRU = ruDetail.TiKVRUV2()
+		tiFlashRU = ruDetail.TiflashRU()
 	}
 	if metrics == nil {
 		return tiKVRU + tiFlashRU

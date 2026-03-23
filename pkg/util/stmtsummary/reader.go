@@ -920,7 +920,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return int64(ssStats.MaxRUWaitDuration)
 	},
 	AvgRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(ssStats.SumRUV2, ssStats.execCount)
+		return avgSumFloat(ssStats.SumRUV2, ssStats.execCount)
 	},
 	MaxRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.MaxRUV2
