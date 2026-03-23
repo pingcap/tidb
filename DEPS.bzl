@@ -7754,13 +7754,13 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "259b9704e7bab0ac1de22cb325052da033ebbd9f2c2ebcdb991790de6642e27e",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260313105007-7e346d14aded",
+        sha256 = "c334cf2b4cf112657f91528a88142f4a62714d6e10bb7578a448c7f8791aebc7",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260319104447-da8b62d4b6bb",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260313105007-7e346d14aded.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260313105007-7e346d14aded.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260313105007-7e346d14aded.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260313105007-7e346d14aded.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260319104447-da8b62d4b6bb.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260319104447-da8b62d4b6bb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260319104447-da8b62d4b6bb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260319104447-da8b62d4b6bb.zip",
         ],
     )
     go_repository(
