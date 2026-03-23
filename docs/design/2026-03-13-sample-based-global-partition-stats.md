@@ -1,7 +1,7 @@
 # Sample-Based Global Partition Statistics
 
 - Author(s): [Mattias Jonsson](http://github.com/mjonss)
-- Discussion PR: https://github.com/pingcap/tidb/pull/66289
+- Discussion PR: https://github.com/pingcap/tidb/pull/66960
 - Tracking Issue: https://github.com/pingcap/tidb/issues/66220
 
 ## Table of Contents
