@@ -267,6 +267,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner",
+        "//pkg/planner/cascades/memo",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -565,12 +566,139 @@ func TestJoinReOrder(t *testing.T) {
 		require.NoError(t, err)
 		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagJoinReOrder, p.(base.LogicalPlan))
 		require.NoError(t, err)
-		planString := ToString(p)
+		planString, err := firstMemoLiteJoinReOrderPlan(p.(base.LogicalPlan))
+		require.NoError(t, err)
+		require.NotEmpty(t, planString, comment)
 		testdata.OnRecord(func() {
 			output[i] = planString
 		})
 		require.Equal(t, output[i], planString, fmt.Sprintf("for %s", tt))
 	}
+}
+
+func firstMemoLiteJoinReOrderPlan(logic base.LogicalPlan) (string, error) {
+	// mem the origin logic tree.
+	initialMemo := memo.NewMemo(logic.SCtx().GetSessionVars().StmtCtx.OperatorNum)
+	if _, err := initialMemo.Init(logic); err != nil {
+		return "", err
+	}
+	// flatten join groups into memo first, then optimize the multi-join alternatives.
+	if err := toMultiJoin(initialMemo, logic); err != nil {
+		return "", err
+	}
+
+	candidates := getExploreCandidates(initialMemo, exploreRuleList[0].match)
+	bestPlan := base.LogicalPlan(nil)
+	bestTargetID := 0
+	bestSchemaLen := -1
+	for _, candidate := range candidates {
+		original := candidate.ge.GetWrappedLogicalPlan().(*logicalMultiJoin).LogicalPlan
+		reordered, err := exploreRuleList[0].optimize(candidate.ge)
+		if err != nil {
+			return "", err
+		}
+		if reordered == nil {
+			continue
+		}
+		reorderedString := ToString(reordered)
+		if reorderedString == ToString(original) {
+			continue
+		}
+		schemaLen := candidate.target.GetLogicalProperty().Schema.Len()
+		if schemaLen > bestSchemaLen {
+			bestPlan = reordered
+			bestTargetID = original.ID()
+			bestSchemaLen = schemaLen
+		}
+	}
+	if bestPlan == nil {
+		return "", nil
+	}
+	return ToString(replaceLogicalSubtreeByID(logic, bestTargetID, bestPlan)), nil
+}
+
+func replaceLogicalSubtreeByID(root base.LogicalPlan, targetID int, replacement base.LogicalPlan) base.LogicalPlan {
+	if root.ID() == targetID {
+		return replacement
+	}
+	children := root.Children()
+	if len(children) == 0 {
+		return root
+	}
+	newChildren := make([]base.LogicalPlan, len(children))
+	changed := false
+	for i, child := range children {
+		newChild := replaceLogicalSubtreeByID(child, targetID, replacement)
+		newChildren[i] = newChild
+		if newChild != child {
+			changed = true
+		}
+	}
+	if changed {
+		root.SetChildren(newChildren...)
+	}
+	return root
+}
+
+func TestJoinReOrderExploration(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+
+	sql := "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d"
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err)
+
+	flags := rule.FlagPredicatePushDown | rule.FlagJoinReOrder
+	logic, err := logicalOptimize(context.Background(), flags, p.(base.LogicalPlan))
+	require.NoError(t, err)
+	initialMemo := memo.NewMemo(logic.SCtx().GetSessionVars().StmtCtx.OperatorNum)
+	_, err = initialMemo.Init(logic)
+	require.NoError(t, err)
+	err = toMultiJoin(initialMemo, logic)
+	require.NoError(t, err)
+
+	candidates := getExploreCandidates(initialMemo, exploreRuleList[0].match)
+	var (
+		targetGroupID memo.GroupID
+		originalPlan  string
+	)
+	for _, candidate := range candidates {
+		originalPlan = ToString(candidate.ge.GetWrappedLogicalPlan().(*logicalMultiJoin).LogicalPlan)
+		reordered, err := exploreRuleList[0].optimize(candidate.ge)
+		require.NoError(t, err)
+		if reordered == nil || ToString(reordered) == originalPlan {
+			continue
+		}
+		targetGroupID = candidate.target.GetGroupID()
+		break
+	}
+	require.NotZero(t, targetGroupID)
+
+	mm, err := exploreLogicalAlternatives(flags, logic)
+	require.NoError(t, err)
+
+	targetGroupElem := mm.GetGroupID2Group()[targetGroupID]
+	require.NotNil(t, targetGroupElem)
+	targetGroup := targetGroupElem.Value.(*memo.Group)
+	require.GreaterOrEqual(t, targetGroup.GetLogicalExpressions().Len(), 2)
+
+	foundOriginal := false
+	foundDifferent := false
+	targetGroup.ForEachGE(func(ge *memo.GroupExpression) bool {
+		planStr := ToString(ge.ExtractLogicalPlan())
+		if planStr == originalPlan {
+			foundOriginal = true
+		} else {
+			foundDifferent = true
+		}
+		return true
+	})
+	require.True(t, foundOriginal)
+	require.True(t, foundDifferent)
 }
 
 func TestEagerAggregation(t *testing.T) {

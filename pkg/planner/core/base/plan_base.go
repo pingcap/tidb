@@ -263,6 +263,12 @@ type LogicalPlan interface {
 	// GetPlanIDsHash set sub operator tree's ids hash64
 	GetPlanIDsHash() uint64
 
+	// GetAttachedGroupExpression returns the memo GroupExpression currently attached to this logical operator.
+	GetAttachedGroupExpression() GroupExpression
+
+	// SetAttachedGroupExpression attaches the memo GroupExpression currently representing this logical operator.
+	SetAttachedGroupExpression(GroupExpression)
+
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan

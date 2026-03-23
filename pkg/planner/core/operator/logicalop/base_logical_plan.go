@@ -50,6 +50,7 @@ type BaseLogicalPlan struct {
 	// taskMapBakTS stores the timestamps of logs.
 	taskMapBakTS []uint64
 	self         base.LogicalPlan
+	attachedGE   base.GroupExpression
 	maxOneRow    bool
 	children     []base.LogicalPlan
 	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
@@ -414,6 +415,16 @@ func (p *BaseLogicalPlan) SetPlanIDsHash(hash uint64) {
 // GetPlanIDsHash return the plan ids hash rooted from this logical plan.
 func (p *BaseLogicalPlan) GetPlanIDsHash() uint64 {
 	return p.planIDsHash
+}
+
+// GetAttachedGroupExpression returns the memo GroupExpression currently attached to this logical operator.
+func (p *BaseLogicalPlan) GetAttachedGroupExpression() base.GroupExpression {
+	return p.attachedGE
+}
+
+// SetAttachedGroupExpression attaches the memo GroupExpression currently representing this logical operator.
+func (p *BaseLogicalPlan) SetAttachedGroupExpression(ge base.GroupExpression) {
+	p.attachedGE = ge
 }
 
 // GetWrappedLogicalPlan implements the logical plan interface.

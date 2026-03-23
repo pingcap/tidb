@@ -144,6 +144,7 @@ func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, er
 			return nil, err
 		}
 	}
+	lp.SetAttachedGroupExpression(groupExpr)
 	return groupExpr, nil
 }
 

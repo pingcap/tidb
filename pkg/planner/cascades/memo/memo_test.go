@@ -41,9 +41,22 @@ func TestMemo(t *testing.T) {
 	join.SetChildren(t1, t2)
 
 	mm := NewMemo()
-	mm.Init(join)
+	gE, err := mm.Init(join)
+	require.NoError(t, err)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
+	require.Same(t, gE, join.GetAttachedGroupExpression())
+	var leftGE, rightGE *GroupExpression
+	gE.Inputs[0].ForEachGE(func(ge *GroupExpression) bool {
+		leftGE = ge
+		return false
+	})
+	gE.Inputs[1].ForEachGE(func(ge *GroupExpression) bool {
+		rightGE = ge
+		return false
+	})
+	require.Same(t, leftGE, t1.GetAttachedGroupExpression())
+	require.Same(t, rightGE, t2.GetAttachedGroupExpression())
 
 	// iter memo.groups to assert group ids.
 	cnt := 1

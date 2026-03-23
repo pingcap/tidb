@@ -14,8 +14,8 @@
 
 package rule
 
-// Note: The order of flags is same as the order of optRule in the list.
-// Do not mess up the order.
+// Note: Most flags follow the same order as optRuleList in optimizer.go.
+// FlagJoinReOrder is explored separately in memo-lite after logical optimization.
 const (
 	FlagGcSubstitute uint64 = 1 << iota
 	FlagPruneColumns
@@ -38,13 +38,13 @@ const (
 	FlagPredicateSimplification
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
-	FlagJoinReOrder
 	FlagOuterJoinToSemiJoin
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
 	FlagResolveExpand
+	FlagJoinReOrder
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

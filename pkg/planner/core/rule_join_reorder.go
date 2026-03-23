@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"maps"
 	"slices"
 
@@ -286,6 +287,24 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
+// logicalMultiJoin is a transient normalization node used by memo-lite join
+// reorder. It stores one extracted join-group so reordering can consume the
+// precomputed structure directly while keeping the original join tree as an
+// alternative in memo.
+type logicalMultiJoin struct {
+	base.LogicalPlan // source plan
+	legacyGroup      *joinGroupResult
+	advancedGroup    *joinorder.JoinGroup
+}
+
+// Children implements the base.LogicalPlan interface.
+func (lp *logicalMultiJoin) Children() []base.LogicalPlan {
+	if lp.legacyGroup != nil {
+		return lp.legacyGroup.group
+	}
+	return lp.advancedGroup.Nodes()
+}
+
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder && p.SCtx().GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
@@ -296,6 +315,68 @@ func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (bas
 	}
 	p, err := s.optimizeRecursive(p.SCtx(), p)
 	return p, false, err
+}
+
+func toMultiJoin(mm *memo.Memo, logic base.LogicalPlan) (err error) {
+	if logic == nil {
+		return nil
+	}
+	if _, ok := logic.(*logicalop.LogicalCTE); ok {
+		return nil
+	}
+
+	// Try to normalize the current root first. If extractJoinGroup/buildLogicalMultiJoin
+	// succeeds here, it has already explored the covered subtree, so we should insert the
+	// new alternative into the current root group and stop descending.
+	multiJoinNode := buildLogicalMultiJoin(logic)
+	if multiJoinNode != nil {
+		attachedGE, ok := logic.GetAttachedGroupExpression().(*memo.GroupExpression)
+		if !ok || attachedGE == nil {
+			return nil
+		}
+		_, err = mm.CopyIn(attachedGE.GetGroup(), multiJoinNode)
+		// simply dive into each node of multi-join node.
+		for _, child := range multiJoinNode.Children() {
+			err = toMultiJoin(mm, child)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		// once this logical operator is simply non-join, dive into its children to find more join groups.
+		for _, child := range logic.Children() {
+			err = toMultiJoin(mm, child)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func buildLogicalMultiJoin(p base.LogicalPlan) *logicalMultiJoin {
+	if p == nil {
+		return nil
+	}
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
+		group := joinorder.ExtractJoinGroup(p)
+		if group == nil {
+			return nil
+		}
+		return &logicalMultiJoin{
+			LogicalPlan:   p,
+			advancedGroup: group,
+		}
+	}
+	group := extractJoinGroup(p)
+	if group == nil || len(group.group) <= 1 {
+		return nil
+	}
+	return &logicalMultiJoin{
+		LogicalPlan: p,
+		legacyGroup: group,
+	}
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
