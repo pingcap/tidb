@@ -15,6 +15,8 @@
 package metrics
 
 import (
+	"sync"
+
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -41,6 +43,8 @@ var (
 	stmtSummaryWindowRecordCountV2  prometheus.Gauge
 	stmtSummaryWindowEvictedCountV1 prometheus.Gauge
 	stmtSummaryWindowEvictedCountV2 prometheus.Gauge
+
+	stmtSummaryWindowMetricsMu sync.Mutex
 )
 
 // InitStmtSummaryMetrics initializes statement summary metrics.
@@ -61,23 +65,49 @@ func InitStmtSummaryMetrics() {
 			Help:      "The number of LRU evictions in the current statement summary window.",
 		}, []string{LblType})
 
-	stmtSummaryWindowRecordCountV1 = StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV1)
-	stmtSummaryWindowRecordCountV2 = StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)
-	stmtSummaryWindowEvictedCountV1 = StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV1)
-	stmtSummaryWindowEvictedCountV2 = StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)
+	stmtSummaryWindowMetricsMu.Lock()
+	stmtSummaryWindowRecordCountV1 = nil
+	stmtSummaryWindowRecordCountV2 = nil
+	stmtSummaryWindowEvictedCountV1 = nil
+	stmtSummaryWindowEvictedCountV2 = nil
+	stmtSummaryWindowMetricsMu.Unlock()
 }
 
 // SetStmtSummaryWindowMetrics reports statement summary window metrics for a given implementation type.
 func SetStmtSummaryWindowMetrics(typ string, recordCount, evictedCount float64) {
 	switch typ {
 	case StmtSummaryTypeV1:
-		stmtSummaryWindowRecordCountV1.Set(recordCount)
-		stmtSummaryWindowEvictedCountV1.Set(evictedCount)
+		recordGauge, evictedGauge := getStmtSummaryWindowMetricsLocked(typ)
+		recordGauge.Set(recordCount)
+		evictedGauge.Set(evictedCount)
 	case StmtSummaryTypeV2:
-		stmtSummaryWindowRecordCountV2.Set(recordCount)
-		stmtSummaryWindowEvictedCountV2.Set(evictedCount)
+		recordGauge, evictedGauge := getStmtSummaryWindowMetricsLocked(typ)
+		recordGauge.Set(recordCount)
+		evictedGauge.Set(evictedCount)
 	default:
 		StmtSummaryWindowRecordCount.WithLabelValues(typ).Set(recordCount)
 		StmtSummaryWindowEvictedCount.WithLabelValues(typ).Set(evictedCount)
+	}
+}
+
+func getStmtSummaryWindowMetricsLocked(typ string) (prometheus.Gauge, prometheus.Gauge) {
+	stmtSummaryWindowMetricsMu.Lock()
+	defer stmtSummaryWindowMetricsMu.Unlock()
+
+	switch typ {
+	case StmtSummaryTypeV1:
+		if stmtSummaryWindowRecordCountV1 == nil {
+			stmtSummaryWindowRecordCountV1 = StmtSummaryWindowRecordCount.WithLabelValues(typ)
+			stmtSummaryWindowEvictedCountV1 = StmtSummaryWindowEvictedCount.WithLabelValues(typ)
+		}
+		return stmtSummaryWindowRecordCountV1, stmtSummaryWindowEvictedCountV1
+	case StmtSummaryTypeV2:
+		if stmtSummaryWindowRecordCountV2 == nil {
+			stmtSummaryWindowRecordCountV2 = StmtSummaryWindowRecordCount.WithLabelValues(typ)
+			stmtSummaryWindowEvictedCountV2 = StmtSummaryWindowEvictedCount.WithLabelValues(typ)
+		}
+		return stmtSummaryWindowRecordCountV2, stmtSummaryWindowEvictedCountV2
+	default:
+		return nil, nil
 	}
 }

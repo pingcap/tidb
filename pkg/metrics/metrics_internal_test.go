@@ -35,16 +35,32 @@ func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
 	return m.GetGauge().GetValue()
 }
 
-func TestStmtSummaryMetricLabels(t *testing.T) {
-	SetStmtSummaryWindowMetrics(StmtSummaryTypeV1, 3, 1)
-	SetStmtSummaryWindowMetrics(StmtSummaryTypeV2, 5, 2)
-	t.Cleanup(func() {
-		SetStmtSummaryWindowMetrics(StmtSummaryTypeV1, 0, 0)
-		SetStmtSummaryWindowMetrics(StmtSummaryTypeV2, 0, 0)
-	})
+func countCollectedMetrics(collector prometheus.Collector) int {
+	ch := make(chan prometheus.Metric, 16)
+	collector.Collect(ch)
+	close(ch)
 
+	count := 0
+	for range ch {
+		count++
+	}
+	return count
+}
+
+func TestStmtSummaryMetricLabels(t *testing.T) {
+	InitStmtSummaryMetrics()
+	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))
+	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowEvictedCount))
+
+	SetStmtSummaryWindowMetrics(StmtSummaryTypeV1, 3, 1)
+	require.Equal(t, 1, countCollectedMetrics(StmtSummaryWindowRecordCount))
+	require.Equal(t, 1, countCollectedMetrics(StmtSummaryWindowEvictedCount))
 	require.Equal(t, 3.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV1)))
 	require.Equal(t, 1.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV1)))
+
+	SetStmtSummaryWindowMetrics(StmtSummaryTypeV2, 5, 2)
+	require.Equal(t, 2, countCollectedMetrics(StmtSummaryWindowRecordCount))
+	require.Equal(t, 2, countCollectedMetrics(StmtSummaryWindowEvictedCount))
 	require.Equal(t, 5.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)))
 	require.Equal(t, 2.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)))
 }
