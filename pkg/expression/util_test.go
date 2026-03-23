@@ -717,6 +717,13 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 		{funcName: ast.FTSMatchPhrase, query: "hello world", columns: []string{"title"}},
 	}, collectFTSLeaves(expr))
 
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("hello"), model.FullTextParserTypeNgramV1)
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchPhrase, query: "hello", columns: []string{"title"}},
+	}, collectFTSLeaves(expr))
+
 	ngramExpr := buildMatchAgainst(`"a>b"`)
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, ngramExpr, model.FullTextParserTypeNgramV1)
 	require.NoError(t, err)
