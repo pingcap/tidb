@@ -260,21 +260,40 @@ func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
 	return
 }
 
-func (l *diskFileReaderWriter) getReader() io.ReaderAt {
+// getReader returns the layered reader and a release function that returns
+// pooled ReaderWithCache objects back to the pool. Callers must invoke
+// release when they are done reading.
+func (l *diskFileReaderWriter) getReader() (reader io.ReaderAt, release func()) {
 	var underlying io.ReaderAt = l.file
+	var pooledCount int
+	var pooled [2]*ReaderWithCache // stack-allocated; at most cipher + checksum layers
+
 	if l.ctrCipher != nil {
-		underlying = NewReaderWithCache(encrypt.NewReader(l.file, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
+		rwc := getPooledReaderWithCache(encrypt.NewReader(l.file, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
+		underlying = rwc
+		pooled[pooledCount] = rwc
+		pooledCount++
 	}
 	if l.checksumWriter != nil {
-		underlying = NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+		rwc := getPooledReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+		underlying = rwc
+		pooled[pooledCount] = rwc
+		pooledCount++
 	}
-	return underlying
+
+	release = func() {
+		for i := range pooledCount {
+			putPooledReaderWithCache(pooled[i])
+		}
+	}
+	return underlying, release
 }
 
-func (l *diskFileReaderWriter) getSectionReader(off int64) *io.SectionReader {
-	checksumReader := l.getReader()
-	r := io.NewSectionReader(checksumReader, off, l.offWrite-off)
-	return r
+// getSectionReader returns a SectionReader starting at off and a release
+// function for the underlying pooled readers.
+func (l *diskFileReaderWriter) getSectionReader(off int64) (*io.SectionReader, func()) {
+	reader, release := l.getReader()
+	return io.NewSectionReader(reader, off, l.offWrite-off), release
 }
 
 func (l *diskFileReaderWriter) getWriter() io.Writer {
