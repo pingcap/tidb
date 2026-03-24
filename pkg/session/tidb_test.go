@@ -64,6 +64,74 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	wg.Wait()
 }
 
+func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+
+	_, err = se.ParseWithParams(context.Background(), "select 1")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
+
+	stmt, err := se.ParseWithParams(context.Background(), "set @a=1")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
+
+	_, err = se.ExecuteStmt(context.Background(), stmt)
+	require.NoError(t, err)
+	require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
+	require.NotNil(t, se.sessionVars.RUV2Metrics)
+	require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
+
+	dctx := se.GetDistSQLCtx()
+	require.Equal(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
+	require.NotNil(t, dctx.RUV2RPCInterceptor)
+}
+
+func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// BEGIN
+	stmtBegin, err := se.ParseWithParams(ctx, "begin")
+	require.NoError(t, err)
+	_, err = se.ExecuteStmt(ctx, stmtBegin)
+	require.NoError(t, err)
+	metricsBegin := se.sessionVars.RUV2Metrics
+	require.NotNil(t, metricsBegin)
+
+	// Statement 1 inside the transaction
+	stmt1, err := se.ParseWithParams(ctx, "select 1")
+	require.NoError(t, err)
+	_, err = se.ExecuteStmt(ctx, stmt1)
+	require.NoError(t, err)
+	metrics1 := se.sessionVars.RUV2Metrics
+	require.NotNil(t, metrics1)
+
+	// Statement 2 inside the transaction
+	stmt2, err := se.ParseWithParams(ctx, "select 2")
+	require.NoError(t, err)
+	_, err = se.ExecuteStmt(ctx, stmt2)
+	require.NoError(t, err)
+	metrics2 := se.sessionVars.RUV2Metrics
+
+	// Each statement must get a fresh RUV2Metrics object so that the
+	// interceptor bound during execution targets the current statement,
+	// not a previous one.
+	require.NotNil(t, metrics2)
+	require.NotSame(t, metricsBegin, metrics1, "stmt1 should have different metrics from BEGIN")
+	require.NotSame(t, metrics1, metrics2, "stmt2 should have different metrics from stmt1")
+}
+
 func TestSchemaCacheSizeVar(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)

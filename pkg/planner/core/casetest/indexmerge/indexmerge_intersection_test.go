@@ -65,9 +65,9 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			// Expect no warnings.
 			testKit.MustQuery("show warnings").Check(testkit.Rows())
 		}
@@ -177,10 +177,10 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 				continue
 			}
 			testdata.OnRecord(func() {
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(ts).Sort().Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 			// Expect no warnings.
 			testKit.MustQuery("show warnings").Check(testkit.Rows())

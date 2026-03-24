@@ -52,7 +52,7 @@
 - `pkg/executor/partition_table_test.go` - executor: Tests point get with range and list partition table.
 - `pkg/executor/pkg_test.go` - executor: Tests nested loop apply.
 - `pkg/executor/point_get_test.go` - executor: Tests select check visibility.
-- `pkg/executor/prepared_test.go` - executor: Tests prepared null param.
+- `pkg/executor/prepared_test.go` - executor: Tests core prepared-statement behavior plus the plan-cache cases that still depend on root-package testdata or domain/TiFlash setup.
 - `pkg/executor/recover_test.go` - executor: Tests recover table.
 - `pkg/executor/resource_tag_test.go` - executor: Tests resource group tag.
 - `pkg/executor/revoke_test.go` - executor: Tests revoke global.
@@ -261,11 +261,23 @@
 - `pkg/executor/test/analyzetest/analyze_test.go` - executor/test/analyzetest: Tests analyze partition.
 - `pkg/executor/test/analyzetest/main_test.go` - Configures default goleak settings and registers testdata.
 
+## pkg/executor/test/analyzetest/columns
+
+### Tests
+- `pkg/executor/test/analyzetest/columns/analyze_columns_with_test.go` - executor/test/analyzetest/columns: Tests analyze columns with options interactions and related column-choice flows.
+- `pkg/executor/test/analyzetest/columns/main_test.go` - Configures default goleak settings and registers testdata.
+
 ## pkg/executor/test/analyzetest/memorycontrol
 
 ### Tests
 - `pkg/executor/test/analyzetest/memorycontrol/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/executor/test/analyzetest/memorycontrol/memory_control_test.go` - executor/test/analyzetest/memorycontrol: Tests global memory control for analyze.
+
+## pkg/executor/test/analyzetest/options
+
+### Tests
+- `pkg/executor/test/analyzetest/options/analyze_saved_options_test.go` - executor/test/analyzetest/options: Tests persisted analyze options on table/partition/multi-table/column flows.
+- `pkg/executor/test/analyzetest/options/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/executor/test/analyzetest/panictest
 
@@ -375,7 +387,7 @@
 
 ### Tests
 - `pkg/executor/test/plancache/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/executor/test/plancache/plan_cache_test.go` - executor/test/plancache: Tests point get prepared plan.
+- `pkg/executor/test/plancache/plan_cache_test.go` - executor/test/plancache: Tests prepared plan cache fast paths and grouped regressions for plan selection, session interactions, clustered indexes, and operator families.
 
 ## pkg/executor/test/planreplayer
 
@@ -387,7 +399,7 @@
 
 ### Tests
 - `pkg/executor/test/seqtest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/executor/test/seqtest/prepared_test.go` - executor/test/seqtest: Tests prepared.
+- `pkg/executor/test/seqtest/prepared_test.go` - executor/test/seqtest: Tests sequential prepared-statement semantics, DML, deallocate, and server-side execution paths.
 - `pkg/executor/test/seqtest/seq_executor_test.go` - executor/test/seqtest: Tests early close.
 
 ## pkg/executor/test/showtest

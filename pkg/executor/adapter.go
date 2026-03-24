@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
@@ -1590,6 +1591,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
+	a.recordInsertRows2Metrics()
+	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1676,6 +1679,71 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
+func (a *ExecStmt) recordInsertRows2Metrics() {
+	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
+}
+
+func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx.StmtType != "Insert" {
+		return
+	}
+	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
+	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
+	if stmtCtx.InsertRowsAsRUV2Recorded {
+		return
+	}
+
+	affectedRows := stmtCtx.AffectedRows()
+	if affectedRows <= 0 {
+		return
+	}
+
+	metrics.RUV2ExecutorL5InsertRows.Add(float64(affectedRows))
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
+	}
+	stmtCtx.InsertRowsAsRUV2Recorded = true
+}
+
+func (a *ExecStmt) finalizeStatementRUV2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.RUV2Metrics == nil {
+		return
+	}
+
+	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
+	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
+	if ruDetail == nil {
+		return
+	}
+
+	weights := sessVars.RUV2Weights()
+	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
+
+	dctx := a.Ctx.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	tikvRU := ruDetail.TiKVRUV2()
+	tiflashRU := ruDetail.TiflashRU()
+	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
+		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
+	}
+}
+
+func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
+	var tiKVRU, tiFlashRU float64
+	if ruDetail != nil {
+		tiKVRU = ruDetail.TiKVRUV2()
+		tiFlashRU = ruDetail.TiflashRU()
+	}
+	if metrics == nil {
+		return tiKVRU + tiFlashRU
+	}
+	return metrics.TotalRU(weights, tiKVRU, tiFlashRU)
+}
+
 func (a *ExecStmt) recordLastQueryInfo(err error) {
 	sessVars := a.Ctx.GetSessionVars()
 	// Record diagnostic information for DML statements
@@ -1747,17 +1815,24 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		v.ResTbl.Lock()
-		err1 := v.ResTbl.DerefAndClose()
-		// Make sure we do not hold the lock for longer than necessary.
-		v.ResTbl.Unlock()
-		// No need to lock IterInTbl.
-		err2 := v.IterInTbl.DerefAndClose()
-		if err1 != nil {
-			return err1
+		if v == nil {
+			continue
 		}
-		if err2 != nil {
-			return err2
+		if v.ResTbl != nil {
+			v.ResTbl.Lock()
+			err1 := v.ResTbl.DerefAndClose()
+			// Make sure we do not hold the lock for longer than necessary.
+			v.ResTbl.Unlock()
+			if err1 != nil {
+				return err1
+			}
+		}
+		// No need to lock IterInTbl.
+		if v.IterInTbl != nil {
+			err2 := v.IterInTbl.DerefAndClose()
+			if err2 != nil {
+				return err2
+			}
 		}
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
@@ -2112,6 +2187,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
+	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
@@ -2227,7 +2303,9 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
-	if !topsqlstate.TopProfilingEnabled() && IsFastPlan(a.Plan) {
+	topSQL, topRU := topsqlstate.TopSQLEnabled(), topsqlstate.TopRUEnabled()
+	topProfiling := topsqlstate.TopProfilingEnabled()
+	if !topProfiling && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
 		// Drop them does not cause notable accuracy issue in Top Profiling.
 		return ctx
@@ -2245,19 +2323,34 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		planDigestByte = planDigest.Bytes()
 	}
 	stats := a.Ctx.GetStmtStats()
-	if !topsqlstate.TopProfilingEnabled() {
+	var beginInfo *stmtstats.ExecBeginInfo
+	if stats != nil {
+		beginInfo = &stmtstats.ExecBeginInfo{
+			InNetworkBytes: vars.InPacketBytes.Load(),
+			TopRUEnabled:   topRU,
+		}
+		if topRU {
+			beginInfo.Ctx = a.GoCtx
+			if vars.User != nil {
+				beginInfo.User = vars.User.String()
+			}
+		}
+	}
+	if !topProfiling {
 		// Always attach the SQL and plan info uses to catch the running SQL when Top Profiling is enabled in execution.
 		// Note: Goroutine labels for CPU profiling are only set when TopSQL is enabled.
 		if stats != nil {
-			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, beginInfo)
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 
 	if stats != nil {
-		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
-		// This is a special logic prepared for TiKV's SQLExecCount.
-		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, beginInfo)
+		if topSQL {
+			// This is a special logic prepared for TiKV's SQLExecCount.
+			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		}
 	}
 
 	isSQLRegistered := sc.IsSQLRegistered.Load()
@@ -2302,11 +2395,33 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 	if vars == nil {
 		return
 	}
-	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopProfilingEnabled() {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := vars.GetTotalCostDuration()
-		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration, vars.OutPacketBytes.Load())
+	stats := a.Ctx.GetStmtStats()
+	if stats == nil {
+		return
 	}
+
+	topRU := topsqlstate.TopRUEnabled()
+	if !topsqlstate.TopSQLEnabled() && !topRU {
+		stats.ClearRUExecContext()
+		return
+	}
+
+	finishInfo := &stmtstats.ExecFinishInfo{
+		OutNetworkBytes: vars.OutPacketBytes.Load(),
+		ExecDuration:    vars.GetTotalCostDuration(),
+		TopRUEnabled:    topRU,
+	}
+	if topRU {
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			finishInfo.RUDetails, _ = ruDetailRaw.(*util.RUDetails)
+		}
+		if vars.User != nil {
+			finishInfo.User = vars.User.String()
+		}
+	}
+
+	sqlDigest, planDigest := a.getSQLPlanDigest()
+	stats.OnExecutionFinished(sqlDigest, planDigest, finishInfo)
 }
 
 func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest []byte) {

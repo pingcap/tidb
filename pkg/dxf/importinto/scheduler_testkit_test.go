@@ -24,6 +24,9 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -66,7 +69,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name: ast.NewCIStr("t"),
+				Name:  ast.NewCIStr("t"),
+				State: model.StatePublic,
 			},
 			DisableTiKVImportMode: true,
 		},
@@ -136,6 +140,26 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "finished", gotJobInfo.Status)
 
+	// create another job, fail it before start (task reverted at init step).
+	// it should be marked as failed instead of being left pending.
+	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	logicalPlan.JobID = jobID
+	bs, err = logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task.Meta = bs
+	task.Step = proto.StepInit
+	task.State = proto.TaskStateReverting
+	task.Error = errors.New("precheck failed")
+	require.NoError(t, ext.OnDone(ctx, d, task))
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "failed", gotJobInfo.Status)
+	activeJobCnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), activeJobCnt)
+
 	// create another job, start it, and fail it.
 	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
 		"root", "", &importer.ImportParameters{}, 123)
@@ -169,6 +193,82 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)
+}
+
+func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("table mode is only set in classic kernel")
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	tblInfo := tbl.Meta().Clone()
+	require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), tk.Session(), model.TableModeImport, dbInfo.ID, tblInfo.ID))
+
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
+
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+
+	// Create a job to ensure onDone cancels it successfully.
+	conn := tk.Session().GetSQLExecutor()
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tblInfo.ID,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+
+	logicalPlan := &importinto.LogicalPlan{
+		JobID: jobID,
+		Plan: importer.Plan{
+			DBName: "test",
+			DBID:   dbInfo.ID,
+			TableInfo: func() *model.TableInfo {
+				c := tblInfo.Clone()
+				c.Name = ast.NewCIStr("t")
+				c.State = model.StatePublic
+				return c
+			}(),
+			DisableTiKVImportMode: true,
+		},
+		Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+	}
+	bs, err := logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			Type:  proto.TaskTypeExample,
+			Step:  proto.StepInit,
+			State: proto.TaskStateReverting,
+		},
+		Meta:  bs,
+		Error: errors.New("cancelled by user"),
+	}
+
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(mgr, store))
+	require.NoError(t, ext.OnDone(ctx, nil, task))
+
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
 }
 
 func TestSchedulerExtGlobalSort(t *testing.T) {

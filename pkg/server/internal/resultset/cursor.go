@@ -66,6 +66,18 @@ func (tcrs *tidbCursorResultSet) GetRowIterator() RowIterator {
 	return &tcrs.reader
 }
 
+func (tcrs *tidbCursorResultSet) setCursorRUV2Tracker(tracker *CursorRUV2Tracker) {
+	if rs, ok := tcrs.ResultSet.(cursorRUV2Trackable); ok {
+		rs.setCursorRUV2Tracker(tracker)
+	}
+}
+
+func (tcrs *tidbCursorResultSet) reportCursorRUV2Delta(resultChunkCellsDelta int64) {
+	if rs, ok := tcrs.ResultSet.(cursorRUV2Trackable); ok {
+		rs.reportCursorRUV2Delta(resultChunkCellsDelta)
+	}
+}
+
 var _ RowIterator = &rowContainerReaderIter{}
 
 type rowContainerReaderIter struct {
@@ -109,6 +121,18 @@ func WrapWithLazyCursor(rs ResultSet, capacity, maxChunkSize int) CursorResultSe
 
 func (tcrs *tidbLazyCursorResultSet) GetRowIterator() RowIterator {
 	return &tcrs.iter
+}
+
+func (tcrs *tidbLazyCursorResultSet) setCursorRUV2Tracker(tracker *CursorRUV2Tracker) {
+	if rs, ok := tcrs.ResultSet.(cursorRUV2Trackable); ok {
+		rs.setCursorRUV2Tracker(tracker)
+	}
+}
+
+func (tcrs *tidbLazyCursorResultSet) reportCursorRUV2Delta(resultChunkCellsDelta int64) {
+	if rs, ok := tcrs.ResultSet.(cursorRUV2Trackable); ok {
+		rs.reportCursorRUV2Delta(resultChunkCellsDelta)
+	}
 }
 
 type lazyRowIterator struct {

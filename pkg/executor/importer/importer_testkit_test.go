@@ -130,7 +130,7 @@ func TestVerifyChecksum(t *testing.T) {
 	ctx2, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, logutil.BgLogger(), func() (*local.RemoteChecksum, error) {
-		return importer.RemoteChecksumTableBySQL(ctx2, tk.Session(), plan, logutil.BgLogger())
+		return importer.RemoteChecksumTableBySQL(ctx2, tk.Session(), plan2, logutil.BgLogger())
 	})
 	require.ErrorContains(t, err, "Query execution was interrupted")
 

@@ -291,7 +291,7 @@ func main() {
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
-		setVersions()
+		mustInitVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
@@ -753,17 +753,52 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 }
 
-func setVersions() {
-	cfg := config.GetGlobalConfig()
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
+func validateVersionConfigPolicy(cfg *config.Config) error {
+	// allow users to set version info is a bad feature, we forbid it in next-gen.
+	if kerneltype.IsNextGen() && (len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0) {
+		return errors.New("config options tidb-edition, tidb-release-version and server-version are not allowed to set in nextgen kernel")
 	}
+	return nil
+}
+
+func deriveRuntimeVersionsFromBuildInfo(releaseVersion string) (normalizedReleaseVersion string, serverVersion string, err error) {
+	normalizedReleaseVersion = mysql.NormalizeTiDBReleaseVersionForNextGen(releaseVersion)
+	serverVersion, err = mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
+	if err != nil {
+		return "", "", errors.Annotate(err, "invalid tidb release version for nextgen kernel")
+	}
+	return normalizedReleaseVersion, serverVersion, nil
+}
+
+func initVersions(cfg *config.Config) error {
+	if err := validateVersionConfigPolicy(cfg); err != nil {
+		return err
+	}
+	if kerneltype.IsNextGen() {
+		normalizedReleaseVersion, serverVersion, err := deriveRuntimeVersionsFromBuildInfo(mysql.TiDBReleaseVersion)
+		if err != nil {
+			return err
+		}
+		mysql.TiDBReleaseVersion = normalizedReleaseVersion
+		mysql.ServerVersion = serverVersion
+		return nil
+	}
+
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
 	}
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	return nil
+}
+
+func mustInitVersions() {
+	cfg := config.GetGlobalConfig()
+	terror.MustNil(initVersions(cfg))
 }
 
 func setGlobalVars() {
@@ -861,20 +896,14 @@ func setGlobalVars() {
 	atomic.StoreUint64(&vardef.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 	atomic.StoreUint64(&vardef.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
-		variable.SetSysVar(vardef.Version, cfg.ServerVersion)
-	}
+	terror.MustNil(initVersions(cfg))
+	variable.SetSysVar(vardef.Version, mysql.ServerVersion)
 
 	if len(cfg.TiDBEdition) > 0 {
-		versioninfo.TiDBEdition = cfg.TiDBEdition
 		variable.SetSysVar(vardef.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(vardef.VersionComment, cfg.VersionComment)
-	}
-	if len(cfg.TiDBReleaseVersion) > 0 {
-		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
 	// set instance variables

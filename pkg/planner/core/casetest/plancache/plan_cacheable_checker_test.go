@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -246,6 +247,60 @@ func TestCacheable(t *testing.T) {
 	}
 	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = false
+	c, reason := core.CacheableWithCtx(mockCtx, stmt, is)
+	require.False(t, c)
+	require.Equal(t, "query has sub-queries is un-cacheable", reason)
+	stmt = &ast.SelectStmt{
+		Where: &ast.SubqueryExpr{Query: &ast.SelectStmt{}},
+	}
+	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.False(t, c)
+	require.Equal(t, "query has sub-queries is un-cacheable", reason)
+	stmt = &ast.SelectStmt{
+		With: &ast.WithClause{
+			CTEs: []*ast.CommonTableExpression{
+				{
+					Name:  ast.NewCIStr("cte"),
+					Query: &ast.SubqueryExpr{Query: &ast.SelectStmt{}},
+				},
+			},
+		},
+		From: &ast.TableRefsClause{
+			TableRefs: &ast.Join{
+				Left: &ast.TableSource{
+					Source: &ast.TableName{Name: ast.NewCIStr("cte")},
+				},
+			},
+		},
+	}
+	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.False(t, c)
+	require.Equal(t, "query has sub-queries is un-cacheable", reason)
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = true
+	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
+	require.Empty(t, reason)
+	p := parser.New()
+	prevPruneMode := mockCtx.GetSessionVars().PartitionPruneMode.Load()
+	mockCtx.GetSessionVars().PartitionPruneMode.Store(string(variable.Static))
+	derivedWithCTE, err := p.ParseOneStmt(
+		"select * from (with t1 as (select 1 as a) select * from t1) dt, test.t1",
+		mysql.DefaultCharset, mysql.DefaultCollationName,
+	)
+	require.NoError(t, err)
+	c, reason = core.CacheableWithCtx(mockCtx, derivedWithCTE, is)
+	require.False(t, c)
+	require.Equal(t, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'", reason)
+	subquerySetWith, err := p.ParseOneStmt(
+		"select (with t1 as (select 1 as a) select a from t1 union all select a from t1) as x from test.t1",
+		mysql.DefaultCharset, mysql.DefaultCollationName,
+	)
+	require.NoError(t, err)
+	c, reason = core.CacheableWithCtx(mockCtx, subquerySetWith, is)
+	require.False(t, c)
+	require.Equal(t, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'", reason)
+	mockCtx.GetSessionVars().PartitionPruneMode.Store(prevPruneMode)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -446,6 +501,50 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (c int)`)
 	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
+}
+
+func TestPreparedPlanCacheWithCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache = 1`)
+	tk.MustExec(`drop table if exists v2`)
+	tk.MustExec(`create table v2 (
+		id int primary key auto_increment,
+		group_name varchar(50),
+		sum1 int not null,
+		cnt int not null,
+		created_at timestamp default current_timestamp
+	)`)
+	tk.MustExec("create index idx_sum1 on v2(sum1)")
+	tk.MustExec("create index idx_cnt on v2(cnt)")
+	tk.MustExec("insert into v2(group_name, sum1, cnt) values ('g1', 100, 5), ('g2', 100, 6)")
+
+	tk.MustExec(`prepare stmt from 'with cte as (
+		select sum1 as c0, cnt as c1
+		from v2
+		where sum1 = 100
+	) select c1 from cte where c1 = 5'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("execute stmt").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare stmt_rec from 'with recursive cte1 as (
+		select 1 c1
+		union all
+		select c1 + 1 c1 from cte1 where c1 < ?
+	) select * from cte1 order by c1'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @a=3")
+	tk.MustQuery("execute stmt_rec using @a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt_rec using @a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {

@@ -585,8 +585,9 @@ type PlanReplayerDumpTask struct {
 	HistoricalStatsTS uint64
 	DebugTrace        []any
 
-	FileName string
-	Zf       io.WriteCloser
+	FileName     string
+	PresignedURL string
+	Zf           io.WriteCloser
 
 	// IsCapture indicates whether the task is from capture
 	IsCapture bool

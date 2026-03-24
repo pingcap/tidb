@@ -1078,6 +1078,7 @@ const (
 	ErrInvalidOptionVal                    = 8164
 	ErrDuplicateOption                     = 8165
 	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataDuplicateKeyConflict        = 8167
 	ErrLoadDataJobNotFound                 = 8170
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
@@ -1150,6 +1151,8 @@ const (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 	ErrInvalidAffinityOption              = 8266
 	ErrForbiddenDDL                       = 8267
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1167,6 +1170,8 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+
+	// [8800, 8900) are reserved for a downstream fork
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

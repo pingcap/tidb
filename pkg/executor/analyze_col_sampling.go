@@ -1,0 +1,969 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"context"
+	stderrors "errors"
+	"slices"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/channel"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+)
+
+func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	var ranges []*ranger.Range
+	if hc := e.handleCols; hc != nil {
+		if hc.IsInt() {
+			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
+		} else {
+			ranges = ranger.FullNotNullRange()
+		}
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+
+	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// are derived from sample data processed within TiDB.
+	// The reason is that we want to keep the same row sampling for all columns.
+	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
+	specialIndexesOffsets := make([]int, 0, len(e.indexes))
+	for i, idx := range e.indexes {
+		isSpecial := false
+		for _, col := range idx.Columns {
+			colInfo := e.colsInfo[col.Offset]
+			isPrefixCol := col.Length != types.UnspecifiedLength
+			if colInfo.IsVirtualGenerated() || isPrefixCol {
+				isSpecial = true
+				break
+			}
+		}
+		if isSpecial {
+			specialIndexesOffsets = append(specialIndexesOffsets, i)
+			specialIndexes = append(specialIndexes, idx)
+		}
+	}
+	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
+	if err != nil {
+		e.memTracker.Release(e.memTracker.BytesConsumed())
+		return &statistics.AnalyzeResults{Err: err, Job: e.job}
+	}
+	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
+	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, err := e.buildSamplingStats(ctx, gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	if err != nil {
+		e.memTracker.Release(e.memTracker.BytesConsumed())
+		return &statistics.AnalyzeResults{Err: err, Job: e.job}
+	}
+	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
+	colGroupResult := &statistics.AnalyzeResult{
+		Hist:    hists[cLen:],
+		TopNs:   topNs[cLen:],
+		Fms:     fmSketches[cLen:],
+		IsIndex: 1,
+	}
+	// Discard stats of _tidb_rowid.
+	// Because the process of analyzing will keep the order of results be the same as the colsInfo in the analyze task,
+	// and in `buildAnalyzeFullSamplingTask` we always place the _tidb_rowid at the last of colsInfo, so if there are
+	// stats for _tidb_rowid, it must be at the end of the column stats.
+	// Virtual column has no histogram yet. So we check nil here.
+	if hists[cLen-1] != nil && hists[cLen-1].ID == -1 {
+		cLen--
+	}
+	colResult := &statistics.AnalyzeResult{
+		Hist:  hists[:cLen],
+		TopNs: topNs[:cLen],
+		Fms:   fmSketches[:cLen],
+	}
+
+	return &statistics.AnalyzeResults{
+		TableID:       e.tableID,
+		Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
+		Job:           e.job,
+		StatsVer:      e.StatsVersion,
+		Count:         count,
+		Snapshot:      e.snapshot,
+		BaseCount:     e.baseCount,
+		BaseModifyCnt: e.baseModifyCnt,
+	}
+}
+
+// decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the decoded normal columns.
+func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
+	collector statistics.RowSampleCollector,
+	fieldTps []*types.FieldType,
+	virtualColIdx []int,
+	schema *expression.Schema,
+) error {
+	totFts := make([]*types.FieldType, 0, e.schemaForVirtualColEval.Len())
+	for _, col := range e.schemaForVirtualColEval.Columns {
+		totFts = append(totFts, col.RetType)
+	}
+	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
+	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
+	for _, sample := range collector.Base().Samples {
+		for i, columns := range sample.Columns {
+			// Virtual columns will be decoded as null first.
+			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	intest.AssertFunc(func() bool {
+		// Ensure all columns in the chunk have the same number of rows.
+		// Checking for virtual columns.
+		for i := 1; i < chk.NumCols(); i++ {
+			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+				return false
+			}
+		}
+		return true
+	}, "all columns in chunk should have the same number of rows")
+	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
+	if err != nil {
+		return err
+	}
+	iter := chunk.NewIterator4Chunk(chk)
+	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
+		datums := row.GetDatumRow(totFts)
+		collector.Base().Samples[i].Columns = datums
+	}
+	return nil
+}
+
+func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID, partitionID int64, isPartition bool, info string, index int) {
+	if index < 0 {
+		logutil.BgLogger().Debug(info,
+			zap.Int64("tableID", tableID),
+			zap.Int64("partitionID", partitionID),
+			zap.Bool("isPartitionTable", isPartition),
+			zap.Int64("oldRootCount", oldRootCount),
+			zap.Int64("newRootCount", newRootCount),
+			zap.Int64("subCount", subCount))
+	} else {
+		logutil.BgLogger().Debug(info,
+			zap.Int64("tableID", tableID),
+			zap.Int64("partitionID", partitionID),
+			zap.Bool("isPartitionTable", isPartition),
+			zap.Int64("oldRootCount", oldRootCount),
+			zap.Int64("newRootCount", newRootCount),
+			zap.Int64("subCount", subCount),
+			zap.Int("subCollectorIndex", index))
+	}
+}
+
+func (e *AnalyzeColumnsExec) buildSamplingStats(
+	ctx context.Context,
+	gp *gp.Pool,
+	ranges []*ranger.Range,
+	indexesWithVirtualColOffsets []int,
+	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
+	samplingStatsConcurrency int,
+) (
+	count int64,
+	hists []*statistics.Histogram,
+	topns []*statistics.TopN,
+	fmSketches []*statistics.FMSketch,
+	err error,
+) {
+	// Open memory tracker and resultHandler.
+	if err = e.open(ctx, ranges); err != nil {
+		return 0, nil, nil, nil, err
+	}
+	defer func() {
+		if err1 := e.resultHandler.Close(); err1 != nil {
+			err = err1
+		}
+	}()
+
+	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+	for range l {
+		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+	}
+
+	sc := e.ctx.GetSessionVars().StmtCtx
+
+	// Start workers to merge the result from collectors.
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
+	taskCtx, taskCancel := context.WithCancelCause(ctx)
+	defer taskCancel(nil)
+	var taskEg errgroup.Group
+	// Start read data from resultHandler and send them to mergeTaskCh.
+	taskEg.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = getAnalyzePanicErr(r)
+			}
+		}()
+		err = readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+		if err != nil {
+			taskCancel(err)
+		}
+		return err
+	})
+	e.samplingMergeWg = &util.WaitGroupWrapper{}
+	e.samplingMergeWg.Add(samplingStatsConcurrency)
+	mergeWorkerPanicCnt := 0
+	mergeEg, mergeCtx := errgroup.WithContext(taskCtx)
+	for i := range samplingStatsConcurrency {
+		id := i
+		gp.Go(func() {
+			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, l, id)
+		})
+	}
+	// Merge the result from collectors.
+	mergeEg.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = getAnalyzePanicErr(r)
+			}
+		}()
+		for mergeWorkerPanicCnt < samplingStatsConcurrency {
+			mergeResult, ok := <-mergeResultCh
+			if !ok {
+				break
+			}
+			if mergeResult.err != nil {
+				err = mergeResult.err
+				if isAnalyzeWorkerPanic(mergeResult.err) {
+					mergeWorkerPanicCnt++
+				}
+				continue
+			}
+			oldRootCollectorSize := rootRowCollector.Base().MemSize
+			oldRootCollectorCount := rootRowCollector.Base().Count
+			// Merge the result from sub-collectors.
+			rootRowCollector.MergeCollector(mergeResult.collector)
+			newRootCollectorCount := rootRowCollector.Base().Count
+			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
+				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
+				"merge subMergeWorker in AnalyzeColumnsExec", -1)
+			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+			mergeResult.collector.DestroyAndPutToPool()
+		}
+		return err
+	})
+	err = taskEg.Wait()
+	if err != nil {
+		if err1 := mergeEg.Wait(); err1 != nil {
+			if !stderrors.Is(err1, err) && err1.Error() != err.Error() {
+				err = stderrors.Join(err, err1)
+			}
+		}
+		drainPendingSamplingMergeTasks(mergeTaskCh, e.memTracker)
+		return 0, nil, nil, nil, getAnalyzePanicErr(err)
+	}
+	err = mergeEg.Wait()
+	drainPendingSamplingMergeTasks(mergeTaskCh, e.memTracker)
+	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
+	if err != nil {
+		taskCancel(err)
+		return 0, nil, nil, nil, err
+	}
+
+	// Decode the data from sample collectors.
+	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
+	// Filling virtual columns is necessary here because these samples are used to build statistics for indexes that constructed by virtual columns.
+	if len(virtualColIdx) > 0 {
+		fieldTps := make([]*types.FieldType, 0, len(virtualColIdx))
+		for _, colOffset := range virtualColIdx {
+			fieldTps = append(fieldTps, e.schemaForVirtualColEval.Columns[colOffset].RetType)
+		}
+		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, e.schemaForVirtualColEval)
+		if err != nil {
+			return 0, nil, nil, nil, err
+		}
+	} else {
+		// If there's no virtual column, normal decode way is enough.
+		for _, sample := range rootRowCollector.Base().Samples {
+			for i := range sample.Columns {
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
+				if err != nil {
+					return 0, nil, nil, nil, err
+				}
+			}
+		}
+	}
+
+	// Calculate handle from the row data for each row. It will be used to sort the samples.
+	for _, sample := range rootRowCollector.Base().Samples {
+		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
+		if err != nil {
+			return 0, nil, nil, nil, err
+		}
+	}
+	colLen := len(e.colsInfo)
+	// The order of the samples are broken when merging samples from sub-collectors.
+	// So now we need to sort the samples according to the handle in order to calculate correlation.
+	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) int {
+		return i.Handle.Compare(j.Handle)
+	})
+
+	totalLen := len(e.colsInfo) + len(e.indexes)
+	hists = make([]*statistics.Histogram, totalLen)
+	topns = make([]*statistics.TopN, totalLen)
+	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
+	buildResultChan := make(chan error, totalLen+samplingStatsConcurrency)
+	buildTaskChan := make(chan *samplingBuildTask, totalLen)
+	if totalLen < samplingStatsConcurrency {
+		samplingStatsConcurrency = totalLen
+	}
+	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(gp, buildResultChan)
+	exitCh := make(chan struct{})
+	e.samplingBuilderWg.Add(samplingStatsConcurrency)
+
+	// Start workers to build stats.
+	for range samplingStatsConcurrency {
+		e.samplingBuilderWg.Run(func() {
+			e.subBuildWorker(ctx, buildResultChan, buildTaskChan, hists, topns, exitCh)
+		})
+	}
+	// Generate tasks for building stats.
+	for i, col := range e.colsInfo {
+		buildTaskChan <- &samplingBuildTask{
+			id:               col.ID,
+			rootRowCollector: rootRowCollector,
+			tp:               &col.FieldType,
+			isColumn:         true,
+			slicePos:         i,
+		}
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
+	}
+
+	indexPushedDownResult := <-idxNDVPushDownCh
+	if indexPushedDownResult.err != nil {
+		close(exitCh)
+		channel.Clear(buildResultChan)
+		return 0, nil, nil, nil, indexPushedDownResult.err
+	}
+	for _, offset := range indexesWithVirtualColOffsets {
+		ret := indexPushedDownResult.results[e.indexes[offset].ID]
+		rootRowCollector.Base().NullCount[colLen+offset] = ret.Count
+		rootRowCollector.Base().FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
+	}
+
+	// Generate tasks for building stats for indexes.
+	for i, idx := range e.indexes {
+		buildTaskChan <- &samplingBuildTask{
+			id:               idx.ID,
+			rootRowCollector: rootRowCollector,
+			tp:               types.NewFieldType(mysql.TypeBlob),
+			isColumn:         false,
+			slicePos:         colLen + i,
+		}
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
+	}
+	close(buildTaskChan)
+
+	panicCnt := 0
+	for panicCnt < samplingStatsConcurrency {
+		err1, ok := <-buildResultChan
+		if !ok {
+			break
+		}
+		if err1 != nil {
+			err = err1
+			if isAnalyzeWorkerPanic(err1) {
+				panicCnt++
+			}
+			continue
+		}
+	}
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+
+	count = rootRowCollector.Base().Count
+	return
+}
+
+// handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
+func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(ctx context.Context, indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			totalResultCh <- analyzeIndexNDVTotalResult{
+				err: getAnalyzePanicErr(r),
+			}
+		}
+	}()
+	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
+	taskCh := make(chan *analyzeTask, len(tasks))
+	pendingJobs := make(map[uint64]*statistics.AnalyzeJob, len(tasks))
+	for _, task := range tasks {
+		AddNewAnalyzeJob(e.ctx, task.job)
+		if task.job != nil && task.job.ID != nil {
+			pendingJobs[*task.job.ID] = task.job
+		}
+	}
+	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	if len(tasks) < samplingStatsConcurrency {
+		samplingStatsConcurrency = len(tasks)
+	}
+	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
+	subIndexWorkerWg.Add(samplingStatsConcurrency)
+	for range samplingStatsConcurrency {
+		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(ctx, taskCh, resultsCh) })
+	}
+	for _, task := range tasks {
+		taskCh <- task
+	}
+	close(taskCh)
+	panicCnt := 0
+	totalResult := analyzeIndexNDVTotalResult{
+		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
+	}
+	var err error
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	for panicCnt < samplingStatsConcurrency {
+		results, ok := <-resultsCh
+		if !ok {
+			break
+		}
+		if results.Job != nil && results.Job.ID != nil {
+			delete(pendingJobs, *results.Job.ID)
+		}
+		if results.Err != nil {
+			err = results.Err
+			statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
+			if isAnalyzeWorkerPanic(err) {
+				panicCnt++
+			}
+			continue
+		}
+		statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
+		totalResult.results[results.Ars[0].Hist[0].ID] = results
+	}
+	if err == nil {
+		if ctxErr := normalizeCtxErrWithCause(ctx, ctx.Err()); ctxErr != nil {
+			err = ctxErr
+		}
+	}
+	if err != nil && len(pendingJobs) > 0 {
+		for _, job := range pendingJobs {
+			statsHandle.FinishAnalyzeJob(job, err, statistics.TableAnalysisJob)
+		}
+	}
+	if err != nil {
+		totalResult.err = err
+	}
+	totalResultCh <- totalResult
+}
+
+// subIndexWorker receive the task for each index and return the result for them.
+func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(ctx context.Context, taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
+	var task *analyzeTask
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultsCh <- &statistics.AnalyzeResults{
+				Err: getAnalyzePanicErr(r),
+				Job: task.job,
+			}
+		}
+	}()
+	for {
+		var ok bool
+		select {
+		case task, ok = <-taskCh:
+			if !ok {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+		statsHandle.StartAnalyzeJob(task.job)
+		if task.taskType != idxTask {
+			resultsCh <- &statistics.AnalyzeResults{
+				Err: errors.Errorf("incorrect analyze type"),
+				Job: task.job,
+			}
+			continue
+		}
+		task.idxExec.job = task.job
+		resultsCh <- analyzeIndexNDVPushDown(ctx, task.idxExec)
+	}
+}
+
+// buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
+// This is because we cannot push the calculation of the virtual column down to the tikv side.
+func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
+	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
+	tasks := make([]*analyzeTask, 0, len(indexInfos))
+	sc := e.ctx.GetSessionVars().StmtCtx
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), e.ctx)
+	for _, indexInfo := range indexInfos {
+		base := baseAnalyzeExec{
+			ctx:         e.ctx,
+			tableID:     e.TableID,
+			concurrency: concurrency,
+			analyzePB: &tipb.AnalyzeReq{
+				Tp:             tipb.AnalyzeType_TypeIndex,
+				Flags:          sc.PushDownFlags(),
+				TimeZoneOffset: offset,
+			},
+			snapshot: e.snapshot,
+		}
+		idxExec := &AnalyzeIndexExec{
+			baseAnalyzeExec: base,
+			isCommonHandle:  e.tableInfo.IsCommonHandle,
+			idxInfo:         indexInfo,
+		}
+		idxExec.opts = make(map[ast.AnalyzeOptionType]uint64, len(ast.AnalyzeOptionString))
+		idxExec.opts[ast.AnalyzeOptNumTopN] = 0
+		idxExec.opts[ast.AnalyzeOptCMSketchDepth] = 0
+		idxExec.opts[ast.AnalyzeOptCMSketchWidth] = 0
+		idxExec.opts[ast.AnalyzeOptNumSamples] = 0
+		idxExec.opts[ast.AnalyzeOptNumBuckets] = 1
+		statsVersion := new(int32)
+		*statsVersion = int32(e.StatsVersion)
+		intest.Assert(*statsVersion == statistics.Version2, "the stats version should be 2 when analyzing index with virtual column")
+		// No Top-N
+		topnSize := int32(0)
+		idxExec.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+			// One bucket to store the null for null histogram.
+			BucketSize: 1,
+			NumColumns: int32(len(indexInfo.Columns)),
+			TopNSize:   &topnSize,
+			Version:    statsVersion,
+			SketchSize: statistics.MaxSketchSize,
+		}
+		if idxExec.isCommonHandle && indexInfo.Primary {
+			idxExec.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
+		}
+		// No CM-Sketch.
+		depth := int32(0)
+		width := int32(0)
+		idxExec.analyzePB.IdxReq.CmsketchDepth = &depth
+		idxExec.analyzePB.IdxReq.CmsketchWidth = &width
+		autoAnalyze := ""
+		if e.ctx.GetSessionVars().InRestrictedSQL {
+			autoAnalyze = "auto "
+		}
+		job := &statistics.AnalyzeJob{DBName: e.job.DBName, TableName: e.job.TableName, PartitionName: e.job.PartitionName, JobInfo: autoAnalyze + "analyze ndv for index " + indexInfo.Name.O}
+		idxExec.job = job
+		tasks = append(tasks, &analyzeTask{
+			taskType: idxTask,
+			idxExec:  idxExec,
+			job:      job,
+		})
+	}
+	return tasks
+}
+
+func (e *AnalyzeColumnsExec) subMergeWorker(
+	ctx context.Context,
+	cancel context.CancelCauseFunc,
+	resultCh chan<- *samplingMergeResult,
+	taskCh <-chan []byte,
+	l int,
+	index int,
+) {
+	// Only close the resultCh in the first worker.
+	closeTheResultCh := index == 0
+	var inflightDataSize int64
+	var inflightRespSize int64
+	defer func() {
+		if r := recover(); r != nil {
+			panicErr := getAnalyzePanicErr(r)
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			cancel(panicErr)
+			resultCh <- &samplingMergeResult{err: panicErr}
+		}
+		if inflightRespSize > 0 {
+			e.memTracker.Release(inflightRespSize)
+		}
+		if inflightDataSize > 0 {
+			e.memTracker.Release(inflightDataSize)
+		}
+		e.samplingMergeWg.Done()
+		if closeTheResultCh {
+			e.samplingMergeWg.Wait()
+			close(resultCh)
+		}
+	}()
+	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
+		panic("failpoint triggered")
+	})
+	failpoint.Inject("mockAnalyzeMergeWorkerSlowConsume", func(val failpoint.Value) {
+		times := val.(int)
+		for range times {
+			e.memTracker.Consume(5 << 20)
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	// Keep one private collector per merge worker and flush it when taskCh is closed.
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+	for range l {
+		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+	}
+	// Early-return paths need to release the worker-local collector explicitly.
+	cleanupCollector := func() {
+		e.memTracker.Release(retCollector.Base().MemSize)
+		retCollector.DestroyAndPutToPool()
+	}
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	// Merge sampled batches until the producer closes taskCh or cancellation arrives.
+	for {
+		select {
+		case data, ok := <-taskCh:
+			if !ok {
+				resultCh <- &samplingMergeResult{collector: retCollector}
+				return
+			}
+			inflightDataSize = int64(cap(data))
+			colResp := &tipb.AnalyzeColumnsResp{}
+			err := colResp.Unmarshal(data)
+			if err != nil {
+				e.memTracker.Release(inflightDataSize)
+				inflightDataSize = 0
+				cleanupCollector()
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
+			inflightRespSize = int64(colResp.Size())
+			e.memTracker.Consume(inflightRespSize)
+
+			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
+
+			oldRetCollectorSize := retCollector.Base().MemSize
+			oldRetCollectorCount := retCollector.Base().Count
+			retCollector.MergeCollector(subCollector)
+			newRetCollectorCount := retCollector.Base().Count
+			printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
+				e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
+				"merge subMergeWorker in AnalyzeColumnsExec", index)
+
+			newRetCollectorSize := retCollector.Base().MemSize
+			subCollectorSize := subCollector.Base().MemSize
+			e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
+			e.memTracker.Release(inflightDataSize + inflightRespSize)
+			inflightDataSize = 0
+			inflightRespSize = 0
+			subCollector.DestroyAndPutToPool()
+		case <-ctx.Done():
+			err := normalizeCtxErrWithCause(ctx, ctx.Err())
+			if err != nil {
+				cleanupCollector()
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
+			if intest.InTest {
+				panic("this ctx should be canceled with the error")
+			}
+			cleanupCollector()
+			resultCh <- &samplingMergeResult{err: errors.New("context canceled without error")}
+			return
+		}
+	}
+}
+
+func drainPendingSamplingMergeTasks(taskCh <-chan []byte, memTracker *memory.Tracker) {
+	for data := range taskCh {
+		memTracker.Release(int64(cap(data)))
+	}
+}
+
+func (e *AnalyzeColumnsExec) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("analyze subBuildWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- getAnalyzePanicErr(r)
+		}
+	}()
+	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
+		panic("failpoint triggered")
+	})
+
+	colLen := len(e.colsInfo)
+
+workLoop:
+	for {
+		select {
+		case task, ok := <-taskCh:
+			if !ok {
+				break workLoop
+			}
+			// Track per-task allocations: curBufferedMemSize is pending charges to the tracker,
+			// totalBuffered accumulates bytes that become part of collector.MemSize.
+			curBufferedMemSize := int64(0)
+			totalBuffered := int64(0)
+
+			consumeBuffered := func(bytes int64) {
+				totalBuffered += bytes
+				e.memTracker.BufferedConsume(&curBufferedMemSize, bytes)
+			}
+			flushBuffered := func(cum *int64) {
+				if curBufferedMemSize != 0 {
+					e.memTracker.Consume(curBufferedMemSize)
+					curBufferedMemSize = 0
+				}
+				*cum += totalBuffered
+				totalBuffered = 0
+			}
+			var collector *statistics.SampleCollector
+			if task.isColumn {
+				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
+					hists[task.slicePos] = nil
+					topns[task.slicePos] = nil
+					continue
+				}
+				sampleNum := task.rootRowCollector.Base().Samples.Len()
+				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
+				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
+				// 8 means the pointer size of sampleItems slice.
+				// types.EmptyDatumSize means the empty datum size we shallow copied from row.Columns to SampleItem.Value.
+				// The real underlying byte slice of Datum in row.Columns has already be accounted FromProto().
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + types.EmptyDatumSize)
+				e.memTracker.Consume(collectorMemSize)
+				var collator collate.Collator
+				ft := e.colsInfo[task.slicePos].FieldType
+				// When it's new collation data, we need to use its collate key instead of original value because only
+				// the collate key can ensure the correct ordering.
+				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
+				if ft.EvalType() == types.ETString && ft.GetType() != mysql.TypeEnum && ft.GetType() != mysql.TypeSet {
+					collator = collate.GetCollator(ft.GetCollate())
+				}
+				for j, row := range task.rootRowCollector.Base().Samples {
+					if row.Columns[task.slicePos].IsNull() {
+						continue
+					}
+					val := row.Columns[task.slicePos]
+					// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
+					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
+						continue
+					}
+					if collator != nil {
+						val.SetBytes(collator.Key(val.GetString()))
+						deltaSize := int64(cap(val.GetBytes()))
+						consumeBuffered(deltaSize)
+					}
+					sampleItems = append(sampleItems, &statistics.SampleItem{
+						Value:   &val,
+						Ordinal: j,
+					})
+				}
+				flushBuffered(&collectorMemSize)
+				collector = &statistics.SampleCollector{
+					Samples:   sampleItems,
+					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+					MemSize:   collectorMemSize,
+				}
+			} else {
+				var tmpDatum types.Datum
+				var err error
+				idx := e.indexes[task.slicePos-colLen]
+				sampleNum := task.rootRowCollector.Base().Samples.Len()
+				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
+				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
+				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
+				// types.EmptyDatumSize: same meaning as above branch.
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8 + types.EmptyDatumSize)
+				e.memTracker.Consume(collectorMemSize)
+				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
+			indexSampleCollectLoop:
+				for _, row := range task.rootRowCollector.Base().Samples {
+					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
+						continue
+					}
+					b := make([]byte, 0, 8)
+					for _, col := range idx.Columns {
+						// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
+						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
+							continue indexSampleCollectLoop
+						}
+						if col.Length != types.UnspecifiedLength {
+							row.Columns[col.Offset].Copy(&tmpDatum)
+							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
+							err = errCtx.HandleError(err)
+							if err != nil {
+								resultCh <- err
+								continue workLoop
+							}
+							continue
+						}
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+						err = errCtx.HandleError(err)
+						if err != nil {
+							resultCh <- err
+							continue workLoop
+						}
+					}
+					if cap(b) > 8 {
+						// We already accounted 8 bytes before the loop started,
+						// here we need to account the remaining bytes.
+						consumeBuffered(int64(cap(b) - 8))
+					}
+					tmp := types.NewBytesDatum(b)
+					sampleItems = append(sampleItems, &statistics.SampleItem{
+						Value: &tmp,
+					})
+				}
+				flushBuffered(&collectorMemSize)
+				collector = &statistics.SampleCollector{
+					Samples:   sampleItems,
+					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+					MemSize:   collectorMemSize,
+				}
+			}
+			releaseCollectorMemory := func() {
+				collectorMemSize := collector.MemSize
+				failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+				intest.Assert(collectorMemSize >= 0, "collector memory size should be non-negative")
+				e.memTracker.Release(collectorMemSize)
+				collector.Destroy()
+				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+			}
+			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+			if task.isColumn {
+				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
+					numTopN = 0
+				}
+			} else {
+				idx := e.indexes[task.slicePos-colLen]
+				if isSingleColNonPrefixUniqueIndex(idx) {
+					numTopN = 0
+				}
+			}
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
+			if err != nil {
+				resultCh <- err
+				releaseCollectorMemory()
+				continue
+			}
+			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
+			e.memTracker.Consume(finalMemSize)
+			hists[task.slicePos] = hist
+			topns[task.slicePos] = topn
+			resultCh <- nil
+			releaseCollectorMemory()
+		case <-exitCh:
+			return
+		case <-ctx.Done():
+			resultCh <- normalizeCtxErrWithCause(ctx, ctx.Err())
+			return
+		}
+	}
+}
+
+type analyzeIndexNDVTotalResult struct {
+	results map[int64]*statistics.AnalyzeResults
+	err     error
+}
+
+type samplingMergeResult struct {
+	collector statistics.RowSampleCollector
+	err       error
+}
+
+type samplingBuildTask struct {
+	id               int64
+	rootRowCollector statistics.RowSampleCollector
+	tp               *types.FieldType
+	isColumn         bool
+	slicePos         int
+}
+
+func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
+	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
+	defer close(mergeTaskCh)
+	for {
+		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
+			dom := domain.GetDomain(sctx)
+			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+				dom.SysProcTracker().KillSysProcess(id)
+			}
+		})
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return err
+		}
+		failpoint.Inject("mockSlowAnalyzeV2", func() {
+			select {
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				if err == nil {
+					err = ctx.Err()
+				}
+				failpoint.Return(err)
+			case <-time.After(1000 * time.Second):
+			}
+		})
+
+		data, err := handler.nextRaw(ctx)
+		if err != nil {
+			err = normalizeCtxErrWithCause(ctx, err)
+			return errors.Trace(err)
+		}
+		if data == nil {
+			break
+		}
+
+		dataSize := int64(cap(data))
+		memTracker.Consume(dataSize)
+		select {
+		case mergeTaskCh <- data:
+		case <-ctx.Done():
+			memTracker.Release(dataSize)
+			return errors.Trace(normalizeCtxErrWithCause(ctx, ctx.Err()))
+		}
+	}
+
+	return nil
+}

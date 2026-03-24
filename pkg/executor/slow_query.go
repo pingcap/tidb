@@ -982,6 +982,9 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else if strings.HasPrefix(line, variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr):]
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogWarnings, line, e.checker, fileLine)
+				} else if strings.HasPrefix(line, variable.SlowLogSessionConnectAttrs+variable.SlowLogSpaceMarkStr) {
+					line = line[len(variable.SlowLogSessionConnectAttrs+variable.SlowLogSpaceMarkStr):]
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogSessionConnectAttrs, line, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr):]
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
@@ -1142,7 +1145,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
 		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings, variable.SlowLogSessAliasStr,
-		variable.SlowLogResourceGroup:
+		variable.SlowLogResourceGroup, variable.SlowLogRUV2Metrics:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
@@ -1168,6 +1171,18 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 				return false, err
 			}
 			row[columnIdx] = types.NewDatum(v)
+			return true, nil
+		}, nil
+	case variable.SlowLogSessionConnectAttrs:
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
+			if len(value) == 0 {
+				return true, nil
+			}
+			bj, err := types.ParseBinaryJSONFromString(value)
+			if err != nil {
+				return false, err
+			}
+			row[columnIdx] = types.NewDatum(bj)
 			return true, nil
 		}, nil
 	}

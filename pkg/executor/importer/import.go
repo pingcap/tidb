@@ -32,6 +32,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -110,6 +111,7 @@ const (
 	maxWriteSpeedOption       = "max_write_speed"
 	checksumTableOption       = "checksum_table"
 	recordErrorsOption        = "record_errors"
+	onDupKeyOption            = "on_duplicate_key"
 	detachedOption            = "detached"
 	// if 'import mode' enabled, TiKV will:
 	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
@@ -148,6 +150,7 @@ var (
 		maxWriteSpeedOption:         true,
 		checksumTableOption:         true,
 		recordErrorsOption:          true,
+		onDupKeyOption:              true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
@@ -204,6 +207,17 @@ var (
 	defaultCharacterSet = "utf8mb4"
 	// default field null def
 	defaultFieldNullDef = []string{`\N`}
+)
+
+// OnDupKeyMode controls the behavior when IMPORT INTO finds conflicted rows.
+type OnDupKeyMode string
+
+const (
+	// OnDupKeyModeCapture keeps current behavior, i.e. remove conflicted
+	// rows and capture them for later inspection.
+	OnDupKeyModeCapture OnDupKeyMode = "capture"
+	// OnDupKeyModeError means fail on first conflict.
+	OnDupKeyModeError OnDupKeyMode = "error"
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -288,6 +302,7 @@ type Plan struct {
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
+	OnDupKey              OnDupKeyMode
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
@@ -318,6 +333,18 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+}
+
+// GetOnDupKeyMode returns the conflict handling mode.
+// For task metadata generated before this option was introduced, the value is
+// empty.
+// Note: currently it's not possible to have other unknown values, so we don't
+// handle that case here.
+func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
+	if p.OnDupKey == "" {
+		return OnDupKeyModeError
+	}
+	return p.OnDupKey
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -663,6 +690,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
+	p.OnDupKey = OnDupKeyModeError
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = getDefMaxEngineSize()
@@ -855,6 +883,19 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+	if opt, ok := specifiedOptions[onDupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		mode := OnDupKeyMode(strings.ToLower(v))
+		switch mode {
+		case OnDupKeyModeCapture, OnDupKeyModeError:
+			p.OnDupKey = mode
+		default:
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
 	if opt, ok := specifiedOptions[groupKeyOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
@@ -887,8 +928,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
-			// only support s3 and gcs now.
-			if b.GetS3() == nil && b.GetGcs() == nil {
+			if !isSupportedCloudStorageBackend(b) {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
 		}
@@ -911,6 +951,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[manualRecoveryOption]; ok {
 		p.ManualRecovery = true
+	}
+
+	if _, ok := specifiedOptions[onDupKeyOption]; ok && p.IsLocalSort() {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(onDupKeyOption, "local sort")
 	}
 
 	if kerneltype.IsClassic() {
@@ -956,6 +1000,10 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	if p.IsGlobalSort() {
 		p.DisableTiKVImportMode = true
 	}
+}
+
+func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
+	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
