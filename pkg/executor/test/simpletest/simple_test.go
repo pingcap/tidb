@@ -776,6 +776,23 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows())
 
 	tk.MustExecToErr("kill rand()", "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+
+	// Test user variable support in KILL (issue #55369)
+	tk.MustExec(fmt.Sprintf("set @kill_id = %d", killConnID))
+	tk.MustExec("kill @kill_id")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	// Test KILL QUERY with user variable
+	tk.MustExec("kill query @kill_id")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	// Test KILL CONNECTION with user variable
+	tk.MustExec("kill connection @kill_id")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
 	// remote kill is tested in `tests/globalkilltest`
 }
 

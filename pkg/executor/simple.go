@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -2617,13 +2618,25 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
-	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
-		if x.FnName.L == ast.ConnectionID {
-			sm := e.Ctx().GetSessionManager()
-			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
-			return nil
+	if s.Expr != nil {
+		if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
+			if x.FnName.L == ast.ConnectionID {
+				sm := e.Ctx().GetSessionManager()
+				sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
+				return nil
+			}
+			return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 		}
-		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+		// Evaluate expression (handles user variables like @id, etc.)
+		val, err := plannerutil.EvalAstExprWithPlanCtx(e.Ctx().GetPlanCtx(), s.Expr)
+		if err != nil {
+			return err
+		}
+		uintVal, err := val.ConvertTo(e.Ctx().GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLonglong))
+		if err != nil {
+			return errors.Errorf("non-integer value for connection ID: %v", val.GetValue())
+		}
+		s.ConnectionID = uintVal.GetUint64()
 	}
 	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()

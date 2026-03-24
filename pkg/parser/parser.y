@@ -15931,6 +15931,28 @@ KillStmt:
 			Expr:          $2,
 		}
 	}
+|	KillOrKillTiDB Variable
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $2,
+		}
+	}
+|	KillOrKillTiDB "CONNECTION" Variable
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $3,
+		}
+	}
+|	KillOrKillTiDB "QUERY" Variable
+	{
+		$$ = &ast.KillStmt{
+			Query:         true,
+			TiDBExtension: $1.(bool),
+			Expr:          $3,
+		}
+	}
 
 KillOrKillTiDB:
 	"KILL"
