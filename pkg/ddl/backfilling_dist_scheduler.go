@@ -657,7 +657,9 @@ func buildTiCIPreSplitImportShardsRequest(
 	return req, nil
 }
 
-func countUniqueFilesForTiCIPreSplitRequest(kvMetaGroups []*external.SortedKVMeta) (int32, int32) {
+func countUniqueFilesForTiCIPreSplitRequest(
+	kvMetaGroups []*external.SortedKVMeta,
+) (dataFileCount int32, statFileCount int32) {
 	dataFiles := make(map[string]struct{})
 	statFiles := make(map[string]struct{})
 	for _, kvMeta := range kvMetaGroups {
