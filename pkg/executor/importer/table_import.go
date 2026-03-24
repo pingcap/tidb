@@ -337,6 +337,15 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 	if err != nil {
 		return nil, err
 	}
+	parserReady := false
+	defer func() {
+		if parserReady {
+			return
+		}
+		if err2 := parser.Close(); err2 != nil {
+			e.logger.Warn("close parser failed", zap.Error(err2))
+		}
+	}()
 	if chunk.Chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
@@ -350,6 +359,7 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 			return nil, err
 		}
 	}
+	parserReady = true
 	return parser, nil
 }
 

@@ -246,6 +246,15 @@ func (s *kvSizeSampler) getParser(
 	if err != nil {
 		return nil, err
 	}
+	parserReady := false
+	defer func() {
+		if parserReady {
+			return
+		}
+		if err2 := parser.Close(); err2 != nil {
+			s.logger.Warn("close parser failed", zap.Error(err2))
+		}
+	}()
 	if chunk.Chunk.Offset == 0 {
 		if err = handleSkipNRows(parser, s.cfg.IgnoreLines); err != nil {
 			return nil, err
@@ -256,6 +265,7 @@ func (s *kvSizeSampler) getParser(
 			return nil, err
 		}
 	}
+	parserReady = true
 	return parser, nil
 }
 

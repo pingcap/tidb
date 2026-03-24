@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"go.uber.org/zap"
 )
 
@@ -332,6 +332,9 @@ func (s *fileScanner) estimateOneTableSize(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	if sampledSize.SourceSize == 0 && sampledSize.TotalKVSize() == 0 {
+		return 0, nil
+	}
 	if sampledSize.SourceSize <= 0 || sampledSize.TotalKVSize() <= 0 {
 		return tblMeta.TotalSize, nil
 	}
@@ -394,7 +397,7 @@ func (s *fileScanner) buildEstimateTableInfo(ctx context.Context, tblMeta *mydum
 	if !ok {
 		return nil, errors.Errorf("schema file %s does not contain a CREATE TABLE statement", tblMeta.SchemaFile.FileMeta.Path)
 	}
-	tableInfo, err := ddl.MockTableInfo(utilmock.NewContext(), createStmt, 1)
+	tableInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), createStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

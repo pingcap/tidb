@@ -184,6 +184,49 @@ func TestFileScanner(t *testing.T) {
 		require.Equal(t, totalTiKVSize, estimate.TotalTiKVSize)
 		require.Greater(t, tableEstimates["with_idx"].TiKVSize, tableEstimates["no_idx"].TiKVSize)
 	})
+
+	t.Run("EstimateImportDataSizeCSV", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.empty_csv-schema.sql"),
+			[]byte("CREATE TABLE db1.empty_csv (id INT PRIMARY KEY, v VARCHAR(255));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.empty_csv.001.csv"),
+			[]byte("id,v\n"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.with_csv-schema.sql"),
+			[]byte("CREATE TABLE db1.with_csv (id INT PRIMARY KEY, v VARCHAR(255), KEY idx_v (v));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.with_csv.001.csv"),
+			[]byte("id,v\n1,\"hello,world\"\n"),
+			0o644,
+		))
+
+		cfg := defaultSDKConfig()
+		cfg.csvConfig.Header = true
+		cfg.dataCharacterSet = "utf8mb4"
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, cfg)
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 2)
+
+		tableEstimates := make(map[string]TableDataSizeEstimate, len(estimate.Tables))
+		for _, tableEstimate := range estimate.Tables {
+			tableEstimates[tableEstimate.Table] = tableEstimate
+		}
+		require.Equal(t, int64(0), tableEstimates["empty_csv"].TiKVSize)
+		require.Positive(t, tableEstimates["with_csv"].TiKVSize)
+	})
 }
 
 func TestFileScannerWithEstimateRealSize(t *testing.T) {

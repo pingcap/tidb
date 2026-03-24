@@ -1167,17 +1167,6 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	return nil
 }
 
-// reorderColumns reorder the e.InsertColumns according to the order of columnNames
-// Note: We must ensure there must be one-to-one mapping between e.InsertColumns and columnNames in terms of column name.
-func (e *LoadDataController) reorderColumns(columnNames []string) error {
-	reorderedColumns, err := reorderColumnsByNames(e.InsertColumns, columnNames)
-	if err != nil {
-		return err
-	}
-	e.InsertColumns = reorderedColumns
-	return nil
-}
-
 // GetFieldCount get field count.
 func (e *LoadDataController) GetFieldCount() int {
 	return len(e.FieldMappings)
