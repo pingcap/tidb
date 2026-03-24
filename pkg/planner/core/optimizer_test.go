@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -180,6 +181,25 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 
 		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
 		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+	})
+
+	t.Run("point get uses exact row bound for overlong type estimation", func(t *testing.T) {
+		sctx := coretestsdk.MockContext()
+		defer func() {
+			domain.GetDomain(sctx).StatsHandle().Close()
+		}()
+
+		pointGet := newPointGetPlan(
+			sctx.GetPlanCtx(),
+			"test",
+			expression.NewSchema(),
+			&model.TableInfo{Name: ast.NewCIStr("t")},
+			nil,
+		)
+
+		estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(pointGet)
+		require.Equal(t, float64(1), estimatedRows)
+		require.True(t, hasTrustedStats)
 	})
 }
 

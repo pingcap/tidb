@@ -1274,12 +1274,12 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 		return totalFlen <= maxFlenForOverlongType
 	}
 
-	// Chunk reuse retains the buffers of one reusable chunk, not the full result set.
-	rowsInReusableChunk := estimatedRows
+	// Estimate the retained reusable chunk size as rows per chunk * bytes per row.
+	rowsPerReusableChunk := estimatedRows
 	switch plan.(type) {
 	case *physicalop.PointGetPlan:
 	default:
-		rowsInReusableChunk = min(rowsInReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
+		rowsPerReusableChunk = min(rowsPerReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
 	}
 
 	estimatedBytesPerRow := float64(totalFlen)
@@ -1290,13 +1290,14 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 			return false
 		}
 	}
-	return rowsInReusableChunk*estimatedBytesPerRow <= float64(maxFlenForOverlongType)
+	estimatedReusableChunkBytes := rowsPerReusableChunk * estimatedBytesPerRow
+	return estimatedReusableChunkBytes <= float64(maxFlenForOverlongType)
 }
 
 // estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
-// estimate together with a flag indicating whether the caller may trust observed average row sizes.
-// Point gets have an operator-level row bound, but they still size rows via the schema-level fallback.
-// Non-point readers only enter the relaxed path when row-count stats are trusted.
+// estimate together with a flag indicating whether the caller may use observed average row sizes.
+// Point gets have an exact operator-level row bound. Non-point readers only enter the relaxed path
+// when row-count stats are trusted.
 func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
 	statsInfo := plan.StatsInfo()
 	if statsInfo == nil || statsInfo.RowCount <= 0 {
@@ -1305,7 +1306,7 @@ func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimated
 
 	switch plan.(type) {
 	case *physicalop.PointGetPlan:
-		return math.Ceil(statsInfo.RowCount), false
+		return math.Ceil(statsInfo.RowCount), true
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
 		// Non-point readers only take the relaxed path when row-count stats are trusted.
