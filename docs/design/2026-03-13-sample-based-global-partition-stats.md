@@ -45,13 +45,13 @@ After all partitions are analyzed, global stats are built by merging per-partiti
 
 **It is lossy.** The merge compounds approximation errors in three ways:
 
-1. **TopN count inflation.** When a TopN value from one partition is not in another partition's TopN, the merge estimates its count from the histogram using `totalRows/NDV` (uniform assumption). This estimate accumulates across partitions. Testing with 20 partitions showed a value with true count=120 inflated to 1,920 (16×), causing the merge to pick the wrong value for global TopN ([test](https://github.com/mjonss/tidb/commit/fb7e5208172ecfa8fd6805893c3edf0c951acdd2)).
+1. **TopN count inflation.** When a TopN value from one partition is not in another partition's TopN, the merge estimates its count from the histogram using `totalRows/NDV` (uniform assumption). This estimate accumulates across partitions. Testing with 20 partitions showed a value with true count=120 inflated to 1,920 (16×), causing the merge to pick the wrong value for global TopN ([test](https://github.com/user-attachments/files/26221251/TestMergeTopNV1V2ManyPartitionsInflation.patch)).
 
 2. **Histogram boundary misalignment.** Bucket boundaries optimized for individual partitions do not align across partitions. The merge uses linear interpolation to estimate bucket overlap — a heuristic that compounds errors when applied across many partitions. The TopN merge also mutates partition histograms (removing values via binary search) before they are merged, further reducing histogram quality.
 
 3. **Globally frequent values missed.** A value appearing in 1% of each partition (below each partition's TopN threshold) but 1% of the entire table (above the global TopN threshold) is never discovered by the current approach, because neither partition promoted it to TopN.
 
-Measured on a table with 8,000 partitions and 30M rows ([accuracy report](https://github.com/mjonss/tidb/blob/8e6c61ffca811dbb92251a520eeafe03170a4268/sample-based-accuracy.md)), building histograms directly from sample data instead of merging produced 3–5× more uniform buckets (CV 0.000–0.048 vs 0.062–0.158) and 1,000× better value range accuracy (+7 overshoot vs +7,999). The sample-based path also computes column correlation (the merge path always returns 0) and avoids the O(P × (T + B)) memory spike that caused a second full ANALYZE to crash with OOM in testing.
+Measured on a table with 8,000 partitions and 30M rows ([accuracy report](https://github.com/user-attachments/files/26221115/sample-based-accuracy.md)), building histograms directly from sample data instead of merging produced 3–5× more uniform buckets (CV 0.000–0.048 vs 0.062–0.158) and 1,000× better value range accuracy (+7 overshoot vs +7,999). The sample-based path also computes column correlation (the merge path always returns 0) and avoids the O(P × (T + B)) memory spike that caused a second full ANALYZE to crash with OOM in testing.
 
 ### Problem 2: Single-Partition ANALYZE Requires Full Rebuild
 
