@@ -267,7 +267,7 @@ service MetaService {
   rpc GetImportStoragePrefix(GetImportStoragePrefixRequest)
       returns (GetImportStoragePrefixResponse);
 
-  // Called before Import Into full index build to pre-split shards by
+  // Called before Add full index build to pre-split shards by
   // aggregated SortedKV metadata groups.
   rpc PreSplitImportShards(PreSplitImportShardsRequest)
       returns (PreSplitImportShardsResponse);
