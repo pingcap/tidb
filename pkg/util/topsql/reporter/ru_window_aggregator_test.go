@@ -394,11 +394,11 @@ func TestRUWindowAggregatorFinalReportCappedTo100x100(t *testing.T) {
 	var othersUserTotalRU float64
 	for i := range records {
 		rec := records[i]
-		if rec.User == keyRUOthersUser && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+		if rec.User == othersUserWireLabel && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
 			othersUserTotalRU += sumTopRUItems(rec.Items)
 			continue
 		}
-		if rec.User == keyRUOthersUser {
+		if rec.User == othersUserWireLabel {
 			continue
 		}
 		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {
@@ -493,7 +493,7 @@ func TestRUWindowAggregatorOverCapBehaviorKeepsHotKeys(t *testing.T) {
 	realUsers := map[string]int{}
 	for i := range records {
 		rec := records[i]
-		if rec.User == keyRUOthersUser {
+		if rec.User == othersUserWireLabel {
 			continue
 		}
 		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {

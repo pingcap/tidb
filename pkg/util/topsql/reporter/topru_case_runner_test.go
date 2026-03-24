@@ -128,7 +128,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 			key: {TotalRU: 4, ExecCount: 2, ExecDuration: 2000},
 		})
 	case "internal_sql_empty_user_handling":
-		// Empty user is valid and should not be rewritten to "<others>".
+		// Empty user is valid and should not be rewritten to the others-user sentinel.
 		sqlDigest := []byte("S_G10")
 		planDigest := []byte("P_G10")
 		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select 10", marker), false)
