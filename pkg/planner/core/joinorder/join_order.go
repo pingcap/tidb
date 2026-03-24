@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"math/bits"
 	"slices"
 	"strings"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -303,10 +305,9 @@ func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.Logi
 func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
-	// TODO impl DP OR merge the old DP impl with the new CD-C impl.
-	// Make sure there is no behavior change since some users already rely on the old DP impl.
-	// useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
-	useGreedy := true
+	// Use DP for any join group under the configured threshold. ConflictDetector
+	// is responsible for validating both inner and non-inner join transitions.
+	useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 	if useGreedy {
 		joinOrderGreedy := newJoinOrderGreedy(ctx, group)
 		if p, err = joinOrderGreedy.optimize(); err != nil {
@@ -335,12 +336,124 @@ type joinOrderDP struct {
 	JoinOrder
 }
 
-func newJoinOrderDP(_ base.PlanContext, _ *joinGroup) *joinOrderDP {
-	panic("not implement yet")
+func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
+	return &joinOrderDP{
+		JoinOrder: JoinOrder{
+			ctx:   ctx,
+			group: group,
+		},
+	}
 }
 
-func (*joinOrderDP) optimize() (base.LogicalPlan, error) {
-	panic("not implement yet")
+func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
+	if len(j.group.leadingHints) > 0 {
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
+	}
+
+	detector := newConflictDetector(j.ctx)
+	nodes, err := detector.Build(j.group)
+	if err != nil {
+		return nil, err
+	}
+
+	plan, ok, err := j.optimizeWithDetector(detector, nodes, false)
+	if err != nil {
+		return nil, err
+	}
+	// Cartesian fallback is only valid for inner-join groups.
+	if !ok && j.group.allInnerJoin {
+		plan, ok, err = j.optimizeWithDetector(detector, nodes, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !ok {
+		return j.group.root, nil
+	}
+	return plan, nil
+}
+
+func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*Node, allowNoEQ bool) (base.LogicalPlan, bool, error) {
+	if len(nodes) == 0 {
+		return nil, false, errors.New("internal error: join group has no nodes")
+	}
+	if len(nodes) == 1 {
+		return nodes[0].p, true, nil
+	}
+
+	nodeCount := len(nodes)
+	if nodeCount > 63 {
+		return nil, false, errors.Errorf("DP join reorder supports at most 63 nodes, got %d", nodeCount)
+	}
+
+	bestPlan := make([]*Node, 1<<nodeCount)
+	for _, node := range nodes {
+		mask, err := fastIntSetToUint64(node.bitSet)
+		if err != nil {
+			return nil, false, err
+		}
+		bestPlan[mask] = node
+	}
+
+	cartesianFactor := j.ctx.GetSessionVars().CartesianJoinOrderThreshold
+	if allowNoEQ && cartesianFactor <= 0 {
+		cartesianFactor = 1
+	}
+
+	fullMask := uint64(1<<nodeCount) - 1
+	for subset := uint64(1); subset <= fullMask; subset++ {
+		if bits.OnesCount64(subset) == 1 {
+			continue
+		}
+		for left := (subset - 1) & subset; left > 0; left = (left - 1) & subset {
+			right := subset ^ left
+			if left > right {
+				continue
+			}
+			leftPlan := bestPlan[left]
+			rightPlan := bestPlan[right]
+			if leftPlan == nil || rightPlan == nil {
+				continue
+			}
+
+			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, leftPlan, rightPlan, j.group.vertexHints, allowNoEQ)
+			if err != nil {
+				return nil, false, err
+			}
+			if newNode == nil {
+				continue
+			}
+			if checkResult.NoEQEdge() {
+				if !allowNoEQ {
+					continue
+				}
+				newNode.cumCost *= cartesianFactor
+			}
+			if bestPlan[subset] == nil || newNode.cumCost < bestPlan[subset].cumCost {
+				bestPlan[subset] = newNode
+			}
+		}
+	}
+
+	finalPlan := bestPlan[fullMask]
+	if finalPlan == nil {
+		return nil, false, nil
+	}
+	if detector.HasRemainingEdges(finalPlan.usedEdges) {
+		return nil, false, nil
+	}
+	return finalPlan.p, true, nil
+}
+
+func fastIntSetToUint64(s intset.FastIntSet) (uint64, error) {
+	var mask uint64
+	s.ForEach(func(i int) {
+		mask |= uint64(1) << uint(i)
+	})
+	if int(bits.OnesCount64(mask)) != s.Len() {
+		return 0, errors.Errorf("fast int set %s cannot be represented as uint64 bitmask", s.String())
+	}
+	return mask, nil
 }
 
 type joinOrderGreedy struct {
