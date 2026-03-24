@@ -149,3 +149,115 @@ select dt.id, dt.val from t1, lateral (select t2.a, t2.b from t2 where t2.a = t1
 ## Wrong column count errors with ErrViewWrongList (1353)
 --error 1353
 select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2) order by t1.a;
+
+# TestLateralJoinRecursiveHierarchy
+# Customer use case: recursive CTE walking a parent-child table, using LATERAL
+# with ORDER BY + LIMIT to cap children fetched per level.  child_c, child_d,
+# and grandchild_a3 must be absent from the result (pruned by LIMIT 2).
+drop table if exists category;
+create table category (id int primary key, parent_id int, name varchar(50), sort_order int, index idx_parent(parent_id, sort_order, name));
+insert into category values
+  (1, null, 'root', 0),
+  (2, 1, 'child_a', 1), (3, 1, 'child_b', 2), (4, 1, 'child_c', 3), (5, 1, 'child_d', 4),
+  (6, 2, 'grandchild_a1', 1), (7, 2, 'grandchild_a2', 2), (8, 2, 'grandchild_a3', 3),
+  (9, 3, 'grandchild_b1', 1), (10, 3, 'grandchild_b2', 2);
+
+## CROSS JOIN LATERAL: at each level, fetch at most 2 children per parent,
+## ordered by sort_order.  child_c, child_d, grandchild_a3 are pruned by LIMIT 2.
+with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  cross join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by parent_id, sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## INNER JOIN LATERAL: same query, same result.
+with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  inner join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by sort_order
+    limit 2
+  ) as c on true
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## Comma syntax: same query, same result.
+with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree,
+  lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by parent_id, sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## EXPLAIN (with redundant parent_id in ORDER BY): ORDER BY parent_id, sort_order is a
+## direct prefix of idx_parent(parent_id, sort_order, name), so TiDB sets keep order:true
+## and pushes Limit to TiKV - scanning stops as soon as 2 rows are read per parent.
+explain format='plan_tree' with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  cross join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by parent_id, sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## EXPLAIN (ORDER BY sort_order only - logically equivalent but suboptimal): TiDB does
+## not yet recognize that the equality filter WHERE parent_id = tree.id fixes parent_id,
+## making ORDER BY sort_order sufficient to match the index prefix. Without that
+## recognition keep order:false is used and TopN replaces Limit, fetching all children
+## per parent before discarding extras instead of stopping early.
+## TODO(planner): teach the Apply probe optimizer to strip equality-filtered leading
+## index columns from the ORDER BY check, so ORDER BY sort_order produces Limit here
+## instead of TopN - making the redundant parent_id column unnecessary.
+explain format='plan_tree' with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  cross join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;

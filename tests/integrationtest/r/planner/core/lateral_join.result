@@ -183,3 +183,146 @@ id	val
 2	y
 select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2) order by t1.a;
 Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop table if exists category;
+create table category (id int primary key, parent_id int, name varchar(50), sort_order int, index idx_parent(parent_id, sort_order, name));
+insert into category values
+(1, null, 'root', 0),
+(2, 1, 'child_a', 1), (3, 1, 'child_b', 2), (4, 1, 'child_c', 3), (5, 1, 'child_d', 4),
+(6, 2, 'grandchild_a1', 1), (7, 2, 'grandchild_a2', 2), (8, 2, 'grandchild_a3', 3),
+(9, 3, 'grandchild_b1', 1), (10, 3, 'grandchild_b2', 2);
+with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+cross join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by parent_id, sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	name	depth
+1	root	1
+2	child_a	2
+3	child_b	2
+6	grandchild_a1	3
+7	grandchild_a2	3
+9	grandchild_b1	3
+10	grandchild_b2	3
+with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+inner join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by sort_order
+limit 2
+) as c on true
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	name	depth
+1	root	1
+2	child_a	2
+3	child_b	2
+6	grandchild_a1	3
+7	grandchild_a2	3
+9	grandchild_b1	3
+10	grandchild_b2	3
+with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree,
+lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by parent_id, sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	name	depth
+1	root	1
+2	child_a	2
+3	child_b	2
+6	grandchild_a1	3
+7	grandchild_a2	3
+9	grandchild_b1	3
+10	grandchild_b2	3
+explain format='plan_tree' with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+cross join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by parent_id, sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	task	access object	operator info
+Sort	root		Column, planner__core__lateral_join.category.id, planner__core__lateral_join.category.name
+└─Projection	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.name, Column
+  └─CTEFullScan	root	CTE:tree	data:CTE_0
+CTE_0	root		Recursive CTE
+├─Projection(Seed Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, 1->Column
+│ └─IndexReader	root		index:IndexRangeScan
+│   └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range:[NULL,NULL], keep order:false, stats:pseudo
+└─Projection(Recursive Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, cast(plus(Column, 1), bigint BINARY)->Column
+  └─Apply	root		CARTESIAN inner join
+    ├─Selection(Build)	root		lt(Column, 3)
+    │ └─CTETable	root		Scan on CTE_0
+    └─Limit(Probe)	root		offset:0, count:2
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:2
+          └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range: decided by [eq(planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.id)], keep order:true, stats:pseudo
+explain format='plan_tree' with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+cross join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	task	access object	operator info
+Sort	root		Column, planner__core__lateral_join.category.id, planner__core__lateral_join.category.name
+└─Projection	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.name, Column
+  └─CTEFullScan	root	CTE:tree	data:CTE_0
+CTE_0	root		Recursive CTE
+├─Projection(Seed Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, 1->Column
+│ └─IndexReader	root		index:IndexRangeScan
+│   └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range:[NULL,NULL], keep order:false, stats:pseudo
+└─Projection(Recursive Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, cast(plus(Column, 1), bigint BINARY)->Column
+  └─Apply	root		CARTESIAN inner join
+    ├─Selection(Build)	root		lt(Column, 3)
+    │ └─CTETable	root		Scan on CTE_0
+    └─TopN(Probe)	root		planner__core__lateral_join.category.sort_order, offset:0, count:2
+      └─IndexReader	root		index:TopN
+        └─TopN	cop[tikv]		planner__core__lateral_join.category.sort_order, offset:0, count:2
+          └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range: decided by [eq(planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.id)], keep order:false, stats:pseudo
