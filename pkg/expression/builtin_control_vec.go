@@ -81,13 +81,18 @@ func (b *builtinCaseWhenRealSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	result.ReserveString(n)
 	f64s := buf.Float64s()
 
+	bits := 64
+	if b.tp.GetType() == mysql.TypeFloat {
+		bits = 32
+	}
+
 	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
-		str := strconv.FormatFloat(f64s[i], 'f', -1, 64)
+		str := strconv.FormatFloat(f64s[i], 'f', -1, bits)
 		result.AppendString(str)
 	}
 	return nil
