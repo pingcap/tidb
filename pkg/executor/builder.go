@@ -5101,7 +5101,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			if err != nil {
 				return nil, err
 			}
-			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
+			// Provide row-count hints (1 per KV range) so the store-batch coprocessor
+			// can batch these tasks just as it does for integer-handle tables.
+			hints := make([]int, len(kvRanges))
+			for i := range hints {
+				hints[i] = 1
+			}
+			return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
 		}
 		handles, _ := dedupHandles(lookUpContents)
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
@@ -5120,6 +5126,15 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		e.dctx, e.rctx, pt, usedPartitionList, usedPartitions, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal, v.IsCommonHandle)
 	if err != nil {
 		return nil, err
+	}
+	if v.IsCommonHandle {
+		// Provide row-count hints (1 per KV range) so the store-batch coprocessor
+		// can batch these tasks just as it does for integer-handle tables.
+		hints := make([]int, len(kvRanges))
+		for i := range hints {
+			hints[i] = 1
+		}
+		return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
 	}
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
@@ -5259,6 +5274,12 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange) (exec.Executor, error) {
 	var b distsql.RequestBuilder
 	b.SetKeyRanges(ranges)
+	return builder.buildTableReaderBase(ctx, e, b)
+}
+
+func (builder *dataReaderBuilder) buildTableReaderFromKvRangesWithHints(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange, hints []int) (exec.Executor, error) {
+	var b distsql.RequestBuilder
+	b.SetKeyRangesWithHints(ranges, hints)
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 
