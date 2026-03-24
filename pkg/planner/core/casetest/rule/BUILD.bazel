@@ -15,11 +15,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 11,
-=======
     shard_count = 25,
->>>>>>> 022ae5b39cb (planner/core: fix wrong results caused by rule_project_eliminate for queries with Apply (#67231))
     deps = [
         "//pkg/config",
         "//pkg/domain",
