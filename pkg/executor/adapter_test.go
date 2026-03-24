@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -412,12 +414,22 @@ func TestWriteSlowLog(t *testing.T) {
 	defer func() { logutil.SlowQueryLogger = prev }()
 
 	sql := "select * from t where a = 1;"
+	readSlowQueryCounter := func() float64 {
+		counter := metrics.SlowQueryCounter.WithLabelValues(metrics.LblGeneral)
+		pb := &dto.Metric{}
+		require.NoError(t, counter.Write(pb))
+		return pb.GetCounter().GetValue()
+	}
 	checkWriteSlowLog := func(expectWrite bool) {
+		before := readSlowQueryCounter()
 		tk.MustExec(sql)
+		after := readSlowQueryCounter()
 		if !expectWrite {
 			require.Equal(t, 0, recorded.Len())
+			require.Equal(t, 0.0, after-before)
 		} else {
 			require.NotEqual(t, 0, recorded.Len())
+			require.Equal(t, 1.0, after-before)
 		}
 
 		writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
