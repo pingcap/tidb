@@ -79,6 +79,9 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
+	failpoint.Inject("mockCloudImportExecutor", func() {
+		failpoint.Return(nil)
+	})
 	concurrency := int(e.GetResource().CPU.Capacity())
 	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, concurrency)
 	if err != nil {
@@ -109,6 +112,9 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
+	failpoint.Inject("mockCloudImportExecutor", func() {
+		failpoint.Return(nil)
+	})
 
 	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
 	if err != nil {
@@ -223,7 +229,9 @@ func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	if e.backendCtx != nil {
 		e.backendCtx.Close()
 	}
-	e.backend.Close()
+	if e.backend != nil {
+		e.backend.Close()
+	}
 	metrics.UnregisterLightningCommonMetricsForDDL(e.job.ID, e.metric)
 	return nil
 }
@@ -259,6 +267,9 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 // ResourceModified change the concurrency for ingest
 func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
+	if e.backend == nil {
+		return nil
+	}
 	newConcurrency := int(newResource.CPU.Capacity())
 	if newConcurrency == e.backend.GetWorkerConcurrency() {
 		return nil
