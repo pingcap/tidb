@@ -503,13 +503,10 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 					clonedNames[i] = name
 					continue
 				}
-				// Clone the field name and update table name
-				// For derived tables (subqueries), clear DBName to avoid confusion with actual tables
-				// For base tables with aliases, preserve DBName for proper metadata and DEFAULT() resolution
-				dbName := ast.NewCIStr("")
-				if isTableName {
-					dbName = name.DBName
-				}
+				// Clone the field name and update table name.
+				// Preserve DBName from the inner name so hint generation (e.g. leading())
+				// can emit the qualified form `db`.`alias` for derived-table aliases.
+				dbName := name.DBName
 				clonedNames[i] = &types.FieldName{
 					DBName:            dbName,
 					OrigTblName:       name.OrigTblName,
