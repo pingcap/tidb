@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -1977,16 +1979,78 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	assertTiCIFulltextParserInfo(t, raw)
 }
 
-func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
+func TestFulltextIndexRequiresGlobalSortForBackfill(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_empty(id int, c text)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_empty")
+	tk.MustExec("alter table t_empty add fulltext index fts_idx(c) with parser standard")
+
+	tk.MustExec("create table t_non_empty(id int, c text)")
+	tk.MustExec("insert into t_non_empty values (1, 'hello world')")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_non_empty")
+	tk.MustContainErrMsg("alter table t_non_empty add fulltext index fts_idx(c) with parser standard",
+		"fulltext index on non-empty table requires global sort")
+}
+
+func TestFulltextIndexProbeErrorDoesNotBecomeGlobalSortError(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCheckTableReorgWorkCanSkip", `return("error")`)
+
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(1)
+	defer func() {
+		vardef.SetDDLErrorCountLimit(limit)
+	}()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(10 * time.Millisecond)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_probe_err(id int, c text)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_probe_err")
+
+	err := tk.ExecToErr("alter table t_probe_err add fulltext index fts_idx(c) with parser standard")
+	require.ErrorContains(t, err, "mock check table reorg work can skip error")
+	require.NotContains(t, err.Error(), "requires global sort")
+}
+
+func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCloudImportExecutor", `return()`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_cloud_storage_uri = '%s'", startFakeGCSSortURI(t)))
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t(id int, c text)")
@@ -2019,6 +2083,32 @@ func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
 	idx := tbl.Meta().FindIndexByName("fts_idx")
 	require.NotNil(t, idx)
 	require.Equal(t, model.StatePublic, idx.State)
+}
+
+func startFakeGCSSortURI(t *testing.T) string {
+	t.Helper()
+
+	const host = "127.0.0.1"
+	l, err := net.Listen("tcp", host+":0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+
+	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+		Scheme:     "http",
+		Host:       host,
+		Port:       uint16(port),
+		PublicHost: fmt.Sprintf("%s:%d", host, port),
+	})
+	require.NoError(t, err)
+	t.Cleanup(server.Stop)
+
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	return fmt.Sprintf(
+		"gs://sorted/addindex?endpoint=http://%s:%d/storage/v1/&access-key=aaaaaa&secret-access-key=bbbbbb",
+		host,
+		port,
+	)
 }
 
 func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
