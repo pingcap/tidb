@@ -95,9 +95,10 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	store := createMockStore(t)
-
-	h := helper.NewHelper(store)
+	// Use a nil-store helper so GetTablesInfoWithKeyRange uses V1 codec, matching the
+	// hardcoded V1 region keys in getMockTiKVRegionsInfo. Keyspace-aware (V2) behavior
+	// is covered by TestGetRegionsTableInfoWithKeyspace.
+	h := &helper.Helper{}
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
 	tableInfos := h.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(schemas), nil)
