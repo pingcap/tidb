@@ -319,6 +319,26 @@ func TestBRIESecureText(t *testing.T) {
 	}
 }
 
+func TestSetStmtSecureTextForCloudStorageURIExpression(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(
+		"set global tidb_replayer_cloud_storage_uri = concat('s3://bucket/prefix?access-key=abcdef&secret-access-key=123', '')",
+		"",
+		"",
+	)
+	require.NoError(t, err)
+
+	n, ok := stmt.(ast.SensitiveStmtNode)
+	require.True(t, ok)
+
+	secured := n.SecureText()
+	require.Contains(t, secured, "tidb_replayer_cloud_storage_uri")
+	require.Contains(t, secured, "xxxxxx")
+	require.NotContains(t, secured, "abcdef")
+	require.NotContains(t, secured, "secret-access-key=123")
+	require.NotContains(t, secured, "CONCAT")
+}
+
 func TestCompactTableStmtRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"alter table abc compact tiflash replica", "ALTER TABLE `abc` COMPACT TIFLASH REPLICA"},

@@ -24,10 +24,33 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateCloudStorageURIWithWriteCheckPermissions(t *testing.T) {
+	origNewStorageForValidation := newStorageForValidation
+	t.Cleanup(func() {
+		newStorageForValidation = origNewStorageForValidation
+	})
+
+	var gotPermissions []storeapi.Permission
+	newStorageForValidation = func(_ context.Context, _ *backuppb.StorageBackend, opts *storeapi.Options) (storeapi.Storage, error) {
+		gotPermissions = append([]storeapi.Permission(nil), opts.CheckPermissions...)
+		return NewMemStorage(), nil
+	}
+
+	err := ValidateCloudStorageURIWithWriteCheck(context.Background(), "noop://blackhole")
+	require.NoError(t, err)
+	require.Equal(t, []storeapi.Permission{
+		storeapi.ListObjects,
+		storeapi.GetObject,
+		storeapi.AccessBuckets,
+		storeapi.PutAndDeleteObject,
+	}, gotPermissions)
+}
 
 func TestDeleteFile(t *testing.T) {
 	dir := t.TempDir()

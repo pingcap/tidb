@@ -80,6 +80,18 @@ func withMinValue(minVal int64) execConcurrencySysVarOption {
 	return func(sv *SysVar) { sv.MinValue = minVal }
 }
 
+func validateCloudStorageURIForSysVar(ctx context.Context, val string, validator func(context.Context, string) error) error {
+	if err := validator(ctx, val); err != nil {
+		// convert annotations (second-level message) to message so clientConn.writeError
+		// will print friendly error.
+		if goerr.As(err, new(*errors.Error)) {
+			err = errors.New(err.Error())
+		}
+		return err
+	}
+	return nil
+}
+
 // newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
 func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
 	sv := &SysVar{
@@ -3008,12 +3020,7 @@ var defaultSysVars = []*SysVar{
 		return cloudStorageURI, nil
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		if len(val) > 0 && val != vardef.CloudStorageURI.Load() {
-			if err := ValidateCloudStorageURI(ctx, val); err != nil {
-				// convert annotations (second-level message) to message so clientConn.writeError
-				// will print friendly error.
-				if goerr.As(err, new(*errors.Error)) {
-					err = errors.New(err.Error())
-				}
+			if err := validateCloudStorageURIForSysVar(ctx, val, ValidateCloudStorageURI); err != nil {
 				return err
 			}
 		}
@@ -3028,12 +3035,11 @@ var defaultSysVars = []*SysVar{
 		return replayerCloudStorageURI, nil
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		if len(val) > 0 && val != vardef.ReplayerCloudStorageURI.Load() {
-			if err := ValidateCloudStorageURI(ctx, val); err != nil {
-				// convert annotations (second-level message) to message so clientConn.writeError
-				// will print friendly error.
-				if goerr.As(err, new(*errors.Error)) {
-					err = errors.New(err.Error())
-				}
+			validator := ValidateCloudStorageURIWithWriteCheck
+			if validator == nil {
+				validator = ValidateCloudStorageURI
+			}
+			if err := validateCloudStorageURIForSysVar(ctx, val, validator); err != nil {
 				return err
 			}
 		}

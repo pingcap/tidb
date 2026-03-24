@@ -1015,7 +1015,11 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Name == TiDBCloudStorageURI || n.Name == TiDBReplayerCloudStorageURI {
 		// need to redact the url for safety when `show processlist;`
-		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
+		if valueExpr, ok := n.Value.(ValueExpr); ok {
+			ctx.WritePlain(RedactURL(valueExpr.GetString()))
+		} else {
+			ctx.WriteString("xxxxxx")
+		}
 	} else if err := n.Value.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore VariableAssignment.Value")
 	}

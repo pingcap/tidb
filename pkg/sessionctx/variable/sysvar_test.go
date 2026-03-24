@@ -1948,6 +1948,41 @@ func TestScope(t *testing.T) {
 	require.Error(t, sv.validateScope(vardef.ScopeGlobal))
 }
 
+func TestCloudStorageURIValidators(t *testing.T) {
+	origReadValidator := ValidateCloudStorageURI
+	origWriteValidator := ValidateCloudStorageURIWithWriteCheck
+	t.Cleanup(func() {
+		ValidateCloudStorageURI = origReadValidator
+		ValidateCloudStorageURIWithWriteCheck = origWriteValidator
+	})
+
+	var readCalls int
+	var writeCalls int
+	ValidateCloudStorageURI = func(context.Context, string) error {
+		readCalls++
+		return nil
+	}
+	ValidateCloudStorageURIWithWriteCheck = func(context.Context, string) error {
+		writeCalls++
+		return nil
+	}
+
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	err := mock.SetGlobalSysVar(context.Background(), vardef.TiDBCloudStorageURI, "noop://cloud")
+	require.NoError(t, err)
+	require.Equal(t, 1, readCalls)
+	require.Zero(t, writeCalls)
+
+	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBReplayerCloudStorageURI, "noop://replayer")
+	require.NoError(t, err)
+	require.Equal(t, 1, readCalls)
+	require.Equal(t, 1, writeCalls)
+}
+
 // TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
 // This feature is deprecated, and if you need to run code to differentiate between init and "SET" (rare),
 // you can instead check if s.StmtCtx.StmtType == "Set".

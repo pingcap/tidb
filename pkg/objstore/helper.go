@@ -31,10 +31,32 @@ import (
 
 func init() {
 	variable.ValidateCloudStorageURI = ValidateCloudStorageURI
+	variable.ValidateCloudStorageURIWithWriteCheck = ValidateCloudStorageURIWithWriteCheck
 }
+
+var newStorageForValidation = New
 
 // ValidateCloudStorageURI makes validation for tidb_cloud_storage_uri.
 func ValidateCloudStorageURI(ctx context.Context, uri string) error {
+	return validateCloudStorageURIWithPermissions(ctx, uri, []storeapi.Permission{
+		storeapi.ListObjects,
+		storeapi.GetObject,
+		storeapi.AccessBuckets,
+	})
+}
+
+// ValidateCloudStorageURIWithWriteCheck validates the cloud storage URI and
+// verifies the storage is usable for read/write/delete extstore operations.
+func ValidateCloudStorageURIWithWriteCheck(ctx context.Context, uri string) error {
+	return validateCloudStorageURIWithPermissions(ctx, uri, []storeapi.Permission{
+		storeapi.ListObjects,
+		storeapi.GetObject,
+		storeapi.AccessBuckets,
+		storeapi.PutAndDeleteObject,
+	})
+}
+
+func validateCloudStorageURIWithPermissions(ctx context.Context, uri string, permissions []storeapi.Permission) error {
 	b, err := ParseBackend(uri, nil)
 	if err != nil {
 		return err
@@ -45,13 +67,9 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 			DisableKeepAlives: true,
 		},
 	}
-	storage, err := New(ctx, b, &storeapi.Options{
-		HTTPClient: &httpCli,
-		CheckPermissions: []storeapi.Permission{
-			storeapi.ListObjects,
-			storeapi.GetObject,
-			storeapi.AccessBuckets,
-		},
+	storage, err := newStorageForValidation(ctx, b, &storeapi.Options{
+		HTTPClient:       &httpCli,
+		CheckPermissions: permissions,
 	})
 	if err != nil {
 		return err
