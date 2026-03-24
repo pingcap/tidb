@@ -149,7 +149,7 @@ func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
 		metrics := execdetails.NewRUV2Metrics()
 		metrics.AddPlanCnt(3)
 		vars.RUV2Metrics = metrics
-		expectedRU := float64(metrics.TotalRU(vars.RUV2Weights(), 0, 0))
+		expectedRU := metrics.TotalRU(vars.RUV2Weights(), 0, 0)
 
 		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
 
