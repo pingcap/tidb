@@ -444,7 +444,11 @@ type Table interface {
 	// IndexPrefix returns the index key prefix.
 	IndexPrefix() kv.Key
 
-	// AddRecord inserts a row which should contain only public columns
+	// AddRecord inserts a row which should contain only public columns.
+	//
+	// The input row is caller-owned and is only valid for the duration of this call.
+	// Implementations must consume it synchronously and must not retain references
+	// to its datum payloads after the function returns.
 	AddRecord(ctx MutateContext, txn kv.Transaction, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
