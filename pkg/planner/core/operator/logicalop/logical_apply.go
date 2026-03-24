@@ -15,11 +15,13 @@
 package logicalop
 
 import (
+	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -174,10 +176,41 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	// so RowCount = leftProfile.RowCount is correct.
 	rowCount := leftProfile.RowCount
 	if la.IsLateral && (la.JoinType == base.InnerJoin || la.JoinType == base.LeftOuterJoin) {
-		// For LATERAL joins, estimate based on join selectivity.
-		// Use rightProfile.RowCount as the average number of rows returned per outer row.
-		// This is a reasonable approximation when we don't have better statistics.
-		rowCount = leftProfile.RowCount * rightProfile.RowCount
+		leftJoinKeys, rightJoinKeys, _, _ := la.GetJoinKeys()
+		if len(leftJoinKeys) > 0 {
+			// Explicit ON-clause join keys: use the same join cardinality estimation as
+			// LogicalJoin so that key NDV selectivity is reflected in the row count.
+			la.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(la.SCtx(),
+				false,
+				leftProfile, rightProfile,
+				leftJoinKeys, rightJoinKeys,
+				childSchema[0], childSchema[1],
+				nil, nil)
+			rowCount = la.EqualCondOutCnt
+		} else if len(la.CorCols) > 0 {
+			// No explicit join keys; the inner plan is a correlated subquery.
+			// childStats[1] is derived for the inner plan as a standalone subtree
+			// (total rows of that plan), not a per-outer-row execution count.
+			// Dividing by the NDV of the outer correlated columns converts it to a
+			// per-outer-row estimate before multiplying by the left row count, mirroring
+			// the key-based selectivity division in EstimateFullJoinRowCount.
+			//
+			// TODO: when the inner plan is bounded by LIMIT or a scalar aggregate,
+			// rightProfile.RowCount is already effectively per-outer-row (LIMIT caps it;
+			// aggregates always return 1 row). In those cases this formula underestimates
+			// by ~NDV(outerCols). A future improvement should detect the LIMIT/aggregate
+			// case and skip the NDV scaling, restoring the correct left*right product.
+			outerCols := make([]*expression.Column, 0, len(la.CorCols))
+			for i := range la.CorCols {
+				outerCols = append(outerCols, &la.CorCols[i].Column)
+			}
+			outerNDV, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), outerCols, childSchema[0], leftProfile)
+			rowCount = leftProfile.RowCount * rightProfile.RowCount / math.Max(outerNDV, 1)
+		} else {
+			// No correlation at all: decorrelation will convert this to a plain cross
+			// join, so the Cartesian product is the correct upper-bound estimate.
+			rowCount = leftProfile.RowCount * rightProfile.RowCount
+		}
 		if la.JoinType == base.LeftOuterJoin {
 			rowCount = max(rowCount, leftProfile.RowCount)
 		}
