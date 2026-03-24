@@ -105,12 +105,12 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title) AND id > 10")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title, body)", "Incorrect parameter count in the call to native function")
-	tk.MustContainErrMsg("explain select * from t where fts_match_prefix('hello', title, body)", "Incorrect parameter count in the call to native function")
-	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('hello world', title, body)", "Incorrect parameter count in the call to native function")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title, body)", "Full text search can only be used with a matching fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_prefix('hello', title, body)", "Full text search can only be used with a matching fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('hello world', title, body)", "Full text search can only be used with a matching fulltext index")
 	tk.MustContainErrMsg(
 		"explain select * from t where match(title, body) against ('hello' IN BOOLEAN MODE)",
-		"Currently TiDB only supports searching one column at a time in MATCH AGAINST",
+		"Full text search can only be used with a matching fulltext index",
 	)
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "you write it in a wrong way")
@@ -123,6 +123,24 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello world', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+
+	tk.MustExec("drop table t")
+	tk.MustExec(`create table t(
+		id INT PRIMARY KEY, title TEXT, body TEXT,
+		FULLTEXT KEY idx_title_body (title, body)
+	)`)
+	tbl, _ = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+	tk.MustQuery("explain format='brief' select * from t where match(title, body) against ('hello' IN BOOLEAN MODE)").CheckContain("idx_title_body")
+	tk.MustQuery("explain format='brief' select * from t where match(body, title) against ('hello' IN BOOLEAN MODE)").CheckContain("idx_title_body")
+	tk.MustQuery("explain format='brief' select * from t where fts_match_word('hello', title, body)").CheckContain("idx_title_body")
+	tk.MustContainErrMsg(
+		"explain select * from t where match(title) against ('hello' IN BOOLEAN MODE)",
+		"Full text search can only be used with a matching fulltext index",
+	)
 
 	// tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash'")
 	// tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
@@ -216,7 +234,7 @@ func TestFTSSyntax(t *testing.T) {
 	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `cannot use 'MATCH ... AGAINST' outside of fulltext index`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(title, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(45.67, body)", `match against a non-constant string`)
-	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `Incorrect parameter count in the call to native function`)
+	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `Full text search can only be used with a matching fulltext index`)
 }
 
 func TestFTSIndexSyntax(t *testing.T) {

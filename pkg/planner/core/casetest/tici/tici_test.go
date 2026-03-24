@@ -63,9 +63,14 @@ func TestTiCISearchExplain(t *testing.T) {
 		id INT UNSIGNED PRIMARY KEY, title TEXT,
 		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
 	)`)
+	tk.MustExec(`create table t7(
+		id INT PRIMARY KEY, title TEXT, body TEXT,
+		FULLTEXT INDEX idx_title_body (title, body)
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t6")
+	testkit.SetTiFlashReplica(t, dom, "test", "t7")
 	tk.MustExec("create table t2(a int, col text)")
 
 	tk.MustExec(`create table t3(
@@ -223,9 +228,17 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		id INT PRIMARY KEY, title TEXT,
 		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
 	)`)
+	tk.MustExec(`create table t7(
+		id INT PRIMARY KEY, title TEXT, body TEXT
+	)`)
+	tk.MustExec(`create hybrid index idx_title_body on t7(id, title, body) parameter '{
+		"fulltext": [{"columns": ["title", "body"]}],
+		"sharding_key": {"columns": ["id"]}
+	}'`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t6")
+	testkit.SetTiFlashReplica(t, dom, "test", "t7")
 
 	// Non-BOOLEAN MODE is rejected.
 	tk.MustContainErrMsg(
@@ -256,6 +269,27 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		"explain format='brief' select * from t6 where match(title) against ('>hello' IN BOOLEAN MODE)",
 		"unsupported operator '>' in BOOLEAN MODE query",
 	)
+	tk.MustQuery(
+		"explain format='brief' select * from t6 where match(title) against ('hello' IN BOOLEAN MODE)",
+	).CheckContain(`search func:fts_match_phrase("hello", test.t6.title)`)
+
+	// Hybrid fulltext components keep the original helper-function behavior:
+	// multi-column helper functions and MATCH ... AGAINST are both rejected, and
+	// multi-column search should use multiple single-column fts_match_xxx calls.
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where match(title, body) against ('hello' IN BOOLEAN MODE)",
+		"Multi-column MATCH AGAINST is not supported on hybrid fulltext indexes",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title, body)",
+		"Multi-column fts_match_xxx is not supported on hybrid fulltext indexes",
+	)
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title)",
+	).CheckContain("idx_title_body")
+	tk.MustQuery(
+		"explain format='brief' select * from t7 where fts_match_word('hello', title) and fts_match_word('hello', body)",
+	).CheckContain("idx_title_body")
 }
 
 func TestTiCISearchWithPrepare(t *testing.T) {
@@ -356,6 +390,17 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 	tk.MustExec(`create fulltext index idx_c on t2(c)`)
 	testkit.SetTiFlashReplica(t, dom, "test", "t2")
 
+	// FTS predicates on another table should not block the local non-FTS TiCI path.
+	tk.MustQuery("explain format='brief' select /*+ use_index(t1, idx1) */ * from t1, t2 where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckContain("idx1")
+	tk.MustQuery("explain format='brief' select /*+ use_index(t1, idx1) */ * from t1, t2 where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckContain("idx_c")
+
+	// Dirty writes on a table without local FTS predicates should not make the whole query fail.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(1, '2026-01-01 10:10:10', '2026-01-01 10:10:10', 'text1')")
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.i = t2.a where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckContain("idx_c")
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.i = t2.a where d between '2026-01-01' and '2026-01-03' and fts_match_word('apple', c)").CheckNotContain("idx1")
+	tk.MustExec("rollback")
+
 	// With dirty write, TiCI index cannot be used.
 	tk.MustExec("begin")
 	tk.MustExec("insert into t2 values(1, 1, 'text1')")
@@ -392,7 +437,7 @@ func TestTiCIWithWrongColumn(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-	tk.MustContainErrMsg("explain select * from t where match(a) against('text1' IN BOOLEAN MODE)", "matching a non-string column")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "matching a non-string column")
-	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "matching a non-string column")
+	tk.MustContainErrMsg("explain select * from t where match(a) against('text1' IN BOOLEAN MODE)", "Doesn't support match search on a non-string column without fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
 }

@@ -153,6 +153,78 @@ func (m *retryFullTextMockShardClient) ScanRanges(_ context.Context, _ int64, _ 
 
 func (m *retryFullTextMockShardClient) Close() {}
 
+type cancelAwareFullTextMockShardClient struct {
+	wait time.Duration
+}
+
+func (m *cancelAwareFullTextMockShardClient) ScanRanges(ctx context.Context, _ int64, _ int64, _ []kv.KeyRange, _ int) ([]*ShardWithAddr, error) {
+	timer := time.NewTimer(m.wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, errors.New("scan did not observe cancellation")
+	}
+}
+
+func (m *cancelAwareFullTextMockShardClient) Close() {}
+
+func TestSendBatchFullTextUsesContextForTaskBuild(t *testing.T) {
+	client := &cancelAwareFullTextMockShardClient{wait: 100 * time.Millisecond}
+	cache := NewTiCIShardCache(client)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := &kv.Request{
+		StoreType: kv.TiFlash,
+		BatchCop:  true,
+		FullText:  true,
+		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}}),
+	}
+	req.FullTextInfo.TableID = 1
+	req.FullTextInfo.IndexID = 2
+	req.FullTextInfo.ExecutorID = "executor-1"
+
+	clientResp := (&CopClient{
+		store: &Store{
+			kvStore: &kvStore{TiCIShardCache: cache},
+		},
+	}).sendBatch(ctx, req, nil, &kv.ClientSendOption{})
+
+	_, err := clientResp.Next(context.Background())
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRetryBatchCopTaskForFullTextUsesContext(t *testing.T) {
+	client := &cancelAwareFullTextMockShardClient{wait: 100 * time.Millisecond}
+	cache := NewTiCIShardCache(client)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	bo := backoff.NewBackofferWithVars(ctx, 1, nil)
+	it := &batchCopIterator{
+		store: &kvStore{TiCIShardCache: cache},
+		req:   &kv.Request{FullText: true},
+	}
+	it.req.FullTextInfo.TableID = 1
+	it.req.FullTextInfo.IndexID = 2
+	it.req.FullTextInfo.ExecutorID = "executor-1"
+
+	task := &batchCopTask{
+		TableShardInfos: []*coprocessor.TableShardInfos{{
+			ExecutorId: "executor-1",
+			ShardInfos: []*coprocessor.ShardInfo{{
+				ShardId: 1,
+				Ranges:  []*coprocessor.KeyRange{{Start: []byte("a"), End: []byte("b")}},
+			}},
+		}},
+	}
+
+	_, err := it.retryBatchCopTask(ctx, bo, task)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestRetryBatchCopTaskForFullTextInvalidatesShardsAndRebuildsTasks(t *testing.T) {
 	indexID := int64(99)
 	client := &retryFullTextMockShardClient{
