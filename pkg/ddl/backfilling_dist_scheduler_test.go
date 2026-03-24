@@ -319,8 +319,8 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = taskMetaBytes
 	sortedKVMeta := writeSortedKVMetaForTest(
-		t,
 		ctx,
+		t,
 		taskMeta.CloudStorageURI,
 		"/pre-split",
 		[][]byte{[]byte("ta"), []byte("tb"), []byte("tc")},
@@ -526,8 +526,8 @@ func createAddIndexTask(t *testing.T,
 }
 
 func writeSortedKVMetaForTest(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	cloudStorageURI string,
 	prefix string,
 	keys [][]byte,
