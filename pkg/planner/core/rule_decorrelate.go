@@ -161,9 +161,7 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
 		return nil, false
 	}
-	// IMPORTANT: We can only eliminate Apply for scalar correlated subqueries (which have MaxOneRow guarantee).
-	// For LATERAL joins (IsLateral=true), the subquery may return multiple rows per left row, so eliminating
-	// the Apply would change result multiplicity (wrong COUNT(*), aggregate results, etc.).
+	// LATERAL joins may return multiple rows per outer row; see LogicalApply.IsLateral.
 	if apply.IsLateral {
 		return nil, false
 	}

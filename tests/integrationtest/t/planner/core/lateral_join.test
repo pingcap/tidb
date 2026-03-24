@@ -32,12 +32,10 @@ create table t1 (a int);
 create table t2 (a int, b varchar(10));
 
 ## Verify Apply operator is used for LATERAL (comma syntax); LIMIT prevents decorrelation
---replace_column 2 <estRows>
-explain format='brief' select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat;
+explain format='plan_tree' select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat;
 
 ## Verify Apply operator for INNER JOIN LATERAL; LIMIT prevents decorrelation
---replace_column 2 <estRows>
-explain format='brief' select * from t1 join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
+explain format='plan_tree' select * from t1 join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
 
 # TestLateralJoinWithRecursiveCTE
 drop table if exists t2;
@@ -124,13 +122,13 @@ insert into t3 values (1, 10, 301), (2, 20, 302);
 insert into t4 values (1, 10, 401), (1, 10, 402), (2, 20, 403);
 
 ## EXPLAIN: LATERAL + USING + ON must show Apply, not plain Join
-explain format='brief' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt;
+explain format='plan_tree' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt;
 
 ## Correctness: verify result set matches nested-loop semantics
 select t1.a, t2.b, t3.c, dt.c from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt order by t1.a;
 
 ## EXPLAIN: LATERAL + USING + ON with aggregate that blocks decorrelation
-explain format='brief' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select sum(t4.c) as s from t4 where t4.a=t2.a) as dt;
+explain format='plan_tree' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select sum(t4.c) as s from t4 where t4.a=t2.a) as dt;
 
 # TestLateralJoinColumnAlias
 ## Column alias list AS dt(col1, ...) renames output columns of a derived table.
