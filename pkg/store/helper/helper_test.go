@@ -226,7 +226,7 @@ func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
 	// The key range sent to PD must match what codecV2.EncodeRegionRange produces for
 	// table 41 with noIndexStats=false (uses EncodeTablePrefix, not GenTableRecordPrefix).
 	tableStart := tablecodec.EncodeTablePrefix(41)
-	tableEnd := kv.Key(tableStart).PrefixNext()
+	tableEnd := tableStart.PrefixNext()
 	expectedStart, expectedEnd := codecV2.EncodeRegionRange(tableStart, tableEnd)
 	require.Equal(t, expectedStart, capturedStart, "GetPDRegionStats must encode start key with the store's codec")
 	require.Equal(t, expectedEnd, capturedEnd, "GetPDRegionStats must encode end key with the store's codec")
