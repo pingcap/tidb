@@ -166,6 +166,70 @@ func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 	codecV1 := tikv.NewCodecV1(tikv.ModeTxn)
 	tbl41V1 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV1)
 	require.NotEqual(t, tbl41.StartKey, tbl41V1.StartKey, "V2 keys should differ from V1 due to keyspace prefix")
+
+	// Verify the public path: GetRegionsTableInfo (wrapping GetTablesInfoWithKeyRange)
+	// must produce the same mapping when backed by a V2-codec store. A regression that
+	// reverts GetTablesInfoWithKeyRange to V1 encoding would produce a mismatched result.
+	regionsInfoForAPI := &pd.RegionsInfo{
+		Count:   int64(len(regions)),
+		Regions: make([]pd.RegionInfo, len(regions)),
+	}
+	for i, r := range regions {
+		regionsInfoForAPI.Regions[i] = *r
+	}
+	hV2 := &helper.Helper{Store: &codecOnlyStorage{codec: codecV2}}
+	tableInfosViaAPI := hV2.GetRegionsTableInfo(regionsInfoForAPI, infoschema.DBInfoAsInfoSchema(schemas), nil)
+	require.Equal(t, tableInfos, tableInfosViaAPI)
+}
+
+// TestGetPDRegionStatsKeyspaceEncoding verifies that GetPDRegionStats encodes the table
+// key range with the store's codec before querying PD. Without this the request would
+// carry a V1 key range and return stats for the wrong set of regions in keyspace-aware
+// clusters.
+func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
+	keyspaceID := uint32(1)
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{Id: keyspaceID, Name: "test_keyspace"}
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+
+	var capturedStart, capturedEnd []byte
+	router := mux.NewRouter()
+	router.HandleFunc(pd.StatsRegion, func(w http.ResponseWriter, r *http.Request) {
+		capturedStart = []byte(r.URL.Query().Get("start_key"))
+		capturedEnd = []byte(r.URL.Query().Get("end_key"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"count":0,"empty_region":0,"region_count":0}`))
+	})
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+	server := httptest.NewServer(serverMux)
+
+	pdAddr := server.URL[len("http://"):]
+	pdAddrs := []string{"invalid_pd_address", pdAddr}
+	store, err := teststore.NewMockStoreWithoutBootstrap(
+		mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("pd-stats-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		server.Close()
+		view.Stop()
+		require.NoError(t, store.Close())
+	})
+
+	h := &helper.Helper{Store: store.(helper.Storage)}
+	_, err = h.GetPDRegionStats(context.Background(), 41, false)
+	require.NoError(t, err)
+
+	// The key range sent to PD must match what codecV2.EncodeRegionRange produces for
+	// table 41 with noIndexStats=false (uses EncodeTablePrefix, not GenTableRecordPrefix).
+	tableStart := tablecodec.EncodeTablePrefix(41)
+	tableEnd := kv.Key(tableStart).PrefixNext()
+	expectedStart, expectedEnd := codecV2.EncodeRegionRange(tableStart, tableEnd)
+	require.Equal(t, expectedStart, capturedStart, "GetPDRegionStats must encode start key with the store's codec")
+	require.Equal(t, expectedEnd, capturedEnd, "GetPDRegionStats must encode end key with the store's codec")
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
@@ -202,6 +266,16 @@ func TestTiKVStoresStat(t *testing.T) {
 	expected := `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":"","start_timestamp":0},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`
 	require.Equal(t, expected, string(data))
 }
+
+// codecOnlyStorage is a minimal helper.Storage stub whose only working method is
+// GetCodec. All other methods panic if called. It is only safe to use with code
+// paths that exclusively call GetCodec, such as GetTablesInfoWithKeyRange.
+type codecOnlyStorage struct {
+	helper.Storage
+	codec tikv.Codec
+}
+
+func (s *codecOnlyStorage) GetCodec() tikv.Codec { return s.codec }
 
 type mockStore struct {
 	helper.Storage
