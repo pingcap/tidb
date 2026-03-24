@@ -253,6 +253,9 @@ func currentRUTotal(execCtx *ExecutionContext, ruDetails *util.RUDetails) float6
 			tiKVRU = ruDetails.TiKVRUV2()
 			tiFlashRU = ruDetails.TiflashRU()
 		}
+		if execCtx.RUV2Metrics == nil {
+			return tiKVRU + tiFlashRU
+		}
 		return execCtx.RUV2Metrics.TotalRU(
 			execCtx.RUV2Weights,
 			tiKVRU,

@@ -1097,10 +1097,10 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
 	repository.StopRepository()
+	topsql.Close()
 	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()
-	topsql.Close()
 	cgmon.StopCgroupMonitor()
 }
 

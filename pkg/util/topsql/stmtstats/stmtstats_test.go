@@ -293,6 +293,32 @@ func TestStatementStatsRUV2Sampling(t *testing.T) {
 		require.InDelta(t, 4.0, finish[key].TotalRU, 1e-9)
 		require.Equal(t, uint64(time.Second.Nanoseconds()), finish[key].ExecDuration)
 	})
+
+	t.Run("v2 with nil metrics falls back to external ru", func(t *testing.T) {
+		stats := &StatementStats{
+			data:             StatementStatsMap{},
+			finished:         atomic.NewBool(false),
+			finishedRUBuffer: RUIncrementMap{},
+		}
+		ru := util.NewRUDetails()
+		ru.AddTiKVRUV2(11)
+
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			Ctx:          context.WithValue(context.Background(), util.RUDetailsCtxKey, ru),
+			User:         "u1",
+			TopRUEnabled: true,
+			RUVersion:    rmclient.RUVersionV2,
+		})
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+		first := stats.MergeRUInto()
+		require.Equal(t, uint64(1), first[key].ExecCount)
+		require.InDelta(t, 11.0, first[key].TotalRU, 1e-9)
+
+		ru.AddTiKVRUV2(4)
+		second := stats.MergeRUInto()
+		require.InDelta(t, 4.0, second[key].TotalRU, 1e-9)
+	})
 }
 
 func TestStatementStatsResetRUStatePreservesStmtStats(t *testing.T) {
