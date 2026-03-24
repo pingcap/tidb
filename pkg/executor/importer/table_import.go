@@ -349,7 +349,7 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 	if chunk.Chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
-		if err = e.HandleSkipNRows(parser); err != nil {
+		if err = HandleSkipNRows(parser, e.IgnoreLines); err != nil {
 			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)

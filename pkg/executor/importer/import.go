@@ -1741,7 +1741,8 @@ func (e *LoadDataController) GetParser(
 	)
 }
 
-func handleSkipNRows(parser mydump.Parser, ignoreLines uint64) error {
+// HandleSkipNRows skips the first N rows of the data file.
+func HandleSkipNRows(parser mydump.Parser, ignoreLines uint64) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -1764,11 +1765,6 @@ func handleSkipNRows(parser mydump.Parser, ignoreLines uint64) error {
 		ignoreLineCnt--
 	}
 	return nil
-}
-
-// HandleSkipNRows skips the first N rows of the data file.
-func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
-	return handleSkipNRows(parser, e.IgnoreLines)
 }
 
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {

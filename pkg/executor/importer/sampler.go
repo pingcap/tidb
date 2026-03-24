@@ -256,7 +256,7 @@ func (s *kvSizeSampler) getParser(
 		}
 	}()
 	if chunk.Chunk.Offset == 0 {
-		if err = handleSkipNRows(parser, s.cfg.IgnoreLines); err != nil {
+		if err = HandleSkipNRows(parser, s.cfg.IgnoreLines); err != nil {
 			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
