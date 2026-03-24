@@ -227,6 +227,45 @@ func TestFileScanner(t *testing.T) {
 		require.Equal(t, int64(0), tableEstimates["empty_csv"].TiKVSize)
 		require.Positive(t, tableEstimates["with_csv"].TiKVSize)
 	})
+
+	t.Run("EstimateImportDataSizeSkipInvalidFiles", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.good-schema.sql"),
+			[]byte("CREATE TABLE db1.good (id INT PRIMARY KEY, v VARCHAR(255));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.good.001.csv"),
+			[]byte("1,good\n"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.bad-schema.sql"),
+			[]byte("CREATE TABL db1.bad (id INT PRIMARY KEY);"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.bad.001.csv"),
+			[]byte("1\n"),
+			0o644,
+		))
+
+		cfg := defaultSDKConfig()
+		cfg.skipInvalidFiles = true
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, cfg)
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 1)
+		require.Equal(t, "good", estimate.Tables[0].Table)
+		require.Positive(t, estimate.Tables[0].SourceSize)
+		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
+		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
+	})
 }
 
 func TestFileScannerWithEstimateRealSize(t *testing.T) {

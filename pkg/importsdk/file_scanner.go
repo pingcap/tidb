@@ -212,6 +212,10 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 		for _, tblMeta := range dbMeta.Tables {
 			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta)
 			if err != nil {
+				if s.config.skipInvalidFiles {
+					s.logger.Warn("skipping table during size estimation", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
+					continue
+				}
 				return nil, err
 			}
 			tableEstimate := TableDataSizeEstimate{

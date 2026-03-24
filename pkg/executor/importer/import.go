@@ -1715,7 +1715,7 @@ func newLoadDataParser(
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:
-		err = exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(format)
+		return nil, exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(format)
 	}
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
