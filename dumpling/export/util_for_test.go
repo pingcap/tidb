@@ -49,18 +49,6 @@ func (m *mockGCStatesClient) GetGCState(_ context.Context) (pdgc.GCState, error)
 	return pdgc.GCState{}, nil
 }
 
-func (m *mockGCStatesClient) SetGlobalGCBarrier(_ context.Context, _ string, _ uint64, _ time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
-	return nil, nil
-}
-
-func (m *mockGCStatesClient) DeleteGlobalGCBarrier(_ context.Context, _ string) (*pdgc.GlobalGCBarrierInfo, error) {
-	return nil, nil
-}
-
-func (m *mockGCStatesClient) GetAllKeyspacesGCStates(_ context.Context) (pdgc.ClusterGCStates, error) {
-	return pdgc.ClusterGCStates{}, nil
-}
-
 // mockPDClientForGC implements a minimal pd.Client for GC-related tests.
 type mockPDClientForGC struct {
 	pd.Client // embed to satisfy the full interface; only override what we need
