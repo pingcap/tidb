@@ -449,7 +449,7 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 		if i > 0 {
 			fixControlStrBuilder.WriteString(",")
 		}
-		fixControlStrBuilder.WriteString(fmt.Sprintf("%v:%v", fixID, state.fixValues[i]))
+		fmt.Fprintf(&fixControlStrBuilder, "%v:%v", fixID, state.fixValues[i])
 	}
 	fixControlMap, _, err := fixcontrol.ParseToMap(fixControlStrBuilder.String())
 	if err != nil {
