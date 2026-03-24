@@ -46,7 +46,7 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.Physi
 
 func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 	if len(t.RootTaskConds) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ctx, t.TblColHists, t.RootTaskConds, nil)
+		selectivity, err := cardinality.Selectivity(ctx, t.TblColHists, t.RootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor

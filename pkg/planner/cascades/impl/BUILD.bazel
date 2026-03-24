@@ -12,7 +12,6 @@ go_library(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
-        "//pkg/planner/util/debugtrace",
         "//pkg/planner/util/utilfuncp",
         "//pkg/util/dbterror/plannererrors",
     ],

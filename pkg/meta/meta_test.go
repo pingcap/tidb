@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -111,6 +111,79 @@ func TestPlacementPolicy(t *testing.T) {
 
 	m = meta.NewMutator(txn)
 	val, err = m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
+
+func TestMaskingPolicy(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+	policy := &model.MaskingPolicyInfo{
+		ID:          1,
+		Name:        ast.NewCIStr("mp1"),
+		TableID:     10,
+		ColumnID:    11,
+		MaskingType: model.MaskingPolicyTypeMaskFull,
+		Expression:  "mask_full(c)",
+		RestrictOps: ast.MaskingPolicyRestrictOpInsertIntoSelect | ast.MaskingPolicyRestrictOpDeleteSelect,
+		Status:      model.MaskingPolicyStatusEnabled,
+		CreatedBy:   "root@%",
+		UpdatedBy:   "root@%",
+		State:       model.StatePublic,
+	}
+	err = m.CreateMaskingPolicy(policy)
+	require.NoError(t, err)
+	require.Equal(t, policy.ID, int64(1))
+
+	err = m.CreateMaskingPolicy(policy)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy already exists")
+	require.ErrorContains(t, err, "masking policy id : 1 already exists")
+
+	_, err = m.GetMaskingPolicy(2)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy doesn't exist")
+	require.ErrorContains(t, err, "masking policy id : 2 doesn't exist")
+
+	val, err := m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	policy.Expression = "mask_partial(c, 0, 2, '*')"
+	policy.Status = model.MaskingPolicyStatusDisabled
+	err = m.UpdateMaskingPolicy(policy)
+	require.NoError(t, err)
+
+	val, err = m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	ps, err := m.ListMaskingPolicies()
+	require.NoError(t, err)
+	require.Equal(t, []*model.MaskingPolicyInfo{policy}, ps)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMutator(txn)
+	val, err = m.GetMaskingPolicy(1)
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
 	err = txn.Commit(context.Background())
@@ -626,6 +699,57 @@ func TestAutoRandomTableIDKey(b *testing.T) {
 	require.Equal(b, tableID, id)
 }
 
+func TestIterDatabases(t *testing.T) {
+	// Create a new mock store and a transaction
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+
+	// Prepare multiple databases
+	db1 := &model.DBInfo{ID: 1, Name: ast.NewCIStr("db1")}
+	db2 := &model.DBInfo{ID: 2, Name: ast.NewCIStr("db2")}
+	db3 := &model.DBInfo{ID: 3, Name: ast.NewCIStr("db3")}
+
+	require.NoError(t, m.CreateDatabase(db1))
+	require.NoError(t, m.CreateDatabase(db2))
+	require.NoError(t, m.CreateDatabase(db3))
+
+	// Iterate all databases and collect names
+	var names []string
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		names = append(names, info.Name.O)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, names, 3)
+	sort.Strings(names)
+	require.Equal(t, []string{"db1", "db2", "db3"}, names)
+
+	// Verify early stop behavior by returning a sentinel error from the callback
+	count := 0
+	sentinel := errors.New("stop")
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		count++
+		if count == 2 {
+			return sentinel
+		}
+		return nil
+	})
+	require.Error(t, err)
+	require.True(t, errors.ErrorEqual(err, sentinel))
+	require.Equal(t, 2, count)
+
+	// Commit the transaction to ensure no side effects remain
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
 func TestSequenceKey(b *testing.T) {
 	var tableID int64 = 10
 	key := meta.SequenceKey(tableID)
@@ -670,6 +794,16 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 		State:   model.StatePublic,
 	}
 	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{
+			Level: "s",
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
@@ -730,6 +864,16 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, meta.IsTableInfoMustLoad(b))
 
+	tableInfo.ForeignKeys = nil
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
 		State:         model.StatePublic,
@@ -758,11 +902,13 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	// The order matter!
 	// IsTableInfoMustLoad relies on the order of the json marshal result,
 	// or the internal of the json marshal in other words.
-	// This test cover the invariance, if Go std library changes, we can catch it.
-	tableInfo := &model.TableInfo{}
+	// This test covers the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{Level: "s"},
+	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"affinity":{"level":"s"},"revision":0}`
 	require.Equal(t, expect, string(b))
 }
 
@@ -990,6 +1136,9 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			Enable:           true,
 			JobInterval:      "1h",
 		},
+		Affinity: &model.TableAffinityInfo{
+			Level: "1",
+		},
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -1027,6 +1176,10 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
+	// affinity
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Affinity, tblInfoRes[0].TableInfos[0].Affinity)
 }
 
 func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {

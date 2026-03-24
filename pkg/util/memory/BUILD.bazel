@@ -21,6 +21,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/util/cgroup",
         "//pkg/util/dbterror",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",

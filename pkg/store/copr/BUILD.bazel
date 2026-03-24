@@ -10,7 +10,9 @@ go_library(
         "key_ranges.go",
         "mpp.go",
         "mpp_probe.go",
+        "range_diagnostics.go",
         "region_cache.go",
+        "ruv2_metrics.go",
         "store.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/store/copr",
@@ -91,7 +93,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 37,
+    shard_count = 40,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",

@@ -53,7 +53,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -75,7 +77,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
-	defaultDDLConcurrency     = 100
+	defaultDDLConcurrency     = 64
 	maxSplitKeysOnce          = 10240
 )
 
@@ -91,11 +93,12 @@ type SnapClient struct {
 	pdHTTPClient pdhttp.Client
 
 	// User configurable parameters
-	cipher              *backuppb.CipherInfo
-	concurrencyPerStore uint
-	keepaliveConf       keepalive.ClientParameters
-	rateLimit           uint64
-	tlsConf             *tls.Config
+	cipher                *backuppb.CipherInfo
+	concurrencyPerStore   uint
+	regionScanConcurrency uint
+	keepaliveConf         keepalive.ClientParameters
+	rateLimit             uint64
+	tlsConf               *tls.Config
 
 	switchCh chan struct{}
 
@@ -140,6 +143,8 @@ type SnapClient struct {
 	policyMap *sync.Map
 
 	batchDdlSize uint
+
+	txnTotalSizeLimit uint64
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -301,8 +306,23 @@ func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
+// SetRegionScanConcurrency sets max in-flight region scan requests during import.
+func (rc *SnapClient) SetRegionScanConcurrency(c uint) {
+	log.Info("region scan request concurrency", zap.Uint("size", c))
+	rc.regionScanConcurrency = c
+}
+
+// GetRegionScanConcurrency returns max in-flight region scan requests during import.
+func (rc *SnapClient) GetRegionScanConcurrency() uint {
+	return rc.regionScanConcurrency
+}
+
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
 	rc.batchDdlSize = batchDdlsize
+}
+
+func (rc *SnapClient) SetTxnTotalSizeLimit(txnTotalSizeLimit uint64) {
+	rc.txnTotalSizeLimit = txnTotalSizeLimit
 }
 
 func (rc *SnapClient) GetBatchDdlSize() uint {
@@ -449,10 +469,16 @@ func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
+	restoreStartTS uint64,
 	logRestoredTS uint64,
 	hash []byte,
 	checkpointExists bool,
-) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
+) (
+	checkpointSetWithTableID map[int64]map[string]struct{},
+	checkpointClusterConfig *pdutil.ClusterConfig,
+	newRestoreStartTS uint64,
+	err error,
+) {
 	// checkpoint sets distinguished by range key
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
@@ -460,12 +486,12 @@ func (rc *SnapClient) InitCheckpoint(
 		// load the checkpoint since this is not the first time to restore
 		meta, err := snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 		rc.restoreUUID = meta.RestoreUUID
 
 		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %v if the cluster has been cleaned up.",
@@ -473,7 +499,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		if !bytes.Equal(meta.Hash, hash) {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
 					"Please don't use the checkpoint, "+
 					"or use the the same restore command. checkpoint manager: %v",
@@ -481,7 +507,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %s if the cluster has been cleaned up.",
@@ -494,13 +520,15 @@ func (rc *SnapClient) InitCheckpoint(
 		// Notice that if log restore checkpoint metadata is not stored, BR always enters
 		// snapshot restore.
 		if meta.LogRestoredTS != logRestoredTS {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The current PITR want to restore cluster to the log restored ts[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you shoud specify the log restored ts instead, "+
 					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
 				logRestoredTS, meta.LogRestoredTS, snapshotCheckpointMetaManager,
 			)
 		}
+
+		newRestoreStartTS = meta.RestoreStartTS
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
 		// Then the undo function would use the result undo of `remove schedulers` operation,
@@ -520,12 +548,12 @@ func (rc *SnapClient) InitCheckpoint(
 			return nil
 		})
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
 		checkpointChecksum, t2, err := snapshotCheckpointMetaManager.LoadCheckpointChecksum(ctx)
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 		rc.checkpointChecksum = checkpointChecksum
 		// use the later time to adjust the summary elapsed time.
@@ -539,6 +567,7 @@ func (rc *SnapClient) InitCheckpoint(
 		restoreID := uuid.New()
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
+			RestoreStartTS:    restoreStartTS,
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
 			Hash:              hash,
@@ -546,20 +575,21 @@ func (rc *SnapClient) InitCheckpoint(
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
+		newRestoreStartTS = restoreStartTS
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg, RuleID: config.RuleID}
 		}
 		if err := snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, meta); err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 	}
 
 	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, snapshotCheckpointMetaManager)
 	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
+		return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 	}
-	return checkpointSetWithTableID, checkpointClusterConfig, nil
+	return checkpointSetWithTableID, checkpointClusterConfig, newRestoreStartTS, nil
 }
 
 func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
@@ -728,7 +758,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
@@ -1003,9 +1033,12 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
 		for _, db := range dbs {
-			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
 			}
 		}
 		return nil
@@ -1018,7 +1051,14 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
+			}
+			return nil
 		})
 	}
 	return eg.Wait()
@@ -1094,6 +1134,8 @@ func (rc *SnapClient) createTables(
 		}
 	}
 	cts := make([]*restoreutils.CreatedTable, 0, len(tables))
+	var tablesWithMergeOption []*restoreutils.CreatedTable
+
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -1114,8 +1156,110 @@ func (rc *SnapClient) createTables(
 		}
 		log.Debug("new created tables", zap.Any("table", ct))
 		cts = append(cts, ct)
+
+		// Collect tables that need merge_option (either table-level or partition-level)
+		if table.IsMergeOptionAllowed || len(table.PartitionMergeOptionAllowed) > 0 {
+			tablesWithMergeOption = append(tablesWithMergeOption, ct)
+		}
 	}
+
+	// Batch set merge_option for collected tables and partitions
+	if len(tablesWithMergeOption) > 0 {
+		err := rc.setMergeOptionForTables(ctx, tablesWithMergeOption)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to batch set merge_option for tables")
+		}
+	}
+
 	return cts, nil
+}
+
+// setMergeOptionForTables sets merge_option for multiple tables and partitions using batch update
+func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables []*restoreutils.CreatedTable) error {
+	if len(createdTables) == 0 {
+		return nil
+	}
+
+	log.Info("batch setting merge_option for tables and partitions", zap.Int("count", len(createdTables)))
+
+	var rulesToSet []*label.Rule
+
+	for _, ct := range createdTables {
+		table := ct.OldTable
+		newTableInfo := ct.Table
+		// Set merge_option for the table itself if IsMergeOptionAllowed is true
+		if table.IsMergeOptionAllowed {
+			rule := label.NewRule()
+			// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+			dbName := table.DB.Name.L
+			tableName := table.Info.Name.L
+			// Set labels including merge_option before calling Reset()
+			rule.Labels = []pdhttp.RegionLabel{
+				{Key: "merge_option", Value: "allow"},
+			}
+			// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table labels
+			// Reset() uses the NEW table ID (after restore)
+			rule.Reset(dbName, tableName, "", newTableInfo.ID)
+
+			rulesToSet = append(rulesToSet, rule)
+		}
+
+		// Set merge_option for partitions if PartitionMergeOptionAllowed is set
+		if len(table.PartitionMergeOptionAllowed) > 0 &&
+			table.Info.Partition != nil && len(table.Info.Partition.Definitions) > 0 &&
+			newTableInfo.Partition != nil && len(newTableInfo.Partition.Definitions) > 0 {
+			newPartitionMap := make(map[string]*model.PartitionDefinition)
+			for i := range newTableInfo.Partition.Definitions {
+				def := &newTableInfo.Partition.Definitions[i]
+				newPartitionMap[def.Name.O] = def
+			}
+
+			for _, oldDef := range table.Info.Partition.Definitions {
+				// Only set merge_option for partitions that have it enabled
+				// Use .O (original) for map lookup to preserve case, but .L for rule ID matching
+				if table.PartitionMergeOptionAllowed[oldDef.Name.O] {
+					// Find the corresponding new partition definition
+					newDef, exists := newPartitionMap[oldDef.Name.O]
+					if !exists {
+						log.Warn("partition not found in restored table, skipping merge_option",
+							zap.String("partition", oldDef.Name.O))
+						continue
+					}
+
+					rule := label.NewRule()
+					// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+					dbName := table.DB.Name.L
+					tableName := table.Info.Name.L
+					partitionName := oldDef.Name.L
+					// Set labels including merge_option before calling Reset()
+					rule.Labels = []pdhttp.RegionLabel{
+						{Key: "merge_option", Value: "allow"},
+					}
+					// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table/partition labels
+					// Reset() uses the NEW partition ID (after restore)
+					rule.Reset(dbName, tableName, partitionName, newDef.ID)
+
+					rulesToSet = append(rulesToSet, rule)
+				}
+			}
+		}
+	}
+
+	// Put label rules to PD in batches to avoid overwhelming PD
+	totalRules := len(rulesToSet)
+	for batch := range slices.Chunk(rulesToSet, utils.LabelRuleBatchSize) {
+		log.Debug("putting label rules batch",
+			zap.Int("batch_size", len(batch)),
+			zap.Int("total", totalRules))
+
+		err := infosync.UpdateLabelRules(ctx, label.NewRulePatch(batch, nil))
+		if err != nil {
+			return errors.Annotatef(err, "failed to put label rules (batch_size=%d, total=%d) for merge_option to PD", len(batch), totalRules)
+		}
+	}
+
+	log.Info("successfully put all label rules", zap.Int("total_rules", totalRules))
+	return nil
 }
 
 // SortTablesBySchemaID sorts tables by their schema ID to ensure tables in the same schema

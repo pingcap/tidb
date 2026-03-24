@@ -22,11 +22,102 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
+type parquetColumnData struct {
+	vals      any
+	defLevels []int16
+}
+
+func calcValueRange(
+	defLevels []int16, rowStart, rowEnd int,
+) (start, end int, err error) {
+	if defLevels == nil {
+		return rowStart, rowEnd, nil
+	}
+
+	valueStart := 0
+	for _, level := range defLevels[:rowStart] {
+		if level > 0 {
+			valueStart++
+		}
+	}
+
+	valueEnd := valueStart
+	for _, level := range defLevels[rowStart:rowEnd] {
+		if level > 0 {
+			valueEnd++
+		}
+	}
+	return valueStart, valueEnd, nil
+}
+
+func writeParquetColumnBatch(cw file.ColumnChunkWriter, vals any, defLevels []int16) error {
+	var err error
+	switch w := cw.(type) {
+	case *file.Int96ColumnChunkWriter:
+		buf, _ := vals.([]parquet.Int96)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.Int64ColumnChunkWriter:
+		buf, _ := vals.([]int64)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.Float64ColumnChunkWriter:
+		buf, _ := vals.([]float64)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.ByteArrayColumnChunkWriter:
+		buf, _ := vals.([]parquet.ByteArray)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.FixedLenByteArrayColumnChunkWriter:
+		buf, _ := vals.([]parquet.FixedLenByteArray)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.Int32ColumnChunkWriter:
+		buf, _ := vals.([]int32)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.BooleanColumnChunkWriter:
+		buf, _ := vals.([]bool)
+		_, err = w.WriteBatch(buf, defLevels, nil)
+	default:
+		return fmt.Errorf("unsupported column type %T", cw)
+	}
+	return err
+}
+
+func sliceColumnData(col parquetColumnData, rowStart, rowEnd int) (any, []int16, error) {
+	valueStart, valueEnd, err := calcValueRange(col.defLevels, rowStart, rowEnd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var rowDefLevels []int16
+	if col.defLevels != nil {
+		rowDefLevels = col.defLevels[rowStart:rowEnd]
+	}
+
+	switch typedVals := col.vals.(type) {
+	case []parquet.Int96:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []int64:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []float64:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []parquet.ByteArray:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []parquet.FixedLenByteArray:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []int32:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []bool:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported value type %T", col.vals)
+	}
+}
+
 // ParquetColumn defines the properties of a column in a Parquet file.
-// Used to generate parquet files in tests.
+// It's only used to generate parquet files in tests.
 type ParquetColumn struct {
 	Name      string
 	Type      parquet.Type
@@ -38,7 +129,7 @@ type ParquetColumn struct {
 }
 
 type writeWrapper struct {
-	Writer storage.ExternalFileWriter
+	Writer objectio.Writer
 }
 
 func (*writeWrapper) Seek(_ int64, _ int) (int64, error) {
@@ -57,13 +148,13 @@ func (w *writeWrapper) Close() error {
 	return w.Writer.Close(context.Background())
 }
 
-func getStore(path string) (storage.ExternalStorage, error) {
-	s, err := storage.ParseBackend(path, nil)
+func getStore(path string) (storeapi.Storage, error) {
+	s, err := objstore.ParseBackend(path, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	store, err := objstore.NewWithDefaultOpt(context.Background(), s)
 	if err != nil {
 		return nil, err
 	}
@@ -110,45 +201,39 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 	//nolint: errcheck
 	defer pw.Close()
 
-	// Only one row group for simplicity
-	rgw := pw.AppendRowGroup()
-	//nolint: errcheck
-	defer rgw.Close()
-
+	colData := make([]parquetColumnData, 0, len(pcolumns))
 	for _, pc := range pcolumns {
-		cw, err := rgw.NextColumn()
-		if err != nil {
-			return err
-		}
-		vals, defLevel := pc.Gen(rows)
+		vals, defLevels := pc.Gen(rows)
+		colData = append(colData, parquetColumnData{vals: vals, defLevels: defLevels})
+	}
 
-		switch w := cw.(type) {
-		case *file.Int96ColumnChunkWriter:
-			buf, _ := vals.([]parquet.Int96)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.Int64ColumnChunkWriter:
-			buf, _ := vals.([]int64)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.Float64ColumnChunkWriter:
-			buf, _ := vals.([]float64)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.ByteArrayColumnChunkWriter:
-			buf, _ := vals.([]parquet.ByteArray)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.Int32ColumnChunkWriter:
-			buf, _ := vals.([]int32)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.BooleanColumnChunkWriter:
-			buf, _ := vals.([]bool)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		default:
-			return fmt.Errorf("unsupported column type %T", cw)
+	rowGroupLen := int(props.MaxRowGroupLength())
+	if rowGroupLen <= 0 {
+		rowGroupLen = rows
+	}
+	for rowStart := 0; rowStart < rows; rowStart += rowGroupLen {
+		rowEnd := min(rows, rowStart+rowGroupLen)
+		rgw := pw.AppendRowGroup()
+
+		for colIdx := range pcolumns {
+			cw, err := rgw.NextColumn()
+			if err != nil {
+				return err
+			}
+
+			rowVals, rowDefLevels, err := sliceColumnData(colData[colIdx], rowStart, rowEnd)
+			if err != nil {
+				return err
+			}
+			if err := writeParquetColumnBatch(cw, rowVals, rowDefLevels); err != nil {
+				return err
+			}
+			if err := cw.Close(); err != nil {
+				return err
+			}
 		}
 
-		if err != nil {
-			return err
-		}
-		if err := cw.Close(); err != nil {
+		if err := rgw.Close(); err != nil {
 			return err
 		}
 	}

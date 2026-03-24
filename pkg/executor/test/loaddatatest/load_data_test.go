@@ -17,12 +17,14 @@ package loaddatatest
 import (
 	"fmt"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -43,10 +45,13 @@ func checkCases(
 ) {
 	for _, tt := range tests {
 		var reader io.ReadCloser = mydump.NewStringReader(string(tt.data))
-		var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
-			r io.ReadCloser, err error,
-		) {
-			return reader, nil
+		var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+			Build: func(_ string) (
+				r io.ReadCloser, err error,
+			) {
+				return reader, nil
+			},
+			Wg: &sync.WaitGroup{},
 		}
 
 		ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
@@ -490,4 +495,34 @@ func TestFix56408(t *testing.T) {
 	selectSQL := "TABLE a;"
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 	tk.MustExec("ADMIN CHECK TABLE a")
+}
+
+// TestLoadDataAutoRandomError tests that LOAD DATA returns proper error
+// when inserting explicit values into AUTO_RANDOM column without
+// allow_auto_random_explicit_insert enabled.
+// See https://github.com/pingcap/tidb/issues/65585
+func TestLoadDataAutoRandomError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_auto_random")
+	tk.MustExec("create table t_auto_random (a bigint primary key auto_random(5), b int)")
+
+	// Ensure allow_auto_random_explicit_insert is disabled (default)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+
+	ctx := tk.Session().(sessionctx.Context)
+
+	// Create a reader with explicit value for auto_random column
+	var reader io.ReadCloser = mydump.NewStringReader("1,2\n")
+	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+		Build: func(_ string) (r io.ReadCloser, err error) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
+	}
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+
+	err := tk.ExecToErr("load data local infile '/tmp/test.csv' into table t_auto_random")
+	require.ErrorIs(t, err, dbterror.ErrInvalidAutoRandom)
 }

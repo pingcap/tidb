@@ -73,6 +73,15 @@ type HandleCols interface {
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
+// It represents a common handle carried by one or more columns, typically the columns of a
+// clustered primary key. Planner and executor use it to rebuild the row handle from the current
+// schema/index row, unlike IntHandleCols which only tracks a single integer handle column.
+// Typical table definitions are:
+//
+//	a varchar(32), PRIMARY KEY (a) CLUSTERED
+//	a bigint, b bigint, PRIMARY KEY (a, b) CLUSTERED
+//
+// A single integer primary key instead uses IntHandleCols.
 // Currently, HandleCols are data fields in some operators and executors, and will be used during execution.
 // So please avoid adding fields like sctx and stmtctx to avoid potential bugs when it's reused/shared by plan cache.
 type CommonHandleCols struct {
@@ -328,6 +337,8 @@ func NewCommonHandlesColsWithoutColsAlign(tblInfo *model.TableInfo, idxInfo *mod
 }
 
 // IntHandleCols implements the kv.HandleCols interface.
+// It represents a single integer handle column, such as _tidb_rowid or a single-column integer
+// primary key that is used as the row handle.
 type IntHandleCols struct {
 	col *expression.Column
 }

@@ -92,4 +92,6 @@ ignore:
   - "pkg/store/mockstore/unistore/testutil.go"
   - "k8s.io/apimachinery/pkg"
   - "build"
-
+  - "lighting/cmd"
+  - "pkg/parser/generate_keyword/genkeyword.go"
+  - "pkg/planner/core/generator"

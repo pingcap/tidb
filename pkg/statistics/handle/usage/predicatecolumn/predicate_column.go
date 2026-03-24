@@ -16,7 +16,6 @@ package predicatecolumn
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -25,12 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // loadColumnStatsUsage is a helper function to load column stats usage information from disk.
@@ -158,28 +154,4 @@ func SaveColumnStatsUsageForTable(
 		}
 	}
 	return nil
-}
-
-// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-func CollectColumnsInExtendedStats(sctx sessionctx.Context, tableID int64) ([]int64, error) {
-	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
-	rows, _, err := utilstats.ExecRows(sctx, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	columnIDs := make([]int64, 0, len(rows)*2)
-	for _, row := range rows {
-		twoIDs := make([]int64, 0, 2)
-		data := row.GetString(2)
-		err := json.Unmarshal([]byte(data), &twoIDs)
-		if err != nil {
-			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", data), zap.Error(err))
-			continue
-		}
-		columnIDs = append(columnIDs, twoIDs...)
-	}
-	return columnIDs, nil
 }

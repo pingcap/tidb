@@ -24,8 +24,14 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -34,12 +40,41 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+type mockRUV2ConsumptionReporter struct {
+	group     string
+	tikvRUV2  float64
+	tidbRUV2  float64
+	tiflashRU float64
+}
+
+func (*mockRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 = tikvRUV2
+	m.tidbRUV2 = tidbRUV2
+	m.tiflashRU = tiflashRUV2
+}
+
+type mockRUV2ReportingContext struct {
+	*mock.Context
+	reporter resourcegroup.ConsumptionReporter
+}
+
+func (c *mockRUV2ReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	dctx := c.Context.GetDistSQLCtx()
+	dctx.RUConsumptionReporter = c.reporter
+	dctx.ResourceGroupName = c.GetSessionVars().StmtCtx.ResourceGroupName
+	return dctx
+}
 
 func TestFormatSQL(t *testing.T) {
 	val := executor.FormatSQL("aaaa")
@@ -95,7 +130,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	sessVars.CurrentDB = "testdb"
 	sessVars.DurationParse = time.Second
 	sessVars.DurationCompile = 2 * time.Second
-	sessVars.DurationOptimization = 3 * time.Second
+	sessVars.DurationOptimizer.Total = 3 * time.Second
 	sessVars.DurationWaitTS = 4 * time.Second
 	sessVars.StmtCtx.ExecRetryCount = 2
 	sessVars.StmtCtx.ExecSuccess = true
@@ -129,7 +164,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 				strings.ToLower(variable.SlowLogDBStr):      {},
 				strings.ToLower(variable.SlowLogSucc):       {},
 				strings.ToLower(execdetails.ProcessTimeStr): {},
-			}})
+			},
+		})
 
 	sessVars.SlowLogRules.NeedUpdateEffectiveFields = false
 	items := executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
@@ -141,8 +177,10 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessTimeStr)].Match(ctx.GetSessionVars(), items, copExec.TimeDetail.ProcessTime.Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.BackoffTimeStr)].Match(ctx.GetSessionVars(), items, copExec.BackoffTime.Seconds()))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.ProcessedKeys))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.TotalKeys))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.ProcessedKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.TotalKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.49))
+	require.False(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.5))
 
 	// fields not in Fields should be zero at this point
 	require.Equal(t, uint64(0), items.ExecRetryCount)
@@ -336,6 +374,26 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		seVars.SessionAlias = "sessA"
 		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
 	})
+
+	t.Run("session rules match by cop_mvcc_read_amplification", func(t *testing.T) {
+		tk.MustExec(`set global tidb_slow_log_rules=""`)
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10"`)
+		seVars := tk.Session().GetSessionVars()
+		items := &variable.SlowQueryLogItems{
+			ExecDetail: &execdetails.ExecDetails{
+				CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &util.ScanDetail{
+						TotalKeys:     100,
+						ProcessedKeys: 10,
+					},
+				},
+			},
+		}
+		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10.01"`)
+		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+	})
 }
 
 func TestWriteSlowLog(t *testing.T) {
@@ -353,12 +411,22 @@ func TestWriteSlowLog(t *testing.T) {
 	defer func() { logutil.SlowQueryLogger = prev }()
 
 	sql := "select * from t where a = 1;"
+	readSlowQueryCounter := func() float64 {
+		counter := metrics.SlowQueryCounter.WithLabelValues(metrics.LblGeneral)
+		pb := &dto.Metric{}
+		require.NoError(t, counter.Write(pb))
+		return pb.GetCounter().GetValue()
+	}
 	checkWriteSlowLog := func(expectWrite bool) {
+		before := readSlowQueryCounter()
 		tk.MustExec(sql)
+		after := readSlowQueryCounter()
 		if !expectWrite {
 			require.Equal(t, 0, recorded.Len())
+			require.Equal(t, 0.0, after-before)
 		} else {
 			require.NotEqual(t, 0, recorded.Len())
+			require.Equal(t, 1.0, after-before)
 		}
 
 		writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
@@ -382,6 +450,61 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+}
+
+func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
+	original := config.GetGlobalConfig()
+	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
+	t.Cleanup(func() {
+		if original != nil {
+			config.StoreGlobalConfig(original)
+		}
+		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
+	})
+	variable.GenerateBinaryPlan.Store(false)
+
+	cfg := config.NewConfig()
+	cfg.RUV2 = config.DefaultRUV2Config()
+	cfg.Instance.EnableSlowLog.Store(false)
+	cfg.Instance.RecordPlanInSlowLog = 0
+	config.StoreGlobalConfig(cfg)
+
+	reporter := &mockRUV2ConsumptionReporter{}
+	ctx := &mockRUV2ReportingContext{
+		Context:  mock.NewContext(),
+		reporter: reporter,
+	}
+	sessVars := ctx.GetSessionVars()
+	sessVars.StartTime = time.Now()
+	sessVars.StmtCtx.StmtType = "Select"
+	sessVars.StmtCtx.OriginalSQL = "select 1"
+	sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+	sessVars.StmtCtx.ResourceGroupName = "rg1"
+
+	goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+	require.NotNil(t, sessVars.RUV2Metrics)
+	sessVars.RUV2Metrics.AddResultChunkCells(100)
+	sessVars.RUV2Metrics.AddPlanCnt(2)
+	sessVars.RUV2Metrics.AddSessionParserTotal(3)
+
+	expected := sessVars.RUV2Metrics.CalculateRUValues(sessVars.RUV2Weights())
+	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	ruDetails.AddTiKVRUV2(23456)
+	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
+
+	execStmt := &executor.ExecStmt{
+		Ctx:      ctx,
+		GoCtx:    goCtx,
+		StmtNode: &ast.SelectStmt{},
+	}
+	execStmt.FinishExecuteStmt(0, nil, false)
+
+	require.Equal(t, float64(23456), ruDetails.TiKVRUV2())
+	require.Equal(t, "rg1", reporter.group)
+	require.Equal(t, float64(23456), reporter.tikvRUV2)
+	require.Equal(t, expected, reporter.tidbRUV2)
+	require.Equal(t, float64(412), reporter.tiflashRU)
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {
@@ -538,5 +661,91 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		execStmt.LogSlowQuery(ts, true, false)
+	}
+}
+
+func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	testCases := []struct {
+		name             string
+		tsoDelayMs       int
+		maxExecutionTime uint64 // in milliseconds
+		expectTimeout    bool
+		description      string
+	}{
+		{
+			name:             "TSO delay 50ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       50,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (50ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 150ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       150,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (150ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 300ms, timeout 50ms - should timeout",
+			tsoDelayMs:       300,
+			maxExecutionTime: 50,
+			expectTimeout:    true,
+			description:      "TSO wait time (300ms) exceeds timeout (50ms) clearly",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Enable failpoint to inject delay in TSO Wait()
+			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+			// Set max_execution_time
+			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
+
+			// Execute a SELECT statement that will trigger TSO wait
+			// Use range scan instead of point get to avoid optimization
+			startTime := time.Now()
+			if tc.expectTimeout {
+				err := tk.QueryToErr("select * from t where a >= 1")
+				if err != nil {
+					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
+				} else {
+					pi := tk.Session().ShowProcess()
+					require.NotNil(t, pi)
+					processElapsed := time.Since(pi.Time)
+					require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
+						"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
+				}
+			} else {
+				tk.MustQuery("select * from t where a >= 1")
+			}
+			elapsed := time.Since(startTime)
+
+			// Verify that the elapsed time includes the TSO delay
+			// Allow some skew for CI scheduling / overhead.
+			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
+			skew := 200 * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-skew,
+				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
+
+			// Check ProcessInfo to verify the start time was set before TSO wait
+			pi := tk.Session().ShowProcess()
+			require.NotNil(t, pi)
+			if pi.MaxExecutionTime > 0 {
+				processElapsed := time.Since(pi.Time)
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-skew,
+					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
+			}
+		})
 	}
 }

@@ -30,10 +30,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -46,19 +46,29 @@ const (
 	metaName = "meta.json"
 )
 
-// seekPropsOffsets reads the statistic files to find the largest offset of
+var (
+	// getReadRangeFromPropsConcurrency limits the number of stats files scanned in
+	// parallel to avoid bursty object-storage reads when an import step tracks a
+	// large number of files. Use a lower default than the data-reader budget
+	// because props scanning is metadata-heavy and benefits less from high fanout.
+	getReadRangeFromPropsConcurrency = 64
+)
+
+// getReadRangeFromProps reads the statistic files to find the largest offset of
 // corresponding sorted data file such that the key at offset is less than or
 // equal to the given start keys. These returned offsets can be used to seek data
 // file reader, read, parse and skip few smaller keys, and then locate the needed
 // data.
 //
-// Caller can specify multiple ascending keys and seekPropsOffsets will return
-// the offsets list per file for each key.
-func seekPropsOffsets(
+// Caller can specify multiple ascending keys and getReadRangeFromProps will return
+// the offsets per file for each key. For a range [keyA, keyB), the caller can use
+// result[A] as startOffsets and result[B] as estimatedEndOffsets.
+// Empty jobKeys returns an empty result.
+func getReadRangeFromProps(
 	ctx context.Context,
-	starts []kv.Key,
+	jobKeys [][]byte,
 	paths []string,
-	exStorage storage.ExternalStorage,
+	exStorage storeapi.Storage,
 ) (_ [][]uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
@@ -66,12 +76,21 @@ func seekPropsOffsets(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	offsetsPerFile := make([][]uint64, len(paths))
-	for i := range offsetsPerFile {
-		offsetsPerFile[i] = make([]uint64, len(starts))
+	starts := make([]kv.Key, len(jobKeys))
+	for i := range jobKeys {
+		starts[i] = kv.Key(jobKeys[i])
+	}
+	if len(starts) == 0 {
+		return [][]uint64{}, nil
+	}
+
+	readRangesPerKey := make([][]uint64, len(starts))
+	for i := range starts {
+		readRangesPerKey[i] = make([]uint64, len(paths))
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
@@ -87,29 +106,35 @@ func seekPropsOffsets(
 			curKey := starts[keyIdx]
 
 			p, err3 := r.nextProp()
+			var firstKey kv.Key
+			if err3 == nil {
+				firstKey = kv.Key(p.firstKey)
+			}
 			for {
 				if err3 != nil {
 					if goerrors.Is(err3, io.EOF) {
 						// fill the rest of the offsets with the last offset
-						currOffset := offsetsPerFile[i][keyIdx]
+						off := readRangesPerKey[keyIdx][i]
 						for keyIdx++; keyIdx < len(starts); keyIdx++ {
-							offsetsPerFile[i][keyIdx] = currOffset
+							readRangesPerKey[keyIdx][i] = off
 						}
 						return nil
 					}
 					return errors.Trace(err3)
 				}
-				propKey := kv.Key(p.firstKey)
-				for propKey.Cmp(curKey) > 0 {
+				for firstKey.Cmp(curKey) > 0 {
 					keyIdx++
 					if keyIdx >= len(starts) {
 						return nil
 					}
-					offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
+					readRangesPerKey[keyIdx][i] = readRangesPerKey[keyIdx-1][i]
 					curKey = starts[keyIdx]
 				}
-				offsetsPerFile[i][keyIdx] = p.offset
+				readRangesPerKey[keyIdx][i] = p.offset
 				p, err3 = r.nextProp()
+				if err3 == nil {
+					firstKey = kv.Key(p.firstKey)
+				}
 			}
 		})
 	}
@@ -117,16 +142,7 @@ func seekPropsOffsets(
 	if err = eg.Wait(); err != nil {
 		return nil, err
 	}
-
-	// TODO(lance6716): change the caller so we don't need to transpose the result
-	offsetsPerKey := make([][]uint64, len(starts))
-	for i := range starts {
-		offsetsPerKey[i] = make([]uint64, len(paths))
-		for j := range paths {
-			offsetsPerKey[i][j] = offsetsPerFile[j][i]
-		}
-	}
-	return offsetsPerKey, nil
+	return readRangesPerKey, nil
 }
 
 // GetAllFileNames returns files with the same non-partitioned dir.
@@ -143,13 +159,13 @@ func seekPropsOffsets(
 //   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	nonPartitionedDir string,
 ) ([]string, error) {
 	var data []string
 
 	err := store.WalkDir(ctx,
-		&storage.WalkOption{},
+		&storeapi.WalkOption{},
 		func(path string, size int64) error {
 			// extract the first dir
 			bs := hack.Slice(path)
@@ -188,7 +204,7 @@ func GetAllFileNames(
 
 // CleanUpFiles delete all data and stat files under the same non-partitioned dir.
 // see randPartitionedPrefix for how we partition the files.
-func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartitionedDir string) error {
+func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
@@ -201,7 +217,7 @@ func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartiti
 
 // MockExternalEngine generates an external engine with the given keys and values.
 func MockExternalEngine(
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
@@ -452,7 +468,7 @@ func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
 
 // WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
 // Usage: Store external meta after appropriate modifications.
-func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storeapi.Storage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}
@@ -465,7 +481,7 @@ func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store 
 
 // ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
 // Usage: Retrieve external meta for further processing.
-func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storeapi.Storage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}

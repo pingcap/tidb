@@ -26,13 +26,14 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -252,10 +253,10 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 }
 
 func readParquetData(t *testing.T) []byte {
-	s, err := storage.ParseBackend("./testdata", nil)
+	s, err := objstore.ParseBackend("./testdata", nil)
 	require.NoError(t, err)
 
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	store, err := objstore.NewWithDefaultOpt(context.Background(), s)
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -756,8 +757,12 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	lnConfig.TikvImporter.Backend = config.BackendLocal
 	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
+	theVersion := "8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"
+	if kerneltype.IsNextGen() {
+		theVersion = "8.0.11-TiDB-CLOUD.202603.1"
+	}
 	mock.ExpectQuery("SELECT version()").
-		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"))
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow(theVersion))
 	err = targetGetter.CheckVersionRequirements(ctx)
 	require.ErrorContains(t, err, "pd HTTP client is required for component version check in local backend")
 	require.NoError(t, mock.ExpectationsWereMet())

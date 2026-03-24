@@ -248,8 +248,7 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression) (base.LogicalPlan, error) {
 	var eqConds []*expression.ScalarFunction
 	for _, edge := range edges {
-		lCol := edge.edge.GetArgs()[0].(*expression.Column)
-		rCol := edge.edge.GetArgs()[1].(*expression.Column)
+		lCol, rCol := expression.ExtractColumnsFromColOpCol(edge.edge)
 		if leftPlan.Schema().Contains(lCol) {
 			eqConds = append(eqConds, edge.edge)
 		} else {

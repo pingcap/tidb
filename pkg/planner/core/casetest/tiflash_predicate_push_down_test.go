@@ -39,6 +39,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		for range 13 {
 			testKit.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 		}
+		testKit.MustExec("flush stats_delta")
 		testKit.MustExec("analyze table t1 all columns;")
 		testKit.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 

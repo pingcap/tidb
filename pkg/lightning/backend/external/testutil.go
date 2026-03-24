@@ -21,10 +21,10 @@ import (
 	"testing"
 
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +40,7 @@ func testReadAndCompare(
 	ctx context.Context,
 	t *testing.T,
 	kvs []common.KvPair,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	datas []string,
 	stats []string,
 	startKey dbkv.Key,
@@ -72,6 +72,10 @@ func testReadAndCompare(
 			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
 		}
 
+		readRanges, err := getReadRangeFromProps(
+			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
+		require.NoError(t, err)
+
 		err = readAllData(
 			ctx,
 			store,
@@ -79,6 +83,8 @@ func testReadAndCompare(
 			statFilesOfGroup,
 			curStart,
 			curEnd,
+			readRanges[0],
+			readRanges[1],
 			bufPool,
 			bufPool,
 			loaded,

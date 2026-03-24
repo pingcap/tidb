@@ -27,8 +27,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -117,7 +117,7 @@ func fakeCheckpointFiles(
 	infos []fakeGlobalCheckPoint,
 ) error {
 	cpDir := filepath.Join(tmpDir, stream.GetStreamBackupGlobalCheckpointPrefix())
-	s, err := storage.NewLocalStorage(cpDir)
+	s, err := objstore.NewLocalStorage(cpDir)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -149,7 +149,7 @@ type fakeGlobalCheckPoint struct {
 func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
+	s, err := objstore.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
 
 	infos := []fakeGlobalCheckPoint{
@@ -178,7 +178,7 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	storage, err := objstore.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -201,7 +201,7 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	var startLogBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	storage, err := objstore.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -223,7 +223,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 
 func TestGetExternalStorageOptions(t *testing.T) {
 	cfg := Config{}
-	u, err := storage.ParseBackend("s3://bucket/path", nil)
+	u, err := objstore.ParseBackend("s3://bucket/path", nil)
 	require.NoError(t, err)
 	options := getExternalStorageOptions(&cfg, u)
 	require.NotNil(t, options.HTTPClient)

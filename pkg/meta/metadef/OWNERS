@@ -1,0 +1,10 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+options:
+  no_parent_owners: true
+filters:
+  "(OWNERS|system_tables_def\\.go)$":
+    approvers:
+      - sig-critical-approvers-tidb-server
+  ".*":
+    approvers:
+      - sig-approvers-meta

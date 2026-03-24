@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "common.go",
         "compatibility.go",
+        "global_sort.go",
         "workload.go",
     ],
     importpath = "github.com/pingcap/tidb/tests/realtikvtest/testutils",
@@ -15,8 +16,10 @@ go_library(
         "//pkg/testkit",
         "//pkg/util/logutil",
         "//tests/realtikvtest",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_google_cloud_go_storage//:storage",
         "@org_uber_go_zap//:zap",
     ],
 )

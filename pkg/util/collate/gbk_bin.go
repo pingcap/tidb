@@ -16,6 +16,7 @@ package collate
 
 import (
 	"bytes"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -87,6 +88,11 @@ func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	}
 
 	return buf
+}
+
+// MaxKeyLen implements Collator interface.
+func (*gbkBinCollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 2
 }
 
 // Pattern implements Collator interface.

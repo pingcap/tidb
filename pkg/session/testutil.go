@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -35,6 +36,8 @@ var (
 	GetBootstrapVersion = getBootstrapVersion
 	// CurrentBootstrapVersion is used in test
 	CurrentBootstrapVersion = currentBootstrapVersion
+	// TiDBDDLTableVersionForTest is used in test
+	TiDBDDLTableVersionForTest = tidbDDLTableVersion
 )
 
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
@@ -95,4 +98,14 @@ func exec(se sessionapi.Session, sql string, args ...any) (sqlexec.RecordSet, er
 		return nil, err
 	}
 	return rs, nil
+}
+
+// RevertVersionAndVariables reverts the version and variables in mysql.tidb and
+// mysql.global_variables for testing upgrade/downgrade.
+func RevertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
+	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
+	if ver <= version195 {
+		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
+		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
+	}
 }

@@ -278,7 +278,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			// Update the global NDV.
 			globalStatsNDV := min(a.globalStats.Fms[i].NDV(), a.globalStats.Count)
 			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
-			a.globalStats.Fms[i].DestroyAndPutToPool()
+			a.globalStats.Fms[i] = nil // Release for GC.
 		}
 	}
 	err = a.dealCMSketch()
@@ -313,6 +313,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
+	// FIXME: The analyze version used during async global stats merge can diverge from
+	// the stats version eventually persisted for the same global stats.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return util.CallWithSCtx(a.statsHandle.SPool(),

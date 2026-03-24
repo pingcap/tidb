@@ -52,7 +52,7 @@ func showRestoredCreateDatabase(sctx sessionctx.Context, db *model.DBInfo, brCom
 	return result.String(), nil
 }
 
-// BRIECreateDatabase creates the database with OnExistIgnore option
+// BRIECreateDatabase creates the database with OnExistError option
 func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment string) error {
 	d := domain.GetDomain(sctx).DDLExecutor()
 	query, err := showRestoredCreateDatabase(sctx, schema, brComment)
@@ -69,7 +69,7 @@ func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(sctx, schema, ddl.OnExistIgnore)
+	return d.CreateSchemaWithInfo(sctx, schema, ddl.OnExistError)
 }
 
 // showRestoredCreateTable shows the result of SHOW CREATE TABLE from a tableInfo.

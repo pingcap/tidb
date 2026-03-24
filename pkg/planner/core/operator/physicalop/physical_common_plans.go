@@ -324,12 +324,15 @@ func (c TblColPosInfoSlice) Len() int {
 	return len(c)
 }
 
-// FindTblIdx finds the ordinal of the corresponding access column.
+// FindTblIdx returns the candidate range whose Start is the last one not greater than colOrdinal.
+// We search for the first range with Start > colOrdinal and then step back by one position.
+// For example, with starts [0, 3, 8] and colOrdinal = 3, the correct candidate is the range
+// starting at 3, so the search predicate must be `>` rather than `>=`.
 func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	if len(c) == 0 {
 		return 0, false
 	}
-	// find the smallest index of the range that its start great than colOrdinal.
+	// Find the first range that starts strictly after colOrdinal.
 	// @see https://godoc.org/sort#Search
 	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].Start > colOrdinal })
 	if rangeBehindOrdinal == 0 {

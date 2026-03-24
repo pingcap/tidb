@@ -18,8 +18,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -28,11 +26,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -45,20 +44,6 @@ const (
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
-
-// metaPattern is a regular expression used to match backup metadata filenames.
-// The expected filename format is:
-//
-//	{flushTs}-{minDefaultTs}-{minTs}-{maxTs}.meta
-//
-// where each part is a hexadecimal string (0-9, a-f, A-F).
-// Example:
-//
-//	0000000000000001-0000000000003039-065CCFF1D8AC0000-065CCFF1D8AC0006.meta
-//
-// The pattern captures all four parts as separate groups.
-// Leading zeros are necessary for the pattern to match.
-var metaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -262,7 +247,7 @@ func (m *MetadataHelper) ReadFile(
 	offset uint64,
 	length uint64,
 	compressionType backuppb.CompressionType,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
@@ -383,35 +368,28 @@ func (m *MetadataHelper) Close() {
 }
 
 func FilterPathByTs(path string, left, right uint64) string {
-	filename := strings.TrimSuffix(path, ".meta")
+	filename := strings.TrimSuffix(path, metaSuffix)
 	filename = filename[strings.LastIndex(filename, "/")+1:]
+	metaFile, err := backupmetas.ParseName(filename)
+	if err != nil {
+		// keep consistency with old behaviour, tolerate future file path changes.
+		return path
+	}
 
-	if metaPattern.MatchString(filename) {
-		matches := metaPattern.FindStringSubmatch(filename)
-		if len(matches) < 5 {
-			log.Warn("invalid meta file name format", zap.String("file", path))
-			// consider compatible with future file path change
-			return path
-		}
+	minBeginTsInDefaultCf := metaFile.MinBeginTsInDefaultCf
+	if minBeginTsInDefaultCf == 0 || minBeginTsInDefaultCf > metaFile.MinTS {
+		log.Warn("minBeginTsInDefaultCf is not correct, won't filter out this file",
+			zap.String("file", path),
+			zap.Uint64("flushTs", metaFile.FlushTS),
+			zap.Uint64("storeID", metaFile.StoreID),
+			zap.Uint64("minTs", metaFile.MinTS),
+			zap.Uint64("minBeginTsInDefaultCf", minBeginTsInDefaultCf),
+		)
+		return path
+	}
 
-		flushTs, _ := strconv.ParseUint(matches[1], 16, 64)
-		minDefaultTs, _ := strconv.ParseUint(matches[2], 16, 64)
-		minTs, _ := strconv.ParseUint(matches[3], 16, 64)
-		maxTs, _ := strconv.ParseUint(matches[4], 16, 64)
-
-		if minDefaultTs == 0 || minDefaultTs > minTs {
-			log.Warn("minDefaultTs is not correct, fallback to minTs",
-				zap.String("file", path),
-				zap.Uint64("flushTs", flushTs),
-				zap.Uint64("minTs", minTs),
-				zap.Uint64("minDefaultTs", minDefaultTs),
-			)
-			minDefaultTs = minTs
-		}
-
-		if right < minDefaultTs || maxTs < left {
-			return ""
-		}
+	if right < minBeginTsInDefaultCf || metaFile.MaxTS < left {
+		return ""
 	}
 
 	// keep consistency with old behaviour
@@ -422,7 +400,7 @@ func FilterPathByTs(path string, left, right uint64) string {
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	startTS uint64,
 	endTS uint64,
 	metaDataWorkerPoolSize uint,
@@ -431,7 +409,7 @@ func FastUnmarshalMetaData(
 	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
 	pool := util.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	opt := &storeapi.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, metaSuffix) {
 			return nil

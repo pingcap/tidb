@@ -229,7 +229,35 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+// PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalCTE) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	if len(childrenProperties) > 0 {
+		hasTiFlash := false
+		hasValidChild := false
+		for _, child := range childrenProperties {
+			if child == nil {
+				continue
+			}
+			if !hasValidChild {
+				hasTiFlash = child.HasTiFlash
+				hasValidChild = true
+				continue
+			}
+			hasTiFlash = hasTiFlash && child.HasTiFlash
+		}
+		if hasValidChild {
+			p.hasTiFlash = hasTiFlash
+			return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
+		}
+	}
+
+	hasTiFlash := false
+	if p.Cte != nil && p.Cte.SeedPartLogicalPlan != nil {
+		hasTiFlash = GetHasTiFlash(p.Cte.SeedPartLogicalPlan)
+	}
+	p.hasTiFlash = hasTiFlash
+	return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
+}
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

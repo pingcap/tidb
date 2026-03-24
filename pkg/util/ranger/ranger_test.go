@@ -2390,11 +2390,11 @@ func TestIssue40997(t *testing.T) {
             AND db_id < '62813'
         )
     )
-	`).Check(testkit.Rows(
-		"IndexLookUp_8 1.25 root  ",
-		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
-	))
+	`).CheckAt([]int{1, 2, 3, 4}, [][]any{
+		{"1.25", "root", "", ""},
+		{"1.25", "cop[tikv]", "table:t71706696, index:dt_2(dt, db_id, tbl_id)", "range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo"},
+		{"1.25", "cop[tikv]", "table:t71706696", "keep order:false, stats:pseudo"},
+	})
 }
 
 func TestIssue50051(t *testing.T) {

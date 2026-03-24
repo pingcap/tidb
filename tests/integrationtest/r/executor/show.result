@@ -869,7 +869,11 @@ utc_time
 utc_timestamp
 uuid
 uuid_short
+uuid_timestamp
 uuid_to_bin
+uuid_v4
+uuid_v7
+uuid_version
 validate_password_strength
 vec_as_text
 vec_cosine_distance
