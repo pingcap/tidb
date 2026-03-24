@@ -175,9 +175,13 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				metaArr = append(metaArr, metaBytes)
 				failpoint.Return(metaArr, nil)
 			})
+			storeWithPDAndCodec, err := getStorageWithPDAndCodec(store)
+			if err != nil {
+				return nil, err
+			}
 			return generateGlobalSortIngestPlan(
 				ctx,
-				store.(storageWithPDAndCodec),
+				storeWithPDAndCodec,
 				taskHandle,
 				task,
 				&backfillMeta,
@@ -223,6 +227,14 @@ func getUserStoreAndTable(
 		return nil, nil, err
 	}
 	return store, tbl, nil
+}
+
+func getStorageWithPDAndCodec(store kv.Storage) (storageWithPDAndCodec, error) {
+	storeWithPDAndCodec, ok := store.(storageWithPDAndCodec)
+	if !ok {
+		return nil, errors.Errorf("store %T from getUserStoreAndTable does not implement storageWithPDAndCodec", store)
+	}
+	return storeWithPDAndCodec, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.
@@ -592,7 +604,7 @@ func triggerTiCIPreSplitImportShards(
 	if err != nil {
 		return err
 	}
-	req, err := buildTiCIPreSplitImportShardsRequest(backfillMeta, reportGroups)
+	req, err := buildTiCIPreSplitImportShardsRequest(backfillMeta, reportGroups, kvMetaGroups)
 	if err != nil {
 		return err
 	}
@@ -605,6 +617,7 @@ func triggerTiCIPreSplitImportShards(
 func buildTiCIPreSplitImportShardsRequest(
 	backfillMeta *BackfillTaskMeta,
 	reportGroups []*tici.PreSplitImportShardMeta,
+	kvMetaGroups []*external.SortedKVMeta,
 ) (*tici.PreSplitImportShardsRequest, error) {
 	if backfillMeta == nil {
 		return nil, errors.New("backfill meta is nil")
@@ -612,11 +625,14 @@ func buildTiCIPreSplitImportShardsRequest(
 	if len(reportGroups) == 0 {
 		return nil, nil
 	}
+	dataFileCount, statFileCount := countUniqueFilesForTiCIPreSplitRequest(kvMetaGroups)
 	req := &tici.PreSplitImportShardsRequest{
 		TidbTaskId:     strconv.FormatInt(backfillMeta.Job.ID, 10),
 		TableId:        backfillMeta.Job.TableID,
 		ScanSnapshotTs: backfillMeta.ScanSnapshotTS,
 		IndexIds:       append([]int64(nil), backfillMeta.EleIDs...),
+		DataFileCount:  dataFileCount,
+		StatFileCount:  statFileCount,
 		MetaGroups:     make([]*tici.PreSplitImportShardMeta, 0, len(reportGroups)),
 	}
 
@@ -633,14 +649,29 @@ func buildTiCIPreSplitImportShardsRequest(
 		}
 		req.TotalKvSize += groupReq.TotalKvSize
 		req.TotalKvCnt += groupReq.TotalKvCnt
-		req.DataFileCount += groupReq.DataFileCount
-		req.StatFileCount += groupReq.StatFileCount
 		req.MetaGroups = append(req.MetaGroups, groupReq)
 		if groupReq.EleId > 0 && !slices.Contains(req.IndexIds, groupReq.EleId) {
 			req.IndexIds = append(req.IndexIds, groupReq.EleId)
 		}
 	}
 	return req, nil
+}
+
+func countUniqueFilesForTiCIPreSplitRequest(kvMetaGroups []*external.SortedKVMeta) (int32, int32) {
+	dataFiles := make(map[string]struct{})
+	statFiles := make(map[string]struct{})
+	for _, kvMeta := range kvMetaGroups {
+		if kvMeta == nil {
+			continue
+		}
+		for _, dataFile := range kvMeta.GetDataFiles() {
+			dataFiles[dataFile] = struct{}{}
+		}
+		for _, statFile := range kvMeta.GetStatFiles() {
+			statFiles[statFile] = struct{}{}
+		}
+	}
+	return int32(len(dataFiles)), int32(len(statFiles))
 }
 
 const ticiPreSplitReportGroupSize int64 = units.GiB
@@ -844,8 +875,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
-				StartKey:    startKey,
-				EndKey:      endKey,
+				StartKey: startKey,
+				EndKey:   endKey,
+				// Keep the historical evenly-divided size in ingest subtask meta
+				// for compatibility. TiCI pre-split report groups calculate exact
+				// per-group size/count separately.
 				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
 			}},
 			DataFiles:      dataFiles,

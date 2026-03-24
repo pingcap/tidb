@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -303,16 +306,26 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	tk.MustExec("create table t_pre(id bigint auto_random primary key)")
 	tk.MustExec("insert into t_pre values (), (), (), (), (), ()")
 	scanSnapshotTS := uint64(300)
-	task, server := createAddIndexTask(t, dom, "test", "t_pre", proto.Backfill, true, scanSnapshotTS)
-	require.NotNil(t, server)
+	task, _ := createAddIndexTask(t, dom, "test", "t_pre", proto.Backfill, false, scanSnapshotTS)
 
 	var taskMeta ddl.BackfillTaskMeta
 	require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
 	taskMeta.Job.Type = model.ActionAddFullTextIndex
 	taskMeta.EleIDs = []int64{10}
+	sortDir := filepath.Join(t.TempDir(), "sorted", "addindex")
+	require.NoError(t, os.MkdirAll(sortDir, 0o755))
+	taskMeta.CloudStorageURI = "local://" + filepath.ToSlash(sortDir)
 	taskMetaBytes, err := json.Marshal(&taskMeta)
 	require.NoError(t, err)
 	task.Meta = taskMetaBytes
+	sortedKVMeta := writeSortedKVMetaForTest(
+		t,
+		ctx,
+		taskMeta.CloudStorageURI,
+		"/pre-split",
+		[][]byte{[]byte("ta"), []byte("tb"), []byte("tc")},
+		[][]byte{[]byte("va"), []byte("vb"), []byte("vc")},
+	)
 
 	sch := schManager.MockScheduler(task)
 	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
@@ -339,21 +352,8 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, proto.BackfillStepReadIndex)
 	require.NoError(t, err)
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*external.SortedKVMeta{{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
-			TotalKVCnt:  7,
-			MultipleFilesStats: []external.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
-					},
-					MaxOverlappingNum: 3,
-				},
-			},
-		}},
-		EleIDs: []int64{10},
+		MetaGroups: []*external.SortedKVMeta{sortedKVMeta},
+		EleIDs:     []int64{10},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
@@ -362,14 +362,8 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBuildTiCIPreSplitReportGroups", `return()`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockSplitSubtaskMetaForOneKVMetaGroup", `return()`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockGenerateGlobalSortIngestPlanAfterPreSplit", `return()`))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBuildTiCIPreSplitReportGroups"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockSplitSubtaskMetaForOneKVMetaGroup"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockGenerateGlobalSortIngestPlanAfterPreSplit"))
 		tici.ResetMockTiCIPreSplitImportShardsRequest()
 	})
 	tici.ResetMockTiCIPreSplitImportShardsRequest()
@@ -398,14 +392,14 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	require.Equal(t, taskMeta.Job.TableID, req.TableId)
 	require.Equal(t, []int64{10}, req.IndexIds)
 	require.Equal(t, scanSnapshotTS, req.ScanSnapshotTs)
-	require.Equal(t, uint64(12), req.TotalKvSize)
-	require.Equal(t, uint64(7), req.TotalKvCnt)
+	require.Equal(t, sortedKVMeta.TotalKVSize, req.TotalKvSize)
+	require.Equal(t, sortedKVMeta.TotalKVCnt, req.TotalKvCnt)
 	require.EqualValues(t, 1, req.DataFileCount)
 	require.EqualValues(t, 1, req.StatFileCount)
 	require.Len(t, req.MetaGroups, 1)
 	require.Equal(t, int64(10), req.MetaGroups[0].EleId)
-	require.Equal(t, uint64(12), req.MetaGroups[0].TotalKvSize)
-	require.Equal(t, uint64(7), req.MetaGroups[0].TotalKvCnt)
+	require.Equal(t, sortedKVMeta.TotalKVSize, req.MetaGroups[0].TotalKvSize)
+	require.Equal(t, sortedKVMeta.TotalKVCnt, req.MetaGroups[0].TotalKvCnt)
 }
 
 func TestGetNextStep(t *testing.T) {
@@ -529,6 +523,36 @@ func createAddIndexTask(t *testing.T,
 	}
 
 	return task, server
+}
+
+func writeSortedKVMetaForTest(
+	t *testing.T,
+	ctx context.Context,
+	cloudStorageURI string,
+	prefix string,
+	keys [][]byte,
+	values [][]byte,
+) *external.SortedKVMeta {
+	t.Helper()
+
+	objStore, err := dxfhandle.NewObjStore(ctx, cloudStorageURI)
+	require.NoError(t, err)
+	t.Cleanup(objStore.Close)
+
+	var summary *external.WriterSummary
+	writer := external.NewWriterBuilder().
+		SetMemorySizeLimit(64).
+		SetBlockSize(64).
+		SetPropSizeDistance(1).
+		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *external.WriterSummary) { summary = s }).
+		Build(objStore, prefix, "writer")
+	for i := range keys {
+		require.NoError(t, writer.WriteRow(ctx, keys[i], values[i], nil))
+	}
+	require.NoError(t, writer.Close(ctx))
+	require.NotNil(t, summary)
+	return external.NewSortedKVMeta(summary)
 }
 
 func TestBackfillTaskMetaVersion(t *testing.T) {

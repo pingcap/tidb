@@ -290,14 +290,31 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		}
 	}
 
+	if returnAfterNextProp {
+		r.activeDataFiles = make(map[string][2]int)
+		r.activeStatFiles = make(map[string][2]int)
+		return nil,
+			retDataFiles,
+			retStatFiles,
+			uint64(retGroupSize),
+			uint64(retGroupKeyCnt),
+			r.takeRangeJobKeys(),
+			r.takeRegionSplitKeys(),
+			r.propIter.Error()
+	}
+
 	retDataFiles, retStatFiles = r.cloneActiveFiles()
+	retGroupSize = r.curGroupSize
+	retGroupKeyCnt = r.curGroupKeyCnt
 	r.activeDataFiles = make(map[string][2]int)
 	r.activeStatFiles = make(map[string][2]int)
+	r.curGroupSize = 0
+	r.curGroupKeyCnt = 0
 	return nil,
 		retDataFiles,
 		retStatFiles,
-		uint64(r.curGroupSize),
-		uint64(r.curGroupKeyCnt),
+		uint64(retGroupSize),
+		uint64(retGroupKeyCnt),
 		r.takeRangeJobKeys(),
 		r.takeRegionSplitKeys(),
 		r.propIter.Error()

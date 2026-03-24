@@ -180,6 +180,39 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.NoError(t, splitter.Close())
 
 	splitter, err = NewRangeSplitter(
+		ctx,
+		multiFileStat,
+		memStore,
+		int64(summary.TotalSize),
+		int64(summary.TotalCnt),
+		1000,
+		10,
+		int64(math.MaxInt64),
+		int64(math.MaxInt64),
+	)
+	require.NoError(t, err)
+	endKey, dataFiles, statFiles, groupSize, groupKeyCnt, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 1)
+	require.Len(t, statFiles, 1)
+	require.Equal(t, summary.TotalSize, groupSize)
+	require.Equal(t, summary.TotalCnt, groupKeyCnt)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
+
+	endKey, dataFiles, statFiles, groupSize, groupKeyCnt, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 0)
+	require.Len(t, statFiles, 0)
+	require.Zero(t, groupSize)
+	require.Zero(t, groupKeyCnt)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
+	require.NoError(t, splitter.Close())
+
+	splitter, err = NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 30, 1000, 1, int64(math.MaxInt64), int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
