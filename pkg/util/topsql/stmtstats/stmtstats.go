@@ -19,7 +19,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/atomic"
 )
 
@@ -47,6 +49,9 @@ type ExecBeginInfo struct {
 	User           string
 	InNetworkBytes uint64
 	TopRUEnabled   bool
+	RUVersion      rmclient.RUVersion
+	RUV2Metrics    *execdetails.RUV2Metrics
+	RUV2Weights    execdetails.RUV2Weights
 }
 
 // ExecFinishInfo carries optional execution-finish context for extensible stats collection.
@@ -94,29 +99,32 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, info *Ex
 	if info != nil {
 		item.NetworkInBytes += info.InNetworkBytes
 		if info.TopRUEnabled {
-			s.addRUOnBeginLocked(info.Ctx, info.User, sqlDigest, planDigest)
+			s.addRUOnBeginLocked(info, sqlDigest, planDigest)
 		}
 	}
 	// Count more data here.
 }
 
-func (s *StatementStats) addRUOnBeginLocked(ctx context.Context, user string, sqlDigest, planDigest []byte) {
+func (s *StatementStats) addRUOnBeginLocked(info *ExecBeginInfo, sqlDigest, planDigest []byte) {
 	key := RUKey{
-		User:       user,
+		User:       info.User,
 		SQLDigest:  BinaryDigest(sqlDigest),
 		PlanDigest: BinaryDigest(planDigest),
 	}
 	// Cache RUDetails at begin time to avoid per-tick context.Value() lookups.
 	var ruDetails *util.RUDetails
-	if ctx != nil {
-		if raw := ctx.Value(util.RUDetailsCtxKey); raw != nil {
+	if info.Ctx != nil {
+		if raw := info.Ctx.Value(util.RUDetailsCtxKey); raw != nil {
 			ruDetails, _ = raw.(*util.RUDetails)
 		}
 	}
 	// Replace stale execution context defensively.
 	s.execCtx = &ExecutionContext{
-		RUDetails: ruDetails,
-		Key:       key,
+		RUDetails:   ruDetails,
+		RUV2Metrics: info.RUV2Metrics,
+		RUV2Weights: info.RUV2Weights,
+		RUVersion:   NormalizeRUVersion(info.RUVersion),
+		Key:         key,
 	}
 	// ExecCount is begin-based, aligned with TopSQL semantics.
 	incr := s.getOrCreateRUIncrementLocked(key)
@@ -166,11 +174,8 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 		return
 	}
 	defer s.clearRUExecCtxLocked()
-	if ru == nil {
-		return
-	}
 
-	currentTotalRU := ru.RRU() + ru.WRU()
+	currentTotalRU := currentRUTotal(s.execCtx, ru)
 	if currentTotalRU <= 0 {
 		return
 	}
@@ -201,6 +206,14 @@ func (s *StatementStats) clearRUExecCtxLocked() {
 	s.execCtx = nil
 }
 
+// ResetRUState clears TopRU-only state without touching regular stmt stats.
+func (s *StatementStats) ResetRUState() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.execCtx = nil
+	s.finishedRUBuffer = RUIncrementMap{}
+}
+
 // ClearRUExecContext discards the active RU execution context without touching
 // accumulated stmtstats or finished RU increments.
 func (s *StatementStats) ClearRUExecContext() {
@@ -210,11 +223,11 @@ func (s *StatementStats) ClearRUExecContext() {
 }
 
 func (s *StatementStats) sampleActiveRUDeltaLocked(result RUIncrementMap) RUIncrementMap {
-	if s.execCtx == nil || s.execCtx.RUDetails == nil {
+	if s.execCtx == nil {
 		return result
 	}
 
-	currentTotalRU := s.execCtx.RUDetails.RRU() + s.execCtx.RUDetails.WRU()
+	currentTotalRU := currentRUTotal(s.execCtx, s.execCtx.RUDetails)
 	deltaRU := currentTotalRU - s.execCtx.LastRUTotal
 	if deltaRU > 0 {
 		incr, ok := result[s.execCtx.Key]
@@ -227,6 +240,30 @@ func (s *StatementStats) sampleActiveRUDeltaLocked(result RUIncrementMap) RUIncr
 	// Keep LastRUTotal in sync even when delta <= 0 (e.g. counter reset).
 	s.execCtx.LastRUTotal = currentTotalRU
 	return result
+}
+
+func currentRUTotal(execCtx *ExecutionContext, ruDetails *util.RUDetails) float64 {
+	if execCtx == nil {
+		return 0
+	}
+
+	if NormalizeRUVersion(execCtx.RUVersion) == rmclient.RUVersionV2 {
+		var tiKVRU, tiFlashRU float64
+		if ruDetails != nil {
+			tiKVRU = ruDetails.TiKVRUV2()
+			tiFlashRU = ruDetails.TiflashRU()
+		}
+		return execCtx.RUV2Metrics.TotalRU(
+			execCtx.RUV2Weights,
+			tiKVRU,
+			tiFlashRU,
+		)
+	}
+
+	if ruDetails == nil {
+		return 0
+	}
+	return ruDetails.RRU() + ruDetails.WRU()
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem

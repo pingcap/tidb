@@ -22,9 +22,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
+	"go.uber.org/atomic"
 )
 
 // String is only used for debugging.
@@ -201,6 +204,117 @@ func TestCreateStatementStats(t *testing.T) {
 	assert.False(t, stats.Finished())
 	stats.SetFinished()
 	assert.True(t, stats.Finished())
+}
+
+func TestStatementStatsRUV2Sampling(t *testing.T) {
+	t.Run("with ru details", func(t *testing.T) {
+		stats := &StatementStats{
+			data:             StatementStatsMap{},
+			finished:         atomic.NewBool(false),
+			finishedRUBuffer: RUIncrementMap{},
+		}
+		ru := util.NewRUDetails()
+		ru.AddTiKVRUV2(11)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddPlanCnt(3)
+		weights := execdetails.RUV2Weights{
+			RUScale: 1,
+			PlanCnt: 2,
+		}
+		info := &ExecBeginInfo{
+			Ctx:          context.WithValue(context.Background(), util.RUDetailsCtxKey, ru),
+			User:         "u1",
+			TopRUEnabled: true,
+			RUVersion:    rmclient.RUVersionV2,
+			RUV2Metrics:  metrics,
+			RUV2Weights:  weights,
+		}
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), info)
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+		first := stats.MergeRUInto()
+		require.Equal(t, uint64(1), first[key].ExecCount)
+		require.InDelta(t, 17.0, first[key].TotalRU, 1e-9)
+
+		metrics.AddPlanCnt(1)
+		ru.AddTiKVRUV2(5)
+		second := stats.MergeRUInto()
+		require.InDelta(t, 7.0, second[key].TotalRU, 1e-9)
+
+		metrics.AddPlanCnt(2)
+		ru.AddTiKVRUV2(4)
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			RUDetails:    ru,
+			User:         "u1",
+			ExecDuration: time.Second,
+			TopRUEnabled: true,
+		})
+		finish := stats.MergeRUInto()
+		require.InDelta(t, 8.0, finish[key].TotalRU, 1e-9)
+		require.Equal(t, uint64(time.Second.Nanoseconds()), finish[key].ExecDuration)
+	})
+
+	t.Run("without ru details still counts tidb ru", func(t *testing.T) {
+		stats := &StatementStats{
+			data:             StatementStatsMap{},
+			finished:         atomic.NewBool(false),
+			finishedRUBuffer: RUIncrementMap{},
+		}
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddPlanCnt(3)
+		weights := execdetails.RUV2Weights{
+			RUScale: 1,
+			PlanCnt: 2,
+		}
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User:         "u1",
+			TopRUEnabled: true,
+			RUVersion:    rmclient.RUVersionV2,
+			RUV2Metrics:  metrics,
+			RUV2Weights:  weights,
+		})
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+		first := stats.MergeRUInto()
+		require.Equal(t, uint64(1), first[key].ExecCount)
+		require.InDelta(t, 6.0, first[key].TotalRU, 1e-9)
+
+		metrics.AddPlanCnt(1)
+		second := stats.MergeRUInto()
+		require.InDelta(t, 2.0, second[key].TotalRU, 1e-9)
+
+		metrics.AddPlanCnt(2)
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User:         "u1",
+			ExecDuration: time.Second,
+			TopRUEnabled: true,
+		})
+		finish := stats.MergeRUInto()
+		require.InDelta(t, 4.0, finish[key].TotalRU, 1e-9)
+		require.Equal(t, uint64(time.Second.Nanoseconds()), finish[key].ExecDuration)
+	})
+}
+
+func TestStatementStatsResetRUStatePreservesStmtStats(t *testing.T) {
+	stats := &StatementStats{
+		data: StatementStatsMap{
+			newSQLPlanDigest([]byte("sql"), []byte("plan")): NewStatementStatsItem(),
+		},
+		finished: atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{
+			{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}: &RUIncrement{TotalRU: 1},
+		},
+		execCtx: &ExecutionContext{
+			Key:       RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")},
+			RUVersion: rmclient.RUVersionV1,
+		},
+	}
+
+	stats.ResetRUState()
+
+	require.Nil(t, stats.execCtx)
+	require.Empty(t, stats.finishedRUBuffer)
+	require.Len(t, stats.Take(), 1)
 }
 
 // TestExecCounterAddExecCountTake verifies exec counter add exec count take and guards against regressions in begin-based RU accounting.

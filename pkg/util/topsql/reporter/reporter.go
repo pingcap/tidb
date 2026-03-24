@@ -26,6 +26,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
 )
@@ -100,6 +101,7 @@ type RemoteTopSQLReporter struct {
 type ruBatch struct {
 	data      stmtstats.RUIncrementMap
 	timestamp uint64
+	version   rmclient.RUVersion
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
@@ -184,19 +186,25 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 //
 // WARN: It will drop the data if the processing is not in time.
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) CollectRUIncrements(data stmtstats.RUIncrementMap) {
+func (tsr *RemoteTopSQLReporter) CollectRUIncrements(data stmtstats.RUIncrementMap, version rmclient.RUVersion) {
 	if len(data) == 0 {
 		return
 	}
 	batch := ruBatch{
 		timestamp: uint64(nowFunc().Unix()),
 		data:      data,
+		version:   version,
 	}
 	select {
 	case tsr.collectRUIncrementsChan <- batch:
 	default:
 		reporter_metrics.IgnoreCollectRUChannelFullCounter.Inc()
 	}
+}
+
+// OnRUVersionChange clears reporter-side RU state for an aggregator-detected handover.
+func (tsr *RemoteTopSQLReporter) OnRUVersionChange(version rmclient.RUVersion) {
+	tsr.ruAggregator.resetForHandover(version, uint64(nowFunc().Unix()))
 }
 
 // RegisterSQL implements TopSQLReporter.
@@ -237,10 +245,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			timestamp := uint64(nowFunc().Unix())
 			tsr.stmtStatsBuffer[timestamp] = data
 		case batch := <-tsr.collectRUIncrementsChan:
-			if len(batch.data) == 0 {
-				continue
-			}
-			tsr.ruAggregator.addBatchToBucket(batch.timestamp, batch.data)
+			tsr.ruAggregator.addBatch(batch)
 		case <-reportTicker.C:
 			timestamp := uint64(nowFunc().Unix())
 			tsr.processStmtStatsData()
