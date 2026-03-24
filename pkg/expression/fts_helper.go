@@ -325,7 +325,15 @@ func rewriteBooleanGroupToFTSExpr(
 		return buildMatchAgainstConstant(foldedRetType, false), nil
 	}
 
-	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
+	// TiCI currently executes MATCH ... AGAINST as a no-score filter. When the
+	// boolean query contains at least one MUST term, MySQL treats SHOULD terms as
+	// optional score contributors, which cannot be represented in the filter-only
+	// path. In that case we keep the MUST / MUST NOT filters and ignore SHOULD.
+	includeShouldInFilter := len(group.Must) == 0
+	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot))
+	if includeShouldInFilter {
+		searchFuncs = make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
+	}
 	for _, item := range group.Must {
 		f, err := rewriteBooleanClauseToFTSExpr(bctx, matchCols, item, parserType)
 		if err != nil {
@@ -341,14 +349,16 @@ func rewriteBooleanGroupToFTSExpr(
 		nf := NewFunctionInternal(bctx, ast.UnaryNot, types.NewFieldType(mysql.TypeDouble), f)
 		searchFuncs = append(searchFuncs, nf)
 	}
-	for _, item := range group.Should {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, matchCols, item, parserType)
-		if err != nil {
-			return nil, err
+	if includeShouldInFilter {
+		for _, item := range group.Should {
+			f, err := rewriteBooleanClauseToFTSExpr(bctx, matchCols, item, parserType)
+			if err != nil {
+				return nil, err
+			}
+			searchFuncs = append(searchFuncs, f)
 		}
-		searchFuncs = append(searchFuncs, f)
 	}
-	if len(group.Should) > 0 {
+	if includeShouldInFilter && len(group.Should) > 0 {
 		startIdx := len(group.Must) + len(group.MustNot)
 		endIdx := startIdx + len(group.Should)
 		orShould := ComposeDNFCondition(bctx, searchFuncs[startIdx:endIdx]...)
@@ -423,13 +433,6 @@ func buildMatchAgainstConstant(retType *types.FieldType, isNull bool) *Constant 
 func validateMySQLMatchAgainstBooleanGroup(group *matchagainst.BooleanGroup) error {
 	if group == nil {
 		return errors.New("invalid nil boolean group")
-	}
-	// Current limitation of TiDB.
-	if len(group.Must)+len(group.MustNot) > 0 && len(group.Should) > 0 {
-		return errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
-	}
-	if len(group.Must)+len(group.MustNot) == 0 && len(group.Should) > 1 {
-		return errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
 	}
 	return nil
 }
