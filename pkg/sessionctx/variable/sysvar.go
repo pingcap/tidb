@@ -2528,6 +2528,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAlternativeLogicalPlans, Value: BoolToOnOff(vardef.DefOptEnableAlternativeLogicalPlans), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil

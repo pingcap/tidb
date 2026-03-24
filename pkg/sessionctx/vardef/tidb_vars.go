@@ -334,6 +334,11 @@ const (
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
+	// TiDBOptEnableAlternativeLogicalPlans controls whether the optimizer may build
+	// an extra non-decorrelate logical alternative when decorrelation does not
+	// produce an equivalent same-order index join candidate.
+	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
+
 	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
 	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
 	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
@@ -1456,6 +1461,7 @@ const (
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableAlternativeLogicalPlans     = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -478,6 +479,7 @@ func buildAndOptimizeLogicalPlanRound(
 	bestNames *types.NameSlice,
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	optFlagAdjust func(uint64) uint64,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -526,7 +528,11 @@ func buildAndOptimizeLogicalPlanRound(
 		*optimizeStarted = true
 		*beginOpt = time.Now()
 	}
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	optFlag := builder.GetOptFlag()
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -544,6 +550,12 @@ func buildAndOptimizeLogicalPlanRound(
 
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
+
+func shouldTryAlternativeLogicalPlanRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
@@ -577,8 +589,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 
 	// build multi logical plan from raw AST.
 	var (
-		buildRound                = 1
-		needRestoreLogicalPlanCtx = buildRound > 1
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
 		bestCost                  = math.MaxFloat64
 		bestPlan                  base.PhysicalPlan
 		bestNames                 types.NameSlice
@@ -588,13 +599,42 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	var initialLogicalPlanCtx logicalPlanBuildCtx
 	if needRestoreLogicalPlanCtx {
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
+		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
 	}
-	for i := range buildRound {
-		if needRestoreLogicalPlanCtx && i > 0 {
-			restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
-		}
 
-		p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+		ctx,
+		sctx,
+		node,
+		is,
+		hintProcessor,
+		&checked,
+		&optimizeStarted,
+		&beginOpt,
+		needRestoreLogicalPlanCtx,
+		&bestPlan,
+		&bestNames,
+		&bestCost,
+		&bestLogicalPlanCtx,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if nonLogical {
+		// keep compatible with the old.
+		return p, names, 0, nil
+	}
+
+	if shouldTryAlternativeLogicalPlanRound(sessVars) {
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
+			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
+			}
+		})
+
+		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 			ctx,
 			sctx,
 			node,
@@ -608,12 +648,12 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			&bestNames,
 			&bestCost,
 			&bestLogicalPlanCtx,
+			func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
 		)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		if nonLogical {
-			// keep compatible with the old.
 			return p, names, 0, nil
 		}
 	}

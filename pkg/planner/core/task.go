@@ -175,6 +175,9 @@ func indexJoinAttach2Task(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) b
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*physicalop.RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.FromDecorrelatedApply {
+		p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin()
+	}
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), innerTask.Plan())
 	} else {

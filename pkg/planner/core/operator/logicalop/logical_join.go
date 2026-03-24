@@ -100,6 +100,11 @@ type LogicalJoin struct {
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
+	// first logical round. It is only used to decide whether an equivalent same-order
+	// PhysicalIndexJoin candidate has already been generated.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes LogicalJoin.
