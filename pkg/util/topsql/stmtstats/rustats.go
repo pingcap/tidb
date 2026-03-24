@@ -50,20 +50,12 @@ type RUKey struct {
 
 // ExecutionContext stores RU sampling state for one active SQL execution.
 type ExecutionContext struct {
-	// RUDetails caches *util.RUDetails from execution begin.
-	RUDetails *util.RUDetails
-	// RUV2Metrics caches the statement-level RU v2 metrics from execution begin.
+	RUDetails   *util.RUDetails
 	RUV2Metrics *execdetails.RUV2Metrics
-	// RUV2Weights snapshots the session RU v2 weights from execution begin.
+	Key         RUKey
 	RUV2Weights execdetails.RUV2Weights
-	// RUVersion snapshots the statement RU accounting version from execution begin.
-	RUVersion rmclient.RUVersion
-
-	// Key identifies this execution by (user, sql_digest, plan_digest).
-	Key RUKey
-
-	// LastRUTotal is the last observed cumulative RU total for the statement RU version.
 	LastRUTotal float64
+	RUVersion   rmclient.RUVersion
 }
 
 // RUIncrement represents a delta RU consumption for a specific RUKey.

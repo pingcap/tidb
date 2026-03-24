@@ -46,12 +46,12 @@ type StatementObserver interface {
 // ExecBeginInfo carries optional execution-begin context for extensible stats collection.
 type ExecBeginInfo struct {
 	Ctx            context.Context
-	User           string
-	InNetworkBytes uint64
-	TopRUEnabled   bool
-	RUVersion      rmclient.RUVersion
 	RUV2Metrics    *execdetails.RUV2Metrics
+	User           string
 	RUV2Weights    execdetails.RUV2Weights
+	InNetworkBytes uint64
+	RUVersion      rmclient.RUVersion
+	TopRUEnabled   bool
 }
 
 // ExecFinishInfo carries optional execution-finish context for extensible stats collection.

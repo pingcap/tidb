@@ -39,14 +39,14 @@ var globalAggregator = newAggregator()
 // them together, uploading them and regularly cleaning up the closed StatementStats.
 type aggregator struct {
 	ctx               context.Context
+	ruVersionProvider RUVersionProvider
 	cancel            context.CancelFunc
 	running           *atomic.Bool
-	statsSet          sync.Map // map[*StatementStats]struct{}
-	collectors        sync.Map // map[Collector]struct{}
-	ruCollectors      sync.Map // map[RUCollector]struct{}
+	statsSet          sync.Map
+	collectors        sync.Map
+	ruCollectors      sync.Map
 	wg                sync.WaitGroup
 	statsLen          atomic.Uint32
-	ruVersionProvider RUVersionProvider
 	lastRUVersion     rmclient.RUVersion
 }
 
