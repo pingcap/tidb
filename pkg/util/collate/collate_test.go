@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -244,6 +245,33 @@ func TestLatin1SwedishCIOrdering(t *testing.T) {
 	require.Equal(t, 0, collator.Compare("ä", "æ"))
 	require.Less(t, collator.Compare("æ", "ö"), 0)
 	require.Less(t, collator.Compare("ö", "~"), 0)
+}
+
+func TestLatin1SwedishCIKeyFallbackForNonLatin1Runes(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	type testCase struct {
+		str string
+		key []byte
+	}
+
+	collator := GetCollator("latin1_swedish_ci")
+	cases := []testCase{
+		{"÷", []byte{0xF7}},
+		{"ÿ", []byte{0xFF, 0x00}},
+		{"ÿxx", []byte{0xFF, 0x00, 0x58, 0x58}},
+		{"Ā", []byte{0xFF, 0x80, 0x01, 0x00}},
+		{"😀", []byte{0xFF, 0x81, 0xF6, 0x00}},
+	}
+
+	var prevCase testCase
+	for _, c := range cases {
+		require.Equal(t, c.key, collator.Key(c.str), c.str)
+		require.Less(t, bytes.Compare(prevCase.key, c.key), 0, c.str)
+		require.Less(t, collator.Compare(prevCase.str, c.str), 0, c.str)
+		prevCase = c
+	}
 }
 
 type collator interface {

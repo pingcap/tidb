@@ -164,7 +164,8 @@ insert into t values
     (248, 'ø'),
     (222, 'Þ'),
     (254, 'þ'),
-    (255, 'ÿ');
+    (255, 'ÿ'),
+    (3, '中文／＃１８９５５');
 select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
 
 explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;

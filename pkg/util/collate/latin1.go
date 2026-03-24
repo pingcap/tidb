@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"encoding/binary"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -66,17 +67,24 @@ func (c *latin1Collator) ImmutableKey(str string) []byte {
 
 func (c *latin1Collator) KeyWithoutTrimRightSpace(str string) []byte {
 	key := make([]byte, 0, len(str))
+	var runeBuf [4]byte
 	for i := 0; i < len(str); {
 		r, rLen := utf8.DecodeRuneInString(str[i:])
 		if r == utf8.RuneError && rLen == 1 {
 			return key
 		}
 		if r <= 0xFF {
-			key = append(key, c.weights[byte(r)])
+			weight := c.weights[byte(r)]
+			if weight < 0xFF {
+				key = append(key, weight)
+			} else {
+				key = append(key, 0xFF, 0x00)
+			}
 			i += rLen
 			continue
 		}
-		key = append(key, str[i:i+rLen]...)
+		binary.BigEndian.PutUint32(runeBuf[:], uint32(r)|0xFF800000)
+		key = append(key, runeBuf[:]...)
 		i += rLen
 	}
 	return key
@@ -91,7 +99,7 @@ func (c *latin1Collator) Clone() Collator {
 }
 
 func (*latin1Collator) MaxKeyLen(s string) int {
-	return len(s)
+	return len(s) * 2
 }
 
 type latin1Pattern struct {

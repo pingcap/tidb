@@ -239,7 +239,8 @@ insert into t values
 (248, 'ø'),
 (222, 'Þ'),
 (254, 'þ'),
-(255, 'ÿ');
+(255, 'ÿ'),
+(3, '中文／＃１８９５５');
 select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
 id	eq_prev	w
 33	NULL	21
@@ -267,6 +268,7 @@ id	eq_prev	w
 248	0	C3B8
 254	0	C3BE
 255	0	C3BF
+3	0	E4B8ADE69687EFBC8FEFBC83EFBC91EFBC98EFBC99EFBC95EFBC95
 explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
 id	task	access object	operator info
 IndexReader	root		index:IndexRangeScan
@@ -290,6 +292,7 @@ select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
 id	val
 1	ÀÁÂÃàáâãÇçÐðÈÉÊËèéêëÌÍÎÏìíîïÑñÒÓÔÕòóôõÙÚÛùúûÜÝüý
 2	aaaaaaaaccddeeeeeeeeiiiiiiiinnoooooooouuuuuuyyyy
+3	中文／＃１８９５５
 197	Å
 216	Ø
 222	Þ
