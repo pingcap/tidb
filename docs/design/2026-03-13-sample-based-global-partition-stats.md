@@ -141,7 +141,7 @@ For accepted Bernoulli samples (`u <= SampleRate`), the resulting priority is un
 Each partition's pruned sample collector is serialized via protobuf and stored in `mysql.stats_table_data`, keyed by the partition's physical table ID:
 
 ```sql
-CREATE TABLE mysql.stats_table_data (
+CREATE TABLE mysql.stats_data (
     table_id  BIGINT(64) NOT NULL,   -- physical partition ID
     type      INT(11) NOT NULL,      -- data type (sample = 2)
     hist_id   BIGINT(64) NOT NULL,   -- 0 for sample data
