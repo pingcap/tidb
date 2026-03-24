@@ -15,7 +15,6 @@
 package reporter
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -658,25 +657,19 @@ func TestProcessStmtStatsData(t *testing.T) {
 			SQLDigest:  "S1",
 			PlanDigest: "P1",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       1,
-			NetworkInBytes:  1,
-			NetworkOutBytes: 0,
+			ExecCount: 1,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S2",
 			PlanDigest: "P2",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       2,
-			NetworkInBytes:  0,
-			NetworkOutBytes: 2,
+			ExecCount: 2,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S3",
 			PlanDigest: "P3",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       3,
-			NetworkInBytes:  1,
-			NetworkOutBytes: 2,
+			ExecCount: 3,
 		},
 	})
 
@@ -688,19 +681,19 @@ func TestProcessStmtStatsData(t *testing.T) {
 	}
 
 	assert.Len(t, data.DataRecords, 3)
-	sort.Slice(data.DataRecords, func(i, j int) bool {
-		return data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes <
-			data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes
-	})
-	// Check Si, Pi and corresponding item value i.
-	for i, record := range data.DataRecords {
-		j := i + 1
-		assert.Equal(t, []byte(fmt.Sprintf("S%d", j)), record.SqlDigest)
-		assert.Equal(t, []byte(fmt.Sprintf("P%d", j)), record.PlanDigest)
-		assert.Equal(t, uint64(j), record.Items[0].StmtNetworkInBytes+record.Items[0].StmtNetworkOutBytes)
+	recordsByDigest := make(map[string]*tipb.TopSQLRecord, len(data.DataRecords))
+	for i := range data.DataRecords {
+		record := &data.DataRecords[i]
+		recordsByDigest[string(record.SqlDigest)] = record
 	}
-	// S3, P3 has no recorded CPU time data, so the CpuTimeMs is 0.
-	assert.Equal(t, uint32(0), data.DataRecords[2].Items[0].CpuTimeMs)
+	require.Contains(t, recordsByDigest, "S1")
+	require.Contains(t, recordsByDigest, "S2")
+	require.Contains(t, recordsByDigest, "S3")
+	assert.Equal(t, uint64(1), recordsByDigest["S1"].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(2), recordsByDigest["S2"].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(3), recordsByDigest["S3"].Items[0].StmtExecCount)
+	// S3/P3 has no recorded CPU time data in this round, so CpuTimeMs is 0.
+	assert.Equal(t, uint32(0), recordsByDigest["S3"].Items[0].CpuTimeMs)
 
 	// Check cases with others and evicted
 	r.Collect(nil)
@@ -741,33 +734,25 @@ func TestProcessStmtStatsData(t *testing.T) {
 			SQLDigest:  "S1",
 			PlanDigest: "P1",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       10,
-			NetworkInBytes:  10,
-			NetworkOutBytes: 0,
+			ExecCount: 10,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S2",
 			PlanDigest: "P2",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       2,
-			NetworkInBytes:  0,
-			NetworkOutBytes: 2,
+			ExecCount: 2,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S4",
 			PlanDigest: "P4",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       4,
-			NetworkInBytes:  1,
-			NetworkOutBytes: 3,
+			ExecCount: 4,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S6",
 			PlanDigest: "P6",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:       6,
-			NetworkInBytes:  2,
-			NetworkOutBytes: 4,
+			ExecCount: 6,
 		},
 	})
 
@@ -776,36 +761,29 @@ func TestProcessStmtStatsData(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.Fail(t, "no data in ch")
 	}
-	assert.Len(t, data.DataRecords, 6)
-	sort.Slice(data.DataRecords, func(i, j int) bool {
-		return (data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[i].Items[0].CpuTimeMs) <
-			(data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[j].Items[0].CpuTimeMs)
-	})
-	// DataRecords should be:
-	// S3, P3, CpuTime=3, Network=0
-	// S7, P7, CpuTime=7, Network=0
-	// S2, P2, CpuTime=2, Network=2
-	// Other,  CpuTime=1, Network=4
-	// S6, P6, CpuTime=0, Network=6
-	// S1, P1, CpuTime=0, Network=10
-	assert.Equal(t, []byte("S3"), data.DataRecords[0].SqlDigest)
-	assert.Equal(t, uint32(3), data.DataRecords[0].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
-	assert.Equal(t, []byte("S7"), data.DataRecords[1].SqlDigest)
-	assert.Equal(t, uint32(7), data.DataRecords[1].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(0), data.DataRecords[1].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
-	assert.Equal(t, []byte("S2"), data.DataRecords[2].SqlDigest)
-	assert.Equal(t, uint32(2), data.DataRecords[2].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(2), data.DataRecords[2].Items[0].StmtNetworkInBytes+data.DataRecords[2].Items[0].StmtNetworkOutBytes)
-	assert.Equal(t, []byte(nil), data.DataRecords[3].SqlDigest)
-	assert.Equal(t, uint32(1), data.DataRecords[3].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(4), data.DataRecords[3].Items[0].StmtNetworkInBytes+data.DataRecords[3].Items[0].StmtNetworkOutBytes)
-	assert.Equal(t, []byte("S6"), data.DataRecords[4].SqlDigest)
-	assert.Equal(t, uint32(0), data.DataRecords[4].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(6), data.DataRecords[4].Items[0].StmtNetworkInBytes+data.DataRecords[4].Items[0].StmtNetworkOutBytes)
-	assert.Equal(t, []byte("S1"), data.DataRecords[5].SqlDigest)
-	assert.Equal(t, uint32(0), data.DataRecords[5].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtNetworkInBytes+data.DataRecords[5].Items[0].StmtNetworkOutBytes)
+	assert.Len(t, data.DataRecords, 5)
+	recordsByDigest = make(map[string]*tipb.TopSQLRecord, len(data.DataRecords))
+	for i := range data.DataRecords {
+		record := &data.DataRecords[i]
+		recordsByDigest[string(record.SqlDigest)] = record
+	}
+	// Records from CPU topN plus stmtstats-only digest.
+	require.Contains(t, recordsByDigest, "S2")
+	require.Contains(t, recordsByDigest, "S3")
+	require.Contains(t, recordsByDigest, "S6")
+	require.Contains(t, recordsByDigest, "S7")
+	require.Contains(t, recordsByDigest, "")
+	assert.Equal(t, uint32(2), recordsByDigest["S2"].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(2), recordsByDigest["S2"].Items[0].StmtExecCount)
+	assert.Equal(t, uint32(3), recordsByDigest["S3"].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), recordsByDigest["S3"].Items[0].StmtExecCount)
+	assert.Equal(t, uint32(7), recordsByDigest["S7"].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), recordsByDigest["S7"].Items[0].StmtExecCount)
+	assert.Equal(t, uint32(0), recordsByDigest["S6"].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(6), recordsByDigest["S6"].Items[0].StmtExecCount)
+	// Evicted stmtstats (S1/P1 + S4/P4) are aggregated into Others.
+	assert.Equal(t, uint32(1), recordsByDigest[""].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(14), recordsByDigest[""].Items[0].StmtExecCount)
 }
 
 // TestReporterChannelsFullDropsAndMetrics covers the backpressure risk path:
