@@ -131,8 +131,8 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 
 	var buf *bytes.Buffer
 	lastCopiedIdx := 0 // tracks position in utf8Text for output assembly
-	origIdx := 0    // tracks position in src (original bytes)
-	i := 0          // scan position in utf8Text
+	origIdx := 0       // tracks position in src (original bytes)
+	i := 0             // scan position in utf8Text
 
 	for i < len(utf8Text) {
 		if utf8Text[i] != '\'' && utf8Text[i] != '"' {
