@@ -15,6 +15,7 @@
 package core
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -127,7 +128,6 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
 		}()
 
-		MaxMemoryLimitForOverlongType = 0
 		// Keep enough bounded overlong columns so that the same row count flips once MaxChunkSize grows.
 		columns := make([]*expression.Column, 0, 80)
 		for i := range 80 {
@@ -139,6 +139,38 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		reader := physicalop.PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
 		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
 
+		MaxMemoryLimitForOverlongType = math.MaxInt64
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{},
+		})
+		require.True(t, existsOverlongType(reader))
+
+		MaxMemoryLimitForOverlongType = 0
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+		})
+		require.False(t, existsOverlongType(reader))
+
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{Pseudo: true},
+		})
+		require.False(t, existsOverlongType(reader))
+
+		wideColumns := make([]*expression.Column, 0, 40)
+		for i := range 40 {
+			colType := types.NewFieldType(mysql.TypeVarchar)
+			colType.SetFlen(1000001)
+			wideColumns = append(wideColumns, &expression.Column{RetType: colType, UniqueID: int64(1000 + i + 1)})
+		}
+		reader.PhysicalSchemaProducer.SetSchema(expression.NewSchema(wideColumns...))
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+		})
+		require.True(t, existsOverlongType(reader))
+
+		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
 		reader.SCtx().GetSessionVars().MaxChunkSize = 32
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
@@ -147,12 +179,6 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		require.False(t, existsOverlongType(reader))
 
 		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
-		require.True(t, existsOverlongType(reader))
-
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-			HistColl: &statistics.HistColl{Pseudo: true},
-		})
 		require.True(t, existsOverlongType(reader))
 	})
 }
