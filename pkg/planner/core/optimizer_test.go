@@ -144,19 +144,19 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			RowCount: 2048,
 			HistColl: &statistics.HistColl{},
 		})
-		require.True(t, existsOverlongType(reader))
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		MaxMemoryLimitForOverlongType = 0
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 		})
-		require.False(t, existsOverlongType(reader))
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 			HistColl: &statistics.HistColl{Pseudo: true},
 		})
-		require.False(t, existsOverlongType(reader))
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		wideColumns := make([]*expression.Column, 0, 40)
 		for i := range 40 {
@@ -168,7 +168,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 		})
-		require.True(t, existsOverlongType(reader))
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
 		reader.SCtx().GetSessionVars().MaxChunkSize = 32
@@ -176,10 +176,10 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			RowCount: 2048,
 			HistColl: &statistics.HistColl{},
 		})
-		require.False(t, existsOverlongType(reader))
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
-		require.True(t, existsOverlongType(reader))
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 	})
 }
 

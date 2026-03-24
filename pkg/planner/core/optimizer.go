@@ -1168,7 +1168,7 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
-	if disableReuseChunk, continueIterating := checkOverlongColType(sctx, plan); disableReuseChunk || !continueIterating {
+	if disableReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx, plan); disableReuseChunk || !continueIterating {
 		return
 	}
 	for _, child := range plan.Children() {
@@ -1176,20 +1176,23 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	}
 }
 
-// checkOverlongColType checks whether the reader output can safely reuse chunks.
-func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
+// checkSkipReuseChunkForOverlongType walks the root-side physical plan tree top-down and stops at
+// the first reader / point get boundary. Only those operators materialize rows into the reusable
+// chunk owned by the current statement, so higher-level physical operators only decide whether the
+// traversal should continue.
+func checkSkipReuseChunkForOverlongType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
 		return false, false
 	}
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
-		if existsOverlongType(plan) {
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
 	case *physicalop.PointGetPlan:
-		if existsOverlongType(plan) {
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
@@ -1197,8 +1200,8 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipRe
 		// Other physical operators do not read data, so we can continue to iterate.
 		return false, true
 	}
-	// PhysicalReader and PointGet is at the root, their children are nil or on the tikv/tiflash side.
-	// So we can stop iterating.
+	// Once we reach a reader / point get, its children are nil or stay on the coprocessor side, so
+	// no other root-side operator can affect the reusable-chunk decision.
 	return false, false
 }
 
@@ -1214,16 +1217,19 @@ var (
 	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
 
-// existsOverlongType checks whether the reader output should disable chunk reuse.
-// We estimate the retained memory of a reusable chunk instead of the total query output.
-// For readers with non-pseudo stats, we use:
+// shouldSkipReuseChunkForPhysicalPlan checks whether one reader / point get should skip chunk reuse
+// because of overlong output columns. The decision is based on retained reusable-chunk memory rather
+// than full query output size.
+//
+// For readers with trusted row-count stats, we estimate:
 //
 //	average size of overlong columns * min(estimated row count, MaxChunkSize)
 //
-// For point gets, or when a reader has no trusted row bound, we fall back to the schema-declared
-// flen check. Reuse is kept enabled only when the server memory is large enough and the estimate
-// stays within maxFlenForOverlongType.
-func existsOverlongType(plan base.PhysicalPlan) bool {
+// All relaxed paths first require server memory >= MaxMemoryLimitForOverlongType; otherwise chunk
+// reuse is unconditionally disabled. When memory is sufficient, point gets and readers without a
+// trusted row bound fall back to the schema-declared flen check. Only readers with trusted row-count
+// stats use observed average sizes.
+func shouldSkipReuseChunkForPhysicalPlan(plan base.PhysicalPlan) bool {
 	schema := plan.Schema()
 	if schema == nil {
 		return false
@@ -1254,18 +1260,21 @@ func existsOverlongType(plan base.PhysicalPlan) bool {
 	return !allowReuseChunkForOverlongType(plan, overlongColumns, totalFlen)
 }
 
+// allowReuseChunkForOverlongType applies the relaxed rule for bounded overlong columns. It first
+// checks the host-memory gate, then estimates the retained memory of one reusable chunk instead of
+// the whole result set.
 func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*expression.Column, totalFlen int) bool {
 	totalMemory, err := memory.MemTotal()
 	if err != nil || totalMemory <= 0 || totalMemory < MaxMemoryLimitForOverlongType {
 		return false
 	}
-	estimatedRows, hasTrustedStats := getEstimatedRowsForOverlongType(plan)
+	estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(plan)
 	if estimatedRows <= 0 {
 		// Without a trusted row bound, keep the old schema-level gate instead of forcing disable.
 		return totalFlen <= maxFlenForOverlongType
 	}
 
-	// Chunk reuse retains the buffers of a reusable chunk, not the full result set.
+	// Chunk reuse retains the buffers of one reusable chunk, not the full result set.
 	rowsInReusableChunk := estimatedRows
 	switch plan.(type) {
 	case *physicalop.PointGetPlan:
@@ -1284,7 +1293,11 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 	return rowsInReusableChunk*estimatedBytesPerRow <= float64(maxFlenForOverlongType)
 }
 
-func getEstimatedRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
+// estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
+// estimate together with a flag indicating whether the caller may trust observed average row sizes.
+// Point gets have an operator-level row bound, but they still size rows via the schema-level fallback.
+// Non-point readers only enter the relaxed path when row-count stats are trusted.
+func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
 	statsInfo := plan.StatsInfo()
 	if statsInfo == nil || statsInfo.RowCount <= 0 {
 		return 0, false
