@@ -420,6 +420,7 @@ func TestRURuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
 		RUDetails: util.NewRUDetails(),
 		Metrics:   NewRUV2Metrics(),
 		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
 	}
 	stats.RUDetails.AddTiKVRUV2(200)
 	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
@@ -819,14 +820,14 @@ func TestRURuntimeStatsStringV2ZeroRU(t *testing.T) {
 }
 
 func TestRURuntimeStatsStringDefaultVersion(t *testing.T) {
-	// RUVersion=0 (zero value) should fall into v2 default path
+	// RUVersion=0 (zero value) should default to v1 for backward compatibility
 	stats := &RURuntimeStats{
-		RUDetails: util.NewRUDetails(),
+		RUDetails: util.NewRUDetailsWith(10.5, 20.3, 0),
 		Metrics:   NewRUV2Metrics(),
 		Weights:   defaultRUV2WeightsForTest(),
 	}
-	stats.RUDetails.AddTiKVRUV2(100)
-	require.Equal(t, "RU:100.00", stats.String())
+	// default (v1): shows RRU + WRU
+	require.Equal(t, "RU:30.80", stats.String())
 }
 
 func TestRURuntimeStatsClonePreservesRUVersion(t *testing.T) {

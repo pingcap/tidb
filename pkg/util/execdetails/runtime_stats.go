@@ -993,14 +993,7 @@ type RURuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
 	switch e.RUVersion {
-	case rmclient.RUVersionV1:
-		if e.RUDetails != nil {
-			buf := bytes.NewBuffer(make([]byte, 0, 8))
-			buf.WriteString("RU:")
-			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
-			return buf.String()
-		}
-	default: // v2 or unknown: show total RU from v2 metrics
+	case rmclient.RUVersionV2:
 		var tiKVRU, tiFlashRU float64
 		if e.RUDetails != nil {
 			tiKVRU = e.RUDetails.TiKVRUV2()
@@ -1014,6 +1007,13 @@ func (e *RURuntimeStats) String() string {
 		buf.WriteString("RU:")
 		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
 		return buf.String()
+	default: // v1 or unknown
+		if e.RUDetails != nil {
+			buf := bytes.NewBuffer(make([]byte, 0, 8))
+			buf.WriteString("RU:")
+			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+			return buf.String()
+		}
 	}
 	return ""
 }
