@@ -504,9 +504,14 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 					continue
 				}
 				// Clone the field name and update table name.
-				// Preserve DBName from the inner name so hint generation (e.g. leading())
-				// can emit the qualified form `db`.`alias` for derived-table aliases.
-				dbName := name.DBName
+				// For derived tables, clear DBName so that error messages (e.g. only_full_group_by)
+				// show "alias.col" not "db.alias.col".  The current-database qualifier needed for
+				// hint generation (leading()) is set separately on plannerSelectBlockAsName below.
+				// For base-table aliases (isTableName), inherit DBName for DEFAULT() resolution.
+				dbName := ast.NewCIStr("")
+				if isTableName {
+					dbName = name.DBName
+				}
 				clonedNames[i] = &types.FieldName{
 					DBName:            dbName,
 					OrigTblName:       name.OrigTblName,
@@ -550,7 +555,11 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+			// Use the current database as DBName for derived-table entries so that hint generation
+			// (e.g. leading()) can emit the qualified form `db`.`alias`.  The output field
+			// names themselves carry DBName="" to keep error messages (only_full_group_by etc.)
+			// in the standard "alias.col" form instead of "db.alias.col".
+			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB), TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
