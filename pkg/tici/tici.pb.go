@@ -4122,7 +4122,7 @@ func (x GetIndexProgressResponse_State) String() string {
 	}
 	return strconv.Itoa(int(x))
 }
-func (this *WorkerNodeStatus) Equal(that interface{}) bool {
+func (this *WorkerNodeStatus) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4149,7 +4149,7 @@ func (this *WorkerNodeStatus) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ReaderNodeStatus) Equal(that interface{}) bool {
+func (this *ReaderNodeStatus) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4182,7 +4182,7 @@ func (this *ReaderNodeStatus) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *WorkerNodeShardStatus) Equal(that interface{}) bool {
+func (this *WorkerNodeShardStatus) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4218,7 +4218,7 @@ func (this *WorkerNodeShardStatus) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *WorkerNodeCompactionStatus) Equal(that interface{}) bool {
+func (this *WorkerNodeCompactionStatus) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4242,7 +4242,7 @@ func (this *WorkerNodeCompactionStatus) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ImportWriteStatus) Equal(that interface{}) bool {
+func (this *ImportWriteStatus) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4272,7 +4272,7 @@ func (this *ImportWriteStatus) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *WorkerNodeHeartbeatRequest) Equal(that interface{}) bool {
+func (this *WorkerNodeHeartbeatRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4323,7 +4323,7 @@ func (this *WorkerNodeHeartbeatRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *WorkerNodeHeartbeatResponse) Equal(that interface{}) bool {
+func (this *WorkerNodeHeartbeatResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4363,7 +4363,7 @@ func (this *WorkerNodeHeartbeatResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ReaderNodeHeartbeatRequest) Equal(that interface{}) bool {
+func (this *ReaderNodeHeartbeatRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4401,7 +4401,7 @@ func (this *ReaderNodeHeartbeatRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ReaderNodeHeartbeatResponse) Equal(that interface{}) bool {
+func (this *ReaderNodeHeartbeatResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4444,7 +4444,7 @@ func (this *ReaderNodeHeartbeatResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FragProperty) Equal(that interface{}) bool {
+func (this *FragProperty) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4480,7 +4480,7 @@ func (this *FragProperty) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *IndexSegment) Equal(that interface{}) bool {
+func (this *IndexSegment) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4507,7 +4507,7 @@ func (this *IndexSegment) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FragMeta) Equal(that interface{}) bool {
+func (this *FragMeta) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4548,7 +4548,7 @@ func (this *FragMeta) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *AppendDeltaFragMetaRequest) Equal(that interface{}) bool {
+func (this *AppendDeltaFragMetaRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4592,7 +4592,7 @@ func (this *AppendDeltaFragMetaRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *AppendFragMetaResponse) Equal(that interface{}) bool {
+func (this *AppendFragMetaResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4616,7 +4616,7 @@ func (this *AppendFragMetaResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *AppendBaseFragMetaRequest) Equal(that interface{}) bool {
+func (this *AppendBaseFragMetaRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4651,7 +4651,7 @@ func (this *AppendBaseFragMetaRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *KeyRange) Equal(that interface{}) bool {
+func (this *KeyRange) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4678,7 +4678,7 @@ func (this *KeyRange) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ShardLocalCacheInfo) Equal(that interface{}) bool {
+func (this *ShardLocalCacheInfo) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4710,7 +4710,7 @@ func (this *ShardLocalCacheInfo) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *GetShardLocalCacheRequest) Equal(that interface{}) bool {
+func (this *GetShardLocalCacheRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4751,7 +4751,7 @@ func (this *GetShardLocalCacheRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *GetShardLocalCacheResponse) Equal(that interface{}) bool {
+func (this *GetShardLocalCacheResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4783,7 +4783,7 @@ func (this *GetShardLocalCacheResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *DebugGetShardManifestRequest) Equal(that interface{}) bool {
+func (this *DebugGetShardManifestRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4813,7 +4813,7 @@ func (this *DebugGetShardManifestRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *DebugGetShardManifestResponse) Equal(that interface{}) bool {
+func (this *DebugGetShardManifestResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4851,7 +4851,7 @@ func (this *DebugGetShardManifestResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *CompactFragRequest) Equal(that interface{}) bool {
+func (this *CompactFragRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4907,7 +4907,7 @@ func (this *CompactFragRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *CompactFragResponse) Equal(that interface{}) bool {
+func (this *CompactFragResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4931,7 +4931,7 @@ func (this *CompactFragResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FinishCompactFragRequest) Equal(that interface{}) bool {
+func (this *FinishCompactFragRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -4989,7 +4989,7 @@ func (this *FinishCompactFragRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FinishCompactFragResponse) Equal(that interface{}) bool {
+func (this *FinishCompactFragResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5013,7 +5013,7 @@ func (this *FinishCompactFragResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ImportWriteRequest) Equal(that interface{}) bool {
+func (this *ImportWriteRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5049,7 +5049,7 @@ func (this *ImportWriteRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ImportWriteResponse) Equal(that interface{}) bool {
+func (this *ImportWriteResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5073,7 +5073,7 @@ func (this *ImportWriteResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ShardManifestHeader) Equal(that interface{}) bool {
+func (this *ShardManifestHeader) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5109,7 +5109,7 @@ func (this *ShardManifestHeader) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *S3Location) Equal(that interface{}) bool {
+func (this *S3Location) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5136,7 +5136,7 @@ func (this *S3Location) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *AddShardRequest) Equal(that interface{}) bool {
+func (this *AddShardRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5175,7 +5175,7 @@ func (this *AddShardRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *AddShardResponse) Equal(that interface{}) bool {
+func (this *AddShardResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5199,7 +5199,7 @@ func (this *AddShardResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *CreateIndexRequest) Equal(that interface{}) bool {
+func (this *CreateIndexRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5235,7 +5235,7 @@ func (this *CreateIndexRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *CreateIndexResponse) Equal(that interface{}) bool {
+func (this *CreateIndexResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5265,7 +5265,7 @@ func (this *CreateIndexResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *DropIndexRequest) Equal(that interface{}) bool {
+func (this *DropIndexRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5295,7 +5295,7 @@ func (this *DropIndexRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *DropIndexResponse) Equal(that interface{}) bool {
+func (this *DropIndexResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5322,7 +5322,7 @@ func (this *DropIndexResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *TableInfo) Equal(that interface{}) bool {
+func (this *TableInfo) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5366,7 +5366,7 @@ func (this *TableInfo) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ColumnInfo) Equal(that interface{}) bool {
+func (this *ColumnInfo) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5425,7 +5425,7 @@ func (this *ColumnInfo) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *IndexInfo) Equal(that interface{}) bool {
+func (this *IndexInfo) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5480,7 +5480,7 @@ func (this *IndexInfo) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *ParserInfo) Equal(that interface{}) bool {
+func (this *ParserInfo) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5520,7 +5520,7 @@ func (this *ParserInfo) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *GetIndexProgressRequest) Equal(that interface{}) bool {
+func (this *GetIndexProgressRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5550,7 +5550,7 @@ func (this *GetIndexProgressRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *GetIndexProgressResponse) Equal(that interface{}) bool {
+func (this *GetIndexProgressResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5580,7 +5580,7 @@ func (this *GetIndexProgressResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *GetImportStoragePrefixRequest) Equal(that interface{}) bool {
+func (this *GetImportStoragePrefixRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5618,7 +5618,7 @@ func (this *GetImportStoragePrefixRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *GetImportStoragePrefixResponse) Equal(that interface{}) bool {
+func (this *GetImportStoragePrefixResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5651,7 +5651,7 @@ func (this *GetImportStoragePrefixResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FinishImportPartitionUploadRequest) Equal(that interface{}) bool {
+func (this *FinishImportPartitionUploadRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5684,7 +5684,7 @@ func (this *FinishImportPartitionUploadRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *PreSplitImportShardMeta) Equal(that interface{}) bool {
+func (this *PreSplitImportShardMeta) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5726,7 +5726,7 @@ func (this *PreSplitImportShardMeta) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *PreSplitImportShardsRequest) Equal(that interface{}) bool {
+func (this *PreSplitImportShardsRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5793,7 +5793,7 @@ func (this *PreSplitImportShardsRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *PreSplitImportIndexResult) Equal(that interface{}) bool {
+func (this *PreSplitImportIndexResult) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5826,7 +5826,7 @@ func (this *PreSplitImportIndexResult) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *PreSplitImportShardsResponse) Equal(that interface{}) bool {
+func (this *PreSplitImportShardsResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5869,7 +5869,7 @@ func (this *PreSplitImportShardsResponse) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FinishImportPartitionBuildRequest) Equal(that interface{}) bool {
+func (this *FinishImportPartitionBuildRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5913,7 +5913,7 @@ func (this *FinishImportPartitionBuildRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FinishImportIndexUploadRequest) Equal(that interface{}) bool {
+func (this *FinishImportIndexUploadRequest) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -5946,7 +5946,7 @@ func (this *FinishImportIndexUploadRequest) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *FinishImportResponse) Equal(that interface{}) bool {
+func (this *FinishImportResponse) Equal(that any) bool {
 	if that == nil {
 		return this == nil
 	}
@@ -6528,7 +6528,7 @@ func (this *IndexInfo) GoString() string {
 		s = append(s, "ParserInfo: "+fmt.Sprintf("%#v", this.ParserInfo)+",\n")
 	}
 	keysForOtherParams := make([]string, 0, len(this.OtherParams))
-	for k, _ := range this.OtherParams {
+	for k := range this.OtherParams {
 		keysForOtherParams = append(keysForOtherParams, k)
 	}
 	github_com_gogo_protobuf_sortkeys.Strings(keysForOtherParams)
@@ -6551,7 +6551,7 @@ func (this *ParserInfo) GoString() string {
 	s = append(s, "&tici.ParserInfo{")
 	s = append(s, "ParserType: "+fmt.Sprintf("%#v", this.ParserType)+",\n")
 	keysForParserParams := make([]string, 0, len(this.ParserParams))
-	for k, _ := range this.ParserParams {
+	for k := range this.ParserParams {
 		keysForParserParams = append(keysForParserParams, k)
 	}
 	github_com_gogo_protobuf_sortkeys.Strings(keysForParserParams)
@@ -6740,7 +6740,7 @@ func (this *FinishImportResponse) GoString() string {
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
-func valueToGoStringTici(v interface{}, typ string) string {
+func valueToGoStringTici(v any, typ string) string {
 	rv := reflect.ValueOf(v)
 	if rv.IsNil() {
 		return "nil"
@@ -7050,7 +7050,7 @@ func RegisterMetaServiceServer(s *grpc.Server, srv MetaServiceServer) {
 	s.RegisterService(&_MetaService_serviceDesc, srv)
 }
 
-func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_WorkerNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(WorkerNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7062,13 +7062,13 @@ func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/WorkerNodeHeartbeat",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).WorkerNodeHeartbeat(ctx, req.(*WorkerNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_ReaderNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(ReaderNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7080,13 +7080,13 @@ func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/ReaderNodeHeartbeat",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).ReaderNodeHeartbeat(ctx, req.(*ReaderNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_CreateIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(CreateIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7098,13 +7098,13 @@ func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec 
 		Server:     srv,
 		FullMethod: "/tici.MetaService/CreateIndex",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).CreateIndex(ctx, req.(*CreateIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DropIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DropIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7116,13 +7116,13 @@ func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec fu
 		Server:     srv,
 		FullMethod: "/tici.MetaService/DropIndex",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DropIndex(ctx, req.(*DropIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetIndexProgress_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetIndexProgressRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7134,13 +7134,13 @@ func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context,
 		Server:     srv,
 		FullMethod: "/tici.MetaService/GetIndexProgress",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetIndexProgress(ctx, req.(*GetIndexProgressRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AppendDeltaFragMeta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_AppendDeltaFragMeta_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AppendDeltaFragMetaRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7152,13 +7152,13 @@ func _MetaService_AppendDeltaFragMeta_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/AppendDeltaFragMeta",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).AppendDeltaFragMeta(ctx, req.(*AppendDeltaFragMetaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AppendBaseFragMeta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_AppendBaseFragMeta_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AppendBaseFragMetaRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7170,13 +7170,13 @@ func _MetaService_AppendBaseFragMeta_Handler(srv interface{}, ctx context.Contex
 		Server:     srv,
 		FullMethod: "/tici.MetaService/AppendBaseFragMeta",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).AppendBaseFragMeta(ctx, req.(*AppendBaseFragMetaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetShardLocalCacheInfo_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetShardLocalCacheRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7188,13 +7188,13 @@ func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: "/tici.MetaService/GetShardLocalCacheInfo",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetShardLocalCacheInfo(ctx, req.(*GetShardLocalCacheRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DebugGetShardManifest_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DebugGetShardManifestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7206,13 +7206,13 @@ func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Con
 		Server:     srv,
 		FullMethod: "/tici.MetaService/DebugGetShardManifest",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DebugGetShardManifest(ctx, req.(*DebugGetShardManifestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishCompactFragments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishCompactFragments_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishCompactFragRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7224,13 +7224,13 @@ func _MetaService_FinishCompactFragments_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishCompactFragments",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishCompactFragments(ctx, req.(*FinishCompactFragRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetImportStoragePrefix_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetImportStoragePrefix_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetImportStoragePrefixRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7242,13 +7242,13 @@ func _MetaService_GetImportStoragePrefix_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: "/tici.MetaService/GetImportStoragePrefix",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetImportStoragePrefix(ctx, req.(*GetImportStoragePrefixRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_PreSplitImportShards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_PreSplitImportShards_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(PreSplitImportShardsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7260,13 +7260,13 @@ func _MetaService_PreSplitImportShards_Handler(srv interface{}, ctx context.Cont
 		Server:     srv,
 		FullMethod: "/tici.MetaService/PreSplitImportShards",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).PreSplitImportShards(ctx, req.(*PreSplitImportShardsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishImportPartitionUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishImportPartitionUpload_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishImportPartitionUploadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7278,13 +7278,13 @@ func _MetaService_FinishImportPartitionUpload_Handler(srv interface{}, ctx conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishImportPartitionUpload",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishImportPartitionUpload(ctx, req.(*FinishImportPartitionUploadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishImportPartitionBuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishImportPartitionBuild_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishImportPartitionBuildRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7296,13 +7296,13 @@ func _MetaService_FinishImportPartitionBuild_Handler(srv interface{}, ctx contex
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishImportPartitionBuild",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishImportPartitionBuild(ctx, req.(*FinishImportPartitionBuildRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishImportIndexUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishImportIndexUpload_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishImportIndexUploadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7314,7 +7314,7 @@ func _MetaService_FinishImportIndexUpload_Handler(srv interface{}, ctx context.C
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishImportIndexUpload",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishImportIndexUpload(ctx, req.(*FinishImportIndexUploadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
@@ -7464,7 +7464,7 @@ func RegisterWorkerServiceServer(s *grpc.Server, srv WorkerServiceServer) {
 	s.RegisterService(&_WorkerService_serviceDesc, srv)
 }
 
-func _WorkerService_AddShard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WorkerService_AddShard_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AddShardRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7476,13 +7476,13 @@ func _WorkerService_AddShard_Handler(srv interface{}, ctx context.Context, dec f
 		Server:     srv,
 		FullMethod: "/tici.WorkerService/AddShard",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(WorkerServiceServer).AddShard(ctx, req.(*AddShardRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WorkerService_CompactFragments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WorkerService_CompactFragments_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(CompactFragRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7494,13 +7494,13 @@ func _WorkerService_CompactFragments_Handler(srv interface{}, ctx context.Contex
 		Server:     srv,
 		FullMethod: "/tici.WorkerService/CompactFragments",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(WorkerServiceServer).CompactFragments(ctx, req.(*CompactFragRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WorkerService_ImportWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WorkerService_ImportWrite_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(ImportWriteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -7512,7 +7512,7 @@ func _WorkerService_ImportWrite_Handler(srv interface{}, ctx context.Context, de
 		Server:     srv,
 		FullMethod: "/tici.WorkerService/ImportWrite",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(WorkerServiceServer).ImportWrite(ctx, req.(*ImportWriteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
@@ -12135,7 +12135,7 @@ func (this *IndexInfo) String() string {
 	}
 	repeatedStringForColumns += "}"
 	keysForOtherParams := make([]string, 0, len(this.OtherParams))
-	for k, _ := range this.OtherParams {
+	for k := range this.OtherParams {
 		keysForOtherParams = append(keysForOtherParams, k)
 	}
 	github_com_gogo_protobuf_sortkeys.Strings(keysForOtherParams)
@@ -12162,7 +12162,7 @@ func (this *ParserInfo) String() string {
 		return "nil"
 	}
 	keysForParserParams := make([]string, 0, len(this.ParserParams))
-	for k, _ := range this.ParserParams {
+	for k := range this.ParserParams {
 		keysForParserParams = append(keysForParserParams, k)
 	}
 	github_com_gogo_protobuf_sortkeys.Strings(keysForParserParams)
@@ -12359,7 +12359,7 @@ func (this *FinishImportResponse) String() string {
 	}, "")
 	return s
 }
-func valueToStringTici(v interface{}) string {
+func valueToStringTici(v any) string {
 	rv := reflect.ValueOf(v)
 	if rv.IsNil() {
 		return "nil"
