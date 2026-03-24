@@ -308,11 +308,13 @@ type mockResourceGroupProvider struct {
 
 func newMockDomainWithRUVersion(t *testing.T, version rmclient.RUVersion) *domain.Domain {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 
 	cfg := rmclient.DefaultConfig()
 	cfg.RUVersionPolicy = &rmclient.RUVersionPolicy{Default: version}
 	provider := &mockResourceGroupProvider{config: cfg}
-	controller, err := rmclient.NewResourceGroupController(context.Background(), 1, provider, nil, 1)
+	controller, err := rmclient.NewResourceGroupController(ctx, 1, provider, nil, 1)
 	require.NoError(t, err)
 
 	do := domain.NewMockDomain()
@@ -330,8 +332,13 @@ func (m *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ..
 	}, nil
 }
 
-func (*mockResourceGroupProvider) Watch(context.Context, []byte, ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
-	return make(chan []*meta_storagepb.Event), nil
+func (*mockResourceGroupProvider) Watch(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
+	ch := make(chan []*meta_storagepb.Event)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
 }
 
 func (*mockResourceGroupProvider) Put(context.Context, []byte, []byte, ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
