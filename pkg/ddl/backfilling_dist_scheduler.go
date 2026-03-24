@@ -64,6 +64,7 @@ type LitBackfillScheduler struct {
 	nodeRes        *proto.NodeResource
 }
 
+// storageWithPDAndCodec is the minimal store capability required by TiCI pre-split.
 type storageWithPDAndCodec interface {
 	kv.StorageWithPD
 	GetCodec() tikv.Codec
@@ -229,6 +230,7 @@ func getUserStoreAndTable(
 	return store, tbl, nil
 }
 
+// getStorageWithPDAndCodec validates that the store can provide both PD access and keyspace codec information.
 func getStorageWithPDAndCodec(store kv.Storage) (storageWithPDAndCodec, error) {
 	storeWithPDAndCodec, ok := store.(storageWithPDAndCodec)
 	if !ok {
@@ -579,6 +581,7 @@ func generateGlobalSortIngestPlan(
 	return metas, nil
 }
 
+// shouldCallTiCIPreSplit reports whether the current backfill job should try the TiCI pre-split optimization.
 func shouldCallTiCIPreSplit(backfillMeta *BackfillTaskMeta) bool {
 	if backfillMeta == nil {
 		return false
@@ -591,6 +594,7 @@ func shouldCallTiCIPreSplit(backfillMeta *BackfillTaskMeta) bool {
 	}
 }
 
+// triggerTiCIPreSplitImportShards builds and sends a best-effort TiCI pre-split request.
 func triggerTiCIPreSplitImportShards(
 	ctx context.Context,
 	store storageWithPDAndCodec,
@@ -614,6 +618,7 @@ func triggerTiCIPreSplitImportShards(
 	return tici.PreSplitImportShards(ctx, store, req)
 }
 
+// buildTiCIPreSplitImportShardsRequest merges per-range report groups into one TiCI request.
 func buildTiCIPreSplitImportShardsRequest(
 	backfillMeta *BackfillTaskMeta,
 	reportGroups []*tici.PreSplitImportShardMeta,
@@ -657,6 +662,7 @@ func buildTiCIPreSplitImportShardsRequest(
 	return req, nil
 }
 
+// countUniqueFilesForTiCIPreSplitRequest deduplicates shared data/stat files before filling request metadata.
 func countUniqueFilesForTiCIPreSplitRequest(
 	kvMetaGroups []*external.SortedKVMeta,
 ) (dataFileCount int32, statFileCount int32) {
@@ -678,6 +684,7 @@ func countUniqueFilesForTiCIPreSplitRequest(
 
 const ticiPreSplitReportGroupSize int64 = units.GiB
 
+// buildTiCIPreSplitReportGroups splits all KV meta groups into TiCI report groups with exact size and key counts.
 func buildTiCIPreSplitReportGroups(
 	ctx context.Context,
 	store kv.StorageWithPD,
@@ -725,6 +732,7 @@ func buildTiCIPreSplitReportGroups(
 	return reportGroups, nil
 }
 
+// splitTiCIPreSplitReportGroupsForOneKVMetaGroup turns one KV meta group into TiCI pre-split report groups.
 func splitTiCIPreSplitReportGroupsForOneKVMetaGroup(
 	ctx context.Context,
 	store kv.StorageWithPD,
@@ -1027,6 +1035,7 @@ func getRangeSplitter(
 	return getRangeSplitterWithGroupSize(ctx, store, cloudStorageURI, rangeGroupSize, multiFileStat, logger)
 }
 
+// getRangeSplitterWithGroupSize builds a range splitter that groups ranges by the provided target size.
 func getRangeSplitterWithGroupSize(
 	ctx context.Context,
 	store kv.StorageWithPD,

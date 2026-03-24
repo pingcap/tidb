@@ -99,6 +99,7 @@ type metaClient struct {
 	client MetaServiceClient
 }
 
+// keyspaceStorage is the store capability needed to derive the keyspace for a TiCI request.
 type keyspaceStorage interface {
 	GetCodec() tikv.Codec
 }
@@ -701,6 +702,7 @@ func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 	return handled, err
 }
 
+// maybeMockPreSplitImportShards intercepts TiCI pre-split requests in tests and stores the captured payload.
 func maybeMockPreSplitImportShards(req *PreSplitImportShardsRequest) (handled bool, err error) {
 	failpoint.Inject("MockPreSplitImportShards", func(val failpoint.Value) {
 		handled = true
