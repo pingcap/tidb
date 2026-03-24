@@ -47,22 +47,19 @@ import (
 )
 
 type mockRUV2ConsumptionReporter struct {
-	tikvGroup string
+	group     string
 	tikvRUV2  float64
-	tidbGroup string
 	tidbRUV2  float64
+	tiflashRU float64
 }
 
 func (*mockRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
 
-func (m *mockRUV2ConsumptionReporter) ReportTiKVRUV2Consumption(resourceGroupName string, ruv2 float64) {
-	m.tikvGroup = resourceGroupName
-	m.tikvRUV2 = ruv2
-}
-
-func (m *mockRUV2ConsumptionReporter) ReportTiDBRUV2Consumption(resourceGroupName string, ruv2 float64) {
-	m.tidbGroup = resourceGroupName
-	m.tidbRUV2 = ruv2
+func (m *mockRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 = tikvRUV2
+	m.tidbRUV2 = tidbRUV2
+	m.tiflashRU = tiflashRUV2
 }
 
 type mockRUV2ReportingContext struct {
@@ -482,6 +479,7 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	expected := sessVars.RUV2Metrics.CalculateRUValues(sessVars.RUV2Weights())
 	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
 	ruDetails.AddTiKVRUV2(23456)
+	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
 
 	execStmt := &executor.ExecStmt{
 		Ctx:      ctx,
@@ -491,10 +489,10 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	execStmt.FinishExecuteStmt(0, nil, false)
 
 	require.Equal(t, float64(23456), ruDetails.TiKVRUV2())
-	require.Equal(t, "rg1", reporter.tikvGroup)
+	require.Equal(t, "rg1", reporter.group)
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
-	require.Equal(t, "rg1", reporter.tidbGroup)
 	require.Equal(t, expected, reporter.tidbRUV2)
+	require.Equal(t, float64(412), reporter.tiflashRU)
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {

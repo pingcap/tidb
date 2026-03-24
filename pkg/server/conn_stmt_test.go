@@ -40,22 +40,19 @@ import (
 )
 
 type mockCursorRUV2ConsumptionReporter struct {
-	tikvGroup string
+	group     string
 	tikvRUV2  float64
-	tidbGroup string
 	tidbRUV2  float64
+	tiflashRU float64
 }
 
 func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
 
-func (m *mockCursorRUV2ConsumptionReporter) ReportTiKVRUV2Consumption(resourceGroupName string, ruv2 float64) {
-	m.tikvGroup = resourceGroupName
-	m.tikvRUV2 += ruv2
-}
-
-func (m *mockCursorRUV2ConsumptionReporter) ReportTiDBRUV2Consumption(resourceGroupName string, ruv2 float64) {
-	m.tidbGroup = resourceGroupName
-	m.tidbRUV2 += ruv2
+func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 += tikvRUV2
+	m.tidbRUV2 += tidbRUV2
+	m.tiflashRU += tiflashRUV2
 }
 
 type mockCursorTrackerRecordSet struct{}
@@ -198,15 +195,18 @@ func TestCursorWithParams(t *testing.T) {
 		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
 		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
 
-		require.Equal(t, "rg1", reporter.tidbGroup)
+		require.Equal(t, "rg1", reporter.group)
 		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
 		require.Equal(t, expectedCursorDelta, reporter.tidbRUV2)
 		require.Equal(t, 0.0, reporter.tikvRUV2)
+		require.Equal(t, 0.0, reporter.tiflashRU)
 
 		ruDetails.AddTiKVRUV2(7)
+		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 5, WRU: 8})
 		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
-		require.Equal(t, "rg1", reporter.tikvGroup)
+		require.Equal(t, "rg1", reporter.group)
 		require.Equal(t, float64(7), reporter.tikvRUV2)
+		require.Equal(t, float64(13), reporter.tiflashRU)
 	})
 
 	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
