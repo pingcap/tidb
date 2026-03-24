@@ -527,6 +527,18 @@ func generateGlobalSortIngestPlan(
 		metaArr = append(metaArr, newMeta...)
 	}
 
+	if shouldCallTiCIPreSplit(backfillMeta) {
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		err := triggerTiCIPreSplitImportShards(timeoutCtx, store, backfillMeta, cloudStorageURI, eleIDs, kvMetaGroups, logger)
+		cancel()
+		if err != nil {
+			logger.Error("tici pre-split shard failed, fallback to default global-sort ingest planning",
+				zap.Int64("taskID", task.ID),
+				zap.Int64("jobID", backfillMeta.Job.ID),
+				zap.String("jobType", backfillMeta.Job.Type.String()),
+				zap.Error(err))
+		}
+	}
 	failpoint.Inject("mockGenerateGlobalSortIngestPlanAfterPreSplit", func() {
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{},
@@ -542,18 +554,6 @@ func generateGlobalSortIngestPlan(
 			i+1,
 		)); err != nil {
 			return nil, err
-		}
-	}
-	if shouldCallTiCIPreSplit(backfillMeta) {
-		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
-		err := triggerTiCIPreSplitImportShards(timeoutCtx, store, backfillMeta, cloudStorageURI, eleIDs, kvMetaGroups, logger)
-		cancel()
-		if err != nil {
-			logger.Error("tici pre-split shard failed, fallback to default global-sort ingest planning",
-				zap.Int64("taskID", task.ID),
-				zap.Int64("jobID", backfillMeta.Job.ID),
-				zap.String("jobType", backfillMeta.Job.Type.String()),
-				zap.Error(err))
 		}
 	}
 	metas := make([][]byte, 0, len(metaArr))
