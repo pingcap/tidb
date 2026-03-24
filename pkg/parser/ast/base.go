@@ -89,57 +89,100 @@ func (n *node) OriginalText() string {
 }
 
 func isPrintable(s []byte) bool {
-	if !utf8.Valid(s) {
-		return false
-	}
-	for _, r := range string(s) {
+	for len(s) > 0 {
+		r, size := utf8.DecodeRune(s)
+		if r == utf8.RuneError && size <= 1 {
+			return false
+		}
 		if unicode.IsControl(r) {
 			return false
 		}
+		s = s[size:]
 	}
 	return true
 }
 
 // convertBinaryStringLiterals processes raw SQL text, converting non-printable
-// single- or double-quoted string literals to 0x hex literals and applying
-// OpDecodeReplace to everything else.
+// single- or double-quoted string literals to 0x hex literals and decoding
+// everything else to UTF-8.
+//
+// The function first transforms the entire text to UTF-8 and then scans the
+// UTF-8 result for string literal boundaries. This avoids ambiguity in
+// encodings like GBK/GB18030 where ASCII-range bytes (e.g. 0x5C backslash)
+// can appear as trail bytes of multibyte characters — UTF-8 never reuses
+// ASCII byte values in multibyte sequences, so quote and backslash detection
+// is always correct.
+//
+// A parallel index into the original byte sequence is maintained so that
+// non-printable strings can be hex-encoded from their original bytes.
+// Quote bytes (0x22, 0x27) are below the trail-byte range of all supported
+// multibyte encodings, so finding them in the original text is always safe.
 func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashEscapes bool) string {
 	src := charset.HackSlice(text)
 
-	// Fast path: if no quotes, just transform the whole thing
+	// Fast path: if no quotes, just transform the whole thing.
 	if bytes.IndexByte(src, '\'') < 0 && bytes.IndexByte(src, '"') < 0 {
 		result, _ := enc.Transform(nil, src, charset.OpDecodeReplace)
 		return charset.HackString(result)
 	}
 
-	var buf *bytes.Buffer
-	var tmp bytes.Buffer
-	lastCopied := 0
-	i := 0
+	// Transform entire text to UTF-8 for safe scanning.
+	utf8Text, _ := enc.Transform(nil, src, charset.OpDecodeReplace)
 
-	for i < len(src) {
-		if src[i] != '\'' && src[i] != '"' {
+	var buf *bytes.Buffer
+	lastCopiedIdx := 0 // tracks position in utf8Text for output assembly
+	origIdx := 0    // tracks position in src (original bytes)
+	i := 0          // scan position in utf8Text
+
+	for i < len(utf8Text) {
+		if utf8Text[i] != '\'' && utf8Text[i] != '"' {
 			i++
 			continue
 		}
 
-		quoteStart := i
-		quote := src[i]
+		utf8QuoteStart := i
+		quote := utf8Text[i]
 		i++
 
-		// Find closing quote
+		// Find the corresponding opening quote in the original text.
+		origQuoteStart := advanceOrigTo(src, &origIdx, quote)
+		if origQuoteStart < 0 {
+			break
+		}
+
+		// Find closing quote in UTF-8 text, keeping origIdx in sync.
 		terminated := false
-		for i < len(src) {
-			ch := src[i]
+		var origQuoteEnd int
+		for i < len(utf8Text) {
+			ch := utf8Text[i]
 			if ch == quote {
 				i++
-				if i >= len(src) || src[i] != quote {
-					terminated = true
+				origClose := advanceOrigTo(src, &origIdx, quote)
+				if origClose < 0 {
 					break
 				}
-				i++ // doubled quote escape
-			} else if ch == '\\' && !noBackslashEscapes && i+1 < len(src) {
-				i += 2 // skip escaped char
+				if i >= len(utf8Text) || utf8Text[i] != quote {
+					// Closing quote.
+					terminated = true
+					origQuoteEnd = origClose + 1
+					break
+				}
+				// Doubled quote escape — advance past second quote in original.
+				i++
+				if advanceOrigTo(src, &origIdx, quote) < 0 {
+					break
+				}
+			} else if ch == '\\' && !noBackslashEscapes && i+1 < len(utf8Text) {
+				nextCh := utf8Text[i+1]
+				i += 2
+				// If the escaped character is a quote byte, advance origIdx
+				// past the corresponding quote in the original text so the
+				// pairing stays in sync.
+				if nextCh == '\'' || nextCh == '"' {
+					if advanceOrigTo(src, &origIdx, nextCh) < 0 {
+						break
+					}
+				}
 			} else {
 				i++
 			}
@@ -149,24 +192,27 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 			continue
 		}
 
-		decoded, err := enc.Transform(nil, src[quoteStart+1:i-1], charset.OpDecode)
+		// Check printability by decoding the original string content.
+		// OpDecode returns an error if the bytes are invalid in the source encoding;
+		// isPrintable then rejects control characters in the decoded UTF-8.
+		decoded, err := enc.Transform(nil, src[origQuoteStart+1:origQuoteEnd-1], charset.OpDecode)
 		if err == nil && isPrintable(decoded) {
 			continue
 		}
 
-		// String contains non-printable UTF8 characters so rescan
-		// the string literal to build the content bytes
+		// Non-printable: extract content from original bytes and hex-encode.
 		var content []byte
-		j := quoteStart + 1
-		for j < i-1 {
+		j := origQuoteStart + 1
+		origEnd := origQuoteEnd - 1
+		for j < origEnd {
 			ch := src[j]
 			if ch == quote {
 				j++
-				if j < i-1 && src[j] == quote {
+				if j < origEnd && src[j] == quote {
 					content = append(content, quote)
 					j++
 				}
-			} else if ch == '\\' && !noBackslashEscapes && j+1 < i-1 {
+			} else if ch == '\\' && !noBackslashEscapes && j+1 < origEnd {
 				j++
 				content = append(content, util.UnescapeChar(src[j])...)
 				j++
@@ -176,44 +222,44 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 			}
 		}
 
-		// Lazy-allocate output buffer on first binary string found
+		// Lazy-allocate output buffer on first binary string found.
 		if buf == nil {
 			buf = &bytes.Buffer{}
-			buf.Grow(len(src))
+			buf.Grow(len(utf8Text))
 		}
 
-		// Flush everything from lastCopied to quoteStart through Transform
-		flushTo(buf, &tmp, src[lastCopied:quoteStart], enc)
-
+		buf.Write(utf8Text[lastCopiedIdx:utf8QuoteStart])
 		buf.WriteString("0x")
 		for _, b := range content {
 			buf.WriteByte(hexDigits[b>>4])
 			buf.WriteByte(hexDigits[b&0xf])
 		}
-		lastCopied = i
+		lastCopiedIdx = i
 	}
 
-	// No binary strings found — transform the whole thing in one call
 	if buf == nil {
-		utf8Lit, _ := enc.Transform(nil, src, charset.OpDecodeReplace)
-		return charset.HackString(utf8Lit)
+		return charset.HackString(utf8Text)
 	}
 
-	// Flush remaining text
-	if lastCopied < len(src) {
-		flushTo(buf, &tmp, src[lastCopied:], enc)
+	if lastCopiedIdx < len(utf8Text) {
+		buf.Write(utf8Text[lastCopiedIdx:])
 	}
 	return buf.String()
 }
 
-// flushTo transforms src through the encoding and appends to buf
-// tmp is a reusable scratch buffer (Transform calls Reset on it)
-func flushTo(buf, tmp *bytes.Buffer, src []byte, enc charset.Encoding) {
-	if len(src) == 0 {
-		return
+// advanceOrigTo scans src from *idx forward until it finds a byte equal to b.
+// It returns the position of that byte and advances *idx past it, or returns -1
+// if not found.
+func advanceOrigTo(src []byte, idx *int, b byte) int {
+	for *idx < len(src) {
+		if src[*idx] == b {
+			pos := *idx
+			*idx++
+			return pos
+		}
+		*idx++
 	}
-	utf8Lit, _ := enc.Transform(tmp, src, charset.OpDecodeReplace)
-	buf.Write(utf8Lit)
+	return -1
 }
 
 // stmtNode implements StmtNode interface.

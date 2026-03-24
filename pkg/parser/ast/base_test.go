@@ -80,6 +80,15 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 		{"escaped \"\" inside", "SELECT \"\xd2\"\"\xe4\"", "SELECT 0xd222e4"},
 		{"backtick inside binary", "SELECT '\xd2`\xe4'", "SELECT 0xd260e4"},
 		{"mixed binary and text args", "SELECT '\xd2\xe4', 'hello', _binary '\xa1\xb2'", "SELECT 0xd2e4, 'hello', _binary 0xa1b2"},
+
+		// Truncated/invalid UTF-8 sequences
+		{"truncated 4-byte utf8", "SELECT '\xf0\x9f\x98'", "SELECT 0xf09f98"},
+		{"invalid continuation byte", "SELECT '\x80\x81'", "SELECT 0x8081"},
+
+		// Control characters
+		{"NUL byte", "SELECT '\x00'", "SELECT 0x00"},
+		{"mixed control and text", "SELECT 'hello\x00world'", "SELECT 0x68656c6c6f00776f726c64"},
+		{"multiple control chars", "SELECT '\x01\x02\x03\x04\x05'", "SELECT 0x0102030405"},
 	}
 	for _, tt := range binaryTests {
 		n.SetText(charset.EncodingUTF8Impl, tt.text)
@@ -115,6 +124,18 @@ func TestBinaryStringLiteralGBK(t *testing.T) {
 	// GBK with actual invalid bytes should still convert to hex
 	n.SetText(charset.EncodingGBKImpl, "select '\x80\xff'")
 	require.Equal(t, "select 0x80ff", n.Text(), "GBK binary")
+
+	// 筡 = \xb9\x5c in GBK; trail byte 0x5c must not be mistaken for backslash
+	n.SetText(charset.EncodingGBKImpl, "select '\xb9\x5c'")
+	require.Equal(t, "select '筡'", n.Text(), "GBK 0x5c trail byte")
+
+	// Multiple GBK chars with 0x5c trail bytes: 筡 = \xb9\x5c, 臷 = \xc5\x5c
+	n.SetText(charset.EncodingGBKImpl, "select '\xb9\x5c\xc5\x5c'")
+	require.Equal(t, "select '筡臷'", n.Text(), "GBK multiple 0x5c trail bytes")
+
+	// 0x5c trail byte right before closing quote must not escape the quote
+	n.SetText(charset.EncodingGBKImpl, "select '\xb9\x5c', 'after'")
+	require.Equal(t, "select '筡', 'after'", n.Text(), "GBK 0x5c before quote")
 }
 
 func buildBinaryClause() string {
