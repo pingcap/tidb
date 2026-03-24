@@ -978,10 +978,16 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && expression.ConstExprConsiderPlanCache(con, useCache) {
+			if con, ok := item.(*expression.Constant); ok {
+				// For *expression.Constant, ConstLevel is always ConstStrict or ConstOnlyInContext,
+				// so we can always evaluate. We just need to skip plan cache for mutable constants.
+				needSkipCache := useCache && !expression.ConstExprConsiderPlanCache(con, useCache)
 				ret, _, err := expression.EvalBool(b.ctx.GetExprCtx().GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
+				}
+				if needSkipCache {
+					b.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache("constant predicate elimination on mutable constant")
 				}
 				if ret {
 					continue
