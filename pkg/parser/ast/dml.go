@@ -551,7 +551,9 @@ func (*TableSource) resultSet() {}
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 	// Validate AST invariants before emitting any SQL.
-	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt).
+	// Source can be TableName, SelectStmt, SetOprStmt, or JoinNode (parenthesized join).
+	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt);
+	// TableName and JoinNode are both excluded.
 	isDerived := false
 	switch n.Source.(type) {
 	case *SelectStmt, *SetOprStmt:

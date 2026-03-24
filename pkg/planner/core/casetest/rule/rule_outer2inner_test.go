@@ -175,10 +175,17 @@ FROM t0
 	})
 }
 
-// TestOuter2InnerLateralSelection verifies that the outer2inner rule does NOT
-// convert Apply→Join when the Apply originates from a LATERAL derived table.
-// The IsLateral guard in pruneRedundantApply must prevent the rewrite even when
-// a null-filtering Selection sits above the Apply.
+// TestOuter2InnerLateralSelection verifies LATERAL join decorrelation behavior:
+//
+//   - Cases 1–2 (simple correlated Selection): DecorrelateSolver pulls the
+//     correlated predicate (e.g. t2.b2 = t1.a1) up as a join condition, which
+//     empties CorCols and converts Apply→HashJoin. This is semantically correct
+//     and is NOT the outer2inner rule — the outer2inner IsLateral guard is a
+//     separate code path (pruneRedundantApply).
+//
+//   - Case 3 (aggregate): after the Selection is pulled up, correlated columns
+//     remain inside the aggregate, so DecorrelateSolver cannot proceed and the
+//     Apply is preserved.
 func TestOuter2InnerLateralSelection(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
