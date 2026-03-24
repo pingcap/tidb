@@ -79,6 +79,7 @@ stats="s"
 set -eu
 
 PIDS_TO_KILL=()
+TEMP_PATHS_TO_REMOVE=()
 function register_pid() {
     local pid=$1
     if [ -n "$pid" ]; then
@@ -86,9 +87,17 @@ function register_pid() {
     fi
 }
 
+function register_temp_path() {
+    local path=$1
+    if [ -n "$path" ]; then
+        TEMP_PATHS_TO_REMOVE+=("$path")
+    fi
+}
+
 function cleanup() {
     set +e
     local pid
+    local path
     for pid in "${PIDS_TO_KILL[@]}"; do
         kill -15 "$pid" 2>/dev/null || true
     done
@@ -103,6 +112,9 @@ function cleanup() {
     done
     for pid in $job_pids; do
         kill -9 "$pid" 2>/dev/null || true
+    done
+    for path in "${TEMP_PATHS_TO_REMOVE[@]}"; do
+        rm -rf "$path"
     done
 }
 
@@ -984,6 +996,49 @@ EOF
     return $exit_code
 }
 
+function run_mysql_tester_setup_case()
+{
+    local downstream_args=()
+
+    if [ -n "${DOWNSTREAM_PORT:-}" ]; then
+        downstream_args=(-downstream "root:@tcp(127.0.0.1:$DOWNSTREAM_PORT)/test")
+    fi
+
+    $mysql_tester \
+      -port "$UPSTREAM_PORT" \
+      "${downstream_args[@]}" \
+      --check-error=true \
+      --path-dumpling="./third_bin/dumpling" \
+      "$1"
+}
+
+function configure_tici_global_sort_uri()
+{
+    local case_dir
+    local case_dir_name
+    local case_name
+    local result_dir
+    local sql_stmt
+    local sort_uri
+
+    sort_uri="s3://${MINIO_BUCKET}/${MINIO_PREFIX}/global-sort?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio"
+    sql_stmt="SET @@global.tidb_cloud_storage_uri='${sort_uri}';"
+    case_dir=$(mktemp -d ./t/tici-runtime-XXXXXX)
+    case_dir_name=$(basename "$case_dir")
+    case_name="${case_dir_name}/set_global_sort_uri"
+    result_dir="./r/${case_dir_name}"
+    mkdir -p "$result_dir"
+    register_temp_path "$case_dir"
+    register_temp_path "$result_dir"
+
+    printf '%s\n' "${sql_stmt}" > "${case_dir}/set_global_sort_uri.test"
+    printf '%s\n' "${sql_stmt}" > "${result_dir}/set_global_sort_uri.result"
+
+    run_mysql_tester_setup_case "$case_name"
+
+    rm -rf "$case_dir" "$result_dir"
+}
+
 function report_name_for_case() {
     local name="$1"
     name="${name//\//_}"
@@ -1097,6 +1152,7 @@ if [ ${#ticdc_cases[@]} -ne 0 ]; then
 fi
 
 if [ ${#tici_cases[@]} -ne 0 ]; then
+    configure_tici_global_sort_uri
     if [ $TICI_ONLY_RUN -ne 0 ] && [ ${#tici_cases[@]} -gt 1 ]; then
         for case_name in "${tici_cases[@]}"; do
             XUNITFILE="$(report_name_for_case "$case_name")"

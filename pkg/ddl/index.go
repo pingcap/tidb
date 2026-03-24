@@ -1715,7 +1715,10 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 
 		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
-			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
+			skipReorg, err := checkIfTableReorgWorkCanSkipWithError(w.store, w.sess.Session(), tbl, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 			if !skipReorg {
 				if err := ensureFulltextIndexReorgMeta(job); err != nil {
 					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
@@ -1911,7 +1914,10 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 
 		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
-			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
+			skipReorg, err := checkIfTableReorgWorkCanSkipWithError(w.store, w.sess.Session(), tbl, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 			if !skipReorg {
 				if err := ensureHybridIndexReorgMeta(job); err != nil {
 					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
@@ -2044,6 +2050,9 @@ func ensureFulltextIndexReorgMeta(job *model.Job) error {
 	// Fulltext index requires DXF + fast reorg ingest only; reject other modes early.
 	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index requires distributed fast reorg ingest")
+	}
+	if !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index on non-empty table requires global sort; set @@global.tidb_cloud_storage_uri")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
@@ -2911,22 +2920,50 @@ func checkIfTableReorgWorkCanSkip(
 	tbl table.Table,
 	job *model.Job,
 ) bool {
+	skipReorg, err := checkIfTableReorgWorkCanSkipWithError(store, sessCtx, tbl, job)
+	if err != nil {
+		return false
+	}
+	return skipReorg
+}
+
+func checkIfTableReorgWorkCanSkipWithError(
+	store kv.Storage,
+	sessCtx sessionctx.Context,
+	tbl table.Table,
+	job *model.Job,
+) (bool, error) {
+	failpoint.Inject("mockCheckTableReorgWorkCanSkip", func(_val failpoint.Value) {
+		if val, ok := _val.(string); ok && val == "error" {
+			failpoint.Return(false, errors.New("mock check table reorg work can skip error"))
+		}
+	})
 	if job.SnapshotVer != 0 {
 		// Reorg work has begun.
-		return false
+		return false, nil
 	}
 	txn, err := sessCtx.Txn(false)
 	validTxn := err == nil && txn != nil && txn.Valid()
 	intest.Assert(validTxn)
 	if !validTxn {
+		if err == nil {
+			err = errors.New("check if table is empty failed")
+		}
 		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
-		return false
+		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
-	return checkIfTableIsEmpty(ctx, store, tbl, startTS)
+	isEmpty, err := checkIfTableIsEmpty(ctx, store, tbl, startTS)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if !isEmpty {
+		return false, nil
+	}
+	return true, nil
 }
 
 func checkIfTableIsEmpty(
@@ -2934,15 +2971,19 @@ func checkIfTableIsEmpty(
 	store kv.Storage,
 	tbl table.Table,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
 			pTbl := pTbl.GetPartition(pid)
-			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS) {
-				return false
+			isEmpty, err := checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS)
+			if err != nil {
+				return false, err
+			}
+			if !isEmpty {
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
@@ -2954,14 +2995,14 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	hasRecord, err := existsTableRow(ctx, store, tbl, startTS)
 	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
-		return false
+		return false, errors.Trace(err)
 	}
-	return !hasRecord
+	return !hasRecord, nil
 }
 
 func checkIfTempIndexReorgWorkCanSkip(
