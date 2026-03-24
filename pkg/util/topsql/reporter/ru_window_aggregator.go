@@ -126,7 +126,10 @@ func (a *ruWindowAggregator) resetForHandover(version rmclient.RUVersion, nowTs 
 
 	a.currentVersion = version
 	a.buckets = make(map[uint64]*ruPointBucket)
-	a.dropUntilTs = alignToInterval(nowTs, ruReportWindowSeconds) + ruReportWindowSeconds
+	a.dropUntilTs = alignToInterval(nowTs, ruReportWindowSeconds)
+	if nowTs%ruReportWindowSeconds != 0 {
+		a.dropUntilTs += ruReportWindowSeconds
+	}
 }
 
 // takeReportRecords emits one aligned closed 60s window for nowTs.

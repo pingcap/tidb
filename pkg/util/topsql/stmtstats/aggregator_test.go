@@ -42,7 +42,12 @@ func TestSetupCloseAggregator(t *testing.T) {
 }
 
 func TestBindRUVersionProviderAfterCloseAggregator(t *testing.T) {
+	originalProvider := globalAggregator.ruVersionProvider
 	provider := &mockRUVersionProvider{version: rmclient.RUVersionV2}
+	t.Cleanup(func() {
+		CloseAggregator()
+		BindRUVersionProvider(originalProvider)
+	})
 	BindRUVersionProvider(provider)
 	SetupAggregator()
 	require.Eventually(t, func() bool {

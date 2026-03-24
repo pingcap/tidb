@@ -238,6 +238,26 @@ func TestRUWindowAggregatorResetCurrentWindowDropsUntilBoundary(t *testing.T) {
 		require.Equal(t, uint64(180), rec.Items[0].TimestampSec)
 		require.InDelta(t, 7.0, rec.Items[0].TotalRu, 1e-9)
 	})
+
+	t.Run("aligned boundary keeps current window", func(t *testing.T) {
+		agg := newRUWindowAggregator()
+		key := stmtstats.RUKey{
+			User:       "u-aligned",
+			SQLDigest:  stmtstats.BinaryDigest("sql-aligned"),
+			PlanDigest: stmtstats.BinaryDigest("plan-aligned"),
+		}
+
+		agg.resetForHandover(rmclient.RUVersionV2, 180)
+		agg.addBatchToBucket(181, stmtstats.RUIncrementMap{
+			key: {TotalRU: 9, ExecCount: 1, ExecDuration: 1},
+		})
+
+		records := agg.takeReportRecords(240, 60, []byte("ks"))
+		rec := findRURecord(t, records, "u-aligned", "sql-aligned", "plan-aligned")
+		require.Len(t, rec.Items, 1)
+		require.Equal(t, uint64(180), rec.Items[0].TimestampSec)
+		require.InDelta(t, 9.0, rec.Items[0].TotalRu, 1e-9)
+	})
 }
 
 // Test gap 3: Concurrent pressure test for ruWindowAggregator.
