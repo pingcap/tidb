@@ -20,7 +20,7 @@
 
 ## Introduction
 
-This document proposes a BR snapshot backup repository layout (“repo-v1”) that allows multiple backups to share a single storage prefix while avoiding “cold/new prefix” issues in large S3-compatible environments. The design keeps data under stable, hot prefixes, adds a repo marker and guard rail, and uses a PD TSO–allocated backup ID in object keys to support safe, prefix-based cleanup even if metadata is lost.
+This document proposes a BR snapshot backup repository layout (“repo-v1”) that allows multiple backups to share a single storage prefix while avoiding “cold/new prefix” issues in large S3-compatible environments. The design keeps data under stable, hot prefixes, adds a repo marker and guard rail, and uses a PD TSO–allocated backup ID in per-backup data prefixes to support safe, prefix-based cleanup even if metadata is lost.
 
 ## Motivation or Background
 
@@ -34,7 +34,7 @@ We want to:
 
 Non-goals (initially):
 - Cross-backup deduplication or compaction.
-- Advanced repo-level scheduling/locking beyond preventing object key collisions.
+- Advanced repo-level scheduling/locking beyond preventing backup target conflicts.
 
 ## Detailed Design
 
@@ -51,31 +51,42 @@ s3://bucket/prefix/
   _meta/snapshot/<backup-id>/backupmeta.datafile.000000001
   _meta/snapshot/<backup-id>/backupmeta.ddl.000000001
   _meta/snapshot/<backup-id>/backupmeta.schema.stats.000000123
-  _meta/snapshot/<backup-id>/checkpoints/... (optional, for checkpoint mode)
-  _data/snapshot/<store-id>/<backup-id>/... (SSTs written by TiKV)
+  _meta/snapshot/<backup-id>/checkpoints/...
+  _data/snapshot/<store-id>/<backup-id>/... (SSTs written by TiKV using legacy naming under this prefix)
+```
+
+Reserved entries at the repo root:
+- `_meta/repo.json` identifies a BR repo and records layout metadata such as repo version, repo ID, and creator. It must not contain secrets.
+- `backup.lock` is a human-readable guard file. It marks the path as BR-managed repository storage and prevents legacy single-backup BR from treating the repo root as an empty backup directory.
+
+Example `_meta/repo.json`:
+```json
+{
+  "repo_version": 1,
+  "repo_id": "b8b9c1b6-7d7b-4a8b-8a5b-2f2e9a2f0c2d",
+  "created_at": "2026-02-27T09:30:12Z",
+  "created_by": "br vX.Y.Z"
+}
 ```
 
 Key points:
-- Data is still sharded by `<store-id>/` under `_data/snapshot/`.
-- `<backup-id>` is placed immediately after `<store-id>` in SST object keys to enable prefix-based deletion without a full scan.
+- Data remains sharded by `<store-id>/` under `_data/snapshot/`.
+- `<store-id>` must stay as the leading data prefix. Putting `<backup-id>` first would recreate a fresh hot prefix for every backup and reintroduce the cold-prefix problem this design is trying to avoid.
+- One backup's SSTs are grouped under `_data/snapshot/<store-id>/<backup-id>/`.
+- Within that per-backup subprefix, TiKV keeps the legacy SST object naming format.
 - Metadata is namespaced per backup under `_meta/snapshot/<backup-id>/`.
-
-### TiKV Capability Probe (Guard Rail)
-
-BR should detect whether TiKV supports the repo-v1 object key format before starting a backup:
-- A capability flag (to be added) is reported by TiKV; BR checks all TiKV nodes.
-- If any TiKV does not support repo-v1 naming (i.e. does not place `unique_id` immediately after `<store-id>`), BR must fail fast in repo-v1 mode.
-
-This prevents partially-upgraded clusters from producing backups that cannot be cleaned up safely.
 
 ### IDs and Naming
 
 Backup ID:
-- Allocate a *fresh* PD TSO as the backup ID.
+- Allocate a *fresh* PD TSO as the backup ID, even if the user specifies `backup-ts`/`--backupts`.
+- The fresh PD TSO gives each backup run a unique object-key namespace. Reusing a user-specified snapshot TS directly would let repeated backups at the same snapshot TS reuse the same prefix and risk SST key collisions or ambiguous cleanup.
+- `backup-id` is therefore distinct from `backup-ts`: `backup-ts` selects the MVCC snapshot to read, while `backup-id` identifies this backup instance for naming, listing, and deletion.
 - Encode as lower-case hex, zero-padded to 16 characters (`hex16`) so lexical order matches numeric order.
 
 ID formatting rule:
-- `<backup-id>` and `<store-id>` in paths are fixed-width hex (16 chars, lower-case).
+- `<backup-id>` in repo-v1 paths is fixed-width hex (16 chars, lower-case).
+- `<store-id>` and the SST object names under `_data/snapshot/<store-id>/<backup-id>/` keep TiKV's legacy backend-specific formatting.
 
 BR prints `<backup-id>` (hex16) on success.
 
@@ -87,134 +98,144 @@ Current (legacy) object key pattern (existing decimal ids):
 - Final SST key appends CF suffix: `<base>_<cf>.sst`
 
 Repo v1 changes:
-- BR sets `BackupRequest.unique_id = <backup-id>`.
-- TiKV inserts `unique_id` immediately after `<store-id>` (before region/range fields).
-- This enables prefix-based deletion per backup and prevents key collisions.
-
-Repo v1 base name (hex IDs, fixed width):
-- S3/local: `<store-id-hex>/<backup-id-hex>_<region-id>_<region-epoch-version>_<start-key-sha256hex>_<unix-millis>`
-- Others: `<store-id-hex>_<backup-id-hex>_<region-id>_<region-epoch-version>_<start-key-sha256hex>_<unix-millis>`
+- BR allocates `<backup-id>` and sets `BackupRequest.file_prefix` for each TiKV backup request.
+- `file_prefix` is the protocol hook TiKV uses to prepend a client-provided path prefix before the original SST object name.
+- Repo-v1 uses that hook to place SSTs under the repo-managed store-first path `_data/snapshot/<store-id>/<backup-id>/`.
+- TiKV keeps its existing SST naming logic and writes legacy object names under that client-provided subprefix.
+- This keeps `<store-id>` as the leading prefix, keeps the original SST key format as intact as possible, and still isolates each backup under its own deletable subprefix.
 
 Example (S3/local):
 ```
-000000000000007b/000000000000f00d_456789_42_<sha256hex>_1700000000123_default.sst
-000000000000007b/000000000000f00d_456789_42_<sha256hex>_1700000000123_write.sst
+_data/snapshot/123/000000000000f00d/456789_42_<sha256hex>_1700000000123_default.sst
+_data/snapshot/123/000000000000f00d/456789_42_<sha256hex>_1700000000123_write.sst
 ```
 
 SST format remains RocksDB SST (per CF), with existing compression/encryption behavior.
 
-### Repo Marker and Guard Rail
-
-`_meta/repo.json`:
-- Identifies a BR repo and records layout + reserved prefixes.
-- Must not contain secrets.
-
-Example:
-```json
-{
-  "repo_version": 1,
-  "repo_id": "b8b9c1b6-7d7b-4a8b-8a5b-2f2e9a2f0c2d",
-  "created_at": "2026-02-27T09:30:12Z",
-  "created_by": "br vX.Y.Z"
-}
-```
-
-`backup.lock` at repo root:
-- A human-readable guard rail to prevent accidental legacy `br backup` into the repo root.
-- Legacy backup should treat this as a hard error even when the repo is otherwise empty.
-
 ### User Experience
 
-Activate repo layout:
+#### Backup
+
+Command:
 - `br backup full -s <repo> --storage-layout=repo-v1 ...`
-- Creates `_meta/repo.json` and `backup.lock` if absent.
 
-Backup:
-- Allocate PD TSO `<backup-id>`.
-- Pass `<backup-id>` to TiKV as `BackupRequest.unique_id`.
-- Write metadata to `_meta/snapshot/<backup-id>/`.
-- Write SSTs under `_data/snapshot/`.
+Semantics:
+- `repo-v1` treats `--storage` as a repository root instead of a legacy single-backup directory.
+- On first use, creates `_meta/repo.json` and `backup.lock`.
+- Creates a new snapshot backup in the repo and allocates a fresh PD TSO `<backup-id>` for this run.
+- Writes metadata under `_meta/snapshot/<backup-id>/` and SSTs under `_data/snapshot/<store-id>/<backup-id>/`.
+- Prints `<backup-id>` on success.
 
-Restore:
+#### Restore
+
+Command:
 - `br restore full -s <repo> --storage-layout=repo-v1 --backup-id <backup-id> ...`
 
-List:
-- `br repo snapshot list -s <repo>`
-- Output `<backup-id>`, snapshot time/TS, backup type, size (completed only).
+Semantics:
+- Restores the snapshot backup identified by `--backup-id` from the repo.
 
-### Files of a Backup (Print/Delete)
+#### List
+
+Command:
+- `br repo snapshot list -s <repo>`
+
+Semantics:
+- Lists completed snapshot backups in the repo.
+- Outputs `<backup-id>`, snapshot time/TS, backup type, and size.
+
+#### Files of a Backup (Print/Delete)
 
 Command:
 - `br repo for-files-of-backup -s <repo> --backup=<backup-id> --do={print|delete}`
 
-Operation:
-- Find objects whose key starts with:
-  - S3/local: `<store-id-hex>/<backup-id-hex>_`
-  - Others: `<store-id-hex>_<backup-id-hex>_`
-- Ensure the key ends with a CF suffix (`_default.sst`, `_write.sst`, or raw-kv CFs).
-- If metadata exists, use it to obtain store IDs; otherwise list immediate children under `_data/snapshot/` to discover store shards.
-- `--do=print` outputs matched object keys. (The default.)
-- `--do=delete` deletes those objects and then removes `_meta/snapshot/<backup-id>/...` if present.
+Semantics:
+- Prints or deletes the SST objects that belong to the specified backup.
+- When `--do=delete` is used, also removes `_meta/snapshot/<backup-id>/...` if present.
+- Still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the `<backup-id>` subprefix in each shard.
+- `--do=print` is the default.
 
-### Orphans (Print/Delete)
+#### Orphans (Print/Delete)
 
 Command:
 - `br repo for-orphans -s <repo> --do={print|delete}`
 
-Operation:
-- Enumerate all known backup IDs from `_meta/snapshot/`.
-- Scan SST objects under `_data/snapshot/` and parse `<backup-id>` from keys.
-- Output (or delete) SSTs whose `<backup-id>` is not in the known set.
-
-Note: this is a full scan of SST objects and can be expensive for large repos.
-
-### Future: Snapshot + Log in One Repo
-
-Suggested namespace:
-- Snapshot metadata: `_meta/snapshot/<backup-id>/...`
-- Snapshot data: `_data/snapshot/<store-id>/...`
-- Log data: `_data/log/<task-name>/...` (preserve existing TiKV layout)
-- Optional log metadata: `_meta/log/<task-name>/...`
+Semantics:
+- Prints or deletes SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
+- Can be implemented by comparing `_meta/snapshot/` entries with `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
+- This is still expected to be more expensive than listing known backups.
 
 ### Compatibility
 
 - BR: new `--storage-layout=repo-v1`, `br repo` subcommands, and layout helper.
-- TiKV: SST key naming must include `unique_id` immediately after `<store-id>` and report repo-v1 capability.
+- TiKV: must support `BackupRequest.file_prefix` for SST output and expose that support via `Backup.feature_gate`.
 - PD: backup ID allocation via TSO.
 - Upgrade: legacy layout remains supported; repo-v1 is opt-in.
 - Downgrade: avoid writing repo-v1 from older BR; repo marker signals layout.
 - External tools: restore/list/cleanup must use repo-v1-aware logic.
 
+### Misc
+
+#### TiKV Backup Subprefix Capability Probe (Guard Rail)
+
+BR should detect whether TiKV supports the repo-v1 backup-subprefix behavior before starting a backup:
+- BR calls `Backup.feature_gate(FeatureGateRequest)` on all TiKV nodes before starting the backup.
+- TiKV reports `FeatureGateResponse.supports_backup_custom_path`.
+- If any TiKV returns `supports_backup_custom_path = false`, BR must fail fast in repo-v1 mode and must not send repo-v1 backup requests to a partially-capable cluster.
+
+This prevents partially-upgraded clusters from producing backups that cannot be cleaned up safely.
+
+#### Future: Snapshot + Log in One Repo
+
+This document does not define a combined snapshot + log repository layout yet.
+
+If we extend the repo in the future, one possible direction would be to keep snapshot and log data in separate namespaces, for example:
+- Snapshot metadata: `_meta/snapshot/<backup-id>/...`
+- Snapshot data: `_data/snapshot/<store-id>/<backup-id>/...`
+- Log data: `_data/log/<task-name>/...` (preserve existing TiKV layout)
+- Log metadata if needed: `_meta/log/<task-name>/...`
+
 ## Test Design
+
+Scope:
+- Required coverage below is for repo-v1 behavior and compatibility with existing BR features.
 
 ### Functional Tests
 
+Repo-v1 behavior:
 - Verify repo marker and `backup.lock` creation.
 - Verify backup-id is PD-assigned and hex16 formatted.
-- Verify SST object key naming inserts `<backup-id>` after `<store-id>`.
-- Verify BR fails fast in repo-v1 mode if any TiKV lacks the capability flag.
+- Verify BR sets `BackupRequest.file_prefix` in repo-v1 mode.
+- Verify SST objects are written under `_data/snapshot/<store-id>/<backup-id>/` while keeping legacy TiKV naming within that subprefix.
+- Verify `<store-id>` remains the leading data prefix and `<backup-id>` is not moved ahead of it.
+- Verify BR calls `Backup.feature_gate` and fails fast in repo-v1 mode if any TiKV reports `supports_backup_custom_path = false`.
 - Verify `br repo snapshot list` returns completed backups only.
 - Verify `for-files-of-backup --do=print` outputs correct keys.
 - Verify `for-files-of-backup --do=delete` deletes matching objects and metadata.
+- Verify `for-orphans --do=print` outputs only orphan SSTs.
+- Verify `for-orphans --do=delete` deletes only orphan SSTs.
+- Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/...`.
 
 ### Scenario Tests
 
+Repo-v1 scenarios:
 - Multiple backups under one repo; restore older/newer backups.
 - Delete one backup while keeping others; verify remaining backups restore.
 - Metadata loss for a backup: `for-files-of-backup` still deletes by prefix.
-- Orphan scan detects unexpected SSTs (simulate interrupted backup).
+- Orphan scan detects unexpected per-backup subprefixes under store shards (simulate interrupted backup).
 
 ### Compatibility Tests
 
+Compatibility coverage:
 - BR repo-v1 with different storage backends (S3/GCS/Azure/HDFS/local).
-- Compatibility with BR `--use-backupmeta-v2` and external stats.
 - Upgrade from legacy backup usage without repo-v1.
-- Restore with TiKV/TiDB version combinations that support repo-v1 naming.
+- Restore with TiKV/TiDB version combinations that support `BackupRequest.file_prefix`.
+- Compatibility with BR `--use-backupmeta-v2`.
+- Compatibility with external stats.
 
 ### Benchmark Tests
 
 - Prefix listing cost for `for-files-of-backup` on large repos.
-- Full scan cost for `for-orphans` and its impact on API rate limits.
+- Listing cost for `for-orphans` over many store shards and per-backup subprefixes, and its impact on API rate limits.
 
 ## Impacts & Risks
 
@@ -223,9 +244,9 @@ Impacts:
 - Simplifies retention and cleanup via prefix-based operations.
 
 Risks:
-- Incorrect key parsing could delete wrong objects.
-- `for-orphans` requires full scans and can be expensive.
-- Repo-v1 depends on TiKV naming changes; mixing versions could break cleanup (mitigated by capability probe).
+- Incorrect prefix matching could delete wrong objects.
+- `for-orphans` still requires storage enumeration and can be expensive on very large repos.
+- Repo-v1 depends on TiKV support for `BackupRequest.file_prefix`; mixing versions could break cleanup isolation (mitigated by the `feature_gate` probe).
 
 ## Investigation & Alternatives
 
