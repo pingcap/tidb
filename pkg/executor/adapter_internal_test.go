@@ -203,7 +203,7 @@ func TestObserveStmtFinishedOnTopProfilingDoes(t *testing.T) {
 
 // TestObserveStmtFinishedOnTopProfilingKeeps verifies TopSQL-only finish stats are
 // preserved when TopRU is disabled.
-// Flow: begin(topSQL-on/topRU-off) -> finish -> verify duration/network-out stats
+// Flow: begin(topSQL-on/topRU-off) -> finish -> verify duration stats
 func TestObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopSQL()
@@ -222,7 +222,6 @@ func TestObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
 		require.Equal(t, uint64(1), item.ExecCount)
 		require.Equal(t, uint64(1), item.DurationCount)
 		require.Greater(t, item.SumDurationNs, uint64(0))
-		require.Equal(t, uint64(0), item.NetworkOutBytes)
 	}
 }
 

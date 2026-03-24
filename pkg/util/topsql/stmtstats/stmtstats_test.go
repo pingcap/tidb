@@ -106,24 +106,18 @@ func TestKvStatementStatsItemMerge(t *testing.T) {
 // TestStatementsStatsItemMerge verifies statements stats item merge and guards against regressions in begin-based RU accounting.
 func TestStatementsStatsItemMerge(t *testing.T) {
 	item1 := &StatementStatsItem{
-		ExecCount:       1,
-		SumDurationNs:   100,
-		KvStatsItem:     NewKvStatementStatsItem(),
-		NetworkInBytes:  10,
-		NetworkOutBytes: 20,
+		ExecCount:     1,
+		SumDurationNs: 100,
+		KvStatsItem:   NewKvStatementStatsItem(),
 	}
 	item2 := &StatementStatsItem{
-		ExecCount:       2,
-		SumDurationNs:   50,
-		KvStatsItem:     NewKvStatementStatsItem(),
-		NetworkInBytes:  50,
-		NetworkOutBytes: 60,
+		ExecCount:     2,
+		SumDurationNs: 50,
+		KvStatsItem:   NewKvStatementStatsItem(),
 	}
 	item1.Merge(item2)
 	assert.Equal(t, uint64(3), item1.ExecCount)
 	assert.Equal(t, uint64(150), item1.SumDurationNs)
-	assert.Equal(t, uint64(60), item1.NetworkInBytes)
-	assert.Equal(t, uint64(80), item1.NetworkOutBytes)
 }
 
 // TestStatementStatsMapMerge verifies statement stats map merge and guards against regressions in begin-based RU accounting.
@@ -209,14 +203,14 @@ func TestExecCounterAddExecCountTake(t *testing.T) {
 	m := stats.Take()
 	assert.Len(t, m, 0)
 	for range 1 {
-		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
+		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), &ExecBeginInfo{})
 	}
 	for range 2 {
-		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
+		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""), &ExecBeginInfo{})
 		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), &ExecFinishInfo{ExecDuration: time.Second})
 	}
 	for range 3 {
-		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
+		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""), &ExecBeginInfo{})
 		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), &ExecFinishInfo{ExecDuration: time.Millisecond})
 	}
 	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), &ExecFinishInfo{ExecDuration: -time.Millisecond})
@@ -230,41 +224,6 @@ func TestExecCounterAddExecCountTake(t *testing.T) {
 	assert.Equal(t, uint64(3*10e5), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumDurationNs)
 	m = stats.Take()
 	assert.Len(t, m, 0)
-}
-
-func TestNetworkBytesAccumulation(t *testing.T) {
-	stats := CreateStatementStats()
-	sqlDigest := []byte("SQL-1")
-	planDigest := []byte("PLAN-1")
-
-	// Test NetworkInBytes accumulation in OnExecutionBegin
-	// Call OnExecutionBegin multiple times with different network input bytes
-	stats.OnExecutionBegin(sqlDigest, planDigest, &ExecBeginInfo{InNetworkBytes: 100})
-	stats.OnExecutionBegin(sqlDigest, planDigest, &ExecBeginInfo{InNetworkBytes: 200})
-	stats.OnExecutionBegin(sqlDigest, planDigest, &ExecBeginInfo{InNetworkBytes: 300})
-
-	m := stats.Take()
-	assert.Len(t, m, 1)
-	key := SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
-	item := m[key]
-	assert.NotNil(t, item)
-	// NetworkInBytes should be accumulated: 100 + 200 + 300 = 600
-	assert.Equal(t, uint64(600), item.NetworkInBytes)
-	assert.Equal(t, uint64(3), item.ExecCount)
-
-	// Test NetworkOutBytes accumulation in OnExecutionFinished
-	// Call OnExecutionFinished multiple times with different network output bytes
-	stats.OnExecutionFinished(sqlDigest, planDigest, &ExecFinishInfo{ExecDuration: time.Second, OutNetworkBytes: 50})
-	stats.OnExecutionFinished(sqlDigest, planDigest, &ExecFinishInfo{ExecDuration: time.Second, OutNetworkBytes: 150})
-	stats.OnExecutionFinished(sqlDigest, planDigest, &ExecFinishInfo{ExecDuration: time.Second, OutNetworkBytes: 250})
-
-	m = stats.Take()
-	assert.Len(t, m, 1)
-	item = m[key]
-	assert.NotNil(t, item)
-	// NetworkOutBytes should be accumulated: 50 + 150 + 250 = 450
-	assert.Equal(t, uint64(450), item.NetworkOutBytes)
-	assert.Equal(t, uint64(3), item.DurationCount)
 }
 
 // TestOnExecutionBeginFinishRU verifies one begin/finish pair emits exactly

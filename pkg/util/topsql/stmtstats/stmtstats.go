@@ -43,19 +43,17 @@ type StatementObserver interface {
 
 // ExecBeginInfo carries optional execution-begin context for extensible stats collection.
 type ExecBeginInfo struct {
-	Ctx            context.Context
-	User           string
-	InNetworkBytes uint64
-	TopRUEnabled   bool
+	Ctx          context.Context
+	User         string
+	TopRUEnabled bool
 }
 
 // ExecFinishInfo carries optional execution-finish context for extensible stats collection.
 type ExecFinishInfo struct {
-	RUDetails       *util.RUDetails
-	User            string
-	OutNetworkBytes uint64
-	ExecDuration    time.Duration
-	TopRUEnabled    bool
+	RUDetails    *util.RUDetails
+	User         string
+	ExecDuration time.Duration
+	TopRUEnabled bool
 }
 
 // StatementStats is a counter used locally in each session.
@@ -92,7 +90,6 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, info *Ex
 
 	item.ExecCount++
 	if info != nil {
-		item.NetworkInBytes += info.InNetworkBytes
 		if info.TopRUEnabled {
 			s.addRUOnBeginLocked(info.Ctx, info.User, sqlDigest, planDigest)
 		}
@@ -142,7 +139,6 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info 
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
-	item.NetworkOutBytes += info.OutNetworkBytes
 	if info.TopRUEnabled {
 		s.addRUOnFinishLocked(info.User, sqlDigest, planDigest, info.RUDetails, info.ExecDuration)
 	} else {
@@ -344,10 +340,6 @@ type StatementStatsItem struct {
 	// DurationCount represents the number of SQL executions specially
 	// used to calculate SQLDuration.
 	DurationCount uint64
-	// NetworkInBytes represents the total number of network input bytes from client.
-	NetworkInBytes uint64
-	// NetworkOutBytes represents the total number of network input bytes to client.
-	NetworkOutBytes uint64
 }
 
 // NewStatementStatsItem creates an empty StatementStatsItem.
@@ -371,8 +363,6 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	i.ExecCount += other.ExecCount
 	i.SumDurationNs += other.SumDurationNs
 	i.DurationCount += other.DurationCount
-	i.NetworkInBytes += other.NetworkInBytes
-	i.NetworkOutBytes += other.NetworkOutBytes
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 
