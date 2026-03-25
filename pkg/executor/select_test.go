@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -67,4 +68,26 @@ func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 			require.EqualValues(t, insertTypeCtx.Flags(), importTypeCtx.Flags())
 		})
 	}
+}
+
+func TestValuesRowStatement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("values row(1)").Check(testkit.Rows("1"))
+	tk.MustQuery("values row(2), row(1) order by column_0").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("values row(1,-2,3), row(5,7,9), row(4,6,8) order by column_0 desc").
+		Check(testkit.Rows("5 7 9", "4 6 8", "1 -2 3"))
+	tk.MustQuery("values row(1,2) union values row(10,15)").
+		Sort().Check(testkit.Rows("1 2", "10 15"))
+	tk.MustQuery("values row(1,2), row(3,4), row(5,6) intersect values row(10,15), row(20,25), row(3,4)").
+		Check(testkit.Rows("3 4"))
+	tk.MustQuery("values row(1,2), row(3,4), row(5,6) except values row(10,15), row(20,25), row(3,4)").
+		Sort().Check(testkit.Rows("1 2", "5 6"))
+	tk.MustQuery("values row(1), row(2), row(3) limit 2").
+		Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select column_0 from (values row(1)) as t").Check(testkit.Rows("1"))
+	tk.MustQuery("select column_1 from (values row(1, 2)) as t").Check(testkit.Rows("2"))
+	tk.MustGetErrMsg("values row()", "[planner:3942]Each row of a VALUES clause must have at least one column, unless when used as source in an INSERT statement.")
 }
