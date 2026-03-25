@@ -1,22 +1,40 @@
 # BR Backup Repository Layout
 
-- Author(s): GPT-5.2-codex, [@YuJuncen](https://github.com/YuJuncen)
+- Author(s): ChatGPT, [@YuJuncen](https://github.com/YuJuncen)
 - Discussion PR: #66576
 - Tracking Issue: TBD
 
 ## Table of Contents
 
-* [Introduction](#introduction)
-* [Motivation or Background](#motivation-or-background)
-* [Detailed Design](#detailed-design)
-* [Test Design](#test-design)
-    * [Functional Tests](#functional-tests)
-    * [Scenario Tests](#scenario-tests)
-    * [Compatibility Tests](#compatibility-tests)
-    * [Benchmark Tests](#benchmark-tests)
-* [Impacts & Risks](#impacts--risks)
-* [Investigation & Alternatives](#investigation--alternatives)
-* [Unresolved Questions](#unresolved-questions)
+- [BR Backup Repository Layout](#br-backup-repository-layout)
+  - [Table of Contents](#table-of-contents)
+  - [Introduction](#introduction)
+  - [Motivation or Background](#motivation-or-background)
+  - [Detailed Design](#detailed-design)
+    - [Repository Layout](#repository-layout)
+    - [IDs and Naming](#ids-and-naming)
+    - [Pending Backup Index and Lifecycle](#pending-backup-index-and-lifecycle)
+    - [TiKV SST Object Keys](#tikv-sst-object-keys)
+    - [User Experience](#user-experience)
+      - [Backup](#backup)
+      - [Controller-Friendly Retry Semantics](#controller-friendly-retry-semantics)
+      - [Restore](#restore)
+      - [Discard Pending Backup](#discard-pending-backup)
+      - [List](#list)
+      - [Files of a Backup](#files-of-a-backup)
+      - [Orphans](#orphans)
+    - [Compatibility](#compatibility)
+    - [Misc](#misc)
+      - [Backend Compatibility of Prefix Rewriting](#backend-compatibility-of-prefix-rewriting)
+      - [Future: Snapshot + Log in One Repo](#future-snapshot--log-in-one-repo)
+  - [Test Design](#test-design)
+    - [Functional Tests](#functional-tests)
+    - [Scenario Tests](#scenario-tests)
+    - [Compatibility Tests](#compatibility-tests)
+    - [Benchmark Tests](#benchmark-tests)
+  - [Impacts \& Risks](#impacts--risks)
+  - [Investigation \& Alternatives](#investigation--alternatives)
+  - [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
 
@@ -30,6 +48,7 @@ We want to:
 - Reuse a single `--storage` prefix across many snapshot backups.
 - Keep the design simple and compatible with existing BR/TiKV behavior.
 - Provide user-friendly listing and cleanup that does not require a full storage scan for routine operations.
+- Provide a cheap way to find or discard one unfinished backup without scanning all historical backups in the repo.
 - Guarantee each backup ID is PD-assigned even if the snapshot TS is user-specified.
 
 Non-goals (initially):
@@ -46,17 +65,15 @@ Treat `--storage` as a repository root. Reserve `_meta/` for metadata and `_data
 s3://bucket/prefix/
   backup.lock
   _meta/repo.json
-  _meta/snapshot/<backup-id>/backupmeta
-  _meta/snapshot/<backup-id>/backupmeta.schema.000000001
-  _meta/snapshot/<backup-id>/backupmeta.datafile.000000001
-  _meta/snapshot/<backup-id>/backupmeta.ddl.000000001
-  _meta/snapshot/<backup-id>/backupmeta.schema.stats.000000123
+  _meta/pending/<config-hash-hex>/<backup-id>.json
+  _meta/snapshot/<backup-id>/backupmeta[.XXXXXXX]
   _meta/snapshot/<backup-id>/checkpoints/...
   _data/snapshot/<store-id>/<backup-id>/... (SSTs written by TiKV using legacy naming under this prefix)
 ```
 
 Reserved entries at the repo root:
 - `_meta/repo.json` identifies a BR repo and records layout metadata such as repo version, repo ID, and creator. It must not contain secrets.
+- `_meta/pending/` stores repo-level pointers to unfinished snapshot backups. It is the fast-path index for resume or discard decisions and avoids scanning all historical snapshots in `_meta/snapshot/`.
 - `backup.lock` is a human-readable guard file. It marks the path as BR-managed repository storage and prevents legacy single-backup BR from treating the repo root as an empty backup directory.
 
 Example `_meta/repo.json`:
@@ -90,6 +107,37 @@ ID formatting rule:
 
 BR prints `<backup-id>` (hex16) on success.
 
+### Pending Backup Index and Lifecycle
+
+Repo-v1 treats an unfinished snapshot backup as an explicit repo object rather than an implicit conclusion from scanning all historical metadata.
+
+Config hash format:
+- Repo-v1 groups unfinished backups by the same logical backup identity using BR's existing backup checkpoint config hash.
+- The hash input is the same immutable backup configuration used by today's checkpoint matching logic.
+- The on-storage directory name is the full SHA-256 digest encoded as 64 lowercase hexadecimal characters.
+- This RFC refers to that value as `<config-hash-hex>`.
+
+Pending index:
+- Each unfinished snapshot backup has a pointer file at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
+- The directory is the grouping key for one logical backup configuration, and the filename identifies a specific attempt of that configuration.
+- The file body stores minimal metadata such as layout version, metadata prefix, and creation time. It may repeat the config hash for debugging, but lookup should rely on the path first.
+- BR creates the pending file before sending snapshot backup requests to TiKV.
+- BR removes the pending file only after the final per-backup `backupmeta` is durable and checkpoint cleanup has completed.
+
+Lookup rules:
+- Routine backup startup computes the current `<config-hash-hex>` and enumerates only `_meta/pending/<config-hash-hex>/`, not `_meta/snapshot/*`.
+- If there is no pending entry under that config-hash directory, BR allocates a fresh `<backup-id>` and starts a new backup.
+- If there is exactly one pending entry under that config-hash directory, BR can validate or resume that specific backup without scanning the whole repo.
+- If there are multiple pending entries under that config-hash directory, BR must fail and require the operator to choose one explicitly.
+- Pending entries under other config-hash directories must not block this backup; they represent different logical backup tasks in the same repo.
+
+State interpretation:
+- `pending exists` + per-backup checkpoint exists + final `backupmeta` absent: unfinished backup, eligible for resume.
+- `pending exists` + final `backupmeta` exists: backup already finished but pending cleanup was incomplete; BR should remove the stale pending entry instead of resuming.
+- `pending exists` + neither checkpoint nor final `backupmeta` exists: inconsistent state; BR must report an operator-visible error instead of guessing.
+
+This keeps “find unfinished backup” cost proportional to the number of unfinished backups, not the number of historical backups in the repo.
+
 ### TiKV SST Object Keys
 
 Current (legacy) object key pattern (existing decimal ids):
@@ -98,11 +146,11 @@ Current (legacy) object key pattern (existing decimal ids):
 - Final SST key appends CF suffix: `<base>_<cf>.sst`
 
 Repo v1 changes:
-- BR allocates `<backup-id>` and sets `BackupRequest.file_prefix` for each TiKV backup request.
-- `file_prefix` is the protocol hook TiKV uses to prepend a client-provided path prefix before the original SST object name.
-- Repo-v1 uses that hook to place SSTs under the repo-managed store-first path `_data/snapshot/<store-id>/<backup-id>/`.
-- TiKV keeps its existing SST naming logic and writes legacy object names under that client-provided subprefix.
-- This keeps `<store-id>` as the leading prefix, keeps the original SST key format as intact as possible, and still isolates each backup under its own deletable subprefix.
+- Repo-v1's user-visible requirement is that SSTs land under `_data/snapshot/<store-id>/<backup-id>/`.
+- The baseline implementation path is for BR to rewrite the per-store `BackupRequest.StorageBackend` prefix so that each TiKV writes into that store-specific repo-v1 location.
+- Because the path includes `<store-id>`, the effective target prefix must be set on the per-store backup request, after the target store is known, rather than once on a single shared request template.
+- Under this baseline path, TiKV keeps its existing SST naming logic and writes legacy object names relative to the rewritten backend prefix.
+- `<store-id>` remains the leading prefix, the original SST key format stays as intact as possible, and each backup is isolated under its own deletable subprefix.
 
 Example (S3/local):
 ```
@@ -123,8 +171,42 @@ Semantics:
 - `repo-v1` treats `--storage` as a repository root instead of a legacy single-backup directory.
 - On first use, creates `_meta/repo.json` and `backup.lock`.
 - Creates a new snapshot backup in the repo and allocates a fresh PD TSO `<backup-id>` for this run.
+- Computes `<config-hash-hex>` for the current logical backup configuration and creates `_meta/pending/<config-hash-hex>/<backup-id>.json` before issuing TiKV backup requests.
 - Writes metadata under `_meta/snapshot/<backup-id>/` and SSTs under `_data/snapshot/<store-id>/<backup-id>/`.
+- Removes `_meta/pending/<config-hash-hex>/<backup-id>.json` after the backup finishes successfully and its checkpoint artifacts are cleaned up.
 - Prints `<backup-id>` on success.
+
+Pending backup behavior:
+- If no pending backup exists, the command starts a new backup.
+- If one pending backup exists for the same logical backup configuration, BR should not silently guess whether the user wants to continue it or abandon it. The command should require an explicit choice, such as a resume flag or a separate discard command.
+- If multiple pending backups exist for the same logical backup configuration, the command must fail and require the operator to resolve the ambiguity first.
+
+#### Controller-Friendly Retry Semantics
+
+The interactive CLI semantics above are not sufficient for Kubernetes-style controllers, which need declarative, idempotent, non-interactive behavior. This RFC should stay close to existing controller designs instead of introducing a second, redundant retry API surface.
+
+In particular, TiDB Operator already has a Backup retry mechanism for failed backup jobs. Repo-v1 should align with that model:
+- Automatic retry of the same backup CR should resume the same unfinished repo-v1 backup attempt
+- Asking for a fresh attempt should be modeled as a new controller-visible attempt, not as a separate interactive `discard` step
+
+To minimize new CRD semantics, the controller-facing mapping can reuse existing concepts:
+- Existing backup retry/backoff configuration controls whether the controller retries a failed backup job
+- The controller treats retries of the same logical backup attempt as `resume`
+- If the user wants a fresh attempt, the controller can use an existing Kubernetes-level signal such as recreating the CR or changing a controller-recognized retry annotation/token, without requiring a new BR-specific retry field in the CRD
+
+Suggested controller state transition:
+- No pending backup exists: start a new backup
+- One pending backup exists under the current config-hash directory and the controller determines this is the same attempt: resume that backup
+- One pending backup exists under the current config-hash directory and the controller determines this is a fresh attempt request: enter a discard phase, remove the old pending backup artifacts, then start a new backup
+- Multiple pending backups exist under the current config-hash directory: fail and surface an explicit ambiguity error
+- Pending backups under other config-hash directories are unrelated attempts and should not block this one
+
+Discard phase requirements:
+- Deleting pending metadata, checkpoint data, unfinished metadata, and partial SSTs must be idempotent
+- Reconciliation after a partial discard must be able to continue the cleanup safely
+- Completed backups identified by a durable final `backupmeta` must never be treated as discard targets
+
+This gives human-facing CLI and controller-facing automation different UX layers while keeping the underlying repo state machine consistent and close to today's operator model.
 
 #### Restore
 
@@ -133,6 +215,21 @@ Command:
 
 Semantics:
 - Restores the snapshot backup identified by `--backup-id` from the repo.
+
+#### Discard Pending Backup
+
+Command:
+- `br repo snapshot pending discard -s <repo> [--backup-id <backup-id>]`
+
+Semantics:
+- Discards one unfinished snapshot backup and frees the repo to start a new checkpointed backup.
+- If there is exactly one pending backup, `--backup-id` may be omitted.
+- If multiple pending backups exist, `--backup-id` is required.
+- Removes `_meta/pending/<config-hash-hex>/<backup-id>.json`.
+- Removes `_meta/snapshot/<backup-id>/checkpoints/...`.
+- Removes unfinished per-backup metadata under `_meta/snapshot/<backup-id>/...` when final `backupmeta` is absent.
+- Removes partial SST data under `_data/snapshot/<store-id>/<backup-id>/...`.
+- Must not delete a completed backup identified by a durable final `backupmeta`; stale pending files for completed backups should be cleaned as stale metadata rather than treated as discard targets.
 
 #### List
 
@@ -143,46 +240,55 @@ Semantics:
 - Lists completed snapshot backups in the repo.
 - Outputs `<backup-id>`, snapshot time/TS, backup type, and size.
 
-#### Files of a Backup (Print/Delete)
+#### Files of a Backup
 
 Command:
-- `br repo for-files-of-backup -s <repo> --backup=<backup-id> --do={print|delete}`
+- `br repo snapshot files list -s <repo> --backup-id <backup-id>`
+- `br repo snapshot files delete -s <repo> --backup-id <backup-id>`
 
 Semantics:
-- Prints or deletes the SST objects that belong to the specified backup.
-- When `--do=delete` is used, also removes `_meta/snapshot/<backup-id>/...` if present.
+- `files list` prints the SST objects that belong to the specified backup.
+- `files delete` deletes the SST objects that belong to the specified backup and also removes `_meta/snapshot/<backup-id>/...` if present.
 - Still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the `<backup-id>` subprefix in each shard.
-- `--do=print` is the default.
 
-#### Orphans (Print/Delete)
+#### Orphans
 
 Command:
-- `br repo for-orphans -s <repo> --do={print|delete}`
+- `br repo snapshot orphans list -s <repo>`
+- `br repo snapshot orphans delete -s <repo>`
 
 Semantics:
-- Prints or deletes SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
+- `orphans list` prints SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
+- `orphans delete` deletes SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
 - Can be implemented by comparing `_meta/snapshot/` entries with `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
 - This is still expected to be more expensive than listing known backups.
 
 ### Compatibility
 
 - BR: new `--storage-layout=repo-v1`, `br repo` subcommands, and layout helper.
-- TiKV: must support `BackupRequest.file_prefix` for SST output and expose that support via `Backup.feature_gate`.
+- TiKV: repo-v1 does not require a new TiKV-side path hook. The baseline deployment path relies on BR rewriting the per-request `StorageBackend` prefix per store.
 - PD: backup ID allocation via TSO.
 - Upgrade: legacy layout remains supported; repo-v1 is opt-in.
 - Downgrade: avoid writing repo-v1 from older BR; repo marker signals layout.
-- External tools: restore/list/cleanup must use repo-v1-aware logic.
+- External tools: restore/list/delete/orphan-cleanup/pending-discard must use repo-v1-aware logic.
 
 ### Misc
 
-#### TiKV Backup Subprefix Capability Probe (Guard Rail)
+#### Backend Compatibility of Prefix Rewriting
 
-BR should detect whether TiKV supports the repo-v1 backup-subprefix behavior before starting a backup:
-- BR calls `Backup.feature_gate(FeatureGateRequest)` on all TiKV nodes before starting the backup.
-- TiKV reports `FeatureGateResponse.supports_backup_custom_path`.
-- If any TiKV returns `supports_backup_custom_path = false`, BR must fail fast in repo-v1 mode and must not send repo-v1 backup requests to a partially-capable cluster.
+The backend-prefix-rewrite compatibility path is not equally suitable for all storage backends.
 
-This prevents partially-upgraded clusters from producing backups that cannot be cleaned up safely.
+Expected to work well:
+- S3 and S3-compatible backends such as KS3 and OSS, because the backend already models a bucket plus a mutable object prefix.
+- GCS, because the backend already models a bucket plus object prefix.
+- Azure Blob Storage, because the backend already models a container plus blob prefix.
+- Local storage, by treating the rewritten target as a different local root path.
+
+Not a good fit today:
+- HDFS, because BR's current HDFS storage support is limited and does not provide the full metadata/checkpoint/list/delete capabilities that repo-v1 relies on for snapshot backup management.
+- Noop storage, because it is not a real persistence target and already disables checkpoint-oriented behavior.
+
+Therefore, if repo-v1 relies on backend-prefix rewriting as a strong-compatibility path, the intended practical scope should be the main object-storage backends rather than every backend type accepted by BR.
 
 #### Future: Snapshot + Log in One Repo
 
@@ -203,16 +309,20 @@ Scope:
 
 Repo-v1 behavior:
 - Verify repo marker and `backup.lock` creation.
+- Verify pending pointer creation at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
 - Verify backup-id is PD-assigned and hex16 formatted.
-- Verify BR sets `BackupRequest.file_prefix` in repo-v1 mode.
+- Verify the baseline implementation path can produce `_data/snapshot/<store-id>/<backup-id>/...` by rewriting the per-store `StorageBackend` prefix.
+- Verify the rewritten backend prefix preserves `<store-id>` as the leading path component.
 - Verify SST objects are written under `_data/snapshot/<store-id>/<backup-id>/` while keeping legacy TiKV naming within that subprefix.
 - Verify `<store-id>` remains the leading data prefix and `<backup-id>` is not moved ahead of it.
-- Verify BR calls `Backup.feature_gate` and fails fast in repo-v1 mode if any TiKV reports `supports_backup_custom_path = false`.
 - Verify `br repo snapshot list` returns completed backups only.
-- Verify `for-files-of-backup --do=print` outputs correct keys.
-- Verify `for-files-of-backup --do=delete` deletes matching objects and metadata.
-- Verify `for-orphans --do=print` outputs only orphan SSTs.
-- Verify `for-orphans --do=delete` deletes only orphan SSTs.
+- Verify unfinished-backup lookup only enumerates `_meta/pending/<config-hash-hex>/` in the normal path.
+- Verify a stale pending file for a completed backup is removed instead of forcing a resume.
+- Verify `pending discard` removes pending pointer, checkpoint data, unfinished metadata, and partial SST data.
+- Verify `snapshot files list` outputs correct keys.
+- Verify `snapshot files delete` deletes matching objects and metadata.
+- Verify `snapshot orphans list` outputs only orphan SSTs.
+- Verify `snapshot orphans delete` deletes only orphan SSTs.
 - Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/...`.
 
 ### Scenario Tests
@@ -220,7 +330,12 @@ Repo-v1 behavior:
 Repo-v1 scenarios:
 - Multiple backups under one repo; restore older/newer backups.
 - Delete one backup while keeping others; verify remaining backups restore.
-- Metadata loss for a backup: `for-files-of-backup` still deletes by prefix.
+- One failed backup is discarded, then a new checkpointed backup can start in the same repo.
+- Multiple pending entries under the same config-hash directory exist due to manual corruption or partial cleanup; backup start fails with an explicit ambiguity error.
+- Multiple unfinished backups with different config-hash directories coexist in the same repo; each new backup only matches or resumes the entries under its own config-hash directory.
+- A controller retries the same failed backup CR through its existing retry mechanism; the unfinished backup continues instead of being replaced.
+- A controller observes a fresh-attempt signal, such as CR recreation or changed retry annotation/token; the old unfinished backup is discarded and a new one starts.
+- Metadata loss for a backup: `snapshot files delete` still deletes by prefix.
 - Orphan scan detects unexpected per-backup subprefixes under store shards (simulate interrupted backup).
 
 ### Compatibility Tests
@@ -228,14 +343,15 @@ Repo-v1 scenarios:
 Compatibility coverage:
 - BR repo-v1 with different storage backends (S3/GCS/Azure/HDFS/local).
 - Upgrade from legacy backup usage without repo-v1.
-- Restore with TiKV/TiDB version combinations that support `BackupRequest.file_prefix`.
+- Restore and cleanup behavior when repo-v1 SST placement is achieved through per-request backend-prefix rewriting.
+- Backend-by-backend validation of the prefix-rewrite compatibility path on S3/KS3/OSS/GCS/Azure, with explicit exclusion or documented limitation for HDFS and noop.
 - Compatibility with BR `--use-backupmeta-v2`.
 - Compatibility with external stats.
 
 ### Benchmark Tests
 
-- Prefix listing cost for `for-files-of-backup` on large repos.
-- Listing cost for `for-orphans` over many store shards and per-backup subprefixes, and its impact on API rate limits.
+- Prefix listing cost for `snapshot files list` on large repos.
+- Listing cost for `snapshot orphans list` over many store shards and per-backup subprefixes, and its impact on API rate limits.
 
 ## Impacts & Risks
 
@@ -245,13 +361,20 @@ Impacts:
 
 Risks:
 - Incorrect prefix matching could delete wrong objects.
-- `for-orphans` still requires storage enumeration and can be expensive on very large repos.
-- Repo-v1 depends on TiKV support for `BackupRequest.file_prefix`; mixing versions could break cleanup isolation (mitigated by the `feature_gate` probe).
+- `snapshot orphans list/delete` still requires storage enumeration and can be expensive on very large repos.
+- Incorrect handling of pending markers could either block future backups unnecessarily or discard data from the wrong unfinished backup.
+- The baseline backend-prefix-rewrite path relies on backend-specific prefix semantics and correct per-store request construction; mistakes there could place SSTs under the wrong prefix.
+- The backend-prefix-rewrite compatibility path may not be supportable on every BR backend; claiming universal support would overstate what current HDFS/noop implementations can do.
+- If the controller-facing mapping between "same attempt" and "fresh attempt" is underspecified, operators may see repeated discard/recreate loops or backups that never advance after a failed attempt.
 
 ## Investigation & Alternatives
 
 - Per-backup prefix (legacy): simple but reintroduces cold-prefix issues.
 - Metadata-driven delete only: fails when metadata is lost.
+- Finding unfinished backups by scanning `_meta/snapshot/*`: simple, but startup cost grows with total historical backups instead of active unfinished backups.
+- Pending index keyed only by `<backup-id>`: simpler naming, but requires scanning all unfinished backups in the repo instead of directly narrowing to one logical backup configuration.
+- Repo-v1 via per-request backend-prefix rewriting: baseline deployment path that avoids a hard dependency on TiKV upgrade, but shifts correctness risk to backend-prefix handling and per-store request mutation.
+- Future TiKV-side path hook such as `file_prefix`: could be added later as an implementation optimization without changing the repo-v1 storage layout or user-facing semantics.
 - Dedup/compaction: higher complexity, out of scope initially.
 
 ## Unresolved Questions
