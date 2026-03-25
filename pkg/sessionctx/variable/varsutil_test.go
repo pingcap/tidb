@@ -92,6 +92,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -216,6 +217,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(TiDBBatchInsert, "1")
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
+
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
 
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
