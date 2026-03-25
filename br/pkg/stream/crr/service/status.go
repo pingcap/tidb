@@ -73,13 +73,15 @@ type statusStore struct {
 }
 
 func newStatusStore(taskName string) *statusStore {
-	return &statusStore{
+	s := &statusStore{
 		snapshot: StatusSnapshot{
 			TaskName: taskName,
 			State:    stateStarting,
 			Phase:    phaseIdle,
 		},
 	}
+	observeStatusMetrics(&s.snapshot)
+	return s
 }
 
 func (s *statusStore) start() {
@@ -89,6 +91,7 @@ func (s *statusStore) start() {
 	s.snapshot.Ready = true
 	s.snapshot.State = stateRunning
 	s.snapshot.Phase = phaseIdle
+	observeStatusMetrics(&s.snapshot)
 }
 
 func (s *statusStore) stop() {
@@ -97,6 +100,7 @@ func (s *statusStore) stop() {
 	s.snapshot.Live = false
 	s.snapshot.Ready = false
 	s.snapshot.State = stateStopped
+	observeStatusMetrics(&s.snapshot)
 }
 
 func (s *statusStore) setPersistentState(state PersistentState) {
@@ -104,6 +108,7 @@ func (s *statusStore) setPersistentState(state PersistentState) {
 	defer s.mu.Unlock()
 	s.snapshot.SafeCheckpoint = state.LastCheckpoint
 	s.snapshot.SyncedTS = state.SyncedTS
+	observeStatusMetrics(&s.snapshot)
 }
 
 func (s *statusStore) clearFailure() {
@@ -117,6 +122,7 @@ func (s *statusStore) clearFailure() {
 	s.snapshot.LastError = ""
 	s.snapshot.LastErrorTime = time.Time{}
 	s.snapshot.ConsecutiveFailures = 0
+	observeStatusMetrics(&s.snapshot)
 }
 
 func (s *statusStore) beginRound() uint64 {
@@ -126,6 +132,7 @@ func (s *statusStore) beginRound() uint64 {
 	s.snapshot.LastLoopIteration = 0
 	s.snapshot.PendingFileCount = 0
 	s.snapshot.Phase = phaseIdle
+	observeStatusMetrics(&s.snapshot)
 	return s.snapshot.CurrentRound
 }
 
@@ -174,6 +181,7 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 			s.snapshot.State = stateRunning
 		}
 	}
+	observeStatusMetrics(&s.snapshot)
 }
 
 func (s *statusStore) snapshotCopy() StatusSnapshot {

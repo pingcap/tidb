@@ -4,6 +4,7 @@ go_library(
     name = "service",
     srcs = [
         "http.go",
+        "metrics.go",
         "service.go",
         "status.go",
     ],
@@ -11,7 +12,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/stream/crr/internal/checkpoint",
+        "//pkg/metrics/common",
         "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
         "@org_uber_go_zap//:zap",
     ],
 )
