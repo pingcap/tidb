@@ -321,26 +321,54 @@ func TestStatementStatsRUV2Sampling(t *testing.T) {
 	})
 }
 
-func TestStatementStatsResetRUStatePreservesStmtStats(t *testing.T) {
-	stats := &StatementStats{
-		data: StatementStatsMap{
-			newSQLPlanDigest([]byte("sql"), []byte("plan")): NewStatementStatsItem(),
+func TestStatementStatsResetRUStateOnVersionChangePreservesStmtStats(t *testing.T) {
+	cases := []struct {
+		name           string
+		execCtxVersion rmclient.RUVersion
+		currentVersion rmclient.RUVersion
+		expectNilExec  bool
+	}{
+		{
+			name:           "clear old version exec context",
+			execCtxVersion: rmclient.RUVersionV1,
+			currentVersion: rmclient.RUVersionV2,
+			expectNilExec:  true,
 		},
-		finished: atomic.NewBool(false),
-		finishedRUBuffer: RUIncrementMap{
-			{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}: &RUIncrement{TotalRU: 1},
-		},
-		execCtx: &ExecutionContext{
-			Key:       RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")},
-			RUVersion: rmclient.RUVersionV1,
+		{
+			name:           "keep current version exec context",
+			execCtxVersion: rmclient.RUVersionV2,
+			currentVersion: rmclient.RUVersionV2,
+			expectNilExec:  false,
 		},
 	}
 
-	stats.ResetRUState()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := &StatementStats{
+				data: StatementStatsMap{
+					newSQLPlanDigest([]byte("sql"), []byte("plan")): NewStatementStatsItem(),
+				},
+				finished: atomic.NewBool(false),
+				finishedRUBuffer: RUIncrementMap{
+					{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}: &RUIncrement{TotalRU: 1},
+				},
+				execCtx: &ExecutionContext{
+					Key:       RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")},
+					RUVersion: tc.execCtxVersion,
+				},
+			}
 
-	require.Nil(t, stats.execCtx)
-	require.Empty(t, stats.finishedRUBuffer)
-	require.Len(t, stats.Take(), 1)
+			stats.ResetRUStateOnVersionChange(tc.currentVersion)
+
+			if tc.expectNilExec {
+				require.Nil(t, stats.execCtx)
+			} else {
+				require.NotNil(t, stats.execCtx)
+			}
+			require.Empty(t, stats.finishedRUBuffer)
+			require.Len(t, stats.Take(), 1)
+		})
+	}
 }
 
 // TestExecCounterAddExecCountTake verifies exec counter add exec count take and guards against regressions in begin-based RU accounting.

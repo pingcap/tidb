@@ -206,12 +206,18 @@ func (s *StatementStats) clearRUExecCtxLocked() {
 	s.execCtx = nil
 }
 
-// ResetRUState clears TopRU-only state without touching regular stmt stats.
-func (s *StatementStats) ResetRUState() {
+// ResetRUStateOnVersionChange resets RU state for RU version handover without
+// touching regular stmt stats.
+func (s *StatementStats) ResetRUStateOnVersionChange(currentRUVersion rmclient.RUVersion) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.execCtx = nil
 	s.finishedRUBuffer = RUIncrementMap{}
+	if s.execCtx == nil {
+		return
+	}
+	if NormalizeRUVersion(s.execCtx.RUVersion) != NormalizeRUVersion(currentRUVersion) {
+		s.execCtx = nil
+	}
 }
 
 // ClearRUExecContext discards the active RU execution context without touching

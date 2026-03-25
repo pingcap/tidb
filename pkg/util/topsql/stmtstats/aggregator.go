@@ -129,7 +129,7 @@ func (m *aggregator) drainAndPushRU() {
 	currentRUVersion := m.currentRUVersion()
 	if currentRUVersion != m.lastRUVersion {
 		m.statsSet.Range(func(statsAny, _ any) bool {
-			statsAny.(*StatementStats).ResetRUState()
+			statsAny.(*StatementStats).ResetRUStateOnVersionChange(currentRUVersion)
 			return true
 		})
 		m.ruCollectors.Range(func(c, _ any) bool {
