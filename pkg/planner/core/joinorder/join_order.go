@@ -346,7 +346,8 @@ func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
 
 func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	if len(j.group.leadingHints) > 0 {
-		// TODO follow the old implementation, hint doesn't support in DP for now.
+		// TODO: Old join reorder doesn't support leading hint either,
+		// we can consider supporting leading hint in DP join reorder in the future, but for now we just return a warning.
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
 	}
 
