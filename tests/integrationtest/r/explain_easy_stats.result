@@ -128,28 +128,28 @@ HashJoin	root		CARTESIAN left outer semi join, left side:IndexReader, other cond
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_16 {
-subgraph cluster16{
+digraph HashJoin_14 {
+subgraph cluster14{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_16" -> "IndexReader_20"
-"HashJoin_16" -> "TableReader_22"
+"HashJoin_14" -> "IndexReader_18"
+"HashJoin_14" -> "TableReader_20"
+}
+subgraph cluster17{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"IndexFullScan_17"
 }
 subgraph cluster19{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_19"
+"TableFullScan_19"
 }
-subgraph cluster21{
-node [style=filled, color=lightgrey]
-color=black
-label = "cop"
-"TableFullScan_21"
-}
-"IndexReader_20" -> "IndexFullScan_19"
-"TableReader_22" -> "TableFullScan_21"
+"IndexReader_18" -> "IndexFullScan_17"
+"TableReader_20" -> "TableFullScan_19"
 }
 
 explain format = 'plan_tree' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;

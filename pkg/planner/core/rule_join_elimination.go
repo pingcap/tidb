@@ -262,6 +262,26 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 				parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 			}
 		}
+	case *logicalop.LogicalJoin:
+		// Besides output columns, a join's own conditions are also required by children.
+		// If we only pass output schema columns to children, we may incorrectly eliminate
+		// a child outer join whose columns are still referenced by this join's predicates.
+		parentCols = append(parentCols[:0], p.Schema().Columns...)
+		for _, eqCond := range x.EqualConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(eqCond)...)
+		}
+		for _, leftCond := range x.LeftConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(leftCond)...)
+		}
+		for _, rightCond := range x.RightConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(rightCond)...)
+		}
+		for _, otherCond := range x.OtherConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(otherCond)...)
+		}
+		for _, naeqCond := range x.NAEQConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(naeqCond)...)
+		}
 	default:
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}

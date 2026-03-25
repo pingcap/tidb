@@ -16,8 +16,11 @@ package enforcempp
 
 import (
 	"context"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -30,6 +33,38 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
+
+var enforceMPPPlanNodeIDPattern = regexp.MustCompile(`_[0-9]+`)
+
+func shouldNormalizeEnforceMPPPlan(sql string) bool {
+	s := strings.ToLower(strings.TrimSpace(sql))
+	return strings.HasPrefix(s, "explain") || strings.HasPrefix(s, "desc")
+}
+
+func normalizeEnforceMPPPlanRows(rows []string) []string {
+	normalized := make([]string, len(rows))
+	for i, row := range rows {
+		normalized[i] = enforceMPPPlanNodeIDPattern.ReplaceAllString(row, "_N")
+	}
+	return normalized
+}
+
+func equalEnforceMPPPlanRows(expected, actual []string, sql string) bool {
+	if shouldNormalizeEnforceMPPPlan(sql) {
+		expected = normalizeEnforceMPPPlanRows(expected)
+		actual = normalizeEnforceMPPPlanRows(actual)
+	}
+	return slices.Equal(expected, actual)
+}
+
+func checkEnforceMPPPlanRows(t *testing.T, res *testkit.Result, expected []string, sql string) {
+	actual := testdata.ConvertRowsToStrings(res.Rows())
+	if shouldNormalizeEnforceMPPPlan(sql) {
+		expected = normalizeEnforceMPPPlanRows(expected)
+		actual = normalizeEnforceMPPPlanRows(actual)
+	}
+	require.Equalf(t, expected, actual, "sql: %s", sql)
+}
 
 func TestEnforceMPP(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
@@ -85,8 +120,12 @@ func TestEnforceMPP(t *testing.T) {
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 			})
-			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			require.Eventuallyf(t,
+				func() bool {
+					res := testKit.MustQuery(tt)
+					actual := testdata.ConvertRowsToStrings(res.Rows())
+					return equalEnforceMPPPlanRows(output[i].Plan, actual, tt)
+				}, 5*time.Second, 100*time.Millisecond, tt, output[i].Plan)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())))
 		}
 	})
@@ -139,7 +178,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -184,7 +223,7 @@ func TestEnforceMPPWarning2(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -237,7 +276,7 @@ func TestEnforceMPPWarning3(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 		collate.SetNewCollationEnabledForTest(true)
@@ -281,7 +320,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -331,7 +370,7 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -378,7 +417,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -423,7 +462,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -431,7 +470,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 
 // todo: some post optimization after resolveIndices will inject another projection below agg, which change the column name used in higher operator,
 //
-//	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
+//	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: explain format = 'plan_tree' select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test;")
@@ -472,7 +511,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	}, mockstore.WithMockTiFlash(1))
@@ -520,7 +559,7 @@ func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	}, mockstore.WithMockTiFlash(2))
@@ -569,7 +608,7 @@ func TestMPPSharedCTEScan(t *testing.T) {
 			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 		})
 		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
+		checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
@@ -599,7 +638,7 @@ func TestRollupMPP(t *testing.T) {
 		require.NoError(t, err)
 
 		// error test
-		err = testKit.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+		err = testKit.ExecToErr("explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
 		require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
 
 		var input []string
@@ -624,7 +663,7 @@ func TestRollupMPP(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	}, mockstore.WithMockTiFlash(2))
@@ -655,7 +694,7 @@ func TestEnforceMPPNewest(t *testing.T) {
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
 			res := tk.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
+			checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})

@@ -32,6 +32,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -927,8 +928,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
-			// only support s3 and gcs now.
-			if b.GetS3() == nil && b.GetGcs() == nil {
+			if !isSupportedCloudStorageBackend(b) {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
 		}
@@ -1000,6 +1000,10 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	if p.IsGlobalSort() {
 		p.DisableTiKVImportMode = true
 	}
+}
+
+func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
+	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {

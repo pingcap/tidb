@@ -180,6 +180,21 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
+	// override with azure
+	sql3a := sql + ", " + cloudStorageURIOption + "='azure://container/path2'"
+	stmt, err = p.ParseOneStmt(sql3a, "", "")
+	require.NoError(t, err, sql3a)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3a)
+	require.Equal(t, "azure://container/path2", plan.CloudStorageURI, sql3a)
+	sql3b := sql + ", " + cloudStorageURIOption + "='azblob://container/path3'"
+	stmt, err = p.ParseOneStmt(sql3b, "", "")
+	require.NoError(t, err, sql3b)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3b)
+	require.Equal(t, "azblob://container/path3", plan.CloudStorageURI, sql3b)
 	// override with empty string, force use local sort
 	sql4 := sql + ", " + cloudStorageURIOption + "=''"
 	stmt, err = p.ParseOneStmt(sql4, "", "")
@@ -295,21 +310,21 @@ func TestInitParameters(t *testing.T) {
 	// test redacted
 	p := &Plan{
 		Format: DataFormatCSV,
-		Path:   "s3://bucket/path?access-key=111111&secret-access-key=222222",
+		Path:   "azure://bucket/path?account-name=test-account&sas-token=111111",
 	}
 	require.NoError(t, p.initParameters(&plannercore.ImportInto{
 		Options: []*plannercore.LoadDataOpt{
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
-					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaaaaa&secret-access-key=bbbbbb"),
+					Value: types.NewStringDatum("azblob://this-is-for-storage/path?account-name=test-account&sas_token=bbbbbb"),
 				},
 			},
 		},
 	}))
-	urlEqual(t, "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx", p.Parameters.FileLocation)
+	urlEqual(t, "azure://bucket/path?account-name=test-account&sas-token=xxxxxx", p.Parameters.FileLocation)
 	require.Len(t, p.Parameters.Options, 1)
-	urlEqual(t, "s3://this-is-for-storage/path?access-key=xxxxxx&secret-access-key=xxxxxx",
+	urlEqual(t, "azblob://this-is-for-storage/path?account-name=test-account&sas_token=xxxxxx",
 		p.Parameters.Options[cloudStorageURIOption].(string))
 
 	// test other options

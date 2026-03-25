@@ -319,12 +319,12 @@ table t;
 id	value
 explain table t;
 id	estRows	task	access object	operator info
-TableReader_6	10000.00	root		data:TableFullScan_5
-└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc table t;
 id	estRows	task	access object	operator info
-TableReader_6	10000.00	root		data:TableFullScan_5
-└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int, b int, c int, d int);
 create binding for select * from t where a in(1) using select * from t where a in(1);
@@ -549,9 +549,8 @@ explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
 id	task	access object	operator info
 Update	root		N/A
 └─HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:Selection
     └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -560,9 +559,8 @@ explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
 id	task	access object	operator info
 Update	root		N/A
 └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:bindinfo__bind.t2.b, inner key:bindinfo__bind.t1.b, equal cond:eq(bindinfo__bind.t2.b, bindinfo__bind.t1.b)
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
   └─IndexLookUp(Probe)	root		
     ├─Selection(Build)	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
     │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo

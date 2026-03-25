@@ -188,7 +188,7 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int6
 	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
-			return nil, err
+			return nil, en.LogKVConvertFailed(vals, i, en.insertColumns[i].ToInfo(), err)
 		}
 
 		offset := en.insertColumns[i].Offset

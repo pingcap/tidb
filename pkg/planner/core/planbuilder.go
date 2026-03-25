@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -526,6 +527,15 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 }
 
+func (b *PlanBuilder) recordPlanBuilderMetric() {
+	metrics.RUV2PlanCnt.Inc()
+	if b.ctx != nil {
+		if vars := b.ctx.GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
+			vars.RUV2Metrics.AddPlanCnt(1)
+		}
+	}
+}
+
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
 	err := b.checkSEMStmt(node.Node)
@@ -537,6 +547,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
+	// Count every recursive build invocation because RU v2 charges plan work per build step.
+	b.recordPlanBuilderMetric()
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -1261,17 +1273,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	publicPaths = append(publicPaths, tablePath)
 
 	// consider hypo TiFlash replicas
-	isHypoTiFlashReplica := false
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
-		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
-		originalTableName := tblInfo.Name.L
-		if hypoReplicas[dbName.L] != nil {
-			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				isHypoTiFlashReplica = true
-			}
-		}
-	}
-
+	isHypoTiFlashReplica := logicalop.UsedHypoTiFlashReplicas(ctx.GetSessionVars(), dbName, tblInfo)
 	if tblInfo.TiFlashReplica == nil {
 		if isHypoTiFlashReplica {
 			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
@@ -1488,7 +1490,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = publicPaths
 	}
 
-	available = removeIgnoredPaths(available, ignored, tblInfo)
+	available = removeIgnoredPaths(available, ignored)
 
 	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
 	// ignore global index if flagPartitionProcessor exists.
@@ -1519,13 +1521,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	return available, nil
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		// ignoredPaths already stores the resolved access paths from the hint.
+		// Re-matching them by prefix here can incorrectly remove sibling indexes that share a prefix.
+		isIgnored := path.Index != nil && slices.ContainsFunc(ignoredPaths, func(ignoredPath *util.AccessPath) bool {
+			return ignoredPath.Index != nil && ignoredPath.Index.Name.L == path.Index.Name.L
+		})
+		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || !isIgnored {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}

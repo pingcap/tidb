@@ -144,6 +144,8 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
+	// SlowLogRUV2Metrics is the RU v2 metrics for the statement.
+	SlowLogRUV2Metrics = "RUv2_metrics"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -221,6 +223,8 @@ const (
 	SlowLogResourceGroup = "Resource_group"
 	// SlowLogCopMVCCReadAmplification is total_keys / processed_keys in coprocessor scan detail.
 	SlowLogCopMVCCReadAmplification = "cop_mvcc_read_amplification"
+	// SlowLogSessionConnectAttrs is the session connection attributes from the client.
+	SlowLogSessionConnectAttrs = "Session_connect_attrs"
 )
 
 // JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
@@ -297,12 +301,16 @@ type SlowQueryLogItems struct {
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
+	RUV2Metrics       *execdetails.RUV2Metrics
 	MemMax            int64
 	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
 	StorageKV         bool // query read from TiKV
 	StorageMPP        bool // query read from TiFlash
 	MemArbitration    float64
+	// SessionConnectAttrs holds the client connection attributes (e.g. _client_name, _os).
+	// This is a shared reference to ConnectionInfo.Attributes and must not be modified.
+	SessionConnectAttrs map[string]string
 }
 
 const zeroStr = "0"
@@ -552,6 +560,25 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
+	var tiKVRU, tiFlashRU float64
+	if logItems.RUDetails != nil {
+		tiKVRU = logItems.RUDetails.TiKVRUV2()
+		tiFlashRU = logItems.RUDetails.TiflashRU()
+	}
+	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
+		writeSlowLogItem(&buf, SlowLogRUV2Metrics, formatted)
+	}
+	if len(logItems.SessionConnectAttrs) > 0 {
+		// Encode into a temporary buffer first so that a (practically impossible)
+		// encoding error does not leave a partial line in the main buffer.
+		var attrsBuf bytes.Buffer
+		encoder := json.NewEncoder(&attrsBuf)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(logItems.SessionConnectAttrs); err == nil {
+			buf.WriteString(SlowLogRowPrefixStr + SlowLogSessionConnectAttrs + SlowLogSpaceMarkStr)
+			buf.Write(attrsBuf.Bytes()) // Encode already appends \n
+		}
+	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

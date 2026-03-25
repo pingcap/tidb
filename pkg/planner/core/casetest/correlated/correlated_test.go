@@ -15,10 +15,14 @@
 package correlated
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCorrelatedSubquery(t *testing.T) {
@@ -92,12 +96,74 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 		for i, sql := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + sql).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + sql).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			})
-			tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
+
+		t.Run("AlternativeLogicalPlansChooseApply", func(t *testing.T) {
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists alt_pick_t1, alt_pick_t2, alt_pick_t3")
+			tk.MustExec("create table alt_pick_t1(a int primary key)")
+			tk.MustExec("create table alt_pick_t2(a int, b int, key idx_a(a))")
+			tk.MustExec("create table alt_pick_t3(a int, c int, key idx_a(a))")
+			tk.MustExec("insert into alt_pick_t1 values (1), (2)")
+
+			vals2 := make([]string, 0, 200)
+			vals3 := make([]string, 0, 200)
+			for i := 0; i < 200; i++ {
+				vals2 = append(vals2, fmt.Sprintf("(%d, %d)", i%100, i))
+				vals3 = append(vals3, fmt.Sprintf("(%d, %d)", i%100, i))
+			}
+			tk.MustExec("insert into alt_pick_t2 values " + strings.Join(vals2, ","))
+			tk.MustExec("insert into alt_pick_t3 values " + strings.Join(vals3, ","))
+			tk.MustExec("analyze table alt_pick_t1, alt_pick_t2, alt_pick_t3")
+
+			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
+			sql := "select alt_pick_t1.a, (select count(*) from alt_pick_t2 join alt_pick_t3 on alt_pick_t2.a = alt_pick_t3.a where alt_pick_t2.a = alt_pick_t1.a) as cnt from alt_pick_t1 order by alt_pick_t1.a"
+			explainSQL := "explain format = 'brief' " + sql
+
+			offPlan := testdata.ConvertRowsToStrings(tk.MustQuery(explainSQL).Rows())
+			tk.MustQuery(sql).Check(testkit.Rows("1 4", "2 4"))
+			require.False(t, planContainsText(offPlan, "Apply"), strings.Join(offPlan, "\n"))
+
+			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered", fmt.Sprintf("return(%q)", sql)))
+			err := tk.ExecToErr(sql)
+			stmtCtx := tk.Session().GetSessionVars().StmtCtx
+			require.True(t, stmtCtx.AlternativeLogicalPlanDecorrelatedApply)
+			require.False(t, stmtCtx.AlternativeLogicalPlanSameOrderIndexJoin)
+			require.ErrorContains(t, err, "unexpected alternative logical plan round")
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered"))
+
+			onPlan := testdata.ConvertRowsToStrings(tk.MustQuery(explainSQL).Rows())
+			tk.MustQuery(sql).Check(testkit.Rows("1 4", "2 4"))
+			require.True(t, planContainsText(onPlan, "Apply"), strings.Join(onPlan, "\n"))
+		})
+
+		t.Run("AlternativeLogicalPlansSkipSecondRoundWhenIndexJoinExists", func(t *testing.T) {
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+			tk.MustExec("drop table if exists alt_skip_t1, alt_skip_t2")
+			tk.MustExec("create table alt_skip_t1(a int primary key)")
+			tk.MustExec("create table alt_skip_t2(a int, b int, key idx_a(a))")
+			tk.MustExec("insert into alt_skip_t1 values (1), (2), (3)")
+			tk.MustExec("insert into alt_skip_t2 values (1, 1), (1, 2), (2, 3), (3, 4)")
+			tk.MustExec("analyze table alt_skip_t1, alt_skip_t2")
+
+			sql := "select alt_skip_t1.a from alt_skip_t1 where exists (select 1 from alt_skip_t2 where alt_skip_t2.a = alt_skip_t1.a and alt_skip_t2.b > 0) order by alt_skip_t1.a"
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered", fmt.Sprintf("return(%q)", sql)))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered"))
+			}()
+
+			require.NoError(t, tk.QueryToErr(sql))
+			stmtCtx := tk.Session().GetSessionVars().StmtCtx
+			require.True(t, stmtCtx.AlternativeLogicalPlanDecorrelatedApply)
+			require.True(t, stmtCtx.AlternativeLogicalPlanSameOrderIndexJoin)
+		})
 	})
 }
 
@@ -113,4 +179,13 @@ func TestWrongDecorrelate(t *testing.T) {
 		"<nil> 0.00000000000000000000 60021022342",
 		" 30025.20000000000000000000 60121022342",
 		"X 6.23000000000000000000 60021022342"))
+}
+
+func planContainsText(plan []string, needle string) bool {
+	for _, row := range plan {
+		if strings.Contains(row, needle) {
+			return true
+		}
+	}
+	return false
 }

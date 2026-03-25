@@ -233,6 +233,10 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			join := &apply.LogicalJoin
 			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
+			if p.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+				p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanDecorrelatedApply()
+				join.FromDecorrelatedApply = true
+			}
 			p = join
 		} else if apply.NoDecorrelate {
 			goto NoOptimize

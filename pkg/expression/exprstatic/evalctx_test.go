@@ -88,7 +88,7 @@ type evalCtxOptionsTestState struct {
 }
 
 func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTestState) {
-	loc, err := time.LoadLocation("US/Eastern")
+	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 	s := &evalCtxOptionsTestState{
 		now:         time.Now(),
@@ -171,7 +171,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 }
 
 func TestStaticEvalCtxCurrentTime(t *testing.T) {
-	loc1, err := time.LoadLocation("US/Eastern")
+	loc1, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 
 	tm := time.UnixMicro(123456789).In(loc1)

@@ -77,12 +77,12 @@ func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
 		!idx.HasPrefixIndex() && !idx.HasCondition()
 }
 
-func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
+func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
-	firstResult, err := e.buildResp(firstPartRanges)
+	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		return err
 	}
@@ -91,7 +91,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 		return nil
 	}
 	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(secondPartRanges)
+	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
@@ -124,7 +124,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err

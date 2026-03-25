@@ -4769,6 +4769,14 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 			b.Ti.UseTableLookUp.Store(true)
 		})
 	}
+	if len(v.TablePlans) == 0 {
+		if b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt {
+			// Plain EXPLAIN doesn't execute the target plan, allow displaying planner output here.
+			return nil
+		}
+		b.err = errors.New("IndexMerge executor requires a table scan under IndexMerge")
+		return nil
+	}
 	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 	assertByItemsAreColumns(ts.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
