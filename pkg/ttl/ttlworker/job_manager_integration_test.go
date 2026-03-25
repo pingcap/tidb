@@ -1736,11 +1736,19 @@ func TestIterationOfRunningJob(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	sessionFactory := sessionFactory(t, dom)
 
+<<<<<<< HEAD
 	tk := testkit.NewTestKit(t, store)
 	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
 
 	se := sessionFactory()
 	defer se.Close()
+=======
+	m := ttlworker.NewJobManager("test-job-manager", dom.AdvancedSysSessionPool(), store, nil, func() bool { return true })
+
+	se, closeSe := sessionFactory()
+	defer closeSe()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+>>>>>>> d1b8ed5ab81 (ttl: fix flaky TestIterationOfRunningJob (#67243))
 	for tableID := int64(0); tableID < 100; tableID++ {
 		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 		m.InfoSchemaCache().Tables[testTable.ID] = testTable
@@ -1748,10 +1756,18 @@ func TestIterationOfRunningJob(t *testing.T) {
 		jobID := uuid.NewString()
 		_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
 		require.NoError(t, err)
-		tk.MustQuery("SELECT current_job_id, current_job_owner_id FROM mysql.tidb_ttl_table_status WHERE table_id = ?", tableID).Check(testkit.Rows(fmt.Sprintf("%s %s", jobID, m.ID())))
+		sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
+		rows, err := se.ExecuteSQL(ctx, sql, args...)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		status, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
+		require.NoError(t, err)
+		require.Equal(t, jobID, status.CurrentJobID)
+		require.Equal(t, m.ID(), status.CurrentJobOwnerID)
 
 		// update the owner id
-		tk.MustExec("UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = ?", jobID)
+		_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
+		require.NoError(t, err)
 	}
 	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 
