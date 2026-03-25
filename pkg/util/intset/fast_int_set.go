@@ -223,7 +223,6 @@ func (s FastIntSet) largeToSmall() (small uint64, otherValues bool) {
 }
 
 // GetSmallUInt64 returns the small uint64 if the set contains only small values, otherwise returns an error.
-// TODO add unit test for this function.
 func (s FastIntSet) GetSmallUInt64() (uint64, error) {
 	if s.large != nil {
 		return 0, errors.New("set contains large values, cannot get small uint64")
