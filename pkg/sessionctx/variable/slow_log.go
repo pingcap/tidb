@@ -567,10 +567,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		tiKVRU = logItems.RUDetails.TiKVRUV2()
 		tiFlashRU = logItems.RUDetails.TiflashRU()
 	}
-	if total := execdetails.FormatRUV2Total(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(total) > 0 {
+	total, formatted := execdetails.FormatRUV2Summary(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU)
+	if len(total) > 0 {
 		writeSlowLogItem(&buf, SlowLogRequestUnitV2, total)
 	}
-	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
+	if len(formatted) > 0 {
 		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
 	}
 	if len(logItems.SessionConnectAttrs) > 0 {
