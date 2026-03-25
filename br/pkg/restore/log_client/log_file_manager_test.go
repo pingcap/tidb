@@ -708,6 +708,8 @@ func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
 		// A regular mDB key written after the DDL entries to verify output ordering.
 		encodemdbkv("mDB:reg:1", 45, false),
 	)
+	// DDL job history entries are only processed for DefaultCF.
+	file.Cf = consts.DefaultCF
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
 	// filterTS=100: all entries land in kvEntries.
@@ -732,6 +734,8 @@ func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
 		encodeddljobkv(201, 60),
 		encodemdbkv("mDB:mixed:1", 55, false), // higher TS wins dedup
 	)
+	// DDL job history entries are only processed for DefaultCF.
+	file.Cf = consts.DefaultCF
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
 	// filterTS=50: ts<50 → kvEntries, ts>=50 → filteredOutKvEntries.

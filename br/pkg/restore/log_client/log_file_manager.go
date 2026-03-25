@@ -529,6 +529,11 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 		}
 
 		if utils.IsMetaDDLJobHistoryKey(txnEntry.Key) {
+			// WriteCF DDL job history entries are not used downstream —
+			// RewriteMetaKvEntry only processes them for DefaultCF.
+			if file.Cf == consts.WriteCF {
+				continue
+			}
 			// DDL job history keys are unique per job ID; copy immediately.
 			keyCopy := make([]byte, len(txnEntry.Key))
 			copy(keyCopy, txnEntry.Key)
