@@ -40,6 +40,14 @@ type LFU struct {
 	closeOnce    sync.Once
 }
 
+type tableShapeSummary struct {
+	columnCount          int
+	indexCount           int
+	version              uint64
+	lastAnalyzeVersion   uint64
+	lastStatsHistVersion uint64
+}
+
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
 	cost, err := adjustMemCost(totalMemCost)
@@ -93,7 +101,50 @@ func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	if !ok {
 		return s.resultKeySet.Get(tid)
 	}
-	return result.(*statistics.Table), ok
+	table := result.(*statistics.Table)
+	if intest.InTest {
+		if latest, latestOK := s.resultKeySet.Get(tid); latestOK && latest != nil && latest != table {
+			cachedShape := summarizeTableShape(table)
+			latestShape := summarizeTableShape(latest)
+			if cachedShape != latestShape {
+				logutil.BgLogger().Warn(
+					"lfu stats cache returned a stale table before the latest update became visible",
+					zap.Int64("tableID", tid),
+					zap.Int("cachedColumnCount", cachedShape.columnCount),
+					zap.Int("latestColumnCount", latestShape.columnCount),
+					zap.Int("cachedIndexCount", cachedShape.indexCount),
+					zap.Int("latestIndexCount", latestShape.indexCount),
+					zap.Uint64("cachedVersion", cachedShape.version),
+					zap.Uint64("latestVersion", latestShape.version),
+					zap.Uint64("cachedLastAnalyzeVersion", cachedShape.lastAnalyzeVersion),
+					zap.Uint64("latestLastAnalyzeVersion", latestShape.lastAnalyzeVersion),
+					zap.Uint64("cachedLastStatsHistVersion", cachedShape.lastStatsHistVersion),
+					zap.Uint64("latestLastStatsHistVersion", latestShape.lastStatsHistVersion),
+				)
+			}
+		}
+	}
+	return table, ok
+}
+
+func summarizeTableShape(table *statistics.Table) tableShapeSummary {
+	if table == nil {
+		return tableShapeSummary{}
+	}
+	summary := tableShapeSummary{
+		version:              table.Version,
+		lastAnalyzeVersion:   table.LastAnalyzeVersion,
+		lastStatsHistVersion: table.LastStatsHistVersion,
+	}
+	table.ForEachColumnImmutable(func(_ int64, _ *statistics.Column) bool {
+		summary.columnCount++
+		return false
+	})
+	table.ForEachIndexImmutable(func(_ int64, _ *statistics.Index) bool {
+		summary.indexCount++
+		return false
+	})
+	return summary
 }
 
 // Put implements statsCacheInner
