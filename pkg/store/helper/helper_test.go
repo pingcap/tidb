@@ -210,7 +210,7 @@ func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
 
 	pdAddr := server.URL[len("http://"):]
 	pdAddrs := []string{"invalid_pd_address", pdAddr}
-	store, err := teststore.NewMockStoreWithoutBootstrap(
+	store, err := mockstore.NewMockStore(
 		mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
 		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("pd-stats-test", pdAddrs)),
 		mockstore.WithPDAddr(pdAddrs),
