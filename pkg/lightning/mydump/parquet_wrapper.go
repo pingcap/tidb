@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 )
 
 // Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go#L32C1-L34C2
@@ -46,6 +48,67 @@ type readerAtSeekerCloser interface {
 	io.ReaderAt
 	io.Seeker
 	io.Closer
+}
+
+var (
+	// parquetMagic is the 4-byte magic number at the start (and end) of every
+	// valid non-encrypted Parquet file: "PAR1".
+	parquetMagic = [4]byte{'P', 'A', 'R', '1'}
+	// parquetEncryptedMagic is the 4-byte footer magic for encrypted Parquet
+	// files: "PARE".
+	parquetEncryptedMagic = [4]byte{'P', 'A', 'R', 'E'}
+)
+
+// minParquetFileSize is the minimum valid Parquet file size:
+// 4 (header magic) + 4 (footer length) + 4 (footer magic) = 12 bytes.
+const minParquetFileSize = 12
+
+// parseParquetMetaData reads and validates the Parquet footer from r, then
+// deserializes the Thrift-encoded FileMetaData. fileSize is the known file
+// size from SourceFileMeta, which avoids a SeekEnd round-trip on cloud storage.
+func parseParquetMetaData(r io.ReaderAt, fileSize int64) (*metadata.FileMetaData, error) {
+	if fileSize < minParquetFileSize {
+		return nil, exeerrors.ErrLoadDataInvalidParquet.GenWithStackByArgs(
+			fmt.Sprintf("file size %d is less than minimum %d", fileSize, minParquetFileSize))
+	}
+
+	// Read the last 8 bytes: 4-byte footer length (LE) + 4-byte magic.
+	var tail [8]byte
+	if _, err := r.ReadAt(tail[:], fileSize-8); err != nil {
+		return nil, err
+	}
+
+	// Validate footer magic.
+	footerMagic := [4]byte(tail[4:8])
+	switch footerMagic {
+	case parquetEncryptedMagic:
+		return nil, exeerrors.ErrLoadDataParquetEncrypted.GenWithStackByArgs()
+	case parquetMagic:
+	default:
+		return nil, exeerrors.ErrLoadDataInvalidParquet.GenWithStackByArgs("missing trailing PAR1 magic")
+	}
+
+	// Validate footer length.
+	footerLen := int64(binary.LittleEndian.Uint32(tail[:4]))
+	if footerLen <= 0 || footerLen+8 > fileSize {
+		return nil, exeerrors.ErrLoadDataParquetCorrupt.GenWithStackByArgs(
+			fmt.Sprintf("invalid footer length %d for %d-byte file", footerLen, fileSize))
+	}
+
+	// Read the Thrift-serialized footer body.
+	footerBuf := make([]byte, footerLen)
+	if _, err := r.ReadAt(footerBuf, fileSize-8-footerLen); err != nil {
+		return nil, err
+	}
+
+	// Deserialize (no decryptor — we don't support encrypted parquet).
+	meta, err := metadata.NewFileMetaData(footerBuf, nil)
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataParquetCorrupt.GenWithStackByArgs(
+			fmt.Sprintf("failed to deserialize metadata: %s", err))
+	}
+	meta.SetSourceFileSize(fileSize)
+	return meta, nil
 }
 
 // parquetWrapper implements parquet.ReaderAtSeeker.

@@ -30,6 +30,50 @@ var part0Content []byte
 //go:embed part1.parquet
 var part1Content []byte
 
+func (s *mockGCSSuite) TestImportInvalidParquet() {
+	tempDir := s.T().TempDir()
+
+	s.tk.MustExec("CREATE TABLE IF NOT EXISTS test.t_invalid_parquet(id bigint NOT NULL PRIMARY KEY, val varchar(64))")
+	s.T().Cleanup(func() {
+		s.tk.MustExec("DROP TABLE IF EXISTS test.t_invalid_parquet")
+	})
+
+	// Build a corrupt parquet: valid PAR1 magic at end, plausible footer
+	// length, but garbage Thrift metadata that cannot be deserialized.
+	// Layout: [4-byte garbage body] [footer_len=4 LE] [PAR1]
+	corruptParquet := []byte{
+		0xDE, 0xAD, 0xBE, 0xEF, // garbage footer body (4 bytes)
+		0x04, 0x00, 0x00, 0x00, // footer length = 4 (little-endian)
+		'P', 'A', 'R', '1', // valid footer magic
+	}
+	// Build an encrypted parquet: ends with PARE magic.
+	encryptedParquet := []byte{
+		0x00, 0x00, 0x00, 0x00,
+		0x04, 0x00, 0x00, 0x00,
+		'P', 'A', 'R', 'E',
+	}
+
+	cases := []struct {
+		name    string
+		content []byte
+		errMsg  string
+	}{
+		{"csv content", []byte("1,\"hello\"\n2,\"world\"\n"), "not a valid Parquet file"},
+		{"sql content", []byte("INSERT INTO t VALUES (1, 'hello'), (2, 'world');\n"), "not a valid Parquet file"},
+		{"empty file", []byte{}, "not a valid Parquet file"},
+		{"too small (< 12 bytes)", []byte("PAR1PAR1"), "not a valid Parquet file"},
+		{"corrupt metadata", corruptParquet, "Parquet file is corrupt"},
+		{"encrypted parquet", encryptedParquet, "encrypted Parquet is not supported"},
+	}
+	for _, tc := range cases {
+		filePath := path.Join(tempDir, tc.name+".parquet")
+		s.NoError(os.WriteFile(filePath, tc.content, 0o644))
+		sql := fmt.Sprintf("IMPORT INTO test.t_invalid_parquet FROM '%s' FORMAT 'parquet'", filePath)
+		err := s.tk.QueryToErr(sql)
+		require.ErrorContains(s.T(), err, tc.errMsg, tc.name)
+	}
+}
+
 func (s *mockGCSSuite) TestImportParquet() {
 	// Each file contains 10 rows, we manually set the row count to 5 when we skip reading the file.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(5)")

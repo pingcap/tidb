@@ -2046,6 +2046,21 @@ error = '''
 Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
+["executor:8182"]
+error = '''
+not a valid Parquet file: %s
+'''
+
+["executor:8183"]
+error = '''
+Parquet file is corrupt: %s
+'''
+
+["executor:8184"]
+error = '''
+encrypted Parquet is not supported
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

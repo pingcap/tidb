@@ -1277,7 +1277,10 @@ func estimateCompressionRatio(
 			failpoint.Return(2.0, nil)
 		}
 	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, store, mydump.SourceFileMeta{
+		Path:     filePath,
+		FileSize: fileSize,
+	})
 	if err != nil {
 		return 1.0, err
 	}
@@ -1700,13 +1703,10 @@ func (e *LoadDataController) GetParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParser(
-			ctx,
-			e.dataStore,
-			reader,
-			dataFileInfo.Remote.Path,
-			dataFileInfo.Remote.ParquetMeta,
-		)
+		parser, err = mydump.NewParquetParser(ctx, e.dataStore, reader, *dataFileInfo.Remote)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())

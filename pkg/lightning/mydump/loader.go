@@ -649,7 +649,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		// Only sample once for each table
 		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
-			rows, rowSize, err := SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
+			rows, rowSize, err := SampleStatisticsFromParquet(ctx, s.loader.GetStore(), info.FileMeta)
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),

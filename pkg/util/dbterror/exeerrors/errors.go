@@ -103,4 +103,7 @@ var (
 	ErrLoadDataInvalidOperation       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
+	ErrLoadDataInvalidParquet         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidParquet)
+	ErrLoadDataParquetCorrupt         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataParquetCorrupt)
+	ErrLoadDataParquetEncrypted       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataParquetEncrypted)
 )

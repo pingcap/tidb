@@ -580,12 +580,13 @@ func ReadParquetFileRowCountByFile(
 		_ = r.Close()
 	}()
 
-	reader, err := file.NewParquetReader(&parquetWrapper{ReadSeekCloser: r})
+	wrapper := &parquetWrapper{ReadSeekCloser: r}
+	meta, err := parseParquetMetaData(wrapper, fileMeta.FileSize)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	return reader.MetaData().NumRows, nil
+	return meta.NumRows, nil
 }
 
 // NewParquetParser generates a parquet parser.
@@ -593,8 +594,7 @@ func NewParquetParser(
 	ctx context.Context,
 	store storeapi.Storage,
 	r storeapi.ReadSeekCloser,
-	path string,
-	meta ParquetFileMeta,
+	fileMeta SourceFileMeta,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
 	wrapper := &parquetWrapper{ReadSeekCloser: r}
@@ -602,7 +602,12 @@ func NewParquetParser(
 		_ = r.Close()
 	}()
 
-	allocator := meta.allocator
+	meta, err := parseParquetMetaData(wrapper, fileMeta.FileSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	allocator := fileMeta.ParquetMeta.allocator
 	if allocator == nil {
 		allocator = memory.NewGoAllocator()
 	}
@@ -610,7 +615,7 @@ func NewParquetParser(
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithMetadata(meta))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -654,13 +659,13 @@ func NewParquetParser(
 		colNames: colNames,
 		ctx:      ctx,
 		store:    store,
-		path:     path,
+		path:     fileMeta.Path,
 		prop:     prop,
 		alloc:    allocator,
 		logger:   logger,
 		rowPool:  &pool,
 	}
-	if err := parser.Init(meta.Loc); err != nil {
+	if err := parser.Init(fileMeta.ParquetMeta.Loc); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -670,19 +675,19 @@ func NewParquetParser(
 // SampleStatisticsFromParquet samples row size of the parquet file.
 func SampleStatisticsFromParquet(
 	ctx context.Context,
-	path string,
 	store storeapi.Storage,
+	fileMeta SourceFileMeta,
 ) (
 	rowCount int64,
 	avgRowSize float64,
 	err error,
 ) {
-	r, err := store.Open(ctx, path, nil)
+	r, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
+	parser, err := NewParquetParser(ctx, store, r, fileMeta)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -821,15 +826,16 @@ func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64
 func EstimateParquetReaderMemory(
 	ctx context.Context,
 	store storeapi.Storage,
-	path string,
+	fileMeta SourceFileMeta,
 ) (int64, error) {
-	r, err := store.Open(ctx, path, nil)
+	r, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, err
 	}
 
 	allocator := &trackingAllocator{}
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+	fileMeta.ParquetMeta = ParquetFileMeta{allocator: allocator}
+	parser, err := NewParquetParser(ctx, store, r, fileMeta)
 	if err != nil {
 		_ = r.Close()
 		return 0, err
@@ -863,7 +869,7 @@ func EstimateParquetReaderMemory(
 
 	peak := allocator.peakAllocation.Load() + preloadBufferBytes
 	logutil.Logger(ctx).Info("estimated parquet reader memory",
-		zap.String("path", path),
+		zap.String("path", fileMeta.Path),
 		zap.Int64("in-memory-preload-bytes", preloadBufferBytes),
 		zap.Int64("peak-memory-bytes", peak),
 	)

@@ -1085,6 +1085,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
 	ErrForbiddenDDL:                     mysql.Message("%s is forbidden", nil),
 
+	ErrLoadDataInvalidParquet:   mysql.Message("not a valid Parquet file: %s", nil),
+	ErrLoadDataParquetCorrupt:   mysql.Message("Parquet file is corrupt: %s", nil),
+	ErrLoadDataParquetEncrypted: mysql.Message("encrypted Parquet is not supported", nil),
+
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
