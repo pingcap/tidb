@@ -2304,6 +2304,13 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if candidate.path.FtsQueryInfo != nil && !prop.IsSortItemEmpty() {
 		return base.InvalidTask, nil
 	}
+	// TiCI index scans must carry either FTSQueryInfo or TiCIVectorQueryInfo.
+	// Reject plain queries here as a safety net, even if the planner path survives
+	// earlier pruning by mistake.
+	if candidate.path.Index != nil && candidate.path.Index.IsTiCIIndex() &&
+		candidate.path.FtsQueryInfo == nil && prop.VectorProp.VSInfo == nil {
+		return base.InvalidTask, nil
+	}
 	if candidate.path.Index != nil && candidate.path.Index.IsTiCIIndex() && !prop.IsSortItemEmpty() && prop.VectorProp.VSInfo == nil {
 		return base.InvalidTask, nil
 	}

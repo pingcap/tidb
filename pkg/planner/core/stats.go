@@ -683,6 +683,13 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			// Reevaluate path.IsSingleScan because it may have been set incorrectly
 			// in the pruning logic.
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			// Hybrid TiCI vector indexes are only valid for vector search queries.
+			// They must not participate in normal covering-index selection, otherwise
+			// plain queries such as `SELECT col LIMIT n` can be pushed into `cop[tici]`
+			// without either FTSQueryInfo or TiCIVectorQueryInfo.
+			if path.Index.IsTiCIIndex() && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
+				path.IsSingleScan = false
+			}
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.

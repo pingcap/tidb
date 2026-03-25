@@ -407,6 +407,10 @@ func TestTiCIHybridVectorPlannerPath(t *testing.T) {
 	// No LIMIT: should NOT use TiCI vector path (not a top-k query).
 	tk.MustQuery("explain format='brief' select * from t_vec order by vec_l2_distance(v, '[1,2,3]')").CheckNotContain("vector search")
 
+	// Plain queries must not treat the hybrid vector index as a normal TiCI covering index.
+	tk.MustQuery("explain format='brief' select b from t_vec limit 10").CheckNotContain("cop[tici]")
+	tk.MustQuery("explain format='brief' select count(*) from t_vec").CheckNotContain("cop[tici]")
+
 	// Hybrid index without distance_metric should be rejected by DDL validation.
 	tk.MustExec("create table t_vec2(a int primary key, b text, v vector(3))")
 	tk.MustContainErrMsg(`create hybrid index idx_hybrid2 on t_vec2(b, v) parameter '{

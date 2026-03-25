@@ -19,9 +19,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/stretchr/testify/require"
 )
@@ -162,4 +165,29 @@ func TestHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func TestConvertToIndexScanRejectsPlainTiCIHybridVectorPath(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	candidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				Name:  ast.NewCIStr("idx_hybrid"),
+				State: model.StatePublic,
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{}},
+				},
+			},
+		},
+	}
+
+	task, err := convertToIndexScan(ds, prop, candidate)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
 }
