@@ -679,6 +679,7 @@ update tdm set c12 = '0' where id = 1;
 select c12+0 from tdm;
 c12+0
 0
+set @@sql_mode = default;
 drop table if exists t;
 create table t(a int);
 with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;
