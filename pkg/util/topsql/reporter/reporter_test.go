@@ -1163,7 +1163,13 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 	}
 }
 
-func TestCollectWorkerDropsStaleRUVersionBatch(t *testing.T) {
+func TestTopRUHandoverEdgeCases(t *testing.T) {
+	t.Run("collect worker drops stale RU version batch", testCollectWorkerDropsStaleRUVersionBatch)
+	t.Run("report worker sends queued RU records after handover", testReportWorkerSendsQueuedRURecordsAfterHandover)
+	t.Run("best effort boundary shift", testTopRUBestEffortBoundaryShift)
+}
+
+func testCollectWorkerDropsStaleRUVersionBatch(t *testing.T) {
 	origNowFunc := nowFunc
 	nowFunc = func() time.Time { return time.Unix(121, 0) }
 	t.Cleanup(func() { nowFunc = origNowFunc })
@@ -1207,7 +1213,7 @@ func TestCollectWorkerDropsStaleRUVersionBatch(t *testing.T) {
 	}
 }
 
-func TestReportWorkerSendsQueuedRURecordsAfterHandover(t *testing.T) {
+func testReportWorkerSendsQueuedRURecordsAfterHandover(t *testing.T) {
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	ch := make(chan *ReportData, 1)
 	require.NoError(t, tsr.Register(newMockDataSink(ch)))
@@ -1245,7 +1251,7 @@ func TestReportWorkerSendsQueuedRURecordsAfterHandover(t *testing.T) {
 	}
 }
 
-func TestTopRUBestEffortBoundaryShift(t *testing.T) {
+func testTopRUBestEffortBoundaryShift(t *testing.T) {
 	origNowFunc := nowFunc
 	var currentUnix int64 = 61
 	nowFunc = func() time.Time {
