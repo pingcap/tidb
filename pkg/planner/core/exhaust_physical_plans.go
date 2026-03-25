@@ -560,13 +560,14 @@ func constructIndexJoin(
 	}
 
 	join := PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
-		innerPlan:        innerTask.Plan(),
-		KeyOff2IdxOff:    newKeyOff,
-		Ranges:           ranges,
-		CompareFilters:   compareFilters,
-		OuterHashKeys:    outerHashKeys,
-		InnerHashKeys:    innerHashKeys,
+		basePhysicalJoin:      baseJoin,
+		innerPlan:             innerTask.Plan(),
+		KeyOff2IdxOff:         newKeyOff,
+		Ranges:                ranges,
+		CompareFilters:        compareFilters,
+		OuterHashKeys:         outerHashKeys,
+		InnerHashKeys:         innerHashKeys,
+		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
