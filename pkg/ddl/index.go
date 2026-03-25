@@ -342,6 +342,9 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 // Clustered tables don't have this issue and use version 0.
 func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	idxInfo.GlobalIndexVersion = 0
+	if !model.GetGlobalIndexV1Supported() {
+		return
+	}
 	if idxInfo.Global && !tblInfo.HasClusteredIndex() {
 		needPartitionInKey := !idxInfo.Unique
 		if !needPartitionInKey {
