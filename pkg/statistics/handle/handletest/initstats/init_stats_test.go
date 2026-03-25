@@ -247,7 +247,7 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 	stats1, ok = h.Get(tbl1.Meta().ID)
 	require.True(t, ok)
 	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok = h.Get(tbl2.Meta().ID)
+	stats2, ok := h.Get(tbl2.Meta().ID)
 	require.True(t, ok)
 	require.True(t, stats2.GetIdx(1).IsFullLoad())
 	stats3, ok := h.Get(tbl3.Meta().ID)
