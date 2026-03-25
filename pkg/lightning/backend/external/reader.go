@@ -40,6 +40,101 @@ func readAllData(
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) (err error) {
+	concurrences, startOffsets, err := getFilesReadConcurrency(
+		ctx,
+		store,
+		statsFiles,
+		startKey,
+		endKey,
+	)
+	if err != nil {
+		return err
+	}
+	return readAllDataWithConcurrency(
+		ctx,
+		store,
+		dataFiles,
+		statsFiles,
+		startKey,
+		endKey,
+		startOffsets,
+		concurrences,
+		smallBlockBufPool,
+		largeBlockBufPool,
+		output,
+	)
+}
+
+func readAllDataWithOffsets(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	startOffsets, estimatedEndOffsets []uint64,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) error {
+	concurrences := getReadConcurrencyFromOffsets(ctx, statsFiles, startOffsets, estimatedEndOffsets)
+	return readAllDataWithConcurrency(
+		ctx,
+		store,
+		dataFiles,
+		statsFiles,
+		startKey,
+		endKey,
+		startOffsets,
+		concurrences,
+		smallBlockBufPool,
+		largeBlockBufPool,
+		output,
+	)
+}
+
+func getReadConcurrencyFromOffsets(
+	ctx context.Context,
+	statsFiles []string,
+	startOffsets, endOffsets []uint64,
+) []uint64 {
+	concurrences := make([]uint64, len(statsFiles))
+	totalFileSize := uint64(0)
+	for i := range statsFiles {
+		size := endOffsets[i] - startOffsets[i]
+		totalFileSize += size
+		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
+		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
+		// always return an offset that is less than or equal to the key.
+		expectedConc += 1
+		if expectedConc >= readAllDataConcThreshold {
+			concurrences[i] = expectedConc
+		} else {
+			concurrences[i] = 1
+		}
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffsets[i]),
+				zap.Uint64("endOffset", endOffsets[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", concurrences[i]),
+			)
+		}
+	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.Uint64("totalSize", totalFileSize))
+	return concurrences
+}
+
+func readAllDataWithConcurrency(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	startOffsets, concurrences []uint64,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
@@ -62,17 +157,6 @@ func readAllData(
 		}
 		task.End(zap.ErrorLevel, err)
 	}()
-
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		store,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
-	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000

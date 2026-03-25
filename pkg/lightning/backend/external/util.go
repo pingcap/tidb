@@ -43,6 +43,30 @@ const (
 	metaName = "meta.json"
 )
 
+var (
+	// getReadRangeFromPropsConcurrency limits the number of stats files scanned in
+	// parallel to avoid bursty object-storage reads when an import step tracks a
+	// large number of files. Use a lower default than the data-reader budget
+	// because props scanning is metadata-heavy and benefits less from high fanout.
+	getReadRangeFromPropsConcurrency = 64
+)
+
+func getReadRangeFromProps(
+	ctx context.Context,
+	jobKeys [][]byte,
+	paths []string,
+	exStorage storage.ExternalStorage,
+) ([][]uint64, error) {
+	if len(jobKeys) == 0 {
+		return [][]uint64{}, nil
+	}
+	starts := make([]kv.Key, len(jobKeys))
+	for i := range jobKeys {
+		starts[i] = kv.Key(jobKeys[i])
+	}
+	return seekPropsOffsets(ctx, starts, paths, exStorage)
+}
+
 // seekPropsOffsets reads the statistic files to find the largest offset of
 // corresponding sorted data file such that the key at offset is less than or
 // equal to the given start keys. These returned offsets can be used to seek data
@@ -69,6 +93,7 @@ func seekPropsOffsets(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
 		i := i
 		eg.Go(func() error {
