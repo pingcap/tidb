@@ -22,6 +22,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -30,6 +31,23 @@ import (
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
+
+type statOpenCountStorage struct {
+	storage.ExternalStorage
+	statFiles map[string]struct{}
+	openCount atomic.Int64
+}
+
+func (s *statOpenCountStorage) Open(
+	ctx context.Context,
+	name string,
+	option *storage.ReaderOption,
+) (storage.ExternalFileReader, error) {
+	if _, ok := s.statFiles[name]; ok {
+		s.openCount.Inc()
+	}
+	return s.ExternalStorage.Open(ctx, name, option)
+}
 
 func testGetFirstAndLastKey(
 	t *testing.T,
@@ -395,4 +413,70 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		e.UpdateResource(context.Background(), 8, 1024)
 		require.NoError(t, eg.Wait())
 	})
+}
+
+func TestLoadIngestDataReusesStatRangesAcrossBatches(t *testing.T) {
+	ctx := context.Background()
+	baseStore := storage.NewMemStorage()
+
+	keys := [][]byte{
+		{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8},
+	}
+	values := [][]byte{
+		[]byte("v1"),
+		[]byte("v2"),
+		[]byte("v3"),
+		[]byte("v4"),
+		[]byte("v5"),
+		[]byte("v6"),
+		[]byte("v7"),
+		[]byte("v8"),
+	}
+	dataFiles, statFiles, err := MockExternalEngine(baseStore, keys, values)
+	require.NoError(t, err)
+	require.NotEmpty(t, statFiles)
+
+	statFileSet := make(map[string]struct{}, len(statFiles))
+	for _, statFile := range statFiles {
+		statFileSet[statFile] = struct{}{}
+	}
+	store := &statOpenCountStorage{
+		ExternalStorage: baseStore,
+		statFiles:       statFileSet,
+	}
+
+	engine := NewExternalEngine(
+		store,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{9},
+		[][]byte{{1}, {3}, {5}, {7}, {9}},
+		nil,
+		common.NoopKeyAdapter{},
+		false,
+		nil,
+		common.DupDetectOpt{},
+		2,
+		1,
+		0,
+		0,
+		true,
+		int64(16<<30),
+		common.OnDuplicateKeyError,
+		"/mock-test",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, engine.Close())
+	})
+
+	outCh := make(chan common.DataAndRanges, 4)
+	require.NoError(t, engine.LoadIngestData(ctx, outCh))
+	require.EqualValues(t, len(statFiles), store.openCount.Load())
+
+	for i := 0; i < 2; i++ {
+		data := <-outCh
+		data.Data.IncRef()
+		data.Data.DecRef()
+	}
 }
