@@ -45,3 +45,27 @@ func TestAllErrCodeHasMsg(t *testing.T) {
 		assert.Truef(t, ok, "ErrCode: %d is unknown", code)
 	}
 }
+
+func TestReservedErrCodeRange(t *testing.T) {
+	const reservedStart = 8800
+	const reservedEnd = 8900
+
+	for _, l := range strings.Split(errCodeSrc, "\n") {
+		l = strings.TrimSpace(l)
+		if !strings.HasPrefix(l, "Err") {
+			continue
+		}
+
+		parts := strings.Split(l, "=")
+		assert.Len(t, parts, 2, "parse code definition: %s", l)
+
+		errName := strings.TrimSpace(parts[0])
+		codeStr := strings.TrimSpace(parts[1])
+		code, err := strconv.Atoi(codeStr)
+		assert.NoErrorf(t, err, "parse code definition: %s", codeStr)
+
+		assert.Falsef(t, code >= reservedStart && code < reservedEnd,
+			"%s must not be in reserved range [%d, %d), but got %d",
+			errName, reservedStart, reservedEnd, code)
+	}
+}

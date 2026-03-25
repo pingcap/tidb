@@ -85,6 +85,8 @@ const (
 	FlagMergeRegionKeyCount = "merge-region-key-count"
 	// FlagPDConcurrency controls concurrency pd-relative operations like split & scatter.
 	FlagPDConcurrency = "pd-concurrency"
+	// FlagRegionScanConcurrency controls max in-flight region scan requests to PD during restore.
+	FlagRegionScanConcurrency = "region-scan-concurrency"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
@@ -119,14 +121,15 @@ const (
 
 	FlagSysCheckCollation = "sys-check-collation"
 
-	defaultPiTRBatchCount     = 8
-	defaultPiTRBatchSize      = 16 * 1024 * 1024
-	defaultRestoreConcurrency = 128
-	defaultPiTRConcurrency    = 16
-	defaultPDConcurrency      = 1
-	defaultStatsConcurrency   = 12
-	defaultBatchFlushInterval = 16 * time.Second
-	defaultFlagDdlBatchSize   = 128
+	defaultPiTRBatchCount        = 8
+	defaultPiTRBatchSize         = 16 * 1024 * 1024
+	defaultRestoreConcurrency    = 128
+	defaultPiTRConcurrency       = 16
+	defaultPDConcurrency         = 1
+	defaultRegionScanConcurrency = 256
+	defaultStatsConcurrency      = 12
+	defaultBatchFlushInterval    = 16 * time.Second
+	defaultFlagDdlBatchSize      = 128
 )
 
 const (
@@ -189,6 +192,8 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"(deprecated) concurrency pd-relative operations like split & scatter.")
+	flags.Uint(FlagRegionScanConcurrency, defaultRegionScanConcurrency,
+		"max in-flight region scan requests to PD during restore. Set to 0 for unlimited.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
@@ -257,12 +262,13 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
-	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
-	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
-	FastLoadSysTables  bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
-	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
-	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
-	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
+	NoSchema              bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats             bool          `json:"load-stats" toml:"load-stats"`
+	FastLoadSysTables     bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
+	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
+	RegionScanConcurrency uint          `json:"region-scan-concurrency" toml:"region-scan-concurrency"`
+	StatsConcurrency      uint          `json:"stats-concurrency" toml:"stats-concurrency"`
+	BatchFlushInterval    time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 
@@ -475,6 +481,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.PDConcurrency, err = flags.GetUint(FlagPDConcurrency)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagPDConcurrency)
+	}
+	cfg.RegionScanConcurrency, err = flags.GetUint(FlagRegionScanConcurrency)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagRegionScanConcurrency)
 	}
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
@@ -749,6 +759,7 @@ func (cfg *RestoreConfig) CloseCheckpointMetaManager() {
 func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}

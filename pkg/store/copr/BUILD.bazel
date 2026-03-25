@@ -12,6 +12,7 @@ go_library(
         "mpp_probe.go",
         "range_diagnostics.go",
         "region_cache.go",
+        "ruv2_metrics.go",
         "store.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/store/copr",

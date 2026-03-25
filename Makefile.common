@@ -44,6 +44,7 @@ ifeq ("${NEXT_GEN}", "1")
 	UNIT_TEST_TAGS := $(UNIT_TEST_TAGS),nextgen
 	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
 endif
+TIDB_RELEASE_VERSION := $(shell NEXT_GEN="$(NEXT_GEN)" ./build/compute-tidb-release-version.sh)
 
 GO              := GO111MODULE=on go
 GOBUILD_NO_TAGS := $(GOEXPERIMENT) $(GO) build
@@ -80,7 +81,7 @@ UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 FAILPOINT_ENABLE  := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl enable
 FAILPOINT_DISABLE := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl disable
 
-LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(TIDB_RELEASE_VERSION)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
@@ -128,7 +129,7 @@ DUMPLING_PACKAGE_DIRECTORIES := $(DUMPLING_PACKAGES) | sed 's|github.com/pingcap
 DUMPLING_BIN        := bin/dumpling
 DUMPLING_CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
-DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev' --always)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(TIDB_RELEASE_VERSION)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git rev-parse HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"

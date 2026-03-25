@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
@@ -393,9 +394,42 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select version()` result for cloud version format.
+	tidbCloudServerVersionRegex = regexp.MustCompile(`TiDB-CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select tidb_version()` result for cloud release version format.
+	tidbCloudReleaseVersionRegex = regexp.MustCompile(`Release Version:\s*CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result with full release version
-	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|CLOUD\.\d{6}\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)`)
 )
+
+func parseTiDBXVersionToSemver(versionStr string) string {
+	// Cloud release version is exposed as
+	// TiDB-CLOUD.<YYYYMM>.<patch> or Release Version: CLOUD.<YYYYMM>.<patch>
+	// (optionally with pre-release suffix).
+	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
+	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
+	// BR version checks can keep working on semver-like values.
+	match := tidbCloudServerVersionRegex.FindStringSubmatch(versionStr)
+	if len(match) != 6 {
+		match = tidbCloudReleaseVersionRegex.FindStringSubmatch(versionStr)
+	}
+	if len(match) != 6 {
+		return ""
+	}
+	year, err := strconv.Atoi(match[1])
+	if err != nil || year < mysql.TiDBXVerMinYear || year > mysql.TiDBXVerMaxYear {
+		return ""
+	}
+	month, err := strconv.Atoi(match[2])
+	if err != nil || month < 1 || month > 12 {
+		return ""
+	}
+	patch, err := strconv.Atoi(match[3])
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d%s", year-2000, month, patch, match[4])
+}
 
 // ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
@@ -424,6 +458,10 @@ func ParseServerInfo(src string) ServerInfo {
 		} else {
 			versionStr = tidbVersionRegex.FindString(src)
 			versionStr = strings.TrimPrefix(versionStr, "-")
+		}
+		// try to parse TiDB-X version if Classic tidb version parsing fails.
+		if versionStr == "" {
+			versionStr = parseTiDBXVersionToSemver(src)
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {

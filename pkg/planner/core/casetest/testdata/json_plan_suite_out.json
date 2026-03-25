@@ -45,7 +45,7 @@
         "SQL": "explain format = tidb_json select count(*) from t1",
         "JSONPlan": [
           {
-            "id": "HashAgg_14",
+            "id": "HashAgg_12",
             "estRows": "1.00",
             "taskType": "root",
             "operatorInfo": "funcs:count(Column#6)->Column#4",
@@ -81,10 +81,10 @@
         "SQL": "explain format = tidb_json select * from t1",
         "JSONPlan": [
           {
-            "id": "IndexReader_8",
+            "id": "IndexReader_7",
             "estRows": "10000.00",
             "taskType": "root",
-            "operatorInfo": "index:IndexFullScan_7",
+            "operatorInfo": "index:IndexFullScan_6",
             "subOperators": [
               {
                 "id": "IndexFullScan_7",
@@ -101,7 +101,7 @@
         "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
         "JSONPlan": [
           {
-            "id": "MergeJoin_10",
+            "id": "MergeJoin_8",
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
@@ -216,7 +216,7 @@
         "SQL": "explain format = tidb_json select count(*) from t1",
         "JSONPlan": [
           {
-            "id": "HashAgg_14",
+            "id": "HashAgg_12",
             "estRows": "1.00",
             "taskType": "root",
             "operatorInfo": "funcs:count(Column#6)->Column#4",
@@ -252,10 +252,10 @@
         "SQL": "explain format = tidb_json select * from t1",
         "JSONPlan": [
           {
-            "id": "IndexReader_8",
+            "id": "IndexReader_7",
             "estRows": "10000.00",
             "taskType": "root",
-            "operatorInfo": "index:IndexFullScan_7",
+            "operatorInfo": "index:IndexFullScan_6",
             "subOperators": [
               {
                 "id": "IndexFullScan_7",
@@ -272,7 +272,7 @@
         "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
         "JSONPlan": [
           {
-            "id": "MergeJoin_10",
+            "id": "MergeJoin_8",
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",

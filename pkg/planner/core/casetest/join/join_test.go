@@ -48,9 +48,7 @@ func TestSemiJoinOrder(t *testing.T) {
 			"  └─TableReader(Probe) root  data:Selection",
 			"    └─Selection cop[tikv]  not(isnull(test.t2.col0))",
 			"      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"))
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort root  test.t1.col0, test.t1.col1",
 			"└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
@@ -75,10 +73,7 @@ func TestSemiJoinOrder(t *testing.T) {
 			"    └─Selection cop[tikv]  not(isnull(test.t1.col0))",
 			"      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		tk.MustQuery("show warnings").Check(testkit.Rows(
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
 		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort root  test.t1.col0, test.t1.col1",
