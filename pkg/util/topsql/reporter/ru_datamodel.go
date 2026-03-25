@@ -645,6 +645,8 @@ func (c *ruCollecting) getOrCreateUser(user string) (u *userRUCollecting, overfl
 // getOrCreateOthersUser returns othersUser and creates it if needed.
 func (c *ruCollecting) getOrCreateOthersUser() *userRUCollecting {
 	if c.othersUser == nil {
+		// Identity of synthetic global othersUser comes from being stored at
+		// c.othersUser, not from userRUCollecting.user value.
 		c.othersUser = newOthersUserRUCollectingWithCap(c.preTopNSQLsPerUser)
 	}
 	return c.othersUser
