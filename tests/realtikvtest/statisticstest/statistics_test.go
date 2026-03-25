@@ -15,6 +15,8 @@
 package statisticstest
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,7 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const analyzeV1CompatFixturePath = "tests/realtikvtest/statisticstest/analyze_v1_compat_v855.json"
+const analyzeV1CompatFixturePath = "tests/realtikvtest/statisticstest/analyze_v1_compat_v855.json.gz"
 
 func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
@@ -432,7 +434,12 @@ func readAnalyzeV1CompatStatsJSON(t *testing.T) *statsutil.JSONTable {
 	require.NoError(t, lastErr)
 
 	var jsonTbl statsutil.JSONTable
-	require.NoError(t, json.Unmarshal(data, &jsonTbl))
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, zr.Close())
+	}()
+	require.NoError(t, json.NewDecoder(zr).Decode(&jsonTbl))
 	return &jsonTbl
 }
 

@@ -7,7 +7,7 @@ go_test(
         "main_test.go",
         "statistics_test.go",
     ],
-    data = ["analyze_v1_compat_v855.json"],
+    data = ["analyze_v1_compat_v855.json.gz"],
     flaky = True,
     race = "on",
     shard_count = 6,
