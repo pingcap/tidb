@@ -886,11 +886,11 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 		testKit.MustExec("alter table t32157 cache")
 
 		testKit.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-			"StreamAgg 1.00 root  funcs:count(1)->Column#9]\n" +
-				"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[  └─TableReader 10.00 root  data:Selection]\n" +
-				"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+			"StreamAgg 1.00 root  funcs:count(1)->Column#9",
+			"└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")",
+			"  └─TableReader 10.00 root  data:Selection",
+			"    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")",
+			"      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
 		require.Eventually(t, func() bool {
 			testKit.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
