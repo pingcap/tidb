@@ -994,28 +994,10 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	// schema-qualified references like ORDER BY test.t2.a continue to resolve.
 	outputNames := make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
 	for i, name := range leftPlan.OutputNames() {
-		outputNames[i] = &types.FieldName{
-			DBName:            name.DBName,
-			OrigTblName:       name.OrigTblName,
-			OrigColName:       name.OrigColName,
-			TblName:           name.TblName,
-			ColName:           name.ColName,
-			NotExplicitUsable: name.NotExplicitUsable,
-			Redundant:         name.Redundant,
-			Hidden:            name.Hidden,
-		}
+		outputNames[i] = name.Clone()
 	}
 	for i, name := range rightPlan.OutputNames() {
-		outputNames[leftPlan.Schema().Len()+i] = &types.FieldName{
-			DBName:            name.DBName,
-			OrigTblName:       name.OrigTblName,
-			OrigColName:       name.OrigColName,
-			TblName:           name.TblName,
-			ColName:           name.ColName,
-			NotExplicitUsable: name.NotExplicitUsable,
-			Redundant:         name.Redundant,
-			Hidden:            name.Hidden,
-		}
+		outputNames[leftPlan.Schema().Len()+i] = name.Clone()
 	}
 	ap.SetOutputNames(outputNames)
 
