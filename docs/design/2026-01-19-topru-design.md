@@ -32,7 +32,7 @@
 
 Next-gen TiDB Cloud charges by RU (Request Unit). When cluster RU consumption is abnormal or reaches the limit, users need to quickly identify high RU-consuming SQLs, but currently there is no effective means to identify the main RU-consuming SQLs in near real-time.
 
-**Typical Scenario**: When the cluster reaches the MAX RCU limit and triggers an alert, users need to quickly locate high RU-consuming SQLs to execute Terminate or optimization operations, relieve resource pressure and restore service.
+**Typical Scenario**: When cluster RU usage reaches the configured limit and triggers an alert, users need to quickly locate high RU-consuming SQLs to execute terminate or optimization operations, relieve resource pressure and restore service.
 
 **Limitations of Existing Solutions**:
 
@@ -47,7 +47,7 @@ Next-gen TiDB Cloud charges by RU (Request Unit). When cluster RU consumption is
 
 1. **Sort by RU Consumption**: Support sorting and querying by cumulative RU consumption, identifying high RU SQLs (including SQLs with short execution time but high RU consumption)
 2. **User-Dimension Aggregation**: Aggregate by `(user, sql_digest, plan_digest)` tuple, support viewing RU consumption distribution by user
-3. **Near Real-Time Statistics**: Local 1-second sampling, batch reporting to downstream (e.g., Vector) every `report_interval` (default 60s, configurable 15s/30s/60s); end-to-end latency approximately 60~120s
+3. **Near Real-Time Statistics**: Local 1-second sampling, with output generated on aligned 60-second closed windows; `item_interval_seconds` controls the item timestamp granularity within each 60-second output window. End-to-end latency is approximately 60~120s
 4. **Compatible with Existing Capabilities**: Coexists with TopSQL's existing CPU time statistics without interference
 
 ### Non-Goals
@@ -61,7 +61,7 @@ Next-gen TiDB Cloud charges by RU (Request Unit). When cluster RU consumption is
 
 ### Architecture Overview
 
-TopRU reuses TopSQL's reporting pipeline and adds RU-specific **bounded window aggregation** (producing 1 data point per `report_interval`), controlling memory and CPU while ensuring near real-time capabilities.
+TopRU reuses TopSQL's reporting pipeline and adds RU-specific **bounded window aggregation** (producing output on aligned 60-second closed windows), controlling memory and CPU while ensuring near real-time capabilities.
 
 **Architecture Diagram** (`[NEW]` marks TopRU new pipelines):
 
@@ -72,20 +72,20 @@ TopRU reuses TopSQL's reporting pipeline and adds RU-specific **bounded window a
 | Principle | Description |
 |-----------|-------------|
 | Reuse Infrastructure | Collection point interfaces and reporting pipelines all reuse existing TopSQL implementation |
-| Pre-filtering | Two-level TopN limiting at 1s collection (Top 200 users × per-user Top 200 SQLs) + others aggregation to avoid buffer bloat |
-| Tiered Storage | 1s per-second storage (200×200) → 15s interval merging (200×200) → 60s merge and report (100×100) |
-| Separate Storage | CPU data uses `collecting.records`, RU data uses `collecting.ruRecords`, no interference |
+| Pre-filtering | Upstream 1s RU aggregation has hard cap `maxRUKeysPerAggregate=10000`; downstream keeps `_others_` aggregation to bound cardinality |
+| Tiered Storage | RU records are compacted in aligned stages (see Memory Control and Related Data Structures) |
+| Separate Storage | CPU data remains on `collecting.records`; RU output is emitted by `ruAggregator.takeReportRecords(...)` into `ReportData.RURecords` |
 | Memory Control | Two-level TopN + others aggregation + hard limit protection |
 
 **Core Data Flow**:
 
-```
-SQL Execution → ExecutionContext Registration → 1s sampling writes to timestampBuffer
-                                          ↓ (Two-level TopN filtering: Top 200 users × per-user Top 200 SQLs + others aggregation)
-                                          ↓ (15s) merge 15 1s intervals
-                                 Merge to ruPointBucket[startTs] (result: 200 users × 200 SQLs)
-                                          ↓ (60s) merge 4 15s intervals + 100×100 final filtering
-                                 Batch report to downstream (DataSink)
+```text
+SQL Execution → ExecutionContext Registration
+                                          ↓ (1s tick) drainAndPushRU (active + finished deltas)
+                                          ↓ CollectRUIncrements
+                                          ↓ ruWindowAggregator (1s ingest, 15s merge, 60s closed-window finalize)
+                                          ↓ ReportData.RURecords
+                                          ↓ Batch report to downstream (DataSink)
 ```
 
 ### Functionality and Semantics
@@ -116,8 +116,9 @@ TopRU is controlled in a **subscription-driven, reference-counted** way.
 
 **`item_interval_seconds` Semantics**:
 - Only one effective interval is supported globally.
-- Different intervals set concurrently by multiple subscribers are treated as a configuration conflict (invalid usage).
-- When conflicts occur, the most recently applied interval takes effect (last update wins).
+- Configurable values are `15s` / `30s` / `60s`, with default `60s`.
+- Concurrent updates from multiple subscribers follow the current implementation behavior: later registration wins.
+- This behavior is implementation-defined (not invalid usage); the effective interval is the most recently registered one.
 
 **Design Considerations**:
 - Independent feature (decoupled from TopSQL semantics).
@@ -155,13 +156,11 @@ type ExecutionContext struct {
 type StatementStats struct {
     data     StatementStatsMap
     finished *atomic.Bool
-    mu       sync.Mutex // Protects StatementStats; RWMutex was considered, but tick/finish paths both perform writes
+    mu       sync.Mutex // Protects StatementStats; tick/finish paths both perform writes
 
     execCtx *ExecutionContext // Currently executing statement
-    // finishedRUIncrements caches RU increments from the finish path,
-    // will be drained and aggregated by aggregator.ruAggregate() in the next 1s tick.
-    finishedRUIncrements RUIncrementMap
-    finishedOthersRU     float64
+    // finishedRUBuffer caches finish-path RU deltas and is drained every 1s tick.
+    finishedRUBuffer RUIncrementMap
 }
 
 // RUIncrementMap stores RU increments in a lightweight map
@@ -170,7 +169,7 @@ type RUIncrementMap map[UserSQLPlanDigest]float64
 
 **Lifecycle Management**:
 
-- **Session Creation**: `CreateStatementStats()` existing interface, new functionality: initialize `execCtx=nil`, and initialize `finishedRUIncrements`/`finishedOthersRU`
+- **Session Creation**: `CreateStatementStats()` keeps existing interface; RU path initializes `execCtx=nil` and `finishedRUBuffer`
 - **SQL Start**: `StartExecution()` creates/replaces current `execCtx` (with pre-constructed key: `(user, sql_digest, plan_digest)`)
 - **SQL Completion**: `FinishExecution()` calculates final ruDelta and writes to session-local finished buffer (with limit), then clears `execCtx`
 - **RU Sampling Aggregation**: `MergeRUInto()` executes in each 1s tick: drains finished buffer + samples active execCtx, updates LastRUSample
@@ -187,134 +186,94 @@ Uses delta calculation mechanism to avoid double counting:
 - **ruDelta <= 0**: Skip this sampling
 - **util.RUDetails is nil**: Skip this sampling
 - **Resource Control not enabled (`tidb_enable_resource_control = OFF`)**: Skip RU collection and reporting (avoid producing invalid all-zero data)
-- **Session finished RU buffer exceeds limit**: When exceeding `MaxFinishedRUKeysPerSession`, new key's RU increment is aggregated to `finishedOthersRU` (later merged into global `_others_`)
+- **Session finished RU buffer behavior**: `MergeRUInto()` drains `finishedRUBuffer` every tick and samples active execution RU in the same call.
 - **SQL Execution Completed**: Clear `execCtx`, stop sampling
 
 #### Data Flow Implementation
 
-**1s Sampling (delegated to aggregator)**:
+**Current Path (contract-level)**:
 
-```go
-// aggregator.run() extension
-func (m *aggregator) run() {
-	...
-    case <-tick.C:
-        m.ruAggregate()    // New RU aggregation
-        m.aggregate()      // Existing CPU/stmtstats aggregation
-    }
-	...
-}
-
-// RU aggregation: iterate active StatementStats, sample RU increments
-func (m *aggregator) ruAggregate() {
-    ...
-    incr := RUIncrements{Data: RUIncrementMap{}}
-    m.statsSet.Range(func(statsR, _ any) bool {
-        stats := statsR.(*StatementStats)
-        stats.MergeRUInto(&incr)
-        return true
-    })
-
-    if len(incr.Data) > 0 || incr.OthersRU > 0 {
-        m.collectors.Range(func(c, _ any) bool {
-            if rc, ok := c.(RUCollector); ok {
-                rc.CollectRUIncrements(incr)
-            }
-            return true
-        })
-    }
-}
-```
+1. `drainAndPushRU` runs on the 1-second tick and drains RU deltas from both active execution contexts and finished buffers.
+2. `CollectRUIncrements` receives drained increments.
+3. `ruWindowAggregator` ingests aligned 15s buckets, compacts closed buckets, and applies per-slice output caps for 60s closed-window reports.
+4. Final closed-window records are emitted as `ReportData.RURecords`.
 
 **Related Interface Description**:
 
 ```go
-type RUIncrements struct {
-	Data     RUIncrementMap
-	OthersRU float64
-}
-
-// RUCollector is an optional extension interface: can receive RU sampling data without changing existing Collector (CollectStmtStatsMap).
+// RUCollector is an optional extension interface: can receive RU sampling data
+// without changing existing Collector (CollectStmtStatsMap).
 type RUCollector interface {
-	CollectRUIncrements(increments RUIncrements)
+	CollectRUIncrements(data stmtstats.RUIncrementMap)
 }
 
-// RemoteTopSQLReporter.CollectRUIncrements: reporter receives RU increments and othersRU aggregated value from 1s tick,
-// writes to ruIncrementBuffer by timestamp_sec (performs two-level TopN + others pre-filtering on write).
-func (tsr *RemoteTopSQLReporter) CollectRUIncrements(increments RUIncrements)
+// Reporter wraps producer-side timestamp at enqueue time.
+type ruBatch struct {
+	data      stmtstats.RUIncrementMap
+	timestamp uint64
+}
+
+// RemoteTopSQLReporter.CollectRUIncrements: receives merged RU increments from
+// drainAndPushRU, wraps ruBatch(timestamp+data), and feeds ruWindowAggregator.
+func (tsr *RemoteTopSQLReporter) CollectRUIncrements(data stmtstats.RUIncrementMap)
 ```
 
-**Memory Control Mechanism (Two-level TopN + others aggregation)**:
+**Memory Control Mechanism (Aggregation guardrails + TopN)**:
 
-To prevent memory overflow in extreme scenarios (100 users × 5000 SQLs), uses two-level TopN filtering, evicted RU is aggregated to `_others_`:
-- **Layer 1**: Limit user count (Top 200 users), evict user with smallest totalRU when exceeding limit
-- **Layer 2**: Limit SQL count per user (Top 200 SQLs), evict SQL with smallest totalRU when exceeding limit
+To prevent memory overflow in extreme scenarios, TopRU uses layered caps instead of a single TopN rule: upstream 1s aggregation has a hard key cap (`maxRUKeysPerAggregate=10000`), and reporter-side compaction follows `400×400` (online pre-cap) → `200×200` (bucket close with `_others_`) → `100×100` (per output slice).
 
-This mechanism is reused across 1s/15s/60s tiers, only TopN thresholds differ (1s/15s: 200×200, 60s: 100×100).
+Note: for `item_interval=15s/30s`, a 60s report contains multiple slices, so total users in one 60s report can exceed 100.
 
 **Related Data Structures**
 
 ```go
 const (
-    MaxUsersPerTimestamp = 200
-    MaxSQLPerUser        = 200
+	maxTopUsers           = 200
+	maxTopSQLsPerUser     = 200
+	ruReportTopNUsers     = 100
+	ruReportTopNSQLsPerUser = 100
 )
 
-type userBuffer struct {
-	sqlRU      map[UserSQLPlanDigest]float64  // (user, sql, plan) -> RU (user is the same within the same userBuffer)
-	totalRU    float64
-	minRUKey   UserSQLPlanDigest
-	minRUValue float64
-}
-
-type timestampBuffer struct {
-    users       map[string]*userBuffer   // user -> userBuffer
-    othersRU    float64                  // Aggregated RU of evicted entries
-    minRUUser   string                   // Current minRU user (for eviction decision)
-    minRUValue  float64                  // Current minRU value (for eviction decision)
-}
-
-// ruIncrementBuffer caches 1s sampled RU increments by second.
-// Performs two-level TopN (200 users × 200 SQLs) pre-filtering on write.
-type ruIncrementBuffer struct {
-    items map[uint64]*timestampBuffer  // timestamp_sec -> 200×200 aggregation for that second
-}
-
-func (b *ruIncrementBuffer) Add(ts uint64, increments RUIncrementMap, othersRU float64)
-func (b *ruIncrementBuffer) TakeAll() map[uint64]*timestampBuffer
-
-// ruPointBucket caches aggregation results by 15s intervals.
-// key = interval start timestamp, e.g., t1, t16, t31, t46 (15s apart)
-// 100×100 final filtering at 60s reporting.
+// ruPointBucket: active bucket keeps 400×400 pre-cap collecting;
+// closed bucket keeps 200×200 compacted snapshot.
 type ruPointBucket struct {
-    items map[uint64]*timestampBuffer  // startTs -> 200×200 aggregation for that interval
+	collecting          *ruCollecting
+	compactedCollecting *ruCollecting
+	startTs             uint64
 }
 
-func (b *ruPointBucket) Merge(startTs uint64, tb *timestampBuffer)
-func (b *ruPointBucket) TakeAll() map[uint64]*timestampBuffer
+// ruWindowAggregator stores aligned 15s buckets and emits 60s closed-window reports.
+type ruWindowAggregator struct {
+	buckets           map[uint64]*ruPointBucket
+	lastReportedEndTs uint64
+	mu                sync.Mutex
+}
+
+func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RUIncrementMap)
+func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64)
+func (a *ruWindowAggregator) takeReportRecords(nowTs, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord
 ```
 
-**15s Micro-batch Processing**: Every 15s drain `ruIncrementBuffer`, merge and apply 200×200 TopN + others, write to `ruPointBucket`.
+**15s Bucket Rotation/Compaction**: incoming data is attributed to aligned 15s buckets; when a bucket becomes closed, it is compacted from `400×400` pre-cap to `200×200` snapshot.
 
 ```go
-// RemoteTopSQLReporter.processRUIncrementBuffer: triggered every 15s,
-// drains ruIncrementBuffer, applies 200×200 TopN + others, merges to ruPointBucket.
-func (tsr *RemoteTopSQLReporter) processRUIncrementBuffer()
+func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64)
 ```
 
-**60s Reporting**: Every `report_interval` (default 60s) takes out `ruPointBucket`, merges and applies 100×100 TopN + others final filtering and reports.
+**60s Closed-Window Reporting**: `ruWindowAggregator` takes one aligned 60s window; for each output slice (`item_interval=15s/30s/60s`) it applies `100×100` compacting, then serializes into `ReportData.RURecords`. For 15s/30s, multiple slices are included in one 60s report.
 
 ```go
-// RemoteTopSQLReporter.reportRUData: triggered every report_interval,
-// takes out ruPointBucket, applies 100×100 TopN + others final filtering, generates TopRURecord and reports.
-func (tsr *RemoteTopSQLReporter) reportRUData()
+func (a *ruWindowAggregator) takeReportRecords(nowTs, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord
 ```
 
 ### Data Model and Storage
 
 #### Storage Solution
 
-Uses separate storage from TopSQL, `collecting.records` stores CPU data, `collecting.ruRecords` stores RU data, no interference.
+Uses separate storage boundaries from TopSQL:
+- CPU stmtstats are still collected from `collecting.records` (TopSQL path).
+- RU records are produced by `ruAggregator.takeReportRecords(...)` and attached as `ReportData.RURecords` on report tick.
+- Current path does **not** rely on a `collecting.ruRecords` map.
 
 **Solution Comparison**:
 
@@ -322,11 +281,11 @@ Uses separate storage from TopSQL, `collecting.records` stores CPU data, `collec
 |----------|-------------|------------|
 | A: Extend records key | Change records to `(user, sql, plan)` key | ❌ High invasiveness, changes TopSQL semantics |
 | B: Embed RUByUser | Embed `map[user]ru` in tsItem | ❌ High memory/GC risk |
-| C: Tiered Storage | Add independent `ruRecords` | ✅ Low invasiveness, clear boundaries |
+| C: Window Aggregator + Side Output | Keep CPU in `collecting.records`, emit RU via `ruAggregator` into `ReportData.RURecords` | ✅ Low invasiveness, clear boundaries |
 
 **Selection Rationale**:
 - Does not change existing TopSQL (CPU TopN) semantics and main implementation
-- Directly meets "per-user Top 100 & users ≤ 100" product constraints
+- Directly matches the final output contract: each item-interval slice is compacted to Top 100 users × Top 100 SQLs per user; one 60s report may contain multiple slices
 - Naturally matches collectWorker/reportWorker's 60s reporting pipeline
 
 #### Data Structure Extension
@@ -342,29 +301,6 @@ Uses separate storage from TopSQL, `collecting.records` stores CPU data, `collec
 | TotalRU | float64 | Cumulative RU consumption (RRU + WRU) |
 | ExecCount | uint64 | Execution count |
 | SumDurationNs | uint64 | Cumulative execution time (nanoseconds) |
-
-```go
-// StatementStatsItem extension
-type StatementStatsItem struct {
-    // ... existing fields ...
-    TotalRU float64  // New: cumulative total RU
-}
-
-type ruRecord struct {
-    sqlDigest      []byte
-    planDigest     []byte
-    user           string   // Username
-    tsItems        tsItems
-    totalRU        float64  // Cumulative total RU
-}
-
-// collecting extension
-type collecting struct {
-    records   map[string]*record  // CPU data (key: sql+plan)
-    ruRecords map[string]*ruRecord  // New: RU data (key: user+sql+plan)
-    // ...
-}
-```
 
 ### Protobuf
 
@@ -415,7 +351,7 @@ type ReportData struct {
 
 | Category | Measure |
 |----------|---------|
-| Memory | Three-tier buffer design, 1s writes to lightweight buffer (200×200), 15s re-filters and merges to point bucket |
+| Memory | Staged guardrails (upstream key cap + bucket/output caps), see Memory Control and Related Data Structures |
 | CPU | RU collection reuses aggregator's 1s tick, no additional collection cycles |
 | Network | 60s batch reporting, reuses TopSQL's existing reporting pipeline |
 
@@ -426,11 +362,11 @@ type ReportData struct {
 | CPU/Algorithm | Optional optimization: two-level filtering uses linear scan by default for minRU maintenance; in high cardinality/frequent eviction scenarios, bounded min-heap can be used to maintain minRU, reducing scan overhead (whether to introduce depends on benchmark) |
 | Sampling Frequency | Optional optimization: current default is 1s sampling, since user-visible data updates at minute level, can consider reducing sampling frequency to 5s/10s to reduce CPU overhead |
 | GC/Alloc | Optional optimization: reuse temporary buffers for digest encoding/copying (e.g., sync.Pool) to reduce small object allocation and GC pressure under high QPS |
-| Concurrency | Optional optimization: ExecutionContext uses RWMutex (read-heavy, write-light) to reduce lock contention |
+| Concurrency | Keep `sync.Mutex` in current implementation; revisit lock strategy only with benchmark evidence under high-contention workloads |
 
 ### Risks and Mitigations
 
-- **OOM**: Reuses TopSQL's existing memory management mechanism + ruIncrementBuffer hard limit protection
+- **OOM**: Reuses TopSQL's existing memory management mechanism + ruWindowAggregator bounded-window protection
 - **CPU Spike**: RU collection and CPU collection are on the same call path, overhead is controllable
 - **Data Inaccuracy**: When Resource Control is not enabled, TopRU skips RU collection and reporting (avoids invalid all-zero data); RU is only counted when enabled
 
@@ -440,11 +376,11 @@ type ReportData struct {
 
 ## Limitation
 
-1. **Data Loss Due to Bounded Buffer in Collection Pipeline**: Collection pipeline uses bounded channel (capacity=2) to pass data, using non-blocking send to avoid affecting SQL execution. When `collectWorker` cannot process in time (e.g., GC pause, processing logic takes time) causing channel to be full, new sampling batches will be dropped, observable via `IgnoreCollectChannelFullCounter` metric. This behavior is the same as TopSQL.
+1. **Data Loss Due to Bounded Buffer in Collection Pipeline**: Collection pipeline uses bounded channel (capacity=2) to pass data, using non-blocking send to avoid affecting SQL execution. When `collectWorker` cannot process in time (e.g., GC pause, processing logic takes time) causing channel to be full, new sampling batches will be dropped, observable via `IgnoreCollectRUChannelFullCounter` metric.
 
 2. **Data Precision Impact**:
-   - **Historical Data of Boundary SQLs May Be Lost**: If a SQL does not enter a user's Top 100 within a timestamp, its RU data will be aggregated to global "_others_"; if that SQL enters Top 100 in subsequent timestamps, previous timestamp data cannot be recovered
-   - **TopN Boundary Fluctuation**: SQLs ranked 99-102 may repeatedly enter/exit Top 100 at each timestamp, causing some time points' data to be in "_others_"
+   - **Historical Data of Boundary SQLs May Be Lost**: If a SQL does not enter Top 100 in one output slice, its RU data in that slice is aggregated to global "_others_"; if that SQL enters Top 100 in later slices/windows, previously aggregated slice data cannot be recovered.
+   - **TopN Boundary Fluctuation**: SQLs ranked around 99-102 may repeatedly enter/exit Top 100 between adjacent slices/windows, causing some slice data to be aggregated into "_others_".
 
 3. **Cross-Node Limitation**: Data is only collected on the current TiDB node, reuses TopSQL's existing cross-node limitations
 
@@ -534,7 +470,7 @@ Note this is a **lower-bound payload estimate**; Go in-memory structures (e.g. m
 **Approach Description**:
 - At 1s collection, directly apply two-level TopN (200 users × 200 SQLs) on pointBucket
 - Maintain minHeap on each write, real-time eviction
-- Apply 100×100 final filtering at 60s reporting
+- Apply final per-slice filtering at 60s reporting
 
 **Shortcomings**:
 
