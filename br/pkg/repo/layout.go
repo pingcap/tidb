@@ -63,10 +63,7 @@ func NewBackupID(ts uint64) (BackupID, error) {
 }
 
 func ParseBackupID(raw string) (BackupID, error) {
-	if len(raw) != 16 {
-		return 0, errors.Errorf("invalid backup id %q: expect 16 hex characters", raw)
-	}
-	id, err := strconv.ParseUint(raw, 16, 64)
+	id, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
 	if err != nil {
 		return 0, errors.Annotatef(err, "invalid backup id %q", raw)
 	}
@@ -74,7 +71,22 @@ func ParseBackupID(raw string) (BackupID, error) {
 }
 
 func (id BackupID) String() string {
-	return fmt.Sprintf("%016x", uint64(id))
+	return strconv.FormatUint(uint64(id), 10)
+}
+
+func ParseBackupIDStorageName(raw string) (BackupID, error) {
+	if len(raw) != 16 {
+		return 0, errors.Errorf("invalid backup id storage name %q: expect 16 hex characters", raw)
+	}
+	id, err := strconv.ParseUint(raw, 16, 64)
+	if err != nil {
+		return 0, errors.Annotatef(err, "invalid backup id storage name %q", raw)
+	}
+	return BackupID(id), nil
+}
+
+func (id BackupID) StorageName() string {
+	return fmt.Sprintf("%016X", uint64(id))
 }
 
 func (id BackupID) IsZero() bool {

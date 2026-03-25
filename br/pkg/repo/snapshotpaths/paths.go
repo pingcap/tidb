@@ -28,7 +28,7 @@ const (
 )
 
 func MetadataDir(backupID repo.BackupID) string {
-	return path.Join("_meta", "snapshot", backupID.String())
+	return path.Join("_meta", "snapshot", backupID.StorageName())
 }
 
 func MetadataFile(backupID repo.BackupID) string {
@@ -40,9 +40,9 @@ func PendingDir(configHashHex string) string {
 }
 
 func PendingFile(configHashHex string, backupID repo.BackupID) string {
-	return path.Join(PendingDir(configHashHex), backupID.String()+".json")
+	return path.Join(PendingDir(configHashHex), backupID.StorageName()+".json")
 }
 
 func StoreDataPrefix(storeID uint64, backupID repo.BackupID) string {
-	return path.Join("_data", "snapshot", strconv.FormatUint(storeID, 10), backupID.String())
+	return path.Join("_data", "snapshot", strconv.FormatUint(storeID, 10), backupID.StorageName())
 }

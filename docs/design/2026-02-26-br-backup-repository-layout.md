@@ -99,13 +99,14 @@ Backup ID:
 - Allocate a *fresh* PD TSO as the backup ID, even if the user specifies `backup-ts`/`--backupts`.
 - The fresh PD TSO gives each backup run a unique object-key namespace. Reusing a user-specified snapshot TS directly would let repeated backups at the same snapshot TS reuse the same prefix and risk SST key collisions or ambiguous cleanup.
 - `backup-id` is therefore distinct from `backup-ts`: `backup-ts` selects the MVCC snapshot to read, while `backup-id` identifies this backup instance for naming, listing, and deletion.
-- Encode as lower-case hex, zero-padded to 16 characters (`hex16`) so lexical order matches numeric order.
+- Expose `backup-id` to users as a `uint64`.
+- Use fixed-width upper-case hex, zero-padded to 16 characters (`%016X`), only when naming external-storage paths so lexical order matches numeric order.
 
 ID formatting rule:
-- `<backup-id>` in repo-v1 paths is fixed-width hex (16 chars, lower-case).
+- `<backup-id>` in repo-v1 paths is fixed-width upper-case hex (16 chars).
 - `<store-id>` and the SST object names under `_data/snapshot/<store-id>/<backup-id>/` keep TiKV's legacy backend-specific formatting.
 
-BR prints `<backup-id>` (hex16) on success.
+BR prints the user-facing `<backup-id>` (`uint64`) on success.
 
 ### Pending Backup Index and Lifecycle
 
@@ -154,8 +155,8 @@ Repo v1 changes:
 
 Example (S3/local):
 ```
-_data/snapshot/123/000000000000f00d/456789_42_<sha256hex>_1700000000123_default.sst
-_data/snapshot/123/000000000000f00d/456789_42_<sha256hex>_1700000000123_write.sst
+_data/snapshot/123/000000000000F00D/456789_42_<sha256hex>_1700000000123_default.sst
+_data/snapshot/123/000000000000F00D/456789_42_<sha256hex>_1700000000123_write.sst
 ```
 
 SST format remains RocksDB SST (per CF), with existing compression/encryption behavior.
@@ -214,7 +215,7 @@ Command:
 - `br restore full -s <repo> --storage-layout=repo-v1 --backup-id <backup-id> ...`
 
 Semantics:
-- Restores the snapshot backup identified by `--backup-id` from the repo.
+- Restores the snapshot backup identified by the user-facing `backup-id` (`uint64`) from the repo.
 
 #### Discard Pending Backup
 
@@ -238,7 +239,7 @@ Command:
 
 Semantics:
 - Lists completed snapshot backups in the repo.
-- Outputs `<backup-id>`, snapshot time/TS, backup type, and size.
+- Outputs the user-facing `backup-id` (`uint64`), snapshot time/TS, backup type, and size.
 
 #### Files of a Backup
 
@@ -249,7 +250,7 @@ Command:
 Semantics:
 - `files list` prints the SST objects that belong to the specified backup.
 - `files delete` deletes the SST objects that belong to the specified backup and also removes `_meta/snapshot/<backup-id>/...` if present.
-- Still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the `<backup-id>` subprefix in each shard.
+- Still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard.
 
 #### Orphans
 
@@ -260,7 +261,7 @@ Command:
 Semantics:
 - `orphans list` prints SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
 - `orphans delete` deletes SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
-- Can be implemented by comparing `_meta/snapshot/` entries with `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
+- Can be implemented by comparing `_meta/snapshot/` entries with upper-case hex `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
 - This is still expected to be more expensive than listing known backups.
 
 ### Compatibility
@@ -310,7 +311,8 @@ Scope:
 Repo-v1 behavior:
 - Verify repo marker and `backup.lock` creation.
 - Verify pending pointer creation at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
-- Verify backup-id is PD-assigned and hex16 formatted.
+- Verify backup-id is PD-assigned as a user-facing `uint64`.
+- Verify the on-storage `<backup-id>` path segment is fixed-width upper-case hex.
 - Verify the baseline implementation path can produce `_data/snapshot/<store-id>/<backup-id>/...` by rewriting the per-store `StorageBackend` prefix.
 - Verify the rewritten backend prefix preserves `<store-id>` as the leading path component.
 - Verify SST objects are written under `_data/snapshot/<store-id>/<backup-id>/` while keeping legacy TiKV naming within that subprefix.

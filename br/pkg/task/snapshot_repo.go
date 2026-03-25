@@ -226,7 +226,7 @@ func listPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHa
 		if path.Ext(filePath) != ".json" {
 			return nil
 		}
-		id, err := repo.ParseBackupID(strings.TrimSuffix(path.Base(filePath), ".json"))
+		id, err := repo.ParseBackupIDStorageName(strings.TrimSuffix(path.Base(filePath), ".json"))
 		if err != nil {
 			return errors.Annotatef(err, "parse pending backup marker %s", filePath)
 		}

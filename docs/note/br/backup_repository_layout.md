@@ -9,7 +9,7 @@
 
 ## Backup ID And Restore Binding
 
-- `backup-id` is allocated from a fresh PD TSO and encoded as fixed-width lower-case hex.
+- `backup-id` is allocated from a fresh PD TSO, exposed to users as decimal `uint64`, and encoded as fixed-width upper-case hex only in storage paths.
 - `br restore full|db|table --storage-layout=repo-v1 --backup-id <id>` resolves metadata from `_meta/snapshot/<backup-id>/backupmeta` while still using the repo root backend for data files.
 - Legacy snapshot backup and restore keep the old root-level `backupmeta` layout unchanged.
 

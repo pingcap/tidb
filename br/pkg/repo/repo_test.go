@@ -41,9 +41,14 @@ func TestLayoutAndBackupID(t *testing.T) {
 
 	id, err := repo.NewBackupID(0xf00d)
 	require.NoError(t, err)
-	require.Equal(t, "000000000000f00d", id.String())
+	require.Equal(t, "61453", id.String())
+	require.Equal(t, "000000000000F00D", id.StorageName())
 
-	parsed, err := repo.ParseBackupID("000000000000F00D")
+	parsed, err := repo.ParseBackupID("61453")
+	require.NoError(t, err)
+	require.Equal(t, id, parsed)
+
+	parsed, err = repo.ParseBackupIDStorageName("000000000000F00D")
 	require.NoError(t, err)
 	require.Equal(t, id, parsed)
 

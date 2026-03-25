@@ -32,7 +32,7 @@ import (
 func TestSnapshotRepoFlags(t *testing.T) {
 	flags := pflag.NewFlagSet("snapshot", pflag.ContinueOnError)
 	DefineSnapshotRepoFlags(flags, true)
-	require.NoError(t, flags.Parse([]string{"--storage-layout=repo-v1", "--backup-id=000000000000f00d"}))
+	require.NoError(t, flags.Parse([]string{"--storage-layout=repo-v1", "--backup-id=61453"}))
 
 	layout, err := parseSnapshotStorageLayoutFlag(flags)
 	require.NoError(t, err)
@@ -49,14 +49,14 @@ func TestRewriteDataBackendForStore(t *testing.T) {
 	}
 	rewritten, err := rewriteDataBackendForStore(local, 123, repo.BackupID(0xf00d))
 	require.NoError(t, err)
-	require.Equal(t, "/tmp/repo/_data/snapshot/123/000000000000f00d", rewritten.GetLocal().Path)
+	require.Equal(t, "/tmp/repo/_data/snapshot/123/000000000000F00D", rewritten.GetLocal().Path)
 
 	s3 := &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{Bucket: "bucket", Prefix: "root"}},
 	}
 	rewritten, err = rewriteDataBackendForStore(s3, 7, repo.BackupID(0xbeef))
 	require.NoError(t, err)
-	require.Equal(t, "root/_data/snapshot/7/000000000000beef", rewritten.GetS3().Prefix)
+	require.Equal(t, "root/_data/snapshot/7/000000000000BEEF", rewritten.GetS3().Prefix)
 }
 
 func TestValidateSnapshotBackupRepoConfigRejectsNoCheckpoint(t *testing.T) {
@@ -72,7 +72,7 @@ func TestValidateSnapshotBackupRepoConfigRejectsNoCheckpoint(t *testing.T) {
 func TestSnapshotRegistrationBackupID(t *testing.T) {
 	require.Empty(t, snapshotRegistrationBackupID(repo.LayoutLegacy, repo.BackupID(0x1234)))
 	require.Empty(t, snapshotRegistrationBackupID(repo.LayoutRepoV1, 0))
-	require.Equal(t, "0000000000001234", snapshotRegistrationBackupID(repo.LayoutRepoV1, repo.BackupID(0x1234)))
+	require.Equal(t, "4660", snapshotRegistrationBackupID(repo.LayoutRepoV1, repo.BackupID(0x1234)))
 }
 
 func TestResolveUnfinishedPendingBackups(t *testing.T) {
