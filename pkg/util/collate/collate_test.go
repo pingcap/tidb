@@ -257,6 +257,10 @@ func TestLatin1SwedishCIKeyFallbackForNonLatin1Runes(t *testing.T) {
 	}
 
 	collator := GetCollator("latin1_swedish_ci")
+
+	// start comparing with empty string which is smallest.
+	prevCase := testCase{"", nil}
+	// the test cases should be sorted in strictly increasing latin1_swedish_ci order
 	cases := []testCase{
 		{"÷", []byte{0xF7}},
 		{"ÿ", []byte{0xFF, 0x00}},
@@ -265,7 +269,6 @@ func TestLatin1SwedishCIKeyFallbackForNonLatin1Runes(t *testing.T) {
 		{"😀", []byte{0xFF, 0x81, 0xF6, 0x00}},
 	}
 
-	var prevCase testCase
 	for _, c := range cases {
 		require.Equal(t, c.key, collator.Key(c.str), c.str)
 		require.Less(t, bytes.Compare(prevCase.key, c.key), 0, c.str)
