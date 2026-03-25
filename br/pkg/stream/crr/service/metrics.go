@@ -113,29 +113,6 @@ var (
 	}, []string{"task"})
 )
 
-type statusMetricSnapshot struct {
-	TaskName string
-
-	Live  bool
-	Ready bool
-	State string
-	Phase string
-
-	CurrentRound      uint64
-	LastLoopIteration uint64
-
-	LastUpstreamCheckpoint uint64
-	SafeCheckpoint         uint64
-	SyncedTS               uint64
-
-	AliveStoreCount      int
-	PendingFileCount     int
-	ConsecutiveFailures  uint64
-	UpstreamReadMetaFile int
-	EstimatedSyncLogFile int
-	DownstreamCheckFile  int
-}
-
 func init() {
 	prometheus.MustRegister(statusLive)
 	prometheus.MustRegister(statusReady)
@@ -154,7 +131,7 @@ func init() {
 	prometheus.MustRegister(downstreamCheckFileCount)
 }
 
-func observeStatusMetrics(snapshot statusMetricSnapshot) {
+func observeStatusMetrics(snapshot *StatusSnapshot) {
 	for _, state := range []string{
 		stateStarting, stateRunning, stateDegraded, stateStopped,
 	} {
@@ -190,9 +167,9 @@ func observeStatusMetrics(snapshot statusMetricSnapshot) {
 	aliveStoreCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.AliveStoreCount))
 	pendingFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.PendingFileCount))
 	consecutiveFailures.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.ConsecutiveFailures))
-	upstreamReadMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.UpstreamReadMetaFile))
-	estimatedSyncLogFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.EstimatedSyncLogFile))
-	downstreamCheckFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.DownstreamCheckFile))
+	upstreamReadMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.UpstreamReadMetaFileCount))
+	estimatedSyncLogFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.EstimatedSyncLogFileCount))
+	downstreamCheckFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.DownstreamCheckFileCount))
 }
 
 func boolToFloat(v bool) float64 {
