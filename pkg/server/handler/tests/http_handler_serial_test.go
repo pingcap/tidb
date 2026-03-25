@@ -715,3 +715,53 @@ func TestTTL(t *testing.T) {
 	require.Nil(t, obj)
 	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
 }
+
+func TestIngestParam(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testCases := []struct {
+		url         string
+		defaultVal  any
+		modVal      any
+		expectedVal any
+	}{
+		{"/ingest/max-batch-split-ranges", float64(2048), 1000, float64(1000)},
+		{"/ingest/max-split-ranges-per-sec", float64(0), 2000, float64(2000)},
+		{"/ingest/max-ingest-inflight", float64(0), 1000, float64(1000)},
+		{"/ingest/max-ingest-per-sec", float64(0), 2000, float64(2000)},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.url, func(t *testing.T) {
+			resp, err := ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder := json.NewDecoder(resp.Body)
+			var payload struct {
+				Value  float64 `json:"value"`
+				IsNull bool    `json:"is_null"`
+			}
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.defaultVal, payload.Value)
+
+			resp, err = ts.PostStatus(tc.url, "", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %v}`, tc.modVal))))
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			resp, err = ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder = json.NewDecoder(resp.Body)
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedVal, payload.Value)
+		})
+	}
+}
