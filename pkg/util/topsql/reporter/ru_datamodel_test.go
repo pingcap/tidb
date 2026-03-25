@@ -357,6 +357,67 @@ func TestRUCollectingEmptyUserAndGlobalOthersRemainDistinct(t *testing.T) {
 	require.True(t, hasGlobalOthers)
 }
 
+func TestRUCollectingMergeFromKeepsEmptyUserDistinctFromGlobalOthers(t *testing.T) {
+	dst := newRUCollectingWithCaps(1, 1)
+
+	// Keep a real empty-user bucket in destination, including per-user others SQL.
+	dst.add(1000, stmtstats.RUKey{
+		User:       "",
+		SQLDigest:  stmtstats.BinaryDigest("sql-empty-top"),
+		PlanDigest: stmtstats.BinaryDigest("plan-empty-top"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      10,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+	dst.add(1001, stmtstats.RUKey{
+		User:       "",
+		SQLDigest:  stmtstats.BinaryDigest("sql-empty-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-empty-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      8,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	src := newRUCollectingWithCaps(1, 1)
+	src.add(1002, stmtstats.RUKey{
+		User:       "other@127.0.0.1",
+		SQLDigest:  stmtstats.BinaryDigest("sql-other-top"),
+		PlanDigest: stmtstats.BinaryDigest("plan-other-top"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      7,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+	// Overflow one more user in source so mergeFrom path also merges src.othersUser.
+	src.add(1003, stmtstats.RUKey{
+		User:       "other2@127.0.0.1",
+		SQLDigest:  stmtstats.BinaryDigest("sql-other-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-other-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      6,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	dst.mergeFrom(src, 0, false)
+	records := dst.toTopRURecords([]byte("ks"))
+
+	var hasEmptyUserOthers bool
+	var hasGlobalOthers bool
+	for _, rec := range records {
+		if rec.User == "" && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasEmptyUserOthers = true
+		}
+		if rec.User == othersUserWireLabel && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasGlobalOthers = true
+		}
+	}
+	require.True(t, hasEmptyUserOthers)
+	require.True(t, hasGlobalOthers)
+}
+
 func TestRUCollectingAddBatch(t *testing.T) {
 	collecting := newRUCollecting()
 

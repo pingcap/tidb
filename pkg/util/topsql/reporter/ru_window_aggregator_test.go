@@ -399,6 +399,8 @@ func TestRUWindowAggregatorFinalReportCappedTo100x100(t *testing.T) {
 			continue
 		}
 		if rec.User == othersUserWireLabel {
+			require.Zero(t, len(rec.SqlDigest))
+			require.Zero(t, len(rec.PlanDigest))
 			continue
 		}
 		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {
@@ -494,6 +496,8 @@ func TestRUWindowAggregatorOverCapBehaviorKeepsHotKeys(t *testing.T) {
 	for i := range records {
 		rec := records[i]
 		if rec.User == othersUserWireLabel {
+			require.Zero(t, len(rec.SqlDigest))
+			require.Zero(t, len(rec.PlanDigest))
 			continue
 		}
 		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {
