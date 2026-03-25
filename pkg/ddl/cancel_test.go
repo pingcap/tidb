@@ -245,6 +245,7 @@ func TestCancelVariousJobs(t *testing.T) {
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
+	fulltextSortURI := startFakeGCSSortURI(t)
 
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -287,18 +288,18 @@ func TestCancelVariousJobs(t *testing.T) {
 	tk.MustExec("use test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(2048)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCloudImportExecutor", `return()`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
 	}()
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
 
 	i := atomicutil.NewInt64(0)
 	canceled := atomicutil.NewBool(false)
@@ -333,6 +334,11 @@ func TestCancelVariousJobs(t *testing.T) {
 		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
+		if requiresFulltextGlobalSort(tc) {
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_cloud_storage_uri = '%s'", fulltextSortURI))
+		} else {
+			tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+		}
 		if tc.onJobBefore {
 			resetHook()
 			for _, prepareSQL := range tc.prepareSQL {
@@ -372,6 +378,18 @@ func TestCancelVariousJobs(t *testing.T) {
 			}
 		}
 	}
+}
+
+func requiresFulltextGlobalSort(tc testCancelJob) bool {
+	if strings.Contains(tc.sql, "fulltext index") {
+		return true
+	}
+	for _, sql := range tc.prepareSQL {
+		if strings.Contains(sql, "fulltext index") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCancelForAddUniqueIndex(t *testing.T) {

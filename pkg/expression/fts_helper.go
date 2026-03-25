@@ -57,28 +57,34 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 	return false
 }
 
-// ExprCoveredByOneTiCIIndex checks whether the given expr is fully covered by one a TiCI index.
-// A TiCI index accepts the
+// ExprCoveredByOneTiCIIndex checks whether the given expr is fully covered by one TiCI index.
+// Single-column FTS helper functions (`fts_match_xxx`) only require their matched column to
+// belong to the helper-eligible FTS column set, while multi-column FTS expressions must match
+// the column set of the regular FULLTEXT index definition.
 func ExprCoveredByOneTiCIIndex(
 	expr Expression,
-	ftsColIDs *intset.FastIntSet,
-	invertedIndexesColIDs *intset.FastIntSet,
+	ftsCols *intset.FastIntSet,
+	colsInFulltextIdx *intset.FastIntSet,
+	invertedCols *intset.FastIntSet,
 ) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		if _, ok := FTSFuncMap[x.FuncName.L]; ok {
-			for i := 1; i < len(x.GetArgs()); i++ {
-				arg := x.GetArgs()[i].(*Column)
-				if !ftsColIDs.Has(int(arg.ID)) {
-					return false
-				}
+		switch x.FuncName.L {
+		case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+			if len(x.GetArgs()) == 2 {
+				arg, ok := x.GetArgs()[1].(*Column)
+				return ok && ftsCols.Has(int(arg.ID))
 			}
-			return true
+			matchedColSet, ok := collectFTSMatchedColumnSet(x)
+			return ok && matchedColSet.Equals(*colsInFulltextIdx)
+		case ast.FTSMysqlMatchAgainst:
+			matchedColSet, ok := collectFTSMatchedColumnSet(x)
+			return ok && matchedColSet.Equals(*colsInFulltextIdx)
 		}
 		switch x.FuncName.L {
 		case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.IsTruthWithNull:
 			for _, arg := range x.GetArgs() {
-				covered := ExprCoveredByOneTiCIIndex(arg, ftsColIDs, invertedIndexesColIDs)
+				covered := ExprCoveredByOneTiCIIndex(arg, ftsCols, colsInFulltextIdx, invertedCols)
 				if !covered {
 					return false
 				}
@@ -89,10 +95,10 @@ func ExprCoveredByOneTiCIIndex(
 			_, lhsIsConst := x.GetArgs()[0].(*Constant)
 			_, rhsIsConst := x.GetArgs()[1].(*Constant)
 			if lhsIsCol && rhsIsConst {
-				return invertedIndexesColIDs.Has(int(lhsCol.ID))
+				return invertedCols.Has(int(lhsCol.ID))
 			}
 			if rhsIsCol && lhsIsConst {
-				return invertedIndexesColIDs.Has(int(rhsCol.ID))
+				return invertedCols.Has(int(rhsCol.ID))
 			}
 			return false
 		default:
@@ -102,6 +108,73 @@ func ExprCoveredByOneTiCIIndex(
 		return true
 	}
 	return true
+}
+
+// DiagnoseUnmatchedFTSIndexReason returns a more specific reason for unsupported FTS usage.
+// It currently specializes the hybrid-index multi-column cases and otherwise returns an empty string.
+func DiagnoseUnmatchedFTSIndexReason(
+	expr Expression,
+	regularFulltextColSets []intset.FastIntSet,
+	hybridFulltextColSets []intset.FastIntSet,
+) string {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		switch x.FuncName.L {
+		case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+			if len(x.GetArgs()) <= 2 {
+				return ""
+			}
+			matchedColSet, ok := collectFTSMatchedColumnSet(x)
+			if !ok || matchesFulltextColumnSet(regularFulltextColSets, matchedColSet) {
+				return ""
+			}
+			if matchesFulltextColumnSet(hybridFulltextColSets, matchedColSet) {
+				return "Multi-column fts_match_xxx is not supported on hybrid fulltext indexes; use multiple single-column fts_match_xxx functions instead"
+			}
+			return ""
+		case ast.FTSMysqlMatchAgainst:
+			if len(x.GetArgs()) <= 2 {
+				return ""
+			}
+			matchedColSet, ok := collectFTSMatchedColumnSet(x)
+			if !ok || matchesFulltextColumnSet(regularFulltextColSets, matchedColSet) {
+				return ""
+			}
+			if matchesFulltextColumnSet(hybridFulltextColSets, matchedColSet) {
+				return "Multi-column MATCH AGAINST is not supported on hybrid fulltext indexes; use multiple single-column fts_match_xxx functions instead"
+			}
+			return ""
+		default:
+			for _, arg := range x.GetArgs() {
+				reason := DiagnoseUnmatchedFTSIndexReason(arg, regularFulltextColSets, hybridFulltextColSets)
+				if reason != "" {
+					return reason
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func collectFTSMatchedColumnSet(expr *ScalarFunction) (intset.FastIntSet, bool) {
+	matchedColSet := intset.NewFastIntSet()
+	for i := 1; i < len(expr.GetArgs()); i++ {
+		arg, ok := expr.GetArgs()[i].(*Column)
+		if !ok {
+			return intset.FastIntSet{}, false
+		}
+		matchedColSet.Insert(int(arg.ID))
+	}
+	return matchedColSet, true
+}
+
+func matchesFulltextColumnSet(fulltextColSets []intset.FastIntSet, matchedColSet intset.FastIntSet) bool {
+	for _, idxColSet := range fulltextColSets {
+		if idxColSet.Equals(matchedColSet) {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectColumnIDForFTS collects column IDs from a complex FullTextSearch expression.
@@ -186,99 +259,107 @@ func RewriteMySQLMatchAgainstRecursively(
 		return expr, false, nil
 	}
 
-	newExpr, err := rewriteOneMySQLMatchAgainst(bctx, scalarFunc, parserType)
+	newExpr, changed, err := rewriteOneMySQLMatchAgainst(bctx, scalarFunc, parserType)
 	if err != nil {
 		return expr, false, err
 	}
-	return newExpr, true, nil
+	return newExpr, changed, nil
 }
 
 func rewriteOneMySQLMatchAgainst(
 	bctx BuildContext,
 	scalarFunc *ScalarFunction,
 	parserType model.FullTextParserType,
-) (Expression, error) {
+) (Expression, bool, error) {
 	sig, ok := scalarFunc.Function.(*builtinFtsMysqlMatchAgainstSig)
 	if !ok {
-		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, scalarFunc.Function)
+		return nil, false, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, scalarFunc.Function)
 	}
 	if sig.modifier != ast.FulltextSearchModifierBooleanMode {
-		return nil, errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+		return nil, false, errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+	}
+	if scalarFunc.GetArgs()[0].(*Constant).Value.IsNull() {
+		return &Constant{
+			Value:   types.NewDatum(nil),
+			RetType: scalarFunc.RetType.Clone(),
+		}, true, nil
 	}
 
+	patternGroup, err := parseMySQLMatchAgainstBooleanMode(scalarFunc, parserType)
+	if err != nil {
+		return nil, false, err
+	}
+	expr, err := rewriteBooleanGroupToFTSExpr(bctx, scalarFunc.GetArgs()[1:], patternGroup, parserType, scalarFunc.RetType)
+	if err != nil {
+		return nil, false, err
+	}
+	return expr, true, nil
+}
+
+func parseMySQLMatchAgainstBooleanMode(
+	scalarFunc *ScalarFunction,
+	parserType model.FullTextParserType,
+) (*matchagainst.BooleanGroup, error) {
 	patternStr := scalarFunc.GetArgs()[0].(*Constant).Value.GetString()
-	var (
-		patternGroup *matchagainst.BooleanGroup
-		err          error
-	)
 	switch parserType {
 	case model.FullTextParserTypeNgramV1:
-		patternGroup, err = matchagainst.ParseNgramBooleanMode(patternStr)
+		return matchagainst.ParseNgramBooleanMode(patternStr)
 	case model.FullTextParserTypeStandardV1, model.FullTextParserTypeMultilingualV1:
 		// STANDARD and MULTILINGUAL both use the standard BOOLEAN MODE parser semantics in TiDB.
-		patternGroup, err = matchagainst.ParseStandardBooleanMode(patternStr)
+		return matchagainst.ParseStandardBooleanMode(patternStr)
 	default:
 		return nil, errors.Errorf("unsupported fulltext parser type: %s", parserType)
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	argsBuffer := make([]Expression, len(scalarFunc.GetArgs()))
-	for i := 1; i < len(scalarFunc.GetArgs()); i++ {
-		argsBuffer[i] = scalarFunc.GetArgs()[i]
-	}
-	return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, patternGroup)
 }
 
 func rewriteBooleanGroupToFTSExpr(
 	bctx BuildContext,
-	argsBuffer []Expression,
+	matchCols []Expression,
 	group *matchagainst.BooleanGroup,
+	parserType model.FullTextParserType,
+	foldedRetType *types.FieldType,
 ) (Expression, error) {
-	if group == nil {
-		return nil, errors.New("invalid nil boolean group")
+	if err := validateMySQLMatchAgainstBooleanGroup(group); err != nil {
+		return nil, err
 	}
-	// Current limitation of TiDB.
-	if len(group.Must)+len(group.MustNot) > 0 && len(group.Should) > 0 {
-		return nil, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
-	}
-	if len(group.Must)+len(group.MustNot) == 0 && len(group.Should) > 1 {
-		return nil, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
-	}
-	// Compatible with MySQL, if there is no valid term in the pattern or only negative search, we return a constant false.
-	if (len(group.Must)+len(group.MustNot)+len(group.Should) == 0) ||
-		(len(group.Must)+len(group.Should) == 0 && len(group.MustNot) > 0) {
-		return &Constant{
-			Value:   types.NewIntDatum(0),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}, nil
+	if matchNothingForMySQLMatchAgainst(group) {
+		return buildMatchAgainstConstant(foldedRetType, false), nil
 	}
 
-	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
+	// TiCI currently executes MATCH ... AGAINST as a no-score filter. When the
+	// boolean query contains at least one MUST term, MySQL treats SHOULD terms as
+	// optional score contributors, which cannot be represented in the filter-only
+	// path. In that case we keep the MUST / MUST NOT filters and ignore SHOULD.
+	includeShouldInFilter := len(group.Must) == 0
+	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot))
+	if includeShouldInFilter {
+		searchFuncs = make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
+	}
 	for _, item := range group.Must {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, matchCols, item, parserType)
 		if err != nil {
 			return nil, err
 		}
 		searchFuncs = append(searchFuncs, f)
 	}
 	for _, item := range group.MustNot {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, matchCols, item, parserType)
 		if err != nil {
 			return nil, err
 		}
 		nf := NewFunctionInternal(bctx, ast.UnaryNot, types.NewFieldType(mysql.TypeDouble), f)
 		searchFuncs = append(searchFuncs, nf)
 	}
-	for _, item := range group.Should {
-		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
-		if err != nil {
-			return nil, err
+	if includeShouldInFilter {
+		for _, item := range group.Should {
+			f, err := rewriteBooleanClauseToFTSExpr(bctx, matchCols, item, parserType)
+			if err != nil {
+				return nil, err
+			}
+			searchFuncs = append(searchFuncs, f)
 		}
-		searchFuncs = append(searchFuncs, f)
 	}
-	if len(group.Should) > 0 {
+	if includeShouldInFilter && len(group.Should) > 0 {
 		startIdx := len(group.Must) + len(group.MustNot)
 		endIdx := startIdx + len(group.Should)
 		orShould := ComposeDNFCondition(bctx, searchFuncs[startIdx:endIdx]...)
@@ -290,28 +371,77 @@ func rewriteBooleanGroupToFTSExpr(
 
 func rewriteBooleanClauseToFTSExpr(
 	bctx BuildContext,
-	argsBuffer []Expression,
+	matchCols []Expression,
 	item matchagainst.BooleanClause,
+	parserType model.FullTextParserType,
 ) (Expression, error) {
 	switch x := item.Expr.(type) {
 	case *matchagainst.BooleanTerm:
-		argsBuffer[0] = &Constant{
-			Value:   types.NewStringDatum(x.Text()),
-			RetType: types.NewFieldType(mysql.TypeString),
+		funcName := ast.FTSMatchWord
+		if x.Wildcard {
+			funcName = ast.FTSMatchPrefix
+		} else if parserType == model.FullTextParserTypeNgramV1 {
+			funcName = ast.FTSMatchPhrase
 		}
-		if !x.Wildcard {
-			return NewFunctionInternal(bctx, ast.FTSMatchWord, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
-		}
-		return NewFunctionInternal(bctx, ast.FTSMatchPrefix, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
+		return rewriteSingleQueryToFTSExpr(bctx, funcName, x.Text(), matchCols), nil
 	case *matchagainst.BooleanPhrase:
-		argsBuffer[0] = &Constant{
-			Value:   types.NewStringDatum(x.Text()),
-			RetType: types.NewFieldType(mysql.TypeString),
-		}
-		return NewFunctionInternal(bctx, ast.FTSMatchPhrase, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
+		return rewriteSingleQueryToFTSExpr(bctx, ast.FTSMatchPhrase, x.Text(), matchCols), nil
 	case *matchagainst.BooleanGroup:
-		return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, x)
+		return rewriteBooleanGroupToFTSExpr(bctx, matchCols, x, parserType, types.NewFieldType(mysql.TypeTiny))
 	default:
 		return nil, errors.Errorf("unsupported boolean expression: %T", item.Expr)
 	}
+}
+
+func rewriteSingleQueryToFTSExpr(
+	bctx BuildContext,
+	funcName string,
+	query string,
+	matchCols []Expression,
+) Expression {
+	args := make([]Expression, 0, len(matchCols)+1)
+	args = append(args, &Constant{
+		Value:   types.NewStringDatum(query),
+		RetType: types.NewFieldType(mysql.TypeString),
+	})
+	args = append(args, matchCols...)
+	return NewFunctionInternal(bctx, funcName, types.NewFieldType(mysql.TypeDouble), args...)
+}
+
+func buildMatchAgainstConstant(retType *types.FieldType, isNull bool) *Constant {
+	clonedRetType := retType.Clone()
+	if isNull {
+		return &Constant{
+			Value:   types.NewDatum(nil),
+			RetType: clonedRetType,
+		}
+	}
+
+	switch clonedRetType.GetType() {
+	case mysql.TypeFloat, mysql.TypeDouble:
+		return &Constant{
+			Value:   types.NewDatum(float64(0)),
+			RetType: clonedRetType,
+		}
+	default:
+		return &Constant{
+			Value:   types.NewIntDatum(0),
+			RetType: clonedRetType,
+		}
+	}
+}
+
+func validateMySQLMatchAgainstBooleanGroup(group *matchagainst.BooleanGroup) error {
+	if group == nil {
+		return errors.New("invalid nil boolean group")
+	}
+	return nil
+}
+
+// matchNothingForMySQLMatchAgainst reports whether, for MySQL compatibility, a
+// BOOLEAN MODE query should be rewritten to a constant false, including an empty
+// query and a query that only contains negative terms.
+func matchNothingForMySQLMatchAgainst(group *matchagainst.BooleanGroup) bool {
+	return (len(group.Must)+len(group.MustNot)+len(group.Should) == 0) ||
+		(len(group.Must)+len(group.Should) == 0 && len(group.MustNot) > 0)
 }

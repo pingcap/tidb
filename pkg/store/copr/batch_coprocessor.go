@@ -1252,7 +1252,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	} else {
 		if req.StoreType == kv.TiFlash && req.FullText {
 			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-			tasks, err = buildBatchCopTasksForFullText(c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
+			tasks, err = buildBatchCopTasksForFullText(ctx, c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
 		} else {
 			// TODO: merge the if branch.
 			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
@@ -1416,6 +1416,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 			b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
 		}
 		return buildBatchCopTasksForFullText(
+			ctx,
 			b.store,
 			b.req.FullTextInfo.TableID,
 			b.req.FullTextInfo.IndexID,
@@ -1787,11 +1788,11 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	return res, nil
 }
 
-func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges) ([]*batchCopTask, error) {
+func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges) ([]*batchCopTask, error) {
 	cmdType := tikvrpc.CmdBatchCop
 	cache := store.GetTiCIShardCache()
 	tasks := make([]*batchCopTask, 0)
-	ret, err := cache.BatchLocateKeyRanges(context.TODO(), tableID, indexID, keyRanges.ToRanges())
+	ret, err := cache.BatchLocateKeyRanges(ctx, tableID, indexID, keyRanges.ToRanges())
 	if err != nil {
 		return nil, err
 	}
