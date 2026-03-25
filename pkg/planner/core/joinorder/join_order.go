@@ -346,7 +346,7 @@ func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
 
 func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	if len(j.group.leadingHints) > 0 {
-		// TODO support hint for DP
+		// TODO follow the old implementation, hint doesn't support in DP for now.
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
 	}
 
@@ -368,7 +368,7 @@ func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 		}
 	}
 	if !ok {
-		// TODO warning
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("no valid join order found, the original join order will be used")
 		return j.group.root, nil
 	}
 	return plan, nil
