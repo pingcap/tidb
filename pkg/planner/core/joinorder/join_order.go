@@ -384,7 +384,7 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 
 	nodeCount := len(nodes)
 	if nodeCount > 63 {
-		// Sanity check: TiDBOptJoinResorderThreshold should prevent this from happening, but we check it here just in case.
+		// Sanity check: TiDBOptJoinReorderThreshold should prevent this from happening, but we check it here just in case.
 		return nil, false, errors.Errorf("DP join reorder supports at most 63 nodes, got %d", nodeCount)
 	}
 
@@ -410,9 +410,9 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 		for left := (subset - 1) & subset; left > 0; left = (left - 1) & subset {
 			right := subset ^ left
 			if left > right {
-				// TODO check if it's true:
 				// We only need to consider one direction of the partition (left, right) and skip the other (right, left) to avoid duplicate work,
-				// because the join order (A join B) and (B join A) will be considered in the same iteration when left and right are swapped.
+				// because the join order (A join B) and (B join A) will be considered in the same iteration when left and right are swapped,
+				// check ConflictDetector.CheckConnection() for more details.
 				continue
 			}
 			leftPlan := bestPlan[left]
