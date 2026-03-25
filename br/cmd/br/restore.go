@@ -198,6 +198,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -212,6 +213,7 @@ func newDBRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 
@@ -225,6 +227,7 @@ func newTableRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 

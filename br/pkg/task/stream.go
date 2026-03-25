@@ -2277,6 +2277,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 
 	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
+		BackupID:          snapshotRegistrationBackupID(cfg.Layout, cfg.BackupID),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,

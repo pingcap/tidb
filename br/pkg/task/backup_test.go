@@ -9,6 +9,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -147,6 +148,18 @@ func TestBackupConfigHash(t *testing.T) {
 	{
 		testCfg := *cfg
 		testCfg.UseCheckpoint = false
+		hashCheck(t, &testCfg, originalHash, false)
+	}
+
+	{
+		testCfg := *cfg
+		testCfg.Layout = repo.LayoutLegacy
+		hashCheck(t, &testCfg, originalHash, true)
+	}
+
+	{
+		testCfg := *cfg
+		testCfg.Layout = repo.LayoutRepoV1
 		hashCheck(t, &testCfg, originalHash, false)
 	}
 

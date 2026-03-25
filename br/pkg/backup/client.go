@@ -94,6 +94,7 @@ type MainBackupLoop struct {
 
 	ProgressCallBack        func(ProgressUnit)
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
+	MutateBackupReq         func(storeID uint64, request backuppb.BackupRequest) (backuppb.BackupRequest, error)
 }
 
 type MainBackupSender struct{}
@@ -269,9 +270,18 @@ mainLoop:
 				reset = true
 				continue mainLoop
 			}
+			storeReq := loop.BackupReq
+			if loop.MutateBackupReq != nil {
+				storeReq, err = loop.MutateBackupReq(storeID, storeReq)
+				if err != nil {
+					handleCancel()
+					mainCancel()
+					return errors.Trace(err)
+				}
+			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+			loop.SendAsync(mainCtx, round, storeID, loop.Limiter, storeReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -336,13 +346,23 @@ mainLoop:
 						continue mainLoop
 					}
 
+					storeReq := loop.BackupReq
+					if loop.MutateBackupReq != nil {
+						storeReq, err = loop.MutateBackupReq(storeID, storeReq)
+						if err != nil {
+							handleCancel()
+							mainCancel()
+							return errors.Trace(err)
+						}
+					}
+
 					// cancel the former collect goroutine
 					handleCancel()
 					ch := make(chan *ResponseAndStore)
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+					loop.SendAsync(mainCtx, round, storeID, loop.Limiter, storeReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
@@ -399,9 +419,10 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage    storeapi.Storage
-	backend    *backuppb.StorageBackend
-	apiVersion kvrpcpb.APIVersion
+	storage     storeapi.Storage
+	metaStorage storeapi.Storage
+	backend     *backuppb.StorageBackend
+	apiVersion  kvrpcpb.APIVersion
 
 	cipher           *backuppb.CipherInfo
 	checkpointMeta   *checkpoint.CheckpointMetadataForBackup
@@ -500,7 +521,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 
 // SetLockFile set write lock file.
 func (bc *Client) SetLockFile(ctx context.Context) error {
-	return bc.storage.WriteFile(ctx, metautil.LockFile,
+	return bc.GetStorage().WriteFile(ctx, metautil.LockFile,
 		[]byte("DO NOT DELETE\n"+
 			"This file exists to remind other backup jobs won't use this path"))
 }
@@ -534,6 +555,14 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 
 // GetStorage gets storage for this backup.
 func (bc *Client) GetStorage() storeapi.Storage {
+	if bc.metaStorage != nil {
+		return bc.metaStorage
+	}
+	return bc.storage
+}
+
+// GetBaseStorage gets the storage created from the configured backend before any metadata view rewrite.
+func (bc *Client) GetBaseStorage() storeapi.Storage {
 	return bc.storage
 }
 
@@ -621,7 +650,7 @@ func (bc *Client) StartCheckpointRunner(
 		}
 
 		// sync the checkpoint meta to the external storage at first
-		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, checkpointMeta); err != nil {
+		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.GetStorage(), checkpointMeta); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -631,7 +660,7 @@ func (bc *Client) StartCheckpointRunner(
 		bc.checkpointMeta.LoadCheckpointDataMap = true
 	}
 
-	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
+	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.GetStorage(), bc.cipher, bc.mgr.GetPDClient())
 	return errors.Trace(err)
 }
 
@@ -666,7 +695,12 @@ func (bc *Client) SetStorage(
 
 	bc.backend = backend
 	bc.storage, err = objstore.New(ctx, backend, opts)
+	bc.metaStorage = bc.storage
 	return errors.Trace(err)
+}
+
+func (bc *Client) SetMetadataStorage(storage storeapi.Storage) {
+	bc.metaStorage = storage
 }
 
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
@@ -1126,6 +1160,7 @@ func (bc *Client) BackupRanges(
 	rangeLimit int,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
+	mutateBackupReq func(storeID uint64, request backuppb.BackupRequest) (backuppb.BackupRequest, error),
 	progressCallBack func(ProgressUnit),
 ) (map[int64]*metautil.ChecksumStats, error) {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
@@ -1157,6 +1192,7 @@ func (bc *Client) BackupRanges(
 		ReplicaReadLabel:   replicaReadLabel,
 		StateNotifier:      stateNotifier,
 		Limiter:            NewResourceMemoryLimiter(rangeLimit),
+		MutateBackupReq:    mutateBackupReq,
 		ProgressCallBack:   progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.

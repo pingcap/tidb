@@ -154,6 +154,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
+	task.DefineSnapshotRepoFlags(command.Flags(), false)
 	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
@@ -169,6 +170,7 @@ func newDBBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), false)
 	return command
 }
 
@@ -183,6 +185,7 @@ func newTableBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), false)
 	return command
 }
 

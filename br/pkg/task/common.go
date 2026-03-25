@@ -861,6 +861,38 @@ func storageOpts(cfg *Config) *storeapi.Options {
 	}
 }
 
+func decodeBackupMeta(metaData []byte, cfg *Config) (*backuppb.BackupMeta, error) {
+	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
+	var iv []byte
+	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
+		iv = metaData[:metautil.CrypterIvLen]
+	}
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
+	}
+
+	backupMeta := &backuppb.BackupMeta{}
+	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
+		return nil, errors.Annotate(err,
+			"parse backupmeta failed because of wrong aes cipher")
+	}
+	return backupMeta, nil
+}
+
+func ReadBackupMetaFromStorage(
+	ctx context.Context,
+	fileName string,
+	storage storeapi.Storage,
+	cfg *Config,
+) (*backuppb.BackupMeta, error) {
+	metaData, err := storage.ReadFile(ctx, fileName)
+	if err != nil {
+		return nil, errors.Annotate(err, "load backupmeta failed")
+	}
+	return decodeBackupMeta(metaData, cfg)
+}
+
 // ReadBackupMeta reads the backupmeta file from the storage.
 func ReadBackupMeta(
 	ctx context.Context,
@@ -894,20 +926,9 @@ func ReadBackupMeta(
 		u.GetGcs().Prefix = oldPrefix
 	}
 
-	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
-	var iv []byte
-	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
-		iv = metaData[:metautil.CrypterIvLen]
-	}
-	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	backupMeta, err := decodeBackupMeta(metaData, cfg)
 	if err != nil {
-		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
-	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
-		return nil, nil, nil, errors.Annotate(err,
-			"parse backupmeta failed because of wrong aes cipher")
+		return nil, nil, nil, errors.Trace(err)
 	}
 	return u, s, backupMeta, nil
 }

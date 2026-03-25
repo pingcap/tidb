@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "repo",
+    srcs = [
+        "layout.go",
+        "meta.go",
+        "storage.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/repo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/checkpoint",
+        "//br/pkg/metautil",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/storeapi",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "repo_test",
+    timeout = "short",
+    srcs = ["repo_test.go"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        ":repo",
+        "//br/pkg/checkpoint",
+        "//br/pkg/metautil",
+        "//br/pkg/repo/snapshotpaths",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "@com_github_stretchr_testify//require",
+    ],
+)

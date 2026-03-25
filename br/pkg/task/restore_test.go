@@ -19,6 +19,7 @@ import (
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -929,6 +930,29 @@ func TestHash(t *testing.T) {
 			name: "toggle_system_tables",
 			modifyFunc: func(cfg *task.RestoreConfig) {
 				cfg.WithSysTable = !cfg.WithSysTable
+			},
+			expectEqual: false,
+		},
+		{
+			name: "explicit_legacy_layout_keeps_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutLegacy
+			},
+			expectEqual: true,
+		},
+		{
+			name: "repo_v1_layout_changes_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutRepoV1
+				cfg.BackupID = repo.BackupID(0x1234)
+			},
+			expectEqual: false,
+		},
+		{
+			name: "repo_v1_backup_id_changes_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutRepoV1
+				cfg.BackupID = repo.BackupID(0x5678)
 			},
 			expectEqual: false,
 		},

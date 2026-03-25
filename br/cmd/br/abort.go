@@ -73,6 +73,7 @@ func newAbortRestoreFullCommand() *cobra.Command {
 	}
 	// define flags specific to full restore
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -87,6 +88,7 @@ func newAbortRestoreDBCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 
@@ -100,6 +102,7 @@ func newAbortRestoreTableCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 
