@@ -825,7 +825,7 @@ func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
 func encodeWriteCFValue(writeType byte) []byte {
 	data := make([]byte, 0, 9)
 	data = append(data, writeType)
-	data = codec.EncodeUvarint(data, 400036290571534337) // 8-byte varint
+	data = codec.EncodeUvarint(data, 400036290571534337) // 9-byte varint; total 10 bytes
 	return data
 }
 
