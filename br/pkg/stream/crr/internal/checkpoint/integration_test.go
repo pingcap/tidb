@@ -151,7 +151,7 @@ func TestCheckpointCalculatorUsesStartAfterFromSyncedTS(t *testing.T) {
 	require.Len(t, upstream.walkOpts, 2)
 	require.Equal(
 		t,
-		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "ffffffffffffffff~"),
+		fmt.Sprintf("%s/%016X%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "FFFFFFFFFFFFFFFF~"),
 		upstream.walkOpts[1].StartAfter,
 	)
 }
@@ -183,7 +183,7 @@ func TestCheckpointCalculatorRestoresPersistentState(t *testing.T) {
 	require.Len(t, upstream.walkOpts, 1)
 	require.Equal(
 		t,
-		fmt.Sprintf("%s/%016x%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "ffffffffffffffff~"),
+		fmt.Sprintf("%s/%016X%s", stream.GetStreamBackupMetaPrefix(), firstRecord.FlushTS, "FFFFFFFFFFFFFFFF~"),
 		upstream.walkOpts[0].StartAfter,
 	)
 }

@@ -22,7 +22,6 @@ import (
 type MockPrefixClient struct {
 	ctrl     *gomock.Controller
 	recorder *MockPrefixClientMockRecorder
-	isgomock struct{}
 }
 
 // MockPrefixClientMockRecorder is the mock recorder for MockPrefixClient.
@@ -42,203 +41,208 @@ func (m *MockPrefixClient) EXPECT() *MockPrefixClientMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockPrefixClient) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // CheckBucketExistence mocks base method.
-func (m *MockPrefixClient) CheckBucketExistence(ctx context.Context) error {
+func (m *MockPrefixClient) CheckBucketExistence(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckBucketExistence", ctx)
+	ret := m.ctrl.Call(m, "CheckBucketExistence", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckBucketExistence indicates an expected call of CheckBucketExistence.
-func (mr *MockPrefixClientMockRecorder) CheckBucketExistence(ctx any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) CheckBucketExistence(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckBucketExistence", reflect.TypeOf((*MockPrefixClient)(nil).CheckBucketExistence), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckBucketExistence", reflect.TypeOf((*MockPrefixClient)(nil).CheckBucketExistence), arg0)
 }
 
 // CheckGetObject mocks base method.
-func (m *MockPrefixClient) CheckGetObject(ctx context.Context) error {
+func (m *MockPrefixClient) CheckGetObject(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckGetObject", ctx)
+	ret := m.ctrl.Call(m, "CheckGetObject", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckGetObject indicates an expected call of CheckGetObject.
-func (mr *MockPrefixClientMockRecorder) CheckGetObject(ctx any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) CheckGetObject(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckGetObject", reflect.TypeOf((*MockPrefixClient)(nil).CheckGetObject), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckGetObject", reflect.TypeOf((*MockPrefixClient)(nil).CheckGetObject), arg0)
 }
 
 // CheckListObjects mocks base method.
-func (m *MockPrefixClient) CheckListObjects(ctx context.Context) error {
+func (m *MockPrefixClient) CheckListObjects(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckListObjects", ctx)
+	ret := m.ctrl.Call(m, "CheckListObjects", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckListObjects indicates an expected call of CheckListObjects.
-func (mr *MockPrefixClientMockRecorder) CheckListObjects(ctx any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) CheckListObjects(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckListObjects", reflect.TypeOf((*MockPrefixClient)(nil).CheckListObjects), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckListObjects", reflect.TypeOf((*MockPrefixClient)(nil).CheckListObjects), arg0)
 }
 
 // CheckPutAndDeleteObject mocks base method.
-func (m *MockPrefixClient) CheckPutAndDeleteObject(ctx context.Context) error {
+func (m *MockPrefixClient) CheckPutAndDeleteObject(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckPutAndDeleteObject", ctx)
+	ret := m.ctrl.Call(m, "CheckPutAndDeleteObject", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckPutAndDeleteObject indicates an expected call of CheckPutAndDeleteObject.
-func (mr *MockPrefixClientMockRecorder) CheckPutAndDeleteObject(ctx any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) CheckPutAndDeleteObject(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckPutAndDeleteObject", reflect.TypeOf((*MockPrefixClient)(nil).CheckPutAndDeleteObject), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckPutAndDeleteObject", reflect.TypeOf((*MockPrefixClient)(nil).CheckPutAndDeleteObject), arg0)
 }
 
 // CopyObject mocks base method.
-func (m *MockPrefixClient) CopyObject(ctx context.Context, params *s3like.CopyInput) error {
+func (m *MockPrefixClient) CopyObject(arg0 context.Context, arg1 *s3like.CopyInput) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CopyObject", ctx, params)
+	ret := m.ctrl.Call(m, "CopyObject", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CopyObject indicates an expected call of CopyObject.
-func (mr *MockPrefixClientMockRecorder) CopyObject(ctx, params any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) CopyObject(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockPrefixClient)(nil).CopyObject), ctx, params)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockPrefixClient)(nil).CopyObject), arg0, arg1)
 }
 
 // DeleteObject mocks base method.
-func (m *MockPrefixClient) DeleteObject(ctx context.Context, name string) error {
+func (m *MockPrefixClient) DeleteObject(arg0 context.Context, arg1 string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObject", ctx, name)
+	ret := m.ctrl.Call(m, "DeleteObject", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
-func (mr *MockPrefixClientMockRecorder) DeleteObject(ctx, name any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) DeleteObject(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockPrefixClient)(nil).DeleteObject), ctx, name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockPrefixClient)(nil).DeleteObject), arg0, arg1)
 }
 
 // DeleteObjects mocks base method.
-func (m *MockPrefixClient) DeleteObjects(ctx context.Context, names []string) error {
+func (m *MockPrefixClient) DeleteObjects(arg0 context.Context, arg1 []string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjects", ctx, names)
+	ret := m.ctrl.Call(m, "DeleteObjects", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteObjects indicates an expected call of DeleteObjects.
-func (mr *MockPrefixClientMockRecorder) DeleteObjects(ctx, names any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) DeleteObjects(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjects", reflect.TypeOf((*MockPrefixClient)(nil).DeleteObjects), ctx, names)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjects", reflect.TypeOf((*MockPrefixClient)(nil).DeleteObjects), arg0, arg1)
 }
 
 // GetObject mocks base method.
-func (m *MockPrefixClient) GetObject(ctx context.Context, name string, startOffset, endOffset int64) (*s3like.GetResp, error) {
+func (m *MockPrefixClient) GetObject(arg0 context.Context, arg1 string, arg2, arg3 int64) (*s3like.GetResp, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetObject", ctx, name, startOffset, endOffset)
+	ret := m.ctrl.Call(m, "GetObject", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(*s3like.GetResp)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetObject indicates an expected call of GetObject.
-func (mr *MockPrefixClientMockRecorder) GetObject(ctx, name, startOffset, endOffset any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) GetObject(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObject", reflect.TypeOf((*MockPrefixClient)(nil).GetObject), ctx, name, startOffset, endOffset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObject", reflect.TypeOf((*MockPrefixClient)(nil).GetObject), arg0, arg1, arg2, arg3)
 }
 
 // HeadObject mocks base method.
-func (m *MockPrefixClient) HeadObject(ctx context.Context, name string) (*s3like.HeadObjectResp, error) {
+func (m *MockPrefixClient) HeadObject(arg0 context.Context, arg1 string) (*s3like.HeadObjectResp, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HeadObject", ctx, name)
+	ret := m.ctrl.Call(m, "HeadObject", arg0, arg1)
 	ret0, _ := ret[0].(*s3like.HeadObjectResp)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // HeadObject indicates an expected call of HeadObject.
-func (mr *MockPrefixClientMockRecorder) HeadObject(ctx, name any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) HeadObject(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadObject", reflect.TypeOf((*MockPrefixClient)(nil).HeadObject), ctx, name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadObject", reflect.TypeOf((*MockPrefixClient)(nil).HeadObject), arg0, arg1)
 }
 
 // IsObjectExists mocks base method.
-func (m *MockPrefixClient) IsObjectExists(ctx context.Context, name string) (bool, error) {
+func (m *MockPrefixClient) IsObjectExists(arg0 context.Context, arg1 string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsObjectExists", ctx, name)
+	ret := m.ctrl.Call(m, "IsObjectExists", arg0, arg1)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // IsObjectExists indicates an expected call of IsObjectExists.
-func (mr *MockPrefixClientMockRecorder) IsObjectExists(ctx, name any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) IsObjectExists(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsObjectExists", reflect.TypeOf((*MockPrefixClient)(nil).IsObjectExists), ctx, name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsObjectExists", reflect.TypeOf((*MockPrefixClient)(nil).IsObjectExists), arg0, arg1)
 }
 
 // ListObjects mocks base method.
-func (m *MockPrefixClient) ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*s3like.ListResp, error) {
+func (m *MockPrefixClient) ListObjects(arg0 context.Context, arg1, arg2 string, arg3 *string, arg4 int) (*s3like.ListResp, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjects", ctx, extraPrefix, startAfter, continuationToken, maxKeys)
+	ret := m.ctrl.Call(m, "ListObjects", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].(*s3like.ListResp)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListObjects indicates an expected call of ListObjects.
-func (mr *MockPrefixClientMockRecorder) ListObjects(ctx, extraPrefix, startAfter, continuationToken, maxKeys any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) ListObjects(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockPrefixClient)(nil).ListObjects), ctx, extraPrefix, startAfter, continuationToken, maxKeys)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockPrefixClient)(nil).ListObjects), arg0, arg1, arg2, arg3, arg4)
 }
 
 // MultipartUploader mocks base method.
-func (m *MockPrefixClient) MultipartUploader(name string, partSize int64, concurrency int) s3like.Uploader {
+func (m *MockPrefixClient) MultipartUploader(arg0 string, arg1 int64, arg2 int) s3like.Uploader {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MultipartUploader", name, partSize, concurrency)
+	ret := m.ctrl.Call(m, "MultipartUploader", arg0, arg1, arg2)
 	ret0, _ := ret[0].(s3like.Uploader)
 	return ret0
 }
 
 // MultipartUploader indicates an expected call of MultipartUploader.
-func (mr *MockPrefixClientMockRecorder) MultipartUploader(name, partSize, concurrency any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) MultipartUploader(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MultipartUploader", reflect.TypeOf((*MockPrefixClient)(nil).MultipartUploader), name, partSize, concurrency)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MultipartUploader", reflect.TypeOf((*MockPrefixClient)(nil).MultipartUploader), arg0, arg1, arg2)
 }
 
 // MultipartWriter mocks base method.
-func (m *MockPrefixClient) MultipartWriter(ctx context.Context, name string) (objectio.Writer, error) {
+func (m *MockPrefixClient) MultipartWriter(arg0 context.Context, arg1 string) (objectio.Writer, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MultipartWriter", ctx, name)
+	ret := m.ctrl.Call(m, "MultipartWriter", arg0, arg1)
 	ret0, _ := ret[0].(objectio.Writer)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // MultipartWriter indicates an expected call of MultipartWriter.
-func (mr *MockPrefixClientMockRecorder) MultipartWriter(ctx, name any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) MultipartWriter(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MultipartWriter", reflect.TypeOf((*MockPrefixClient)(nil).MultipartWriter), ctx, name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MultipartWriter", reflect.TypeOf((*MockPrefixClient)(nil).MultipartWriter), arg0, arg1)
 }
 
 // PutObject mocks base method.
-func (m *MockPrefixClient) PutObject(ctx context.Context, name string, data []byte) error {
+func (m *MockPrefixClient) PutObject(arg0 context.Context, arg1 string, arg2 []byte) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PutObject", ctx, name, data)
+	ret := m.ctrl.Call(m, "PutObject", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PutObject indicates an expected call of PutObject.
-func (mr *MockPrefixClientMockRecorder) PutObject(ctx, name, data any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) PutObject(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockPrefixClient)(nil).PutObject), ctx, name, data)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockPrefixClient)(nil).PutObject), arg0, arg1, arg2)
 }

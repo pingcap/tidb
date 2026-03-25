@@ -203,7 +203,7 @@ func (c *Calculator) ComputeNextCheckpoint(ctx context.Context) (checkpoint uint
 		return 0, err
 	}
 
-	round, err := c.planRound(ctx, aliveStores)
+	round, err := c.planRound(ctx)
 	if err != nil {
 		return 0, err
 	}

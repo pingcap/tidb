@@ -46,7 +46,7 @@ func newRoundPlan() roundPlan {
 	}
 }
 
-func (p *roundPlan) recordLoadedMeta(loadedMeta loadedMetaFile, aliveStores map[uint64]struct{}) {
+func (p *roundPlan) recordLoadedMeta(loadedMeta loadedMetaFile) {
 	p.statistic.UpstreamReadMetaFileCount++
 	p.recordPendingPath(loadedMeta.path)
 	for _, logPath := range loadedMeta.dataFilePaths {
@@ -54,7 +54,7 @@ func (p *roundPlan) recordLoadedMeta(loadedMeta loadedMetaFile, aliveStores map[
 			p.statistic.EstimatedSyncLogFileCount++
 		}
 	}
-	if _, ok := aliveStores[loadedMeta.storeID]; ok && loadedMeta.flushTS > p.maxFlushTSByStore[loadedMeta.storeID] {
+	if loadedMeta.flushTS > p.maxFlushTSByStore[loadedMeta.storeID] {
 		p.maxFlushTSByStore[loadedMeta.storeID] = loadedMeta.flushTS
 	}
 }
@@ -106,10 +106,7 @@ func (c *Calculator) loadAliveStores(ctx context.Context) (map[uint64]struct{}, 
 	return aliveStores, nil
 }
 
-func (c *Calculator) planRound(
-	ctx context.Context,
-	aliveStores map[uint64]struct{},
-) (roundPlan, error) {
+func (c *Calculator) planRound(ctx context.Context) (roundPlan, error) {
 	plan := newRoundPlan()
 
 	planCtx, cancel := context.WithCancel(ctx)
@@ -136,7 +133,7 @@ func (c *Calculator) planRound(
 			}
 
 			planMu.Lock()
-			plan.recordLoadedMeta(loadedMeta, aliveStores)
+			plan.recordLoadedMeta(loadedMeta)
 			planMu.Unlock()
 
 			failpoint.InjectCall("flush-meta", loadedMeta.path, loadedMeta.storeID, loadedMeta.flushTS)
@@ -188,37 +185,34 @@ func (c *Calculator) advanceSyncedState(
 	aliveStores map[uint64]struct{},
 	maxFlushTSByStore map[uint64]uint64,
 ) {
-	for storeID := range c.state.syncedByStore {
-		if _, ok := aliveStores[storeID]; !ok {
-			delete(c.state.syncedByStore, storeID)
-		}
-	}
 	for storeID, flushTS := range maxFlushTSByStore {
 		if flushTS > c.state.syncedByStore[storeID] {
 			c.state.syncedByStore[storeID] = flushTS
 		}
 	}
 
-	if len(aliveStores) == 0 {
-		return
-	}
-
-	syncedCandidate := uint64(math.MaxUint64)
 	missingStores := make([]uint64, 0)
 	for storeID := range aliveStores {
-		storeSyncedTS, ok := c.state.syncedByStore[storeID]
-		if !ok {
+		if _, ok := c.state.syncedByStore[storeID]; !ok {
 			missingStores = append(missingStores, storeID)
-			continue
-		}
-		if storeSyncedTS < syncedCandidate {
-			syncedCandidate = storeSyncedTS
 		}
 	}
 	if len(missingStores) > 0 {
 		c.warnUnsafeSyncedTS(missingStores, "alive store has no observed flush ts yet")
 		return
 	}
+
+	if len(c.state.syncedByStore) == 0 {
+		return
+	}
+
+	syncedCandidate := uint64(math.MaxUint64)
+	for _, storeSyncedTS := range c.state.syncedByStore {
+		if storeSyncedTS < syncedCandidate {
+			syncedCandidate = storeSyncedTS
+		}
+	}
+
 	if syncedCandidate < c.state.syncedTS {
 		behindStores := make([]uint64, 0)
 		for storeID, storeSyncedTS := range c.state.syncedByStore {
@@ -226,7 +220,7 @@ func (c *Calculator) advanceSyncedState(
 				behindStores = append(behindStores, storeID)
 			}
 		}
-		c.warnUnsafeSyncedTS(behindStores, "alive store flush ts is behind current synced-ts")
+		c.warnUnsafeSyncedTS(behindStores, "observed store flush ts is behind current synced-ts")
 		return
 	}
 	if syncedCandidate > c.state.syncedTS {
