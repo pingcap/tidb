@@ -1282,13 +1282,11 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 		rowsPerReusableChunk = min(rowsPerReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
 	}
 
+	statsInfo := plan.StatsInfo()
 	estimatedBytesPerRow := float64(totalFlen)
-	if hasTrustedStats && hasUsableOverlongTypeSizeStats(plan.StatsInfo(), overlongColumns) {
+	if hasTrustedStats && hasUsableOverlongTypeSizeStats(statsInfo, overlongColumns) {
 		// Real stats let us use the observed average size instead of the schema worst case.
-		estimatedBytesPerRow = getAvgRowSize(plan.StatsInfo(), overlongColumns)
-		if estimatedBytesPerRow <= 0 {
-			return false
-		}
+		estimatedBytesPerRow = getAvgRowSize(statsInfo, overlongColumns)
 	}
 	estimatedReusableChunkBytes := rowsPerReusableChunk * estimatedBytesPerRow
 	return estimatedReusableChunkBytes <= float64(maxFlenForOverlongType)
