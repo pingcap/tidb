@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -94,7 +95,22 @@ type MainBackupLoop struct {
 
 	ProgressCallBack        func(ProgressUnit)
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
-	MutateBackupReq         func(storeID uint64, request backuppb.BackupRequest) (backuppb.BackupRequest, error)
+	RewriteStorageBackend   func(storeID uint64, backend *backuppb.StorageBackend) error
+}
+
+func (l *MainBackupLoop) buildStoreBackupReq(storeID uint64) (backuppb.BackupRequest, error) {
+	request := l.BackupReq
+	if l.RewriteStorageBackend == nil {
+		return request, nil
+	}
+
+	// The loop-wide request is shared across stores and retries. Clone the backend
+	// before applying any store-specific rewrite so later retries still start clean.
+	request.StorageBackend = util.ProtoV1Clone(request.StorageBackend)
+	if err := l.RewriteStorageBackend(storeID, request.StorageBackend); err != nil {
+		return backuppb.BackupRequest{}, errors.Trace(err)
+	}
+	return request, nil
 }
 
 type MainBackupSender struct{}
@@ -270,14 +286,11 @@ mainLoop:
 				reset = true
 				continue mainLoop
 			}
-			storeReq := loop.BackupReq
-			if loop.MutateBackupReq != nil {
-				storeReq, err = loop.MutateBackupReq(storeID, storeReq)
-				if err != nil {
-					handleCancel()
-					mainCancel()
-					return errors.Trace(err)
-				}
+			storeReq, err := loop.buildStoreBackupReq(storeID)
+			if err != nil {
+				handleCancel()
+				mainCancel()
+				return errors.Trace(err)
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
@@ -346,14 +359,11 @@ mainLoop:
 						continue mainLoop
 					}
 
-					storeReq := loop.BackupReq
-					if loop.MutateBackupReq != nil {
-						storeReq, err = loop.MutateBackupReq(storeID, storeReq)
-						if err != nil {
-							handleCancel()
-							mainCancel()
-							return errors.Trace(err)
-						}
+					storeReq, err := loop.buildStoreBackupReq(storeID)
+					if err != nil {
+						handleCancel()
+						mainCancel()
+						return errors.Trace(err)
 					}
 
 					// cancel the former collect goroutine
@@ -1160,7 +1170,7 @@ func (bc *Client) BackupRanges(
 	rangeLimit int,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
-	mutateBackupReq func(storeID uint64, request backuppb.BackupRequest) (backuppb.BackupRequest, error),
+	rewriteStorageBackend func(storeID uint64, backend *backuppb.StorageBackend) error,
 	progressCallBack func(ProgressUnit),
 ) (map[int64]*metautil.ChecksumStats, error) {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
@@ -1185,15 +1195,15 @@ func (bc *Client) BackupRanges(
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
-		BackupSender:       &MainBackupSender{},
-		BackupReq:          request,
-		Concurrency:        concurrency,
-		GlobalProgressTree: &globalProgressTree,
-		ReplicaReadLabel:   replicaReadLabel,
-		StateNotifier:      stateNotifier,
-		Limiter:            NewResourceMemoryLimiter(rangeLimit),
-		MutateBackupReq:    mutateBackupReq,
-		ProgressCallBack:   progressCallBack,
+		BackupSender:          &MainBackupSender{},
+		BackupReq:             request,
+		Concurrency:           concurrency,
+		GlobalProgressTree:    &globalProgressTree,
+		ReplicaReadLabel:      replicaReadLabel,
+		StateNotifier:         stateNotifier,
+		Limiter:               NewResourceMemoryLimiter(rangeLimit),
+		RewriteStorageBackend: rewriteStorageBackend,
+		ProgressCallBack:      progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
 		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {

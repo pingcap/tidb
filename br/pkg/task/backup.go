@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gc"
@@ -489,11 +488,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	var (
-		resolvedStorage      *resolvedSnapshotStorage
-		removePendingOnClose bool
-		pendingMarkerCreated bool
-		backupMetaDurable    bool
-		checkpointCleanedUp  bool
+		resolvedStorage *resolvedSnapshotStorage
+		repoLifecycle   *snapshotRepoBackupLifecycle
 	)
 	if cfg.Layout.IsRepoV1() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
@@ -503,17 +499,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err != nil {
 			return errors.Trace(err)
 		}
-		client.SetMetadataStorage(resolvedStorage.MetadataStorage)
-		if resolvedStorage.PendingFile != "" {
-			defer func() {
-				if !removePendingOnClose || !pendingMarkerCreated || !backupMetaDurable || !checkpointCleanedUp {
-					return
-				}
-				if err := resolvedStorage.RootStorage.DeleteFile(ctx, resolvedStorage.PendingFile); err != nil {
-					log.Warn("failed to remove repo-v1 pending marker", zap.String("path", resolvedStorage.PendingFile), zap.Error(err))
-				}
-			}()
-		}
+		repoLifecycle = newSnapshotRepoBackupLifecycle(resolvedStorage)
+		repoLifecycle.Attach(client)
+		defer repoLifecycle.Close(ctx)
 	} else {
 		if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
@@ -656,9 +644,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		err = metawriter.FlushBackupMeta(ctx)
 		if err == nil {
 			gcSafePointKeeperRemovable = true
-			if pendingMarkerCreated {
-				removePendingOnClose = true
-			}
+			repoLifecycle.MarkSuccess()
 			summary.SetSuccessStatus(true)
 		}
 		return err
@@ -716,49 +702,21 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 
-	if resolvedStorage != nil && resolvedStorage.Layout.IsRepoV1() && resolvedStorage.PendingFile != "" {
-		if err = writePendingSnapshot(ctx, resolvedStorage.RootStorage, resolvedStorage.PendingFile, resolvedStorage.BackupID); err != nil {
-			return errors.Trace(err)
-		}
-		pendingMarkerCreated = true
-	}
-
 	if cfg.UseCheckpoint {
-		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, safePointID, progressCallBack); err != nil {
-			removePendingMarker := true
-			if resolvedStorage != nil && resolvedStorage.Layout.IsRepoV1() {
-				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
-					log.Warn("failed to roll back checkpoint metadata after checkpoint setup failure", zap.Error(removeErr))
-					removePendingMarker = false
-				}
-			}
-			if pendingMarkerCreated && removePendingMarker {
-				if removeErr := resolvedStorage.RootStorage.DeleteFile(ctx, resolvedStorage.PendingFile); removeErr != nil {
-					log.Warn("failed to roll back repo-v1 pending marker after checkpoint setup failure",
-						zap.String("path", resolvedStorage.PendingFile),
-						zap.Error(removeErr))
-				}
-				pendingMarkerCreated = false
-			}
+		if err = repoLifecycle.StartCheckpoint(ctx, client, cfgHash, backupTS, safePointID, progressCallBack); err != nil {
 			return errors.Trace(err)
 		}
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx, true)
+				repoLifecycle.FinishCheckpoint(ctx, client, true)
 			} else {
 				log.Info("start to remove checkpoint data for backup")
-				client.WaitForFinishCheckpoint(ctx, false)
-				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
-					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
-				} else {
-					checkpointCleanedUp = true
-					log.Info("the checkpoint data for backup is removed.")
-				}
+				repoLifecycle.FinishCheckpoint(ctx, client, false)
 			}
 		}()
 	} else {
-		checkpointCleanedUp = true
+		repoLifecycle.MarkCheckpointCleanupSkipped()
 	}
 
 	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
@@ -777,12 +735,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	var mutateBackupReq func(storeID uint64, request backuppb.BackupRequest) (backuppb.BackupRequest, error)
-	if resolvedStorage != nil && resolvedStorage.Layout.IsRepoV1() {
-		mutateBackupReq = func(storeID uint64, request backuppb.BackupRequest) (backuppb.BackupRequest, error) {
-			return mutateBackupReqForRepoV1(storeID, resolvedStorage.BackupID, request)
-		}
-	}
 	checksumMap, err := client.BackupRanges(
 		ctx,
 		ranges,
@@ -791,7 +743,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		cfg.RangeLimit,
 		cfg.ReplicaReadLabel,
 		metawriter,
-		mutateBackupReq,
+		repoLifecycle.RewriteStorageBackend(),
 		progressCallBack,
 	)
 	if err != nil {
@@ -835,16 +787,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	backupMetaDurable = true
+	repoLifecycle.MarkBackupMetaDurable()
 	// Since backupmeta is flushed on the external storage,
 	// we can remove the gc safepoint keeper
 	gcSafePointKeeperRemovable = true
-	if resolvedStorage != nil && resolvedStorage.Layout.IsRepoV1() {
-		log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", resolvedStorage.BackupID.String()))
-	}
-	if pendingMarkerCreated {
-		removePendingOnClose = true
-	}
+	repoLifecycle.MarkSuccess()
 
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()

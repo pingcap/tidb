@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -52,6 +51,149 @@ type pendingSnapshot struct {
 	BackupID       string `json:"backup_id"`
 	MetadataPrefix string `json:"metadata_prefix"`
 	CreatedAt      string `json:"created_at"`
+}
+
+type snapshotRepoBackupLifecycle struct {
+	resolvedStorage      *resolvedSnapshotStorage
+	removePendingOnClose bool
+	pendingMarkerCreated bool
+	backupMetaDurable    bool
+	checkpointCleanedUp  bool
+}
+
+func newSnapshotRepoBackupLifecycle(resolved *resolvedSnapshotStorage) *snapshotRepoBackupLifecycle {
+	if resolved == nil || !resolved.Layout.IsRepoV1() {
+		return nil
+	}
+	return &snapshotRepoBackupLifecycle{resolvedStorage: resolved}
+}
+
+func (l *snapshotRepoBackupLifecycle) Attach(client *backup.Client) {
+	if l == nil {
+		return
+	}
+	client.SetMetadataStorage(l.resolvedStorage.MetadataStorage)
+}
+
+func (l *snapshotRepoBackupLifecycle) Close(ctx context.Context) {
+	if l == nil || !l.removePendingOnClose || !l.pendingMarkerCreated || !l.backupMetaDurable || !l.checkpointCleanedUp {
+		return
+	}
+	if err := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.resolvedStorage.PendingFile); err != nil {
+		log.Warn("failed to remove repo-v1 pending marker",
+			zap.String("path", l.resolvedStorage.PendingFile),
+			zap.Error(err))
+	}
+}
+
+func (l *snapshotRepoBackupLifecycle) StartCheckpoint(
+	ctx context.Context,
+	client *backup.Client,
+	cfgHash []byte,
+	backupTS uint64,
+	safePointID string,
+	progressCallBack func(backup.ProgressUnit),
+) error {
+	pendingFile, err := l.pendingFileForCheckpoint()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if pendingFile != "" {
+		if err := writePendingSnapshot(ctx, l.resolvedStorage.RootStorage, pendingFile, l.resolvedStorage.BackupID); err != nil {
+			return errors.Trace(err)
+		}
+		l.pendingMarkerCreated = true
+	}
+	if err := client.StartCheckpointRunner(ctx, cfgHash, backupTS, safePointID, progressCallBack); err != nil {
+		l.rollbackStartCheckpoint(ctx, client)
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (l *snapshotRepoBackupLifecycle) pendingFileForCheckpoint() (string, error) {
+	if l == nil {
+		return "", nil
+	}
+	if l.resolvedStorage == nil {
+		return "", errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 backup lifecycle is missing resolved storage")
+	}
+	if l.resolvedStorage.PendingFile == "" {
+		return "", errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"repo-v1 backup lifecycle is missing pending marker path for backup %s",
+			l.resolvedStorage.BackupID,
+		)
+	}
+	return l.resolvedStorage.PendingFile, nil
+}
+
+func (l *snapshotRepoBackupLifecycle) rollbackStartCheckpoint(ctx context.Context, client *backup.Client) {
+	if l == nil {
+		return
+	}
+	removePendingMarker := true
+	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+		log.Warn("failed to roll back checkpoint metadata after checkpoint setup failure", zap.Error(removeErr))
+		removePendingMarker = false
+	}
+	if l.pendingMarkerCreated && removePendingMarker {
+		if removeErr := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.resolvedStorage.PendingFile); removeErr != nil {
+			log.Warn("failed to roll back repo-v1 pending marker after checkpoint setup failure",
+				zap.String("path", l.resolvedStorage.PendingFile),
+				zap.Error(removeErr))
+		}
+		l.pendingMarkerCreated = false
+	}
+}
+
+func (l *snapshotRepoBackupLifecycle) FinishCheckpoint(ctx context.Context, client *backup.Client, flush bool) {
+	client.WaitForFinishCheckpoint(ctx, flush)
+	if flush {
+		return
+	}
+	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+		log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
+		return
+	}
+	if l != nil {
+		l.checkpointCleanedUp = true
+	}
+	log.Info("the checkpoint data for backup is removed.")
+}
+
+func (l *snapshotRepoBackupLifecycle) MarkCheckpointCleanupSkipped() {
+	if l == nil {
+		return
+	}
+	l.checkpointCleanedUp = true
+}
+
+func (l *snapshotRepoBackupLifecycle) MarkBackupMetaDurable() {
+	if l == nil {
+		return
+	}
+	l.backupMetaDurable = true
+}
+
+func (l *snapshotRepoBackupLifecycle) MarkSuccess() {
+	if l == nil {
+		return
+	}
+	log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", l.resolvedStorage.BackupID.String()))
+	if l.pendingMarkerCreated {
+		l.removePendingOnClose = true
+	}
+}
+
+func (l *snapshotRepoBackupLifecycle) RewriteStorageBackend() func(storeID uint64, backend *backuppb.StorageBackend) error {
+	if l == nil {
+		return nil
+	}
+	backupID := l.resolvedStorage.BackupID
+	return func(storeID uint64, backend *backuppb.StorageBackend) error {
+		return errors.Trace(rewriteDataBackendForStore(backend, storeID, backupID))
+	}
 }
 
 func validateSnapshotBackupRepoConfig(cfg *BackupConfig) error {
@@ -255,8 +397,10 @@ func writePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pen
 	return rootStorage.WriteFile(ctx, pendingFile, payload)
 }
 
-func rewriteDataBackendForStore(root *backuppb.StorageBackend, storeID uint64, backupID repo.BackupID) (*backuppb.StorageBackend, error) {
-	backend := util.ProtoV1Clone(root)
+func rewriteDataBackendForStore(backend *backuppb.StorageBackend, storeID uint64, backupID repo.BackupID) error {
+	if backend == nil {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 request is missing storage backend")
+	}
 	prefix := snapshotpaths.StoreDataPrefix(storeID, backupID)
 	switch {
 	case backend.GetLocal() != nil:
@@ -268,9 +412,9 @@ func rewriteDataBackendForStore(root *backuppb.StorageBackend, storeID uint64, b
 	case backend.GetAzureBlobStorage() != nil:
 		backend.GetAzureBlobStorage().Prefix = joinBackendPrefix(backend.GetAzureBlobStorage().Prefix, prefix)
 	default:
-		return nil, errors.Errorf("repo-v1 is unsupported for backend %T", backend.Backend)
+		return errors.Errorf("repo-v1 is unsupported for backend %T", backend.Backend)
 	}
-	return backend, nil
+	return nil
 }
 
 func joinBackendPrefix(current, suffix string) string {
@@ -294,15 +438,6 @@ func validateRepoV1Backend(backend *backuppb.StorageBackend) error {
 	default:
 		return errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 doesn't support backend %T", backend.Backend)
 	}
-}
-
-func mutateBackupReqForRepoV1(storeID uint64, backupID repo.BackupID, request backuppb.BackupRequest) (backuppb.BackupRequest, error) {
-	backend, err := rewriteDataBackendForStore(request.StorageBackend, storeID, backupID)
-	if err != nil {
-		return backuppb.BackupRequest{}, errors.Trace(err)
-	}
-	request.StorageBackend = backend
-	return request, nil
 }
 
 func repoCreatedBy(version string) string {

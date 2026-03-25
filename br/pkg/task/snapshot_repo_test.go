@@ -47,16 +47,16 @@ func TestRewriteDataBackendForStore(t *testing.T) {
 	local := &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
 	}
-	rewritten, err := rewriteDataBackendForStore(local, 123, repo.BackupID(0xf00d))
+	err := rewriteDataBackendForStore(local, 123, repo.BackupID(0xf00d))
 	require.NoError(t, err)
-	require.Equal(t, "/tmp/repo/_data/snapshot/123/000000000000F00D", rewritten.GetLocal().Path)
+	require.Equal(t, "/tmp/repo/_data/snapshot/123/000000000000F00D", local.GetLocal().Path)
 
 	s3 := &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{Bucket: "bucket", Prefix: "root"}},
 	}
-	rewritten, err = rewriteDataBackendForStore(s3, 7, repo.BackupID(0xbeef))
+	err = rewriteDataBackendForStore(s3, 7, repo.BackupID(0xbeef))
 	require.NoError(t, err)
-	require.Equal(t, "root/_data/snapshot/7/000000000000BEEF", rewritten.GetS3().Prefix)
+	require.Equal(t, "root/_data/snapshot/7/000000000000BEEF", s3.GetS3().Prefix)
 }
 
 func TestValidateSnapshotBackupRepoConfigRejectsNoCheckpoint(t *testing.T) {
@@ -73,6 +73,29 @@ func TestSnapshotRegistrationBackupID(t *testing.T) {
 	require.Empty(t, snapshotRegistrationBackupID(repo.LayoutLegacy, repo.BackupID(0x1234)))
 	require.Empty(t, snapshotRegistrationBackupID(repo.LayoutRepoV1, 0))
 	require.Equal(t, "4660", snapshotRegistrationBackupID(repo.LayoutRepoV1, repo.BackupID(0x1234)))
+}
+
+func TestSnapshotRepoBackupLifecyclePendingFileInvariant(t *testing.T) {
+	lifecycle := &snapshotRepoBackupLifecycle{
+		resolvedStorage: &resolvedSnapshotStorage{
+			Layout:   repo.LayoutRepoV1,
+			BackupID: repo.BackupID(0x1234),
+		},
+	}
+
+	_, err := lifecycle.pendingFileForCheckpoint()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing pending marker path")
+
+	lifecycle.resolvedStorage.PendingFile = snapshotpaths.PendingFile("hash", lifecycle.resolvedStorage.BackupID)
+	pendingFile, err := lifecycle.pendingFileForCheckpoint()
+	require.NoError(t, err)
+	require.Equal(t, snapshotpaths.PendingFile("hash", lifecycle.resolvedStorage.BackupID), pendingFile)
+
+	var nilLifecycle *snapshotRepoBackupLifecycle
+	pendingFile, err = nilLifecycle.pendingFileForCheckpoint()
+	require.NoError(t, err)
+	require.Empty(t, pendingFile)
 }
 
 func TestResolveUnfinishedPendingBackups(t *testing.T) {

@@ -64,6 +64,7 @@ go_test(
     name = "backup_test",
     timeout = "short",
     srcs = [
+        "client_request_test.go",
         "client_test.go",
         "limit_test.go",
         "main_test.go",
@@ -74,7 +75,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 20,
+    shard_count = 21,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gc",
