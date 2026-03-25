@@ -116,6 +116,51 @@ func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
 		Check(testkit.Rows("1"))
 }
 
+func TestMaskingPolicyCreateOrReplaceCoverage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_or_replace")
+	tk.MustExec("create table t_or_replace(id int primary key, c1 varchar(20), c2 varchar(20))")
+	tk.MustExec("insert into t_or_replace values (1, 'alpha', 'A1'), (2, 'bravo', 'B2')")
+
+	// OR REPLACE should create policy when policy does not exist.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as c1 enable")
+	tk.MustQuery("select policy_name, column_name, expression, status, restrict_on from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("p_or_replace c1 `c1` ENABLED NONE"))
+
+	// OR REPLACE and IF NOT EXISTS are mutually exclusive.
+	tk.MustGetErrCode(
+		"create or replace masking policy if not exists p_or_replace on t_or_replace(c1) as c1 enable",
+		errno.ErrWrongUsage,
+	)
+
+	// OR REPLACE can update status.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as c1 disable")
+	tk.MustQuery("select expression, status from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("`c1` DISABLED"))
+
+	// OR REPLACE can update RESTRICT ON.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as c1 restrict on (insert_into_select) enable")
+	tk.MustQuery("select status, restrict_on from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("ENABLED INSERT_INTO_SELECT"))
+
+	// OR REPLACE with the same policy name on a different column should fail.
+	tk.MustGetErrCode("create or replace masking policy p_or_replace on t_or_replace(c2) as c2 enable", errno.ErrMaskingPolicyExists)
+
+	// OR REPLACE should update updated_at and keep created_at unchanged.
+	tk.MustExec("do sleep(0.01)")
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as mask_full(c1, '*') enable")
+	tk.MustQuery("select timestampdiff(microsecond, created_at, updated_at) > 0 from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("1"))
+
+	// OR REPLACE works for DISABLED -> ENABLED transition.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as mask_full(c1, '*') disable")
+	tk.MustQuery("select c1 from t_or_replace order by id").Check(testkit.Rows("alpha", "bravo"))
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as mask_full(c1, '*') enable")
+	tk.MustQuery("select c1 from t_or_replace order by id").Check(testkit.Rows("*****", "*****"))
+}
+
 func TestMaskingPolicyCascadeCleanupOnDrop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
