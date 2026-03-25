@@ -139,6 +139,15 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		readerSchema := expression.NewSchema(columns...)
 		reader := physicalop.PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
 		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
+		buildTrustedHistColl := func(cols []*expression.Column, rowCount int64, avgColSize int64) *statistics.HistColl {
+			histColl := statistics.NewHistColl(1, rowCount, 0, len(cols), 0)
+			for _, col := range cols {
+				histColl.SetCol(col.UniqueID, &statistics.Column{
+					Histogram: *statistics.NewHistogram(col.UniqueID, rowCount, 0, 0, col.RetType, 0, avgColSize*rowCount),
+				})
+			}
+			return histColl
+		}
 
 		MaxMemoryLimitForOverlongType = math.MaxInt64
 		reader.SetStats(&property.StatsInfo{
@@ -172,11 +181,18 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
-		reader.SCtx().GetSessionVars().MaxChunkSize = 32
+		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 			HistColl: &statistics.HistColl{},
 		})
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: buildTrustedHistColl(columns, 2048, 500),
+		})
+		reader.SCtx().GetSessionVars().MaxChunkSize = 32
 		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
@@ -200,6 +216,56 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(pointGet)
 		require.Equal(t, float64(1), estimatedRows)
 		require.True(t, hasTrustedStats)
+	})
+
+	t.Run("batch point get participates in overlong type chunk reuse gating", func(t *testing.T) {
+		sctx := coretestsdk.MockContext()
+		defer func() {
+			domain.GetDomain(sctx).StatsHandle().Close()
+		}()
+
+		originMaxMemoryLimitForOverlongType := MaxMemoryLimitForOverlongType
+		originMaxChunkSize := sctx.GetSessionVars().MaxChunkSize
+		defer func() {
+			MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
+		}()
+
+		MaxMemoryLimitForOverlongType = 0
+
+		columns := make([]*expression.Column, 0, 80)
+		for i := range 80 {
+			colType := types.NewFieldType(mysql.TypeVarchar)
+			colType.SetFlen(1001)
+			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(2000 + i + 1)})
+		}
+		batchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
+			sctx.GetPlanCtx(),
+			&property.StatsInfo{RowCount: 2048},
+			expression.NewSchema(columns...),
+			nil,
+			0,
+		)
+
+		sctx.GetSessionVars().MaxChunkSize = 32
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
+
+		sctx.GetSessionVars().MaxChunkSize = 1024
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
+
+		jsonBatchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
+			sctx.GetPlanCtx(),
+			&property.StatsInfo{RowCount: 1},
+			expression.NewSchema(&expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeJSON),
+				UniqueID: int64(3001),
+			}),
+			nil,
+			0,
+		)
+		skipReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx.GetPlanCtx(), jsonBatchPointGet)
+		require.True(t, skipReuseChunk)
+		require.False(t, continueIterating)
 	})
 }
 

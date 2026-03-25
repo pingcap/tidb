@@ -1191,7 +1191,7 @@ func checkSkipReuseChunkForOverlongType(sctx base.PlanContext, plan base.Physica
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
-	case *physicalop.PointGetPlan:
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
 		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
@@ -1283,7 +1283,7 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 	}
 
 	estimatedBytesPerRow := float64(totalFlen)
-	if hasTrustedStats {
+	if hasTrustedStats && hasUsableOverlongTypeSizeStats(plan.StatsInfo(), overlongColumns) {
 		// Real stats let us use the observed average size instead of the schema worst case.
 		estimatedBytesPerRow = getAvgRowSize(plan.StatsInfo(), overlongColumns)
 		if estimatedBytesPerRow <= 0 {
@@ -1294,10 +1294,28 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 	return estimatedReusableChunkBytes <= float64(maxFlenForOverlongType)
 }
 
+func hasUsableOverlongTypeSizeStats(statsInfo *property.StatsInfo, overlongColumns []*expression.Column) bool {
+	if statsInfo == nil || statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+		statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+		return false
+	}
+	for _, column := range overlongColumns {
+		colStats := statsInfo.HistColl.GetCol(column.UniqueID)
+		if colStats == nil {
+			return false
+		}
+		// Keep the schema-level fallback when this column would still fall back to EstimateTypeWidth.
+		if !colStats.IsHandle && colStats.TotColSize == 0 && colStats.NullCount != statsInfo.HistColl.RealtimeCount {
+			return false
+		}
+	}
+	return true
+}
+
 // estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
 // estimate together with a flag indicating whether the caller may use observed average row sizes.
-// Point gets have an exact operator-level row bound. Non-point readers only enter the relaxed path
-// when row-count stats are trusted.
+// Point gets and batch point gets have an exact operator-level row bound. Non-point readers only
+// enter the relaxed path when row-count stats are trusted.
 func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
 	statsInfo := plan.StatsInfo()
 	if statsInfo == nil || statsInfo.RowCount <= 0 {
@@ -1307,10 +1325,16 @@ func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimated
 	switch plan.(type) {
 	case *physicalop.PointGetPlan:
 		return math.Ceil(statsInfo.RowCount), true
+	case *physicalop.BatchPointGetPlan:
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
+			return math.Ceil(statsInfo.RowCount), false
+		}
+		return math.Ceil(statsInfo.RowCount), true
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
 		// Non-point readers only take the relaxed path when row-count stats are trusted.
-		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+			statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
 			return 0, false
 		}
 		return math.Ceil(statsInfo.RowCount), true
