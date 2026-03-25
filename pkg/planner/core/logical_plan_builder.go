@@ -774,7 +774,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 
 	// Decide whether this join should produce a LogicalApply.
 	// containsLateralTableSource (isLateral) was used above only to decide
-	// whether to push outerSchemas.  The LogicalApply decision requires a
+	// whether to push outerSchemas. The LogicalApply decision requires a
 	// tighter check so that a LATERAL nested *inside* the right subtree —
 	// one that correlates only with something inside that subtree, not with
 	// the current left side — does not cause the outer join to be mis-classified
