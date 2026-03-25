@@ -28,7 +28,7 @@ import (
 // TopN limits for RU aggregation.
 //
 // Two "others" buckets are used to bound cardinality:
-// 1. "others user" (othersUserWireLabel = "_TIDB$TOPRU$OTHERS_USER") for evicted users.
+// 1. "others user" (othersUserWireLabel = "_TIDB_TOPRU_OTHERS_USER") for evicted users.
 // 2. "others SQL" (nil sqlDigest + nil planDigest) for evicted SQLs per user.
 const (
 	// maxTopUsers is the maximum number of users to keep in global TopN.
@@ -39,7 +39,7 @@ const (
 	// It is only used when encoding to TopRURecord output.
 	// Under current runtime invariant, real user values come from vars.User.String()
 	// (shape: "user@host" or ""), so this label does not collide with runtime users.
-	othersUserWireLabel = "_TIDB$TOPRU$OTHERS_USER"
+	othersUserWireLabel = "_TIDB_TOPRU_OTHERS_USER"
 
 	// Pre-TopN memory caps used during collection.
 	maxPreTopNUsers       = maxTopUsers * 2       // 400 users max during collection.
