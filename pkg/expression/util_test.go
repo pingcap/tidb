@@ -797,14 +797,25 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	require.Equal(t, mysql.TypeDouble, c.RetType.GetType())
 
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("hello world"), model.FullTextParserTypeStandardV1)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
-	require.True(t, hasMySQLMatchAgainst(expr))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	root, ok := expr.(*ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, ast.LogicOr, root.FuncName.L)
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "hello", columns: []string{"title"}},
+		{funcName: ast.FTSMatchWord, query: "world", columns: []string{"title"}},
+	}, collectFTSLeaves(expr))
 
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("+hello world"), model.FullTextParserTypeStandardV1)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
-	require.True(t, hasMySQLMatchAgainst(expr))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	root, ok = expr.(*ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, ast.FTSMatchWord, root.FuncName.L)
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "hello", columns: []string{"title"}},
+	}, collectFTSLeaves(expr))
 
 	ngramErrExpr := buildMatchAgainst(">hello")
 	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, ngramErrExpr, model.FullTextParserTypeNgramV1)
