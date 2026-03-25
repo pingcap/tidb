@@ -477,11 +477,8 @@ func sumRUV2LabelMap(values map[string]int64) int64 {
 	return total
 }
 
-// FormatRUV2Metrics formats RUv2 metrics into a compact string.
-func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) string {
-	if (metrics == nil || metrics.IsZero()) && tiKVRU == 0 && tiFlashRU == 0 {
-		return ""
-	}
+// FormatRUV2Summary formats the RUv2 total and detailed metrics in one pass.
+func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) (total string, detail string) {
 	var (
 		resultChunkCells                  int64
 		executorL1                        map[string]int64
@@ -501,6 +498,7 @@ func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		tiKVStorageProcessedKeysBatchGet  int64
 		tiKVStorageProcessedKeysGet       int64
 		tiKVCoprocessorExecutorWorkTotal  map[string]int64
+		tidbRU                            float64
 	)
 	if metrics != nil {
 		resultChunkCells = metrics.ResultChunkCells()
@@ -521,6 +519,29 @@ func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		tiKVStorageProcessedKeysBatchGet = metrics.TiKVStorageProcessedKeysBatchGet()
 		tiKVStorageProcessedKeysGet = metrics.TiKVStorageProcessedKeysGet()
 		tiKVCoprocessorExecutorWorkTotal = snapshotRUV2LabelCounter(&metrics.tikvCoprocessorWorkTotal)
+		tidbRU = metrics.calculateRUValuesWithWeights(weights)
+	}
+	if resultChunkCells == 0 &&
+		len(executorL1) == 0 &&
+		len(executorL2) == 0 &&
+		len(executorL3) == 0 &&
+		executorL5InsertRows == 0 &&
+		planCnt == 0 &&
+		planDeriveStatsPaths == 0 &&
+		sessionParserTotal == 0 &&
+		txnCnt == 0 &&
+		resourceManagerReadCnt == 0 &&
+		resourceManagerWriteCnt == 0 &&
+		tiKVKVEngineCacheMiss == 0 &&
+		tiKVCoprocessorExecutorIterations == 0 &&
+		tiKVCoprocessorResponseBytes == 0 &&
+		tiKVRaftstoreStoreWriteTriggerWB == 0 &&
+		tiKVStorageProcessedKeysBatchGet == 0 &&
+		tiKVStorageProcessedKeysGet == 0 &&
+		len(tiKVCoprocessorExecutorWorkTotal) == 0 &&
+		tiKVRU == 0 &&
+		tiFlashRU == 0 {
+		return "", ""
 	}
 	parts := make([]string, 0, 19)
 	appendInt := func(key string, value int64) {
@@ -541,8 +562,8 @@ func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		}
 	}
 
-	tidbRU := metrics.CalculateRUValues(weights)
-	totalRU := metrics.TotalRU(weights, tiKVRU, tiFlashRU)
+	totalRU := tidbRU + tiKVRU + tiFlashRU
+	total = fmt.Sprintf("%.2f", totalRU)
 	appendFloat64Always("total_ru", totalRU)
 	appendFloat64Always("tidb_ru", tidbRU)
 	appendFloat64Always("tikv_ru", tiKVRU)
@@ -567,7 +588,19 @@ func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 	appendInt("tikv_storage_processed_keys_get", tiKVStorageProcessedKeysGet)
 	appendMap("tikv_coprocessor_executor_work_total", tiKVCoprocessorExecutorWorkTotal)
 
-	return strings.Join(parts, ", ")
+	return total, strings.Join(parts, ", ")
+}
+
+// FormatRUV2Total formats the RUv2 total into a slow log string.
+func FormatRUV2Total(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) string {
+	total, _ := FormatRUV2Summary(metrics, weights, tiKVRU, tiFlashRU)
+	return total
+}
+
+// FormatRUV2Metrics formats RUv2 metrics into a compact detail string.
+func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) string {
+	_, detail := FormatRUV2Summary(metrics, weights, tiKVRU, tiFlashRU)
+	return detail
 }
 
 func formatRUV2LabelMap(values map[string]int64) string {
