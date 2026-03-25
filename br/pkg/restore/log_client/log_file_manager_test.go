@@ -815,6 +815,119 @@ func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
 	}, kvEntries)
 }
 
+// encodeWriteCFValue produces a minimal serialized RawWriteCFValue with the
+// given write type. Uses a large startTs to ensure the encoded value meets
+// the minimum 9-byte length required by RawWriteCFValue.ParseFrom.
+func encodeWriteCFValue(writeType byte) []byte {
+	data := make([]byte, 0, 9)
+	data = append(data, writeType)
+	data = codec.EncodeUvarint(data, 400036290571534337) // 8-byte varint
+	return data
+}
+
+// encodemdbkvWithValue constructs an encoded KV entry with an explicit value.
+func encodemdbkvWithValue(logicalKeyPrefix string, ts uint64, value []byte) []byte {
+	key := codec.EncodeUintDesc([]byte(logicalKeyPrefix), ts)
+	return stream.EncodeKVEntry(key, value)
+}
+
+// TestReadFilteredEntries_WriteCFSkipsLockAndRollback verifies that Lock and Rollback
+// records in WriteCF are skipped and do not evict committed Put/Delete records
+// from the dedup map. A higher-TS Rollback must not replace a lower-TS Put.
+func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
+	ctx := context.Background()
+	putValue := encodeWriteCFValue(stream.WriteTypePut)
+	deleteValue := encodeWriteCFValue(stream.WriteTypeDelete)
+	rollbackValue := encodeWriteCFValue(stream.WriteTypeRollback)
+	lockValue := encodeWriteCFValue(stream.WriteTypeLock)
+
+	t.Run("RollbackDoesNotEvictPut", func(t *testing.T) {
+		data, file := buildTestBuffer(
+			// Committed Put at ts=40.
+			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
+			// Rollback at ts=60 — higher TS but must NOT evict the Put.
+			encodemdbkvWithValue("mDB:1:IID:5", 60, rollbackValue),
+		)
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+		kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+		require.NoError(t, err)
+		require.Empty(t, filteredOutKvEntries)
+		// Only the committed Put@40 should survive.
+		require.Len(t, kvEntries, 1)
+		require.Equal(t, uint64(40), kvEntries[0].Ts)
+		require.Equal(t, putValue, []byte(kvEntries[0].E.Value))
+	})
+
+	t.Run("LockDoesNotEvictPut", func(t *testing.T) {
+		data, file := buildTestBuffer(
+			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
+			// Lock at ts=55 — must NOT evict the Put.
+			encodemdbkvWithValue("mDB:1:IID:5", 55, lockValue),
+		)
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+		require.NoError(t, err)
+		require.Len(t, kvEntries, 1)
+		require.Equal(t, uint64(40), kvEntries[0].Ts)
+		require.Equal(t, putValue, []byte(kvEntries[0].E.Value))
+	})
+
+	t.Run("RollbackDoesNotEvictDelete", func(t *testing.T) {
+		data, file := buildTestBuffer(
+			encodemdbkvWithValue("mDB:1:Table:3", 45, deleteValue),
+			encodemdbkvWithValue("mDB:1:Table:3", 70, rollbackValue),
+		)
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+		require.NoError(t, err)
+		require.Len(t, kvEntries, 1)
+		require.Equal(t, uint64(45), kvEntries[0].Ts)
+		require.Equal(t, deleteValue, []byte(kvEntries[0].E.Value))
+	})
+
+	t.Run("OnlyRollbacksProduceNoOutput", func(t *testing.T) {
+		data, file := buildTestBuffer(
+			encodemdbkvWithValue("mDB:1:IID:5", 40, rollbackValue),
+			encodemdbkvWithValue("mDB:1:IID:5", 60, rollbackValue),
+		)
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+		kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+		require.NoError(t, err)
+		require.Empty(t, kvEntries)
+		require.Empty(t, filteredOutKvEntries)
+	})
+
+	t.Run("CommittedPutAfterRollbackSurvives", func(t *testing.T) {
+		data, file := buildTestBuffer(
+			// Rollback arrives first at ts=50 — skipped.
+			encodemdbkvWithValue("mDB:1:IID:5", 50, rollbackValue),
+			// Put arrives later at ts=40 — should be the dedup winner (only committed entry).
+			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
+		)
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+		require.NoError(t, err)
+		require.Len(t, kvEntries, 1)
+		require.Equal(t, uint64(40), kvEntries[0].Ts)
+		require.Equal(t, putValue, []byte(kvEntries[0].E.Value))
+	})
+
+	t.Run("DefaultCFIgnoresWriteTypeFiltering", func(t *testing.T) {
+		// In DefaultCF, values are not WriteCF-encoded — all entries pass through.
+		data, file := buildTestBuffer(
+			encodemdbkv("mDB:1:IID:5", 40, false),
+			encodemdbkv("mDB:1:IID:5", 60, false),
+		)
+		file.Cf = consts.DefaultCF
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
+		require.NoError(t, err)
+		// Normal dedup: highest TS wins regardless of value content.
+		require.Len(t, kvEntries, 1)
+		require.Equal(t, uint64(60), kvEntries[0].Ts)
+	})
+}
+
 func TestReadAllEntries(t *testing.T) {
 	ctx := context.Background()
 	data, file := generateKvData()

@@ -514,6 +514,20 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			continue
 		}
 
+		// For WriteCF entries, skip Lock and Rollback records. These are not
+		// committed writes and must not participate in dedup — a higher-TS
+		// Rollback/Lock would otherwise evict a lower-TS committed Put/Delete,
+		// causing data loss for the restored MVCC state.
+		if file.Cf == consts.WriteCF {
+			var rawWrite stream.RawWriteCFValue
+			if err := rawWrite.ParseFrom(txnEntry.Value); err == nil {
+				wt := rawWrite.GetWriteType()
+				if wt == stream.WriteTypeLock || wt == stream.WriteTypeRollback {
+					continue
+				}
+			}
+		}
+
 		if utils.IsMetaDDLJobHistoryKey(txnEntry.Key) {
 			// DDL job history keys are unique per job ID; copy immediately.
 			keyCopy := make([]byte, len(txnEntry.Key))
