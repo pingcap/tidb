@@ -118,7 +118,7 @@ func TestEnsureRepoRejectsExistingRepoArtifactsWithoutMeta(t *testing.T) {
 	ctx := context.Background()
 	for _, artifact := range []string{
 		snapshotpaths.MetadataFile(repo.BackupID(1)),
-		snapshotpaths.PendingFile("hash", repo.BackupID(2)),
+		snapshotpaths.PendingFile([]byte("hash"), repo.BackupID(2)),
 		snapshotpaths.StoreDataPrefix(3, repo.BackupID(4)) + "/sst",
 	} {
 		storage := objstore.NewMemStorage()

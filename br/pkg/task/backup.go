@@ -85,18 +85,19 @@ type CompressionConfig struct {
 type BackupConfig struct {
 	Config
 
-	TimeAgo          time.Duration     `json:"time-ago" toml:"time-ago"`
-	BackupTS         uint64            `json:"backup-ts" toml:"backup-ts"`
-	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
-	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
-	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
-	RangeLimit       int               `json:"range-limit" toml:"range-limit"`
-	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
-	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
-	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
-	Layout           repo.Layout       `json:"storage-layout" toml:"storage-layout"`
-	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
-	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
+	TimeAgo          time.Duration               `json:"time-ago" toml:"time-ago"`
+	BackupTS         uint64                      `json:"backup-ts" toml:"backup-ts"`
+	LastBackupTS     uint64                      `json:"last-backup-ts" toml:"last-backup-ts"`
+	GCTTL            int64                       `json:"gc-ttl" toml:"gc-ttl"`
+	RemoveSchedulers bool                        `json:"remove-schedulers" toml:"remove-schedulers"`
+	RangeLimit       int                         `json:"range-limit" toml:"range-limit"`
+	IgnoreStats      bool                        `json:"ignore-stats" toml:"ignore-stats"`
+	UseBackupMetaV2  bool                        `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool                        `json:"use-checkpoint" toml:"use-checkpoint"`
+	Layout           repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
+	OnPending        snapshotRepoOnPendingAction `json:"on-pending" toml:"on-pending"`
+	ReplicaReadLabel map[string]string           `json:"replica-read-label" toml:"replica-read-label"`
+	TableConcurrency uint                        `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -195,6 +196,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 	cfg.Layout, err = parseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.OnPending, err = parseSnapshotOnPendingFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -489,18 +494,38 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	var (
 		resolvedStorage *resolvedSnapshotStorage
+		preparedStorage *preparedSnapshotBackupStorage
 		repoLifecycle   *snapshotRepoBackupLifecycle
 	)
 	if cfg.Layout.IsRepoV1() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
 		}
-		resolvedStorage, err = prepareSnapshotBackupStorage(ctx, cfg, u, client.GetBaseStorage(), client, cfgHash, repoCreatedBy(g.GetVersion()))
+		preparedStorage, err = prepareSnapshotBackupStorage(ctx, u, client.GetBaseStorage(), snapshotBackupStorageParams{
+			onPending: cfg.OnPending,
+			cfgHash:   cfgHash,
+			createdBy: repoCreatedBy(g.GetVersion()),
+			allocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
+				backupTS, err := client.GetCurrentTS(ctx)
+				if err != nil {
+					return 0, errors.Annotate(err, "allocate repo-v1 backup id")
+				}
+				backupID, err := repo.NewBackupID(backupTS)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				return backupID, nil
+			},
+		})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		repoLifecycle = newSnapshotRepoBackupLifecycle(resolvedStorage)
+		resolvedStorage = &preparedStorage.resolvedSnapshotStorage
+		repoLifecycle = newSnapshotRepoBackupLifecycle(preparedStorage)
 		repoLifecycle.Attach(client)
+		if err := activateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
+			return errors.Trace(err)
+		}
 		defer repoLifecycle.Close(ctx)
 	} else {
 		if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
@@ -645,6 +670,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err == nil {
 			gcSafePointKeeperRemovable = true
 			repoLifecycle.MarkSuccess()
+			if resolvedStorage != nil && resolvedStorage.Layout.IsRepoV1() {
+				g.Record("backup id", uint64(resolvedStorage.BackupID))
+			}
 			summary.SetSuccessStatus(true)
 		}
 		return err
@@ -744,6 +772,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		cfg.ReplicaReadLabel,
 		metawriter,
 		repoLifecycle.RewriteStorageBackend(),
+		repoLifecycle.BeforeFirstRequestToStore(),
 		progressCallBack,
 	)
 	if err != nil {
@@ -792,6 +821,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// we can remove the gc safepoint keeper
 	gcSafePointKeeperRemovable = true
 	repoLifecycle.MarkSuccess()
+	if resolvedStorage != nil && resolvedStorage.Layout.IsRepoV1() {
+		g.Record("backup id", uint64(resolvedStorage.BackupID))
+	}
 
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
@@ -802,6 +834,24 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	g.Record("Size", archiveSize)
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
+	return nil
+}
+
+func activateSnapshotBackupResume(
+	ctx context.Context,
+	client *backup.Client,
+	prepared *preparedSnapshotBackupStorage,
+	cfgHash []byte,
+) error {
+	if prepared == nil || !prepared.resumeCheckpoint {
+		return nil
+	}
+	if err := client.LoadCheckpointMetadataFromStorage(ctx, prepared.MetadataStorage); err != nil {
+		return errors.Annotatef(err, "load repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
+	}
+	if err := client.CheckCheckpoint(cfgHash); err != nil {
+		return errors.Annotatef(err, "validate repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
+	}
 	return nil
 }
 

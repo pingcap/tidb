@@ -16,7 +16,7 @@
 ## Pending Marker Semantics
 
 - Repo-v1 currently creates pending markers only when snapshot checkpoint mode is enabled.
-- Startup scans `_meta/pending/<config-hash>/` for repo-v1 backups of the same immutable backup config.
+- Startup scans `_meta/pending/<config-hash>/` for repo-v1 backups of the same immutable backup config. The on-storage config-hash directory name is upper-case hex.
 - If a pending entry already has final `backupmeta`, BR removes it as stale metadata.
 - If a pending entry has checkpoint metadata but no final `backupmeta`, BR fails fast instead of implicitly resuming.
 - If a pending entry has neither checkpoint metadata nor final `backupmeta`, BR treats it as inconsistent repo state and reports an operator-visible error.

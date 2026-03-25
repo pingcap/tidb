@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/btree"
@@ -93,24 +94,46 @@ type MainBackupLoop struct {
 	// make sure not too many requests are marshaled at the same time
 	Limiter *ResourceConcurrentLimiter
 
-	ProgressCallBack        func(ProgressUnit)
-	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
-	RewriteStorageBackend   func(storeID uint64, backend *backuppb.StorageBackend) error
+	ProgressCallBack          func(ProgressUnit)
+	GetBackupClientCallBack   func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
+	RewriteStorageBackend     func(storeID uint64, backend *backuppb.StorageBackend) error
+	BeforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error
+
+	beforeFirstRequestToStoreOnce sync.Map
 }
 
 func (l *MainBackupLoop) buildStoreBackupReq(storeID uint64) (backuppb.BackupRequest, error) {
 	request := l.BackupReq
-	if l.RewriteStorageBackend == nil {
+	if l.RewriteStorageBackend == nil && l.BeforeFirstRequestToStore == nil {
 		return request, nil
 	}
 
 	// The loop-wide request is shared across stores and retries. Clone the backend
-	// before applying any store-specific rewrite so later retries still start clean.
+	// before applying any store-specific rewrite or first-request hook so later retries
+	// still start clean.
 	request.StorageBackend = util.ProtoV1Clone(request.StorageBackend)
-	if err := l.RewriteStorageBackend(storeID, request.StorageBackend); err != nil {
+	if l.RewriteStorageBackend != nil {
+		if err := l.RewriteStorageBackend(storeID, request.StorageBackend); err != nil {
+			return backuppb.BackupRequest{}, errors.Trace(err)
+		}
+	}
+	if err := l.runBeforeFirstRequestToStore(storeID, request); err != nil {
 		return backuppb.BackupRequest{}, errors.Trace(err)
 	}
 	return request, nil
+}
+
+func (l *MainBackupLoop) runBeforeFirstRequestToStore(storeID uint64, request backuppb.BackupRequest) error {
+	if l == nil || l.BeforeFirstRequestToStore == nil {
+		return nil
+	}
+	onceAny, _ := l.beforeFirstRequestToStoreOnce.LoadOrStore(storeID, &sync.Once{})
+	once := onceAny.(*sync.Once)
+	var hookErr error
+	once.Do(func() {
+		hookErr = l.BeforeFirstRequestToStore(storeID, request)
+	})
+	return hookErr
 }
 
 type MainBackupSender struct{}
@@ -634,6 +657,19 @@ func (bc *Client) CheckCheckpoint(hash []byte) error {
 
 	// first execution or not using checkpoint mode yet
 	// or using the same config can pass the check
+	return nil
+}
+
+// LoadCheckpointMetadataFromStorage loads backup checkpoint metadata from the given storage.
+func (bc *Client) LoadCheckpointMetadataFromStorage(ctx context.Context, storage storeapi.Storage) error {
+	if storage == nil {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "checkpoint storage is missing")
+	}
+	checkpointMeta, err := checkpoint.LoadCheckpointMetadata(ctx, storage)
+	if err != nil {
+		return errors.Annotate(err, "load checkpoint metadata")
+	}
+	bc.checkpointMeta = checkpointMeta
 	return nil
 }
 
@@ -1171,6 +1207,7 @@ func (bc *Client) BackupRanges(
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	rewriteStorageBackend func(storeID uint64, backend *backuppb.StorageBackend) error,
+	beforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error,
 	progressCallBack func(ProgressUnit),
 ) (map[int64]*metautil.ChecksumStats, error) {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
@@ -1195,15 +1232,16 @@ func (bc *Client) BackupRanges(
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
-		BackupSender:          &MainBackupSender{},
-		BackupReq:             request,
-		Concurrency:           concurrency,
-		GlobalProgressTree:    &globalProgressTree,
-		ReplicaReadLabel:      replicaReadLabel,
-		StateNotifier:         stateNotifier,
-		Limiter:               NewResourceMemoryLimiter(rangeLimit),
-		RewriteStorageBackend: rewriteStorageBackend,
-		ProgressCallBack:      progressCallBack,
+		BackupSender:              &MainBackupSender{},
+		BackupReq:                 request,
+		Concurrency:               concurrency,
+		GlobalProgressTree:        &globalProgressTree,
+		ReplicaReadLabel:          replicaReadLabel,
+		StateNotifier:             stateNotifier,
+		Limiter:                   NewResourceMemoryLimiter(rangeLimit),
+		RewriteStorageBackend:     rewriteStorageBackend,
+		BeforeFirstRequestToStore: beforeFirstRequestToStore,
+		ProgressCallBack:          progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
 		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {

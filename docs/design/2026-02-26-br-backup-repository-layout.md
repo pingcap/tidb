@@ -115,7 +115,7 @@ Repo-v1 treats an unfinished snapshot backup as an explicit repo object rather t
 Config hash format:
 - Repo-v1 groups unfinished backups by the same logical backup identity using BR's existing backup checkpoint config hash.
 - The hash input is the same immutable backup configuration used by today's checkpoint matching logic.
-- The on-storage directory name is the full SHA-256 digest encoded as 64 lowercase hexadecimal characters.
+- The on-storage directory name is the full SHA-256 digest encoded as 64 upper-case hexadecimal characters.
 - This RFC refers to that value as `<config-hash-hex>`.
 
 Pending index:
@@ -126,7 +126,7 @@ Pending index:
 - BR removes the pending file only after the final per-backup `backupmeta` is durable and checkpoint cleanup has completed.
 
 Lookup rules:
-- Routine backup startup computes the current `<config-hash-hex>` and enumerates only `_meta/pending/<config-hash-hex>/`, not `_meta/snapshot/*`.
+- Routine backup startup computes the current `<config-hash-hex>` and enumerates only `_meta/pending/<config-hash-hex>/`, not `_meta/snapshot/*`. The on-storage directory component is the upper-case hex form of the config hash.
 - If there is no pending entry under that config-hash directory, BR allocates a fresh `<backup-id>` and starts a new backup.
 - If there is exactly one pending entry under that config-hash directory, BR can validate or resume that specific backup without scanning the whole repo.
 - If there are multiple pending entries under that config-hash directory, BR must fail and require the operator to choose one explicitly.

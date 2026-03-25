@@ -15,8 +15,10 @@
 package snapshotpaths
 
 import (
+	"encoding/hex"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
@@ -35,12 +37,16 @@ func MetadataFile(backupID repo.BackupID) string {
 	return path.Join(MetadataDir(backupID), metautil.MetaFile)
 }
 
-func PendingDir(configHashHex string) string {
-	return path.Join("_meta", "pending", configHashHex)
+func PendingConfigHashStorageName(configHash []byte) string {
+	return strings.ToUpper(hex.EncodeToString(configHash))
 }
 
-func PendingFile(configHashHex string, backupID repo.BackupID) string {
-	return path.Join(PendingDir(configHashHex), backupID.StorageName()+".json")
+func PendingDir(configHash []byte) string {
+	return path.Join("_meta", "pending", PendingConfigHashStorageName(configHash))
+}
+
+func PendingFile(configHash []byte, backupID repo.BackupID) string {
+	return path.Join(PendingDir(configHash), backupID.StorageName()+".json")
 }
 
 func StoreDataPrefix(storeID uint64, backupID repo.BackupID) string {

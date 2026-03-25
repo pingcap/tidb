@@ -16,6 +16,8 @@ package task
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -41,6 +43,16 @@ func TestSnapshotRepoFlags(t *testing.T) {
 	backupID, err := parseSnapshotBackupIDFlag(flags)
 	require.NoError(t, err)
 	require.Equal(t, repo.BackupID(0xf00d), backupID)
+}
+
+func TestSnapshotRepoBackupFlagsOnPending(t *testing.T) {
+	flags := pflag.NewFlagSet("snapshot", pflag.ContinueOnError)
+	DefineSnapshotRepoFlags(flags, false)
+	require.NoError(t, flags.Parse([]string{"--storage-layout=repo-v1", "--on-pending=resume"}))
+
+	action, err := parseSnapshotOnPendingFlag(flags)
+	require.NoError(t, err)
+	require.Equal(t, snapshotRepoOnPendingResume, action)
 }
 
 func TestRewriteDataBackendForStore(t *testing.T) {
@@ -76,6 +88,7 @@ func TestSnapshotRegistrationBackupID(t *testing.T) {
 }
 
 func TestSnapshotRepoBackupLifecyclePendingFileInvariant(t *testing.T) {
+	cfgHash := []byte("hash")
 	lifecycle := &snapshotRepoBackupLifecycle{
 		resolvedStorage: &resolvedSnapshotStorage{
 			Layout:   repo.LayoutRepoV1,
@@ -87,10 +100,10 @@ func TestSnapshotRepoBackupLifecyclePendingFileInvariant(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing pending marker path")
 
-	lifecycle.resolvedStorage.PendingFile = snapshotpaths.PendingFile("hash", lifecycle.resolvedStorage.BackupID)
+	lifecycle.pendingFile = snapshotpaths.PendingFile(cfgHash, lifecycle.resolvedStorage.BackupID)
 	pendingFile, err := lifecycle.pendingFileForCheckpoint()
 	require.NoError(t, err)
-	require.Equal(t, snapshotpaths.PendingFile("hash", lifecycle.resolvedStorage.BackupID), pendingFile)
+	require.Equal(t, snapshotpaths.PendingFile(cfgHash, lifecycle.resolvedStorage.BackupID), pendingFile)
 
 	var nilLifecycle *snapshotRepoBackupLifecycle
 	pendingFile, err = nilLifecycle.pendingFileForCheckpoint()
@@ -98,15 +111,41 @@ func TestSnapshotRepoBackupLifecyclePendingFileInvariant(t *testing.T) {
 	require.Empty(t, pendingFile)
 }
 
+func TestPendingConfigHashStorageName(t *testing.T) {
+	require.Equal(t, "DEADBEEF", snapshotpaths.PendingConfigHashStorageName([]byte{0xde, 0xad, 0xbe, 0xef}))
+}
+
+func TestSnapshotRepoBackupLifecycleBeforeFirstRequestToStorePreparesLocalDir(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "_data", "snapshot", "1", "0000000000001234")
+	lifecycle := &snapshotRepoBackupLifecycle{
+		resolvedStorage: &resolvedSnapshotStorage{Layout: repo.LayoutRepoV1, BackupID: repo.BackupID(0x1234)},
+	}
+
+	prepare := lifecycle.BeforeFirstRequestToStore()
+	require.NotNil(t, prepare)
+	require.NoError(t, prepare(1, backuppb.BackupRequest{
+		StorageBackend: &backuppb.StorageBackend{
+			Backend: &backuppb.StorageBackend_Local{
+				Local: &backuppb.Local{Path: targetDir},
+			},
+		},
+	}))
+
+	info, err := os.Stat(targetDir)
+	require.NoError(t, err)
+	require.True(t, info.IsDir())
+}
+
 func TestResolveUnfinishedPendingBackups(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
-	cfgHashHex := "hash"
+	cfgHash := []byte("hash")
 	staleID := repo.BackupID(1)
 	unfinishedID := repo.BackupID(2)
 
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHashHex, staleID), []byte("{}")))
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHashHex, unfinishedID), []byte("{}")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, staleID), []byte("{}")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, unfinishedID), []byte("{}")))
 
 	staleMetaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(staleID))
 	require.NoError(t, staleMetaStorage.WriteFile(ctx, metautil.MetaFile, []byte("done")))
@@ -114,11 +153,11 @@ func TestResolveUnfinishedPendingBackups(t *testing.T) {
 	unfinishedMetaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(unfinishedID))
 	require.NoError(t, unfinishedMetaStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("cp")))
 
-	unfinished, err := resolveUnfinishedPendingBackups(ctx, storage, cfgHashHex)
+	unfinished, err := resolveUnfinishedPendingBackups(ctx, storage, cfgHash)
 	require.NoError(t, err)
 	require.Equal(t, []repo.BackupID{unfinishedID}, unfinished)
 
-	exists, err := storage.FileExists(ctx, snapshotpaths.PendingFile(cfgHashHex, staleID))
+	exists, err := storage.FileExists(ctx, snapshotpaths.PendingFile(cfgHash, staleID))
 	require.NoError(t, err)
 	require.False(t, exists)
 }
@@ -126,12 +165,12 @@ func TestResolveUnfinishedPendingBackups(t *testing.T) {
 func TestResolveUnfinishedPendingBackupsRejectsInconsistentState(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
-	cfgHashHex := "hash"
+	cfgHash := []byte("hash")
 	backupID := repo.BackupID(3)
 
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHashHex, backupID), []byte("{}")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, backupID), []byte("{}")))
 
-	_, err := resolveUnfinishedPendingBackups(ctx, storage, cfgHashHex)
+	_, err := resolveUnfinishedPendingBackups(ctx, storage, cfgHash)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "inconsistent")
 }
@@ -174,4 +213,167 @@ func TestResolveSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	exists, err := storage.FileExists(ctx, metautil.MetaFile)
 	require.NoError(t, err)
 	require.False(t, exists)
+}
+
+func TestPrepareSnapshotBackupStorageOnPendingNoneStartsNew(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	require.NoError(t, err)
+
+	rootBackend := &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
+	}
+	cfgHash := []byte("hash")
+
+	for _, onPending := range []snapshotRepoOnPendingAction{
+		snapshotRepoOnPendingError,
+		snapshotRepoOnPendingResume,
+		snapshotRepoOnPendingNew,
+	} {
+		resolved, err := prepareSnapshotBackupStorage(ctx, rootBackend, storage, snapshotBackupStorageParams{
+			onPending: onPending,
+			cfgHash:   cfgHash,
+			createdBy: "test",
+			allocateBackupID: func(context.Context) (repo.BackupID, error) {
+				return repo.BackupID(0x1111), nil
+			},
+		})
+		require.NoError(t, err)
+		require.Equal(t, repo.BackupID(0x1111), resolved.BackupID)
+		require.Contains(t, resolved.MetadataStorage.URI(), snapshotpaths.MetadataDir(repo.BackupID(0x1111)))
+	}
+}
+
+func TestPrepareSnapshotBackupStorageResumePendingBackup(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	require.NoError(t, err)
+
+	rootBackend := &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
+	}
+	cfgHash := []byte("hash")
+	backupID := repo.BackupID(0x1234)
+	metaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, backupID), []byte("{}")))
+	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, metaStorage, &checkpoint.CheckpointMetadataForBackup{
+		GCServiceId: "checkpoint-gc",
+		ConfigHash:  cfgHash,
+		BackupTS:    0x2222,
+	}))
+
+	allocateCalled := false
+	resolved, err := prepareSnapshotBackupStorage(ctx, rootBackend, storage, snapshotBackupStorageParams{
+		onPending: snapshotRepoOnPendingResume,
+		cfgHash:   cfgHash,
+		createdBy: "test",
+		allocateBackupID: func(context.Context) (repo.BackupID, error) {
+			allocateCalled = true
+			return repo.BackupID(0x1111), nil
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, allocateCalled)
+	require.Equal(t, backupID, resolved.BackupID)
+	require.Equal(t, snapshotpaths.PendingFile(cfgHash, backupID), resolved.pendingFile)
+	require.True(t, resolved.resumeCheckpoint)
+	require.Contains(t, resolved.MetadataStorage.URI(), snapshotpaths.MetadataDir(backupID))
+}
+
+func TestPrepareSnapshotBackupStorageRejectsPendingWhenErrorMode(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	require.NoError(t, err)
+
+	rootBackend := &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
+	}
+	cfgHash := []byte("hash")
+	backupID := repo.BackupID(0x1234)
+	metaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, backupID), []byte("{}")))
+	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, metaStorage, &checkpoint.CheckpointMetadataForBackup{
+		GCServiceId: "checkpoint-gc",
+		ConfigHash:  cfgHash,
+		BackupTS:    0x2222,
+	}))
+
+	_, prepErr := prepareSnapshotBackupStorage(ctx, rootBackend, storage, snapshotBackupStorageParams{
+		onPending: snapshotRepoOnPendingError,
+		cfgHash:   cfgHash,
+		createdBy: "test",
+		allocateBackupID: func(context.Context) (repo.BackupID, error) {
+			return repo.BackupID(0x1111), nil
+		},
+	})
+	require.Error(t, prepErr)
+	require.Contains(t, prepErr.Error(), backupID.String())
+	require.Contains(t, prepErr.Error(), "--on-pending=resume")
+}
+
+func TestPrepareSnapshotBackupStorageRejectsAmbiguousResume(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	require.NoError(t, err)
+
+	rootBackend := &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
+	}
+	cfgHash := []byte("hash")
+	for _, id := range []repo.BackupID{0x1234, 0x2345} {
+		require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, id), []byte("{}")))
+		metaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(id))
+		require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, metaStorage, &checkpoint.CheckpointMetadataForBackup{
+			GCServiceId: "checkpoint-gc",
+			ConfigHash:  cfgHash,
+			BackupTS:    uint64(id),
+		}))
+	}
+
+	_, prepErr := prepareSnapshotBackupStorage(ctx, rootBackend, storage, snapshotBackupStorageParams{
+		onPending: snapshotRepoOnPendingResume,
+		cfgHash:   cfgHash,
+		createdBy: "test",
+		allocateBackupID: func(context.Context) (repo.BackupID, error) {
+			return repo.BackupID(0x1111), nil
+		},
+	})
+	require.Error(t, prepErr)
+	require.Contains(t, prepErr.Error(), "cannot resume an ambiguous backup")
+}
+
+func TestPrepareSnapshotBackupStorageNewStartsFreshDespitePending(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	require.NoError(t, err)
+
+	rootBackend := &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
+	}
+	cfgHash := []byte("hash")
+	pendingID := repo.BackupID(0x1234)
+	metaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(pendingID))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, pendingID), []byte("{}")))
+	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, metaStorage, &checkpoint.CheckpointMetadataForBackup{
+		GCServiceId: "checkpoint-gc",
+		ConfigHash:  cfgHash,
+		BackupTS:    0x2222,
+	}))
+
+	resolved, err := prepareSnapshotBackupStorage(ctx, rootBackend, storage, snapshotBackupStorageParams{
+		onPending: snapshotRepoOnPendingNew,
+		cfgHash:   cfgHash,
+		createdBy: "test",
+		allocateBackupID: func(context.Context) (repo.BackupID, error) {
+			return repo.BackupID(0x1111), nil
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, repo.BackupID(0x1111), resolved.BackupID)
+	require.Equal(t, snapshotpaths.PendingFile(cfgHash, repo.BackupID(0x1111)), resolved.pendingFile)
 }

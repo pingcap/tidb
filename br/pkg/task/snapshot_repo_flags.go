@@ -25,13 +25,32 @@ import (
 const (
 	flagStorageLayout = "storage-layout"
 	flagBackupID      = "backup-id"
+	flagOnPending     = "on-pending"
 )
+
+type snapshotRepoOnPendingAction string
+
+const (
+	snapshotRepoOnPendingError  snapshotRepoOnPendingAction = "error"
+	snapshotRepoOnPendingResume snapshotRepoOnPendingAction = "resume"
+	snapshotRepoOnPendingNew    snapshotRepoOnPendingAction = "new"
+)
+
+func (a snapshotRepoOnPendingAction) String() string {
+	if a == "" {
+		return string(snapshotRepoOnPendingError)
+	}
+	return string(a)
+}
 
 func DefineSnapshotRepoFlags(flags *pflag.FlagSet, includeBackupID bool) {
 	flags.String(flagStorageLayout, repo.LayoutLegacy.String(),
 		"snapshot storage layout, one of legacy or repo-v1")
 	if includeBackupID {
 		flags.String(flagBackupID, "", "snapshot backup id in repo-v1 layout")
+	} else {
+		flags.String(flagOnPending, string(snapshotRepoOnPendingError),
+			"how repo-v1 snapshot backup handles matching pending backups, one of error, resume, or new")
 	}
 }
 
@@ -59,4 +78,25 @@ func parseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
 		return 0, nil
 	}
 	return repo.ParseBackupID(raw)
+}
+
+func parseSnapshotOnPendingFlag(flags *pflag.FlagSet) (snapshotRepoOnPendingAction, error) {
+	if flags.Lookup(flagOnPending) == nil {
+		return snapshotRepoOnPendingError, nil
+	}
+	raw, err := flags.GetString(flagOnPending)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	action := snapshotRepoOnPendingAction(strings.ToLower(strings.TrimSpace(raw)))
+	switch action {
+	case "", snapshotRepoOnPendingError:
+		return snapshotRepoOnPendingError, nil
+	case snapshotRepoOnPendingResume:
+		return snapshotRepoOnPendingResume, nil
+	case snapshotRepoOnPendingNew:
+		return snapshotRepoOnPendingNew, nil
+	default:
+		return "", errors.Errorf("unknown on-pending action %q", raw)
+	}
 }

@@ -16,13 +16,11 @@ package task
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"os"
 	"path"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -43,29 +41,38 @@ type resolvedSnapshotStorage struct {
 	RootBackend     *backuppb.StorageBackend
 	RootStorage     storeapi.Storage
 	MetadataStorage storeapi.Storage
-	PendingFile     string
 }
 
-type pendingSnapshot struct {
-	LayoutVersion  int    `json:"layout_version"`
-	BackupID       string `json:"backup_id"`
-	MetadataPrefix string `json:"metadata_prefix"`
-	CreatedAt      string `json:"created_at"`
+type preparedSnapshotBackupStorage struct {
+	resolvedSnapshotStorage
+	pendingFile      string
+	resumeCheckpoint bool
+}
+
+type snapshotBackupStorageParams struct {
+	onPending        snapshotRepoOnPendingAction
+	cfgHash          []byte
+	createdBy        string
+	allocateBackupID func(context.Context) (repo.BackupID, error)
 }
 
 type snapshotRepoBackupLifecycle struct {
 	resolvedStorage      *resolvedSnapshotStorage
+	pendingFile          string
 	removePendingOnClose bool
 	pendingMarkerCreated bool
 	backupMetaDurable    bool
 	checkpointCleanedUp  bool
 }
 
-func newSnapshotRepoBackupLifecycle(resolved *resolvedSnapshotStorage) *snapshotRepoBackupLifecycle {
-	if resolved == nil || !resolved.Layout.IsRepoV1() {
+func newSnapshotRepoBackupLifecycle(prepared *preparedSnapshotBackupStorage) *snapshotRepoBackupLifecycle {
+	if prepared == nil || !prepared.Layout.IsRepoV1() {
 		return nil
 	}
-	return &snapshotRepoBackupLifecycle{resolvedStorage: resolved}
+	return &snapshotRepoBackupLifecycle{
+		resolvedStorage: &prepared.resolvedSnapshotStorage,
+		pendingFile:     prepared.pendingFile,
+	}
 }
 
 func (l *snapshotRepoBackupLifecycle) Attach(client *backup.Client) {
@@ -79,9 +86,9 @@ func (l *snapshotRepoBackupLifecycle) Close(ctx context.Context) {
 	if l == nil || !l.removePendingOnClose || !l.pendingMarkerCreated || !l.backupMetaDurable || !l.checkpointCleanedUp {
 		return
 	}
-	if err := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.resolvedStorage.PendingFile); err != nil {
+	if err := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.pendingFile); err != nil {
 		log.Warn("failed to remove repo-v1 pending marker",
-			zap.String("path", l.resolvedStorage.PendingFile),
+			zap.String("path", l.pendingFile),
 			zap.Error(err))
 	}
 }
@@ -99,7 +106,7 @@ func (l *snapshotRepoBackupLifecycle) StartCheckpoint(
 		return errors.Trace(err)
 	}
 	if pendingFile != "" {
-		if err := writePendingSnapshot(ctx, l.resolvedStorage.RootStorage, pendingFile, l.resolvedStorage.BackupID); err != nil {
+		if err := writePendingSnapshot(ctx, l.resolvedStorage.RootStorage, pendingFile); err != nil {
 			return errors.Trace(err)
 		}
 		l.pendingMarkerCreated = true
@@ -118,14 +125,14 @@ func (l *snapshotRepoBackupLifecycle) pendingFileForCheckpoint() (string, error)
 	if l.resolvedStorage == nil {
 		return "", errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 backup lifecycle is missing resolved storage")
 	}
-	if l.resolvedStorage.PendingFile == "" {
+	if l.pendingFile == "" {
 		return "", errors.Annotatef(
 			berrors.ErrInvalidArgument,
 			"repo-v1 backup lifecycle is missing pending marker path for backup %s",
 			l.resolvedStorage.BackupID,
 		)
 	}
-	return l.resolvedStorage.PendingFile, nil
+	return l.pendingFile, nil
 }
 
 func (l *snapshotRepoBackupLifecycle) rollbackStartCheckpoint(ctx context.Context, client *backup.Client) {
@@ -138,9 +145,9 @@ func (l *snapshotRepoBackupLifecycle) rollbackStartCheckpoint(ctx context.Contex
 		removePendingMarker = false
 	}
 	if l.pendingMarkerCreated && removePendingMarker {
-		if removeErr := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.resolvedStorage.PendingFile); removeErr != nil {
+		if removeErr := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.pendingFile); removeErr != nil {
 			log.Warn("failed to roll back repo-v1 pending marker after checkpoint setup failure",
-				zap.String("path", l.resolvedStorage.PendingFile),
+				zap.String("path", l.pendingFile),
 				zap.Error(removeErr))
 		}
 		l.pendingMarkerCreated = false
@@ -196,6 +203,29 @@ func (l *snapshotRepoBackupLifecycle) RewriteStorageBackend() func(storeID uint6
 	}
 }
 
+func (l *snapshotRepoBackupLifecycle) BeforeFirstRequestToStore() func(storeID uint64, request backuppb.BackupRequest) error {
+	if l == nil {
+		return nil
+	}
+	return func(storeID uint64, request backuppb.BackupRequest) error {
+		backend := request.GetStorageBackend()
+		if backend == nil || backend.GetLocal() == nil {
+			return nil
+		}
+		if backend.GetLocal().Path == "" {
+			return errors.Annotatef(
+				berrors.ErrInvalidArgument,
+				"repo-v1 local backend for store %d is missing target path",
+				storeID,
+			)
+		}
+		if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
+			return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
+		}
+		return nil
+	}
+}
+
 func validateSnapshotBackupRepoConfig(cfg *BackupConfig) error {
 	if !cfg.Layout.IsRepoV1() {
 		return nil
@@ -219,69 +249,106 @@ func snapshotRegistrationBackupID(layout repo.Layout, backupID repo.BackupID) st
 
 func prepareSnapshotBackupStorage(
 	ctx context.Context,
-	cfg *BackupConfig,
 	rootBackend *backuppb.StorageBackend,
 	rootStorage storeapi.Storage,
-	client *backup.Client,
-	cfgHash []byte,
-	createdBy string,
-) (*resolvedSnapshotStorage, error) {
-	resolved := &resolvedSnapshotStorage{
-		Layout:          cfg.Layout,
-		RootBackend:     rootBackend,
-		RootStorage:     rootStorage,
-		MetadataStorage: rootStorage,
-	}
-	if !cfg.Layout.IsRepoV1() {
-		return resolved, nil
-	}
+	params snapshotBackupStorageParams,
+) (*preparedSnapshotBackupStorage, error) {
 	if err := validateRepoV1Backend(rootBackend); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if _, err := repo.EnsureRepo(ctx, rootStorage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, createdBy); err != nil {
+	if _, err := repo.EnsureRepo(ctx, rootStorage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, params.createdBy); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	cfgHashHex := hex.EncodeToString(cfgHash)
-	unfinished, err := resolveUnfinishedPendingBackups(ctx, rootStorage, cfgHashHex)
+	cfgHashStorageName := snapshotpaths.PendingConfigHashStorageName(params.cfgHash)
+	unfinished, err := resolveUnfinishedPendingBackups(ctx, rootStorage, params.cfgHash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	switch len(unfinished) {
-	case 0:
-	case 1:
-		return nil, errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"found unfinished repo-v1 backup %s for config hash %s; explicit resume/discard is required before starting a new backup",
-			unfinished[0], cfgHashHex,
-		)
-	default:
-		ids := make([]string, 0, len(unfinished))
-		for _, id := range unfinished {
-			ids = append(ids, id.String())
+	backupID, resume, err := resolveRepoV1BackupID(params.onPending, unfinished, cfgHashStorageName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if !resume {
+		backupID, err = params.allocateBackupID(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return nil, errors.Annotatef(
+	}
+	resolved := &preparedSnapshotBackupStorage{
+		resolvedSnapshotStorage: resolvedSnapshotStorage{
+			Layout:          repo.LayoutRepoV1,
+			BackupID:        backupID,
+			RootBackend:     rootBackend,
+			RootStorage:     rootStorage,
+			MetadataStorage: repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(backupID)),
+		},
+		pendingFile:      snapshotpaths.PendingFile(params.cfgHash, backupID),
+		resumeCheckpoint: resume,
+	}
+	log.Info("created repo-v1 snapshot backup storage",
+		zap.String("backup-id", backupID.String()),
+		zap.String("metadata-uri", resolved.MetadataStorage.URI()),
+		zap.Bool("resumed?", resume))
+	return resolved, nil
+}
+
+func resolveRepoV1BackupID(
+	onPending snapshotRepoOnPendingAction,
+	unfinished []repo.BackupID,
+	cfgHashStorageName string,
+) (repo.BackupID, bool, error) {
+	switch onPending {
+	case "", snapshotRepoOnPendingError:
+		if len(unfinished) == 0 {
+			return 0, false, nil
+		}
+		if len(unfinished) == 1 {
+			return 0, false, errors.Annotatef(
+				berrors.ErrInvalidArgument,
+				"found unfinished repo-v1 backup %s for config hash %s; use --%s=%s to resume it or --%s=%s to start a fresh attempt",
+				unfinished[0], cfgHashStorageName, flagOnPending, snapshotRepoOnPendingResume, flagOnPending, snapshotRepoOnPendingNew,
+			)
+		}
+		return 0, false, errors.Annotatef(
 			berrors.ErrInvalidArgument,
 			"found multiple unfinished repo-v1 backups for config hash %s: %s",
-			cfgHashHex, strings.Join(ids, ", "),
+			cfgHashStorageName, formatRepoV1BackupIDs(unfinished),
+		)
+	case snapshotRepoOnPendingResume:
+		switch len(unfinished) {
+		case 0:
+			return 0, false, nil
+		case 1:
+			return unfinished[0], true, nil
+		default:
+			return 0, false, errors.Annotatef(
+				berrors.ErrInvalidArgument,
+				"found multiple unfinished repo-v1 backups for config hash %s: %s; cannot resume an ambiguous backup",
+				cfgHashStorageName, formatRepoV1BackupIDs(unfinished),
+			)
+		}
+	case snapshotRepoOnPendingNew:
+		return 0, false, nil
+	default:
+		return 0, false, errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"unknown repo-v1 on-pending action %q",
+			onPending,
 		)
 	}
+}
 
-	backupTS, err := client.GetCurrentTS(ctx)
-	if err != nil {
-		return nil, errors.Annotate(err, "allocate repo-v1 backup id")
+func formatRepoV1BackupIDs(ids []repo.BackupID) string {
+	if len(ids) == 0 {
+		return ""
 	}
-	backupID, err := repo.NewBackupID(backupTS)
-	if err != nil {
-		return nil, errors.Trace(err)
+	items := make([]string, 0, len(ids))
+	for _, id := range ids {
+		items = append(items, id.String())
 	}
-	resolved.BackupID = backupID
-	resolved.MetadataStorage = repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(backupID))
-	resolved.PendingFile = snapshotpaths.PendingFile(cfgHashHex, backupID)
-	log.Info("prepared repo-v1 snapshot backup storage",
-		zap.String("backup-id", backupID.String()),
-		zap.String("metadata-uri", resolved.MetadataStorage.URI()))
-	return resolved, nil
+	return strings.Join(items, ", ")
 }
 
 func resolveSnapshotRestoreStorage(
@@ -327,21 +394,21 @@ func resolveSnapshotBackupMeta(
 	return resolved, backupMeta, nil
 }
 
-func resolveUnfinishedPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHashHex string) ([]repo.BackupID, error) {
-	ids, err := listPendingBackups(ctx, rootStorage, cfgHashHex)
+func resolveUnfinishedPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
+	entries, err := listPendingBackups(ctx, rootStorage, cfgHash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	unfinished := make([]repo.BackupID, 0, len(ids))
-	for _, id := range ids {
-		metadataStorage := repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(id))
+	unfinished := make([]repo.BackupID, 0, len(entries))
+	for _, entry := range entries {
+		metadataStorage := repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(entry.backupID))
 		hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if hasBackupMeta {
-			if err := rootStorage.DeleteFile(ctx, snapshotpaths.PendingFile(cfgHashHex, id)); err != nil {
-				return nil, errors.Annotatef(err, "remove stale pending marker for %s", id)
+			if err := rootStorage.DeleteFile(ctx, entry.path); err != nil {
+				return nil, errors.Annotatef(err, "remove stale pending marker for %s", entry.backupID)
 			}
 			continue
 		}
@@ -353,18 +420,22 @@ func resolveUnfinishedPendingBackups(ctx context.Context, rootStorage storeapi.S
 			return nil, errors.Annotatef(
 				berrors.ErrInvalidArgument,
 				"found inconsistent repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
-				id, metautil.MetaFile, checkpoint.CheckpointMetaPathForBackup,
+				entry.backupID, metautil.MetaFile, checkpoint.CheckpointMetaPathForBackup,
 			)
 		}
-		unfinished = append(unfinished, id)
+		unfinished = append(unfinished, entry.backupID)
 	}
 	return unfinished, nil
 }
 
-func listPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHashHex string) ([]repo.BackupID, error) {
-	pendingDir := snapshotpaths.PendingDir(cfgHashHex)
-	ids := make([]repo.BackupID, 0)
-	err := rootStorage.WalkDir(ctx, &storeapi.WalkOption{SubDir: pendingDir}, func(filePath string, _ int64) error {
+type pendingBackupEntry struct {
+	backupID repo.BackupID
+	path     string
+}
+
+func listPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]pendingBackupEntry, error) {
+	entries := make([]pendingBackupEntry, 0)
+	err := rootStorage.WalkDir(ctx, &storeapi.WalkOption{SubDir: snapshotpaths.PendingDir(cfgHash)}, func(filePath string, _ int64) error {
 		if path.Ext(filePath) != ".json" {
 			return nil
 		}
@@ -372,29 +443,20 @@ func listPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHa
 		if err != nil {
 			return errors.Annotatef(err, "parse pending backup marker %s", filePath)
 		}
-		ids = append(ids, id)
+		entries = append(entries, pendingBackupEntry{backupID: id, path: filePath})
 		return nil
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sort.Slice(ids, func(i, j int) bool {
-		return ids[i] < ids[j]
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].backupID < entries[j].backupID
 	})
-	return ids, nil
+	return entries, nil
 }
 
-func writePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pendingFile string, backupID repo.BackupID) error {
-	payload, err := json.Marshal(&pendingSnapshot{
-		LayoutVersion:  repo.RepoVersion,
-		BackupID:       backupID.String(),
-		MetadataPrefix: snapshotpaths.MetadataDir(backupID),
-		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return rootStorage.WriteFile(ctx, pendingFile, payload)
+func writePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pendingFile string) error {
+	return rootStorage.WriteFile(ctx, pendingFile, []byte("{}"))
 }
 
 func rewriteDataBackendForStore(backend *backuppb.StorageBackend, storeID uint64, backupID repo.BackupID) error {
