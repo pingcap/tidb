@@ -1607,14 +1607,14 @@ create table t67150_inner (ref_id varchar(64) primary key);
 insert into t67150_outer values ('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5);
 insert into t67150_inner values ('a'), ('c'), ('e');
 set tidb_store_batch_size = 4;
-select t67150_outer.id from t67150_outer left join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
+select /*+ INL_JOIN(t67150_inner) */ t67150_outer.id from t67150_outer left join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
 id
 a
 b
 c
 d
 e
-select t67150_outer.id from t67150_outer join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
+select /*+ INL_JOIN(t67150_inner) */ t67150_outer.id from t67150_outer join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
 id
 a
 c

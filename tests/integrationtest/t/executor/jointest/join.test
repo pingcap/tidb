@@ -1111,8 +1111,8 @@ insert into t67150_outer values ('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5)
 insert into t67150_inner values ('a'), ('c'), ('e');
 set tidb_store_batch_size = 4;
 ## LEFT JOIN returns all outer rows; non-matching ones have NULL ref_id.
-select t67150_outer.id from t67150_outer left join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
+select /*+ INL_JOIN(t67150_inner) */ t67150_outer.id from t67150_outer left join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
 ## INNER JOIN returns only matched rows.
-select t67150_outer.id from t67150_outer join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
+select /*+ INL_JOIN(t67150_inner) */ t67150_outer.id from t67150_outer join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
 set tidb_store_batch_size = default;
 drop table if exists t67150_outer, t67150_inner;
