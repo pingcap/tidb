@@ -17,6 +17,8 @@ package initstats
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,12 +28,75 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/stretchr/testify/require"
 )
+
+func formatInitStatsTableState(tk *testkit.TestKit, h *handle.Handle, is infoschema.InfoSchema, tableID int64) string {
+	parts := []string{fmt.Sprintf("table_id=%d", tableID)}
+	if tblInfo, ok := h.TableInfoByIDForInitStats(is, tableID); ok {
+		metaIndexes := make([]string, 0, len(tblInfo.Meta().Indices))
+		for _, idxInfo := range tblInfo.Meta().Indices {
+			metaIndexes = append(metaIndexes, fmt.Sprintf("%d:%s", idxInfo.ID, idxInfo.Name.O))
+		}
+		parts = append(parts, fmt.Sprintf("meta_indexes=%v", metaIndexes))
+	} else {
+		parts = append(parts, "meta_indexes=<missing>")
+	}
+
+	stats, ok := h.Get(tableID)
+	parts = append(parts, fmt.Sprintf("cache_hit=%t", ok))
+	if ok && stats != nil {
+		cachedIndexes := make([]string, 0, stats.IdxNum())
+		stats.ForEachIndexImmutable(func(id int64, idx *statistics.Index) bool {
+			cachedIndexes = append(cachedIndexes, fmt.Sprintf("%d:full=%t:topn=%t", id, idx != nil && idx.IsFullLoad(), idx != nil && idx.TopN != nil))
+			return false
+		})
+		sort.Strings(cachedIndexes)
+		parts = append(parts,
+			fmt.Sprintf("cached_indexes=%v", cachedIndexes),
+			fmt.Sprintf("existence_has_idx1=%t", stats.ColAndIdxExistenceMap.Has(1, true)),
+			fmt.Sprintf("existence_analyzed_idx1=%t", stats.ColAndIdxExistenceMap.HasAnalyzed(1, true)),
+		)
+	} else {
+		parts = append(parts, "cached_indexes=<missing>")
+	}
+
+	parts = append(parts,
+		fmt.Sprintf("stats_meta=%v", tk.MustQuery(fmt.Sprintf("select version, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where table_id = %d", tableID)).Rows()),
+		fmt.Sprintf("stats_histograms=%v", tk.MustQuery(fmt.Sprintf("select hist_id, is_index, stats_ver, version from mysql.stats_histograms where table_id = %d order by is_index desc, hist_id", tableID)).Rows()),
+		fmt.Sprintf("stats_top_n=%v", tk.MustQuery(fmt.Sprintf("select hist_id, count(*) from mysql.stats_top_n where table_id = %d and is_index = 1 group by hist_id order by hist_id", tableID)).Rows()),
+		fmt.Sprintf("stats_buckets=%v", tk.MustQuery(fmt.Sprintf("select hist_id, count(*) from mysql.stats_buckets where table_id = %d and is_index = 1 group by hist_id order by hist_id", tableID)).Rows()),
+	)
+	return strings.Join(parts, "; ")
+}
+
+func requireIndexFullLoadWithDiagnostics(t *testing.T, tk *testkit.TestKit, h *handle.Handle, is infoschema.InfoSchema, tableID, indexID int64, stage string, relatedTableIDs ...int64) {
+	t.Helper()
+	stats, ok := h.Get(tableID)
+	if !ok || stats == nil {
+		t.Fatalf("%s: stats cache miss; %s", stage, initStatsReloadDiagnostics(tk, h, is, relatedTableIDs...))
+	}
+	idx := stats.GetIdx(indexID)
+	if idx == nil {
+		t.Fatalf("%s: missing index %d; %s", stage, indexID, initStatsReloadDiagnostics(tk, h, is, relatedTableIDs...))
+	}
+	if !idx.IsFullLoad() {
+		t.Fatalf("%s: index %d is not full load; %s", stage, indexID, initStatsReloadDiagnostics(tk, h, is, relatedTableIDs...))
+	}
+}
+
+func initStatsReloadDiagnostics(tk *testkit.TestKit, h *handle.Handle, is infoschema.InfoSchema, tableIDs ...int64) string {
+	states := make([]string, 0, len(tableIDs))
+	for _, tableID := range tableIDs {
+		states = append(states, formatInitStatsTableState(tk, h, is, tableID))
+	}
+	return strings.Join(states, " || ")
+}
 
 func maxPhysicalTableID(h *handle.Handle, is infoschema.InfoSchema) int64 {
 	var maxID int64
@@ -135,6 +200,7 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 	require.NoError(t, err)
 	is = dom.InfoSchema()
 	h := dom.StatsHandle()
+	diagTK := testkit.NewTestKit(t, store)
 	_, ok := h.Get(tbl1.Meta().ID)
 	require.False(t, ok)
 	require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID))
@@ -148,12 +214,32 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 
 	// Make sure it can be loaded multiple times.
 	require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID, tbl2.Meta().ID))
+	requireIndexFullLoadWithDiagnostics(
+		t,
+		diagTK,
+		h,
+		is,
+		tbl1.Meta().ID,
+		1,
+		fmt.Sprintf("after InitStats(%d, %d) for table t1", tbl1.Meta().ID, tbl2.Meta().ID),
+		tbl1.Meta().ID,
+		tbl2.Meta().ID,
+	)
+	requireIndexFullLoadWithDiagnostics(
+		t,
+		diagTK,
+		h,
+		is,
+		tbl2.Meta().ID,
+		1,
+		fmt.Sprintf("after InitStats(%d, %d) for table t2", tbl1.Meta().ID, tbl2.Meta().ID),
+		tbl1.Meta().ID,
+		tbl2.Meta().ID,
+	)
 	stats1, ok = h.Get(tbl1.Meta().ID)
 	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
 	stats2, ok := h.Get(tbl2.Meta().ID)
 	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
 	_, ok = h.Get(tbl3.Meta().ID)
 	require.False(t, ok)
 
