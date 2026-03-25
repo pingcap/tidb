@@ -399,8 +399,10 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	metrics.AddResultChunkCells(1000)
 	metrics.AddResourceManagerWriteCnt(20)
 	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 10)
+	total := FormatRUV2Total(metrics, weights, 10987, 246)
 	formatted := FormatRUV2Metrics(metrics, weights, 10987, 246)
 
+	require.Equal(t, "19983.42", total)
 	require.Contains(t, formatted, "tidb_ru:")
 	require.Contains(t, formatted, "tikv_ru:")
 	require.Contains(t, formatted, "tiflash_ru:")

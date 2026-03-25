@@ -477,7 +477,15 @@ func sumRUV2LabelMap(values map[string]int64) int64 {
 	return total
 }
 
-// FormatRUV2Metrics formats RUv2 metrics into a compact string.
+// FormatRUV2Total formats the RUv2 total into a slow log string.
+func FormatRUV2Total(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) string {
+	if (metrics == nil || metrics.IsZero()) && tiKVRU == 0 && tiFlashRU == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.2f", metrics.TotalRU(weights, tiKVRU, tiFlashRU))
+}
+
+// FormatRUV2Metrics formats RUv2 metrics into a compact detail string.
 func FormatRUV2Metrics(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) string {
 	if (metrics == nil || metrics.IsZero()) && tiKVRU == 0 && tiFlashRU == 0 {
 		return ""
