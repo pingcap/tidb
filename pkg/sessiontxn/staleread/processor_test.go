@@ -299,8 +299,8 @@ func TestStaleReadInvalidExpression(t *testing.T) {
 		{"not-a-date", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"},
 		{"2024-13-01 00:00:00", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"}, // invalid month
 		{"2024-01-32 00:00:00", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"}, // invalid day
-		{"42", "invalid TSO timestamp: TSO is before 2013-01-01"},                              // small integer, not a valid TSO
-		{"0", "invalid TSO timestamp: TSO is before 2013-01-01"},                               // zero is not a valid TSO
+		{"42", "invalid TSO timestamp: TSO is before 2013-01-01"},                             // small integer, not a valid TSO
+		{"0", "invalid TSO timestamp: TSO is before 2013-01-01"},                              // zero is not a valid TSO
 	}
 
 	for _, tc := range testCases {
