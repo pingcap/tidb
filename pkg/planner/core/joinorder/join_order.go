@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -347,6 +346,7 @@ func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
 
 func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	if len(j.group.leadingHints) > 0 {
+		// TODO support hint for DP
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
 	}
 
@@ -368,6 +368,7 @@ func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 		}
 	}
 	if !ok {
+		// TODO warning
 		return j.group.root, nil
 	}
 	return plan, nil
@@ -383,12 +384,13 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 
 	nodeCount := len(nodes)
 	if nodeCount > 63 {
+		// Sanity check: TiDBOptJoinResorderThreshold should prevent this from happening, but we check it here just in case.
 		return nil, false, errors.Errorf("DP join reorder supports at most 63 nodes, got %d", nodeCount)
 	}
 
 	bestPlan := make([]*Node, 1<<nodeCount)
 	for _, node := range nodes {
-		mask, err := fastIntSetToUint64(node.bitSet)
+		mask, err := node.bitSet.GetSmallUInt64()
 		if err != nil {
 			return nil, false, err
 		}
@@ -408,11 +410,16 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 		for left := (subset - 1) & subset; left > 0; left = (left - 1) & subset {
 			right := subset ^ left
 			if left > right {
+				// TODO check if it's true:
+				// We only need to consider one direction of the partition (left, right) and skip the other (right, left) to avoid duplicate work,
+				// because the join order (A join B) and (B join A) will be considered in the same iteration when left and right are swapped.
 				continue
 			}
 			leftPlan := bestPlan[left]
 			rightPlan := bestPlan[right]
 			if leftPlan == nil || rightPlan == nil {
+				// leftPlan or rightPlan will be nil if there is no valid join order for the corresponding subset,
+				// for example, when the subset contains two nodes but they cannot be joined together.
 				continue
 			}
 
@@ -443,17 +450,6 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 		return nil, false, nil
 	}
 	return finalPlan.p, true, nil
-}
-
-func fastIntSetToUint64(s intset.FastIntSet) (uint64, error) {
-	var mask uint64
-	s.ForEach(func(i int) {
-		mask |= uint64(1) << uint(i)
-	})
-	if int(bits.OnesCount64(mask)) != s.Len() {
-		return 0, errors.Errorf("fast int set %s cannot be represented as uint64 bitmask", s.String())
-	}
-	return mask, nil
 }
 
 type joinOrderGreedy struct {
