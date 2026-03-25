@@ -28,16 +28,18 @@ import (
 // TopN limits for RU aggregation.
 //
 // Two "others" buckets are used to bound cardinality:
-// 1. "others user" (keyRUOthersUser = "<others>") for evicted users.
+// 1. "others user" (othersUserWireLabel = "_TIDB_TOPRU_OTHERS_USER") for evicted users.
 // 2. "others SQL" (nil sqlDigest + nil planDigest) for evicted SQLs per user.
 const (
 	// maxTopUsers is the maximum number of users to keep in global TopN.
 	maxTopUsers = 200
 	// maxTopSQLsPerUser is the maximum number of SQLs to keep per user.
 	maxTopSQLsPerUser = 200
-	// keyRUOthersUser is the special user key for aggregated "others" users.
-	// Use a non-empty sentinel to avoid collision with real empty user names.
-	keyRUOthersUser = "<others>"
+	// othersUserWireLabel is the wire/output label for aggregated "others user".
+	// It is only used when encoding to TopRURecord output.
+	// Under current runtime invariant, real user values come from vars.User.String()
+	// (shape: "user@host" or ""), so this label does not collide with runtime users.
+	othersUserWireLabel = "_TIDB_TOPRU_OTHERS_USER"
 
 	// Pre-TopN memory caps used during collection.
 	maxPreTopNUsers       = maxTopUsers * 2       // 400 users max during collection.
@@ -190,8 +192,10 @@ func (rs ruRecords) topN(n int) (top, evicted ruRecords) {
 
 // userRUCollecting tracks RU data for one user with per-user SQL TopN.
 type userRUCollecting struct {
-	records            map[sqlPlanKey]*ruRecord // sqlPlanKey => ruRecord
-	othersRec          *ruRecord                // Pre-aggregated "others SQL" record
+	records   map[sqlPlanKey]*ruRecord // sqlPlanKey => ruRecord
+	othersRec *ruRecord                // Pre-aggregated "others SQL" record
+	// user is the real user key for entries stored in ruCollecting.users.
+	// Do not use this field to infer whether it is synthetic othersUser.
 	user               string
 	totalRU            float64 // cumulative RU for user-level TopN sorting
 	preTopNSQLsPerUser int
@@ -210,6 +214,10 @@ func newUserRUCollectingWithCap(user string, preTopNSQLsPerUser int) *userRUColl
 		records:            make(map[sqlPlanKey]*ruRecord, preTopNSQLsPerUser),
 		preTopNSQLsPerUser: preTopNSQLsPerUser,
 	}
+}
+
+func newOthersUserRUCollectingWithCap(preTopNSQLsPerUser int) *userRUCollecting {
+	return newUserRUCollectingWithCap("", preTopNSQLsPerUser)
 }
 
 // add adds RU increments for one SQL.
@@ -381,8 +389,10 @@ func (us userRUCollectings) topN(n int) (top, evicted userRUCollectings) {
 // ruCollecting is the top-level RU collector.
 // It keeps global TopN users with per-user SQL TopN.
 type ruCollecting struct {
-	users              map[string]*userRUCollecting // user => userRUCollecting
-	othersUser         *userRUCollecting            // Pre-aggregated "others user"
+	users map[string]*userRUCollecting // user => userRUCollecting
+	// othersUser stores the synthetic global "others user" bucket.
+	// Its identity is determined by this field location, not by userRUCollecting.user value.
+	othersUser         *userRUCollecting
 	preTopNUsers       int
 	preTopNSQLsPerUser int
 	mu                 sync.Mutex
@@ -414,11 +424,7 @@ func (c *ruCollecting) add(timestamp uint64, key stmtstats.RUKey, incr *stmtstat
 	if !ok {
 		// At capacity, merge into "others user".
 		if len(c.users) >= c.preTopNUsers {
-			if c.othersUser == nil {
-				c.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, c.preTopNSQLsPerUser)
-			}
-			// Merge into "others user"'s "others SQL".
-			c.othersUser.addOthers(timestamp, incr)
+			c.getOrCreateOthersUser().addOthers(timestamp, incr)
 			return
 		}
 		userCollecting = newUserRUCollectingWithCap(user, c.preTopNSQLsPerUser)
@@ -521,7 +527,7 @@ func (c *ruCollecting) toTopRURecords(keyspaceName []byte) []tipb.TopRURecord {
 		}
 		result = append(result, tipb.TopRURecord{
 			KeyspaceName: keyspaceName,
-			User:         keyRUOthersUser,
+			User:         othersUserWireLabel,
 			SqlDigest:    nil,
 			PlanDigest:   nil,
 			Items:        c.othersUser.othersRec.items.toProto(),
@@ -606,12 +612,12 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 	// Merge evicted users into "others user".
 	var othersUser *userRUCollecting
 	if c.othersUser != nil {
-		othersUser = newUserRUCollectingWithCap(keyRUOthersUser, maxSQLsPerUser)
+		othersUser = newOthersUserRUCollectingWithCap(maxSQLsPerUser)
 		mergeUserIntoOthers(othersUser, c.othersUser)
 	}
 	if len(evictedUsers) > 0 {
 		if othersUser == nil {
-			othersUser = newUserRUCollectingWithCap(keyRUOthersUser, maxSQLsPerUser)
+			othersUser = newOthersUserRUCollectingWithCap(maxSQLsPerUser)
 		}
 		for _, evictedUser := range evictedUsers {
 			mergeUserIntoOthers(othersUser, evictedUser)
@@ -622,27 +628,26 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 	return result
 }
 
-// getOrCreateUser returns userRUCollecting for user and creates it if needed.
-// If at user capacity, it returns othersUser.
-func (c *ruCollecting) getOrCreateUser(user string) *userRUCollecting {
-	if user == keyRUOthersUser {
-		return c.getOrCreateOthersUser()
-	}
+// getOrCreateUser returns userRUCollecting for real users and creates it if needed.
+// It also returns whether the user overflows current user capacity.
+func (c *ruCollecting) getOrCreateUser(user string) (u *userRUCollecting, overflow bool) {
 	u, ok := c.users[user]
 	if !ok {
 		if len(c.users) >= c.preTopNUsers {
-			return c.getOrCreateOthersUser()
+			return nil, true
 		}
 		u = newUserRUCollectingWithCap(user, c.preTopNSQLsPerUser)
 		c.users[user] = u
 	}
-	return u
+	return u, false
 }
 
 // getOrCreateOthersUser returns othersUser and creates it if needed.
 func (c *ruCollecting) getOrCreateOthersUser() *userRUCollecting {
 	if c.othersUser == nil {
-		c.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, c.preTopNSQLsPerUser)
+		// Identity of synthetic global othersUser comes from being stored at
+		// c.othersUser, not from userRUCollecting.user value.
+		c.othersUser = newOthersUserRUCollectingWithCap(c.preTopNSQLsPerUser)
 	}
 	return c.othersUser
 }
@@ -657,7 +662,19 @@ func (c *ruCollecting) mergeFrom(src *ruCollecting, targetTimestamp uint64, rewr
 
 	// Merge regular users.
 	for _, srcUser := range src.users {
-		dstUser := c.getOrCreateUser(srcUser.user)
+		dstUser, overflow := c.getOrCreateUser(srcUser.user)
+		if overflow {
+			// When dst user capacity is full, fold the entire src user footprint into
+			// synthetic global othersUser instead of creating a new real-user bucket.
+			dstOthersUser := c.getOrCreateOthersUser()
+			for _, srcRec := range srcUser.records {
+				dstOthersUser.mergeRecord(othersKey, srcRec, targetTimestamp, rewriteTimestamp)
+			}
+			if srcUser.othersRec != nil {
+				dstOthersUser.mergeRecord(othersKey, srcUser.othersRec, targetTimestamp, rewriteTimestamp)
+			}
+			continue
+		}
 		for _, srcRec := range srcUser.records {
 			key := makeKey(srcRec.sqlDigest, srcRec.planDigest)
 			dstUser.mergeRecord(key, srcRec, targetTimestamp, rewriteTimestamp)

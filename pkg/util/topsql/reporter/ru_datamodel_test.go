@@ -226,7 +226,7 @@ func TestRUCollectingHybridTopN(t *testing.T) {
 	// Find "others user" records (empty user string)
 	var hasOthersUser bool
 	for _, rec := range records {
-		if rec.User == keyRUOthersUser {
+		if rec.User == othersUserWireLabel {
 			hasOthersUser = true
 			break
 		}
@@ -254,6 +254,168 @@ func TestRUCollectingPreTopNUserCap(t *testing.T) {
 	require.Len(t, collecting.users, maxPreTopNUsers)
 	require.NotNil(t, collecting.othersUser)
 	require.Equal(t, float64(extra), collecting.othersUser.totalRU)
+}
+
+func TestRUCollectingOthersWireLabelNoCollisionWithRuntimeUserShape(t *testing.T) {
+	collecting := newRUCollectingWithCaps(1, 1)
+	runtimeUser := "app@127.0.0.1"
+
+	// Build per-user others SQL for runtime-shaped user.
+	collecting.add(1000, stmtstats.RUKey{
+		User:       runtimeUser,
+		SQLDigest:  stmtstats.BinaryDigest("sql-top"),
+		PlanDigest: stmtstats.BinaryDigest("plan-top"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      10,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+	collecting.add(1001, stmtstats.RUKey{
+		User:       runtimeUser,
+		SQLDigest:  stmtstats.BinaryDigest("sql-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      8,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	// Add one more user to overflow global user cap and build synthetic global othersUser.
+	collecting.add(1002, stmtstats.RUKey{
+		User:       "other@127.0.0.1",
+		SQLDigest:  stmtstats.BinaryDigest("sql-global-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-global-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      7,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	records := collecting.toTopRURecords([]byte("ks"))
+
+	var hasPerUserOthers bool
+	var hasGlobalOthers bool
+	for _, rec := range records {
+		if rec.User == runtimeUser && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasPerUserOthers = true
+		}
+		if rec.User == othersUserWireLabel && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasGlobalOthers = true
+		}
+	}
+	require.True(t, hasPerUserOthers)
+	require.True(t, hasGlobalOthers)
+}
+
+func TestRUCollectingEmptyUserAndGlobalOthersRemainDistinct(t *testing.T) {
+	collecting := newRUCollectingWithCaps(1, 1)
+
+	// Empty user is a valid runtime user shape.
+	collecting.add(1000, stmtstats.RUKey{
+		User:       "",
+		SQLDigest:  stmtstats.BinaryDigest("sql-empty-top"),
+		PlanDigest: stmtstats.BinaryDigest("plan-empty-top"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      10,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+	collecting.add(1001, stmtstats.RUKey{
+		User:       "",
+		SQLDigest:  stmtstats.BinaryDigest("sql-empty-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-empty-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      8,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	// Overflow one additional user into synthetic global othersUser.
+	collecting.add(1002, stmtstats.RUKey{
+		User:       "other@127.0.0.1",
+		SQLDigest:  stmtstats.BinaryDigest("sql-global-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-global-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      7,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	records := collecting.toTopRURecords([]byte("ks"))
+
+	var hasEmptyUserOthers bool
+	var hasGlobalOthers bool
+	for _, rec := range records {
+		if rec.User == "" && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasEmptyUserOthers = true
+		}
+		if rec.User == othersUserWireLabel && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasGlobalOthers = true
+		}
+	}
+	require.True(t, hasEmptyUserOthers)
+	require.True(t, hasGlobalOthers)
+}
+
+func TestRUCollectingMergeFromKeepsEmptyUserDistinctFromGlobalOthers(t *testing.T) {
+	dst := newRUCollectingWithCaps(1, 1)
+
+	// Keep a real empty-user bucket in destination, including per-user others SQL.
+	dst.add(1000, stmtstats.RUKey{
+		User:       "",
+		SQLDigest:  stmtstats.BinaryDigest("sql-empty-top"),
+		PlanDigest: stmtstats.BinaryDigest("plan-empty-top"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      10,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+	dst.add(1001, stmtstats.RUKey{
+		User:       "",
+		SQLDigest:  stmtstats.BinaryDigest("sql-empty-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-empty-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      8,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	src := newRUCollectingWithCaps(1, 1)
+	src.add(1002, stmtstats.RUKey{
+		User:       "other@127.0.0.1",
+		SQLDigest:  stmtstats.BinaryDigest("sql-other-top"),
+		PlanDigest: stmtstats.BinaryDigest("plan-other-top"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      7,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+	// Overflow one more user in source so mergeFrom path also merges src.othersUser.
+	src.add(1003, stmtstats.RUKey{
+		User:       "other2@127.0.0.1",
+		SQLDigest:  stmtstats.BinaryDigest("sql-other-overflow"),
+		PlanDigest: stmtstats.BinaryDigest("plan-other-overflow"),
+	}, &stmtstats.RUIncrement{
+		TotalRU:      6,
+		ExecCount:    1,
+		ExecDuration: 10,
+	})
+
+	dst.mergeFrom(src, 0, false)
+	records := dst.toTopRURecords([]byte("ks"))
+
+	var hasEmptyUserOthers bool
+	var hasGlobalOthers bool
+	for _, rec := range records {
+		if rec.User == "" && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasEmptyUserOthers = true
+		}
+		if rec.User == othersUserWireLabel && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			hasGlobalOthers = true
+		}
+	}
+	require.True(t, hasEmptyUserOthers)
+	require.True(t, hasGlobalOthers)
 }
 
 func TestRUCollectingAddBatch(t *testing.T) {
@@ -398,7 +560,7 @@ var compactWithLimitsCases = []compactWithLimitsCase{
 			})
 			collecting.users["u2"] = u2
 
-			preOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
+			preOthers := newOthersUserRUCollectingWithCap(10)
 			preOthers.add(2000, stmtstats.BinaryDigest("sql-pre-others"), stmtstats.BinaryDigest("plan-pre-others"), &stmtstats.RUIncrement{
 				TotalRU:      6,
 				ExecCount:    1,
@@ -419,7 +581,7 @@ var compactWithLimitsCases = []compactWithLimitsCase{
 			require.Contains(t, compacted.users, "u1")
 
 			require.NotNil(t, compacted.othersUser)
-			require.Equal(t, keyRUOthersUser, compacted.othersUser.user)
+			require.Empty(t, compacted.othersUser.user)
 			require.Empty(t, compacted.othersUser.records)
 			require.NotNil(t, compacted.othersUser.othersRec)
 			require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
@@ -432,7 +594,7 @@ var compactWithLimitsCases = []compactWithLimitsCase{
 		setup: func() *ruCollecting {
 			// Precondition: only othersUser.othersRec has data.
 			collecting := newRUCollectingWithCaps(10, 10)
-			collecting.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, 10)
+			collecting.othersUser = newOthersUserRUCollectingWithCap(10)
 			collecting.othersUser.addOthers(3000, &stmtstats.RUIncrement{
 				TotalRU:      11,
 				ExecCount:    1,
@@ -480,7 +642,7 @@ var compactWithLimitsCases = []compactWithLimitsCase{
 		setup: func() *ruCollecting {
 			// Precondition: legacy others data sits in othersUser.records with nil digests.
 			collecting := newRUCollectingWithCaps(10, 10)
-			legacyOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
+			legacyOthers := newOthersUserRUCollectingWithCap(10)
 			legacyRec := newOthersRURecord()
 			legacyRec.add(5000, 13, 2, 30)
 			legacyOthers.records[othersKey] = legacyRec
