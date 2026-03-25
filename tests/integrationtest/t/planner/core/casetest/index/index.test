@@ -1,5 +1,4 @@
 # TestIndexJoinUniqueCompositeIndex
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 set tidb_enable_clustered_index=int_only;
 create table t1(a int not null, c int not null);
@@ -64,7 +63,6 @@ explain format='plan_tree' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b 
 
 
 # TestIndexJoinInnerIndexNDV
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null, c int not null);
 create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c));
@@ -73,7 +71,6 @@ insert into t2 values(1,1,1),(1,1,2),(1,1,3);
 analyze table t1, t2 all columns;
 ## t2 should use idx2 instead of idx1, since idx2 has larger NDV.
 explain format='plan_tree' select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c;
-set tidb_cost_model_version=default;
 
 
 # TestIndexMergeSerial
@@ -93,7 +90,6 @@ show warnings;
 
 
 # TestIndexJoinOnClusteredIndex
-set tidb_cost_model_version=2;
 set tidb_enable_clustered_index=on;
 drop table if exists t;
 create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c));
@@ -112,11 +108,9 @@ select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c;
 explain format='plan_tree' select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 set tidb_enable_clustered_index=default;
-set tidb_cost_model_version=default;
 
 
 # TestIndexMergeWithCorrelatedColumns
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));
 insert into t1 values(1, 1, 1);
@@ -151,7 +145,6 @@ select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ 
 ## Test correlated column in TablePath.TableFilters.
 explain format='plan_tree'  select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
-set tidb_cost_model_version=default;
 
 
 # TestIndexJoinRangeFallback
@@ -186,7 +179,6 @@ set @@tidb_opt_range_max_size = default;
 
 
 # TestHeuristicIndexSelection
-set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3, t4;
 create table t1(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g));
 create table t2(a int, b int, c int, d int, unique index idx_a (a), unique index idx_b_c (b, c), unique index idx_b_c_a_d (b, c, a, d));
@@ -220,16 +212,13 @@ show warnings;
 explain format = 'brief' replace into t3 select a, b, c from t1 where a = 3;
 show warnings;
 set @@tidb_enable_chunk_rpc = default;
-set tidb_cost_model_version=default;
 
 
 # TestLimitIndexLookUpKeepOrder
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int, b int, c int, d int, index idx(a,b,c));
 explain format='plan_tree' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10;
 explain format='plan_tree' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10;
-set tidb_cost_model_version=default;
 
 
 # TestAccessPathOnClusterIndex

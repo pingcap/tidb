@@ -16,6 +16,39 @@
 
 set -euo pipefail
 
+github_actions_base_candidates() {
+  local base_branch="${GITHUB_BASE_REF:-}"
+  local remote
+
+  [ -n "$base_branch" ] || return 1
+
+  while IFS= read -r remote; do
+    [ -n "$remote" ] || continue
+    printf '%s/%s\n' "$remote" "$base_branch"
+  done < <(find_pingcap_remotes)
+
+  # actions/checkout on pull_request commonly leaves the workflow on the
+  # synthetic merge commit without fetching origin/<base>. Its first parent is
+  # the base-side commit, which is still safe to diff against locally.
+  if [[ "${GITHUB_EVENT_NAME:-}" == pull_request* ]]; then
+    printf 'HEAD^1\n'
+  fi
+}
+
+find_base_branch_from_github_actions() {
+  local candidate
+
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if git rev-parse --verify -q "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(github_actions_base_candidates)
+
+  return 1
+}
+
 find_pingcap_remotes() {
   local remote url type
 
@@ -42,6 +75,12 @@ find_base_branch() {
   local ref branch merge_base score remote
   local -a candidate_patterns=()
 
+  if branch="$(find_base_branch_from_github_actions 2>/dev/null || true)" &&
+    [ -n "$branch" ]; then
+    printf '%s\n' "$branch"
+    return 0
+  fi
+
   while IFS= read -r remote; do
     [ -n "$remote" ] || continue
     candidate_patterns+=(
@@ -52,7 +91,7 @@ find_base_branch() {
   done < <(find_pingcap_remotes)
 
   if [ "${#candidate_patterns[@]}" -eq 0 ]; then
-    echo "ERROR: failed to find remote that points to github.com/pingcap/tidb" >&2
+    echo "ERROR: failed to detect base branch from GitHub Actions metadata or pingcap/tidb remotes" >&2
     return 1
   fi
 
@@ -79,7 +118,7 @@ find_base_branch() {
   )
 
   if [ -z "$best_branch" ]; then
-    echo "ERROR: failed to detect base branch from <pingcap-remote>/master, <pingcap-remote>/release-*, <pingcap-remote>/feature/*" >&2
+    echo "ERROR: failed to detect base branch from GitHub Actions metadata or <pingcap-remote>/master, <pingcap-remote>/release-*, <pingcap-remote>/feature/*" >&2
     return 1
   fi
 

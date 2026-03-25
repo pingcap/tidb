@@ -29,7 +29,9 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -205,8 +207,8 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	}
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 3)
-	wg.Add(3)
+	errCh := make(chan error, 4)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
@@ -219,6 +221,10 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	go func() {
 		defer wg.Done()
 		errCh <- ds.sendBatchTopSQLRecord(ctx, task.data.DataRecords)
+	}()
+	go func() {
+		defer wg.Done()
+		errCh <- ds.sendBatchTopRURecord(ctx, task.data.RURecords)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -261,6 +267,49 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
 	return
+}
+
+// sendBatchTopRURecord sends a batch of TopRU records by stream.
+// TopRU over SingleTarget is intentionally unsupported now.
+func (*SingleTargetDataSink) sendBatchTopRURecord(_ context.Context, records []tipb.TopRURecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	return nil
+}
+
+func sendTopRURecords(stream topRURecordStream, records []tipb.TopRURecord) (sentCount int, retErr error) {
+	defer func() {
+		if status.Code(retErr) == codes.Unimplemented {
+			_, _ = stream.CloseAndRecv()
+			retErr = nil
+			return
+		}
+
+		if _, cErr := stream.CloseAndRecv(); cErr != nil {
+			if status.Code(cErr) == codes.Unimplemented {
+				retErr = nil
+				return
+			}
+			if retErr == nil {
+				retErr = cErr
+			}
+		}
+	}()
+
+	for i := range records {
+		if retErr = stream.Send(&records[i]); retErr != nil {
+			return
+		}
+		sentCount++
+	}
+
+	return
+}
+
+type topRURecordStream interface {
+	Send(*tipb.TopRURecord) error
+	CloseAndRecv() (*tipb.EmptyResponse, error)
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.

@@ -354,6 +354,9 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType m
 // Clustered tables don't have this issue and use version 0.
 func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	idxInfo.GlobalIndexVersion = 0
+	if !model.GetGlobalIndexV1Supported() {
+		return
+	}
 	if idxInfo.Global && !tblInfo.HasClusteredIndex() {
 		needPartitionInKey := !idxInfo.Unique
 		if !needPartitionInKey {
@@ -1507,7 +1510,9 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 		}
 
-		doneCh = make(chan error)
+		// Use a buffered channel so analyze goroutine can always report an error
+		// even after caller has timed out and moved on.
+		doneCh = make(chan error, 1)
 		eg := util.NewErrorGroupWithRecover()
 		eg.Go(func() error {
 			sessCtx, err := w.sessPool.Get()

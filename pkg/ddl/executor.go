@@ -1044,6 +1044,23 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+
+	// Process region split policies from CREATE TABLE
+	if len(s.SplitIndex) > 0 {
+		for _, splitOpt := range s.SplitIndex {
+			policy, indexName, err := normalizeSplitPolicy(metaBuildCtx.GetExprCtx(), splitOpt, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if indexName == "" {
+				tbInfo.TableSplitPolicy = policy
+			} else {
+				indexInfo := tbInfo.FindIndexByName(indexName)
+				indexInfo.RegionSplitPolicy = policy
+			}
+		}
+	}
+
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}
@@ -1933,6 +1950,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
 			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
 			// MyISAM specific
+		case ast.AlterTableSplitIndex:
+			err = e.AlterTableSetRegionSplitPolicy(sctx, ident, spec.SplitIndex)
 		case ast.AlterTableRemoveTTL:
 			// the parser makes sure we have only one `ast.AlterTableRemoveTTL` in an alter statement
 			err = e.AlterTableRemoveTTL(sctx, ident)
@@ -4191,7 +4210,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				err := adminCheckTableBeforeDrop(ctx, fullti)
+				err := adminCheckTableBeforeDrop(e.sessPool, fullti)
 				if err != nil {
 					return err
 				}
@@ -4266,35 +4285,44 @@ func (e *executor) dropTableObject(
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
 // Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
 // using it in other places by mistake, it's named like this.
-func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	logutil.DDLLogger().Warn("admin check table before drop",
 		zap.String("database", fullti.Schema.O),
 		zap.String("table", fullti.Name.O),
 	)
-	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
-	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
-	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
-	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
-	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	sctx, err := sessPool.Get()
 	if err != nil {
+		return err
+	}
+	var discardErr error
+	defer func() {
+		if discardErr == nil {
+			sessPool.Put(sctx)
+			return
+		}
+		logutil.DDLLogger().Warn("discard internal session because tidb_enable_fast_table_check change failed", zap.Error(discardErr))
+		sessPool.Destroy(sctx)
+	}()
+	s := sess.NewSession(sctx)
+
+	// Some features (e.g. partial index) doesn't support admin check with `tidb_enable_fast_table_check = OFF`,
+	// so we temporarily enable it in the internal DDL session and restore it afterward.
+	originalFastTableCheck := sctx.GetSessionVars().FastCheckTable
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		discardErr = err
 		return err
 	}
 	if !originalFastTableCheck {
 		defer func() {
-			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
-			if err != nil {
-				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off); err != nil {
+				discardErr = err
 			}
 		}()
 	}
-	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
+	return err
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -5046,6 +5074,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		}},
 		OpType: model.OpAddIndex,
 	}
+
+	// Check if we should warn about missing region split policy
+	// If other indexes already have region split policy, warn user to set policy for new index
+	checkAndWarnMissingRegionSplitPolicy(ctx, tblInfo, indexName)
 
 	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
@@ -7147,4 +7179,58 @@ func isReservedSchemaObjInNextGen(id int64) bool {
 		failpoint.Return(false)
 	})
 	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+}
+
+// AlterTableSetRegionSplitPolicy sets persistent region split policy for table
+func (e *executor) AlterTableSetRegionSplitPolicy(ctx sessionctx.Context, ident ast.Ident, splitOpt *ast.SplitIndexOption) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+
+	policy, indexName, err := normalizeSplitPolicy(ctx.GetExprCtx(), splitOpt, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionAlterTableSetRegionSplitPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
+	}
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+
+	args := &model.AlterTableSetRegionSplitPolicyArgs{
+		IndexName: indexName,
+		Policy:    policy,
+	}
+	return e.doDDLJob2(ctx, job, args)
+}
+
+// checkAndWarnMissingRegionSplitPolicy checks if table has other indexes with region split policy,
+// and warns user to set policy for newly created index.
+func checkAndWarnMissingRegionSplitPolicy(ctx sessionctx.Context, tblInfo *model.TableInfo, newIndexName ast.CIStr) {
+	// Check if any existing index has RegionSplitPolicy
+	hasExistingPolicy := false
+	for _, idx := range tblInfo.Indices {
+		if idx.RegionSplitPolicy != nil {
+			hasExistingPolicy = true
+			break
+		}
+	}
+
+	// If existing indexes have region split policy, warn about new index
+	if hasExistingPolicy {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"It is recommended to add a region split strategy to the new index '" + newIndexName.O + "' to avoid write hotspots"))
+	}
 }

@@ -118,22 +118,22 @@ func TestFilterPath(t *testing.T) {
 			expected: "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta",
 		},
 		{
-			name: "fallback: minDefaultTs > minTs, should fallback to minTs",
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved",
 			args: args{
 				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
 				shiftStartTS: 5,
-				restoreTS:    11, // fallback to 10, 11>10
+				restoreTS:    11,
 			},
 			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
 		},
 		{
-			name: "restoreTS < fallback minTs, should be filtered",
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved (not filtered)",
 			args: args{
-				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // fallback to min=10
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
 				shiftStartTS: 5,
-				restoreTS:    9, // 9 < 10, should be filtered
+				restoreTS:    9, // even though 9 < minTs(10), file is preserved when minBeginTsInDefaultCf is invalid
 			},
-			expected: "",
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
 		},
 		{
 			name: "maxTs < shiftStartTS, should be filtered",
@@ -145,13 +145,49 @@ func TestFilterPath(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "invalid: minDefaultTs > minTs, fallback, but restoreTS < fallback",
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved even with small restoreTS",
 			args: args{
 				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
 				shiftStartTS: 5,
-				restoreTS:    8, // fallback to 10, 8 < 10
+				restoreTS:    8, // even though 8 < minTs(10), file is preserved when minBeginTsInDefaultCf is invalid
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "new format: normal",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+		},
+		{
+			name: "new format: accepts reordered tags and extra tags",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 3,
+				restoreTS:    4,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+		},
+		{
+			name: "new format: out of range should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003u0000000000000004.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
 			},
 			expected: "",
+		},
+		{
+			name: "new format: invalid name should be preserved for compatibility",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 10,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
 		},
 		{
 			name: "non-matching file name format, preserved for compatibility",

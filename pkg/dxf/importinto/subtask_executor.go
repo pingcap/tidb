@@ -20,8 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -31,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -172,17 +169,6 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
 		)
-		if kerneltype.IsClassic() {
-			failpoint.Inject("skipPostProcessAlterTableMode", func() {
-				failpoint.Return(err)
-			})
-			// log error instead of raise error to avoid user rerun task,
-			// clean up will alter table mode to normal finally.
-			err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
-			if err2 != nil {
-				callLog.Warn("alter table mode to normal failure", zap.Error(err2))
-			}
-		}
 		return err
 	})
 }

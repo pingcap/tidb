@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -287,10 +288,13 @@ func testDropTableBeforeInitStats(t *testing.T) {
 }
 
 func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
-	config.GetGlobalConfig().Performance.SkipInitStats = true
-	defer func() {
-		config.GetGlobalConfig().Performance.SkipInitStats = false
-	}()
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.SkipInitStats = true
+	})
+	originalStatsLease := vardef.GetStatsLease()
+	defer vardef.SetStatsLease(originalStatsLease)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer store.Close()
@@ -301,7 +305,9 @@ func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
 	session.MustExec(t, se, "analyze table t all columns;")
 	dom.Close()
 
-	vardef.SetStatsLease(3)
+	// Keep the periodic stats updater enabled, but give the assertion time to
+	// observe the skipped init path before the first background refresh.
+	vardef.SetStatsLease(3 * time.Second)
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	h := dom.StatsHandle()

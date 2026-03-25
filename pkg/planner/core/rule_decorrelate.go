@@ -126,7 +126,9 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:
 			defaultValueMap[i] = expression.NewZero()
 		case ast.AggFuncBitAnd:
-			defaultValueMap[i] = &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: types.NewFieldType(mysql.TypeLonglong)}
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			tp.AddFlag(mysql.UnsignedFlag)
+			defaultValueMap[i] = &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: tp}
 		}
 	}
 	return defaultValueMap
@@ -231,6 +233,10 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			join := &apply.LogicalJoin
 			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
+			if p.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+				p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanDecorrelatedApply()
+				join.FromDecorrelatedApply = true
+			}
 			p = join
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
@@ -248,8 +254,8 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 				apply.SetChildren(outerPlan, innerPlan)
 				return s.optimize(ctx, p, groupByColumn)
 			case *logicalop.LogicalMaxOneRow:
-				// Check if MaxOneRow's child is Limit or TopN, and if we can remove it for LeftOuterJoin
-				// Also handle the case where there's a Projection between MaxOneRow and Limit: MaxOneRow -> Projection -> Limit
+				// Check if MaxOneRow's child is Limit, and if we can remove it for LeftOuterJoin.
+				// Also handle MaxOneRow -> Projection -> Limit, which can appear after ORDER BY/HAVING rewrites.
 				if apply.JoinType == base.LeftOuterJoin {
 					mChild := innerPlanTyped.Children()[0]
 					var removePlan base.LogicalPlan
@@ -261,30 +267,23 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 						if mChild.Offset != 0 || mChild.Count == 0 {
 							canRemove = false
 						} else {
-							// Check if join key is unique key
 							removePlan = mChild.Children()[0]
-							if isJoinKeyUniqueKey(apply, removePlan) {
+							if canRemoveLimitForUniqueJoinKey(apply, removePlan) {
 								canRemove = true
 							}
 						}
 					case *logicalop.LogicalProjection:
-						// Check if Projection's child is Limit: MaxOneRow -> Projection -> Limit
-						// This pattern occurs when subqueries contain some clauses like ORDER BY or HAVING clauses that require projection.
-						// Examples:
-						//   - HAVING clause: SELECT ... (SELECT AVG(...) FROM ... GROUP BY ... HAVING ... LIMIT 1)
-						//   - ORDER BY clause: SELECT ... (SELECT ... FROM ... ORDER BY ... LIMIT 1)
+						// Check if Projection's child is Limit: MaxOneRow -> Projection -> Limit.
 						if li, ok := mChild.Children()[0].(*logicalop.LogicalLimit); ok {
 							// LIMIT 0 returns no rows; removing it would change semantics.
 							// Non-zero offset also prevents safe removal.
 							if li.Offset != 0 || li.Count == 0 {
-								canRemove = false
 								break
 							}
-							// Check if join key is unique key using the plan below Limit.
 							// Keep Projection but remove MaxOneRow + Limit:
 							//   before: MaxOneRow -> Projection -> Limit -> child
 							//   after:  Projection -> child
-							if isJoinKeyUniqueKey(apply, li.Children()[0]) {
+							if canRemoveLimitForUniqueJoinKey(apply, li.Children()[0]) {
 								mChild.SetChildren(li.Children()[0])
 								removePlan = mChild
 								canRemove = true
@@ -360,7 +359,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 					goto NoOptimize
 				}
 				// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
-				if innerPlanTyped.Offset == 0 {
+				if innerPlanTyped.Offset == 0 && innerPlanTyped.Count != 0 {
 					innerPlan = innerPlanTyped.Children()[0]
 					apply.SetChildren(outerPlan, innerPlan)
 					return s.optimize(ctx, p, groupByColumn)
@@ -534,7 +533,8 @@ func (*DecorrelateSolver) Name() string {
 
 // extractJoinKeyFromCondition extracts the inner join key column from an equality condition.
 // It checks if the condition is of the form "outer_col = inner_col" where outer_col is a correlated column
-// from the Apply operator. Returns the inner column if it belongs to the given schema, otherwise returns nil.
+// from the Apply operator. LogicalApply.DeCorColFromEqExpr normalizes the equality to "outer = inner",
+// so args[1] is the inner column here. Returns nil when the inner column is outside the given schema.
 func extractJoinKeyFromCondition(apply *logicalop.LogicalApply, cond expression.Expression, schema *expression.Schema) *expression.Column {
 	decExpr := apply.DeCorColFromEqExpr(cond)
 	if decExpr == nil {
@@ -555,8 +555,7 @@ func extractJoinKeyFromCondition(apply *logicalop.LogicalApply, cond expression.
 	return innerCol
 }
 
-// findDataSource recursively finds the underlying DataSource in a logical plan tree.
-// It returns the first DataSource found, or nil if none exists.
+// findDataSource recursively finds the first reachable DataSource in a logical plan tree.
 func findDataSource(p base.LogicalPlan) *logicalop.DataSource {
 	if ds, ok := p.(*logicalop.DataSource); ok {
 		return ds
@@ -569,41 +568,35 @@ func findDataSource(p base.LogicalPlan) *logicalop.DataSource {
 	return nil
 }
 
-// canGenerateMultipleRows returns if the LogicalPlan can generate multiple rows from a single input row.
-// This is used to check if an operator can expand rows, which affects uniqueness constraints.
-// Operators that can generate multiple rows include:
-//   - JOIN (except semi/anti joins which preserve row count)
-//   - UNION ALL
-//   - PartitionUnionAll
-//   - Expand (for GROUPING SETS/ROLLUP)
-//   - TODO: unnest function when implemented
-func canGenerateMultipleRows(p base.LogicalPlan) bool {
+// mayGenerateMultipleRows conservatively reports whether p may expand one input row into multiple rows.
+// This helper is only used for decorrelating scalar subqueries. When a new row-expanding logical operator
+// is added, it must be listed here or guarded from this rewrite path with NoDecorrelate. A future opt-in
+// row-preserving contract would be safer than extending this conservative blocklist indefinitely.
+func mayGenerateMultipleRows(p base.LogicalPlan) bool {
 	switch p.(type) {
+	case *logicalop.LogicalApply:
+		// Nested Apply can multiply rows through correlated execution.
+		return true
 	case *logicalop.LogicalJoin:
-		// JOIN operators can generate multiple rows (Cartesian product effect)
-		// Note: Semi/Anti joins preserve row count, but we return true here for safety
-		// as the caller can refine this check if needed
+		// JOIN may multiply rows. Keep the guard conservative even for semi/anti joins.
 		return true
 	case *logicalop.LogicalUnionAll, *logicalop.LogicalPartitionUnionAll:
-		// UNION ALL combines multiple inputs, potentially generating multiple rows
 		return true
 	case *logicalop.LogicalExpand:
-		// Expand operator splits rows for GROUPING SETS/ROLLUP
 		return true
 	}
 	return false
 }
 
-// isJoinKeyUniqueKey checks if join key is unique key.
-// Returns true if the join key forms a unique key constraint.
-func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
+// canRemoveLimitForUniqueJoinKey reports whether the decorrelated equality predicates under plan
+// cover a PK/UK on the first reachable DataSource. This is a conservative check used only when
+// deciding whether LIMIT/MaxOneRow can be removed during scalar-subquery decorrelation.
+func canRemoveLimitForUniqueJoinKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
 	var hasMultiRowOperator func(base.LogicalPlan) bool
 	hasMultiRowOperator = func(p base.LogicalPlan) bool {
-		// Use centralized function to check if operator can generate multiple rows
-		if canGenerateMultipleRows(p) {
+		if mayGenerateMultipleRows(p) {
 			return true
 		}
-		// Recursively check children
 		for _, child := range p.Children() {
 			if hasMultiRowOperator(child) {
 				return true
@@ -615,32 +608,23 @@ func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bo
 		return false
 	}
 
-	// Extract join keys from Selection conditions and their children recursively
-	// Join conditions may be pushed down to DataSource or nested in child Selection nodes
 	innerJoinKeys := make([]*expression.Column, 0)
-
-	// Recursively extract all conditions from Selection nodes and their children
 	var extractConditions func(base.LogicalPlan)
 	extractConditions = func(p base.LogicalPlan) {
 		if sel, ok := p.(*logicalop.LogicalSelection); ok {
-			// Check conditions directly on Selection
 			for _, cond := range sel.Conditions {
 				if innerCol := extractJoinKeyFromCondition(apply, cond, sel.Schema()); innerCol != nil {
 					innerJoinKeys = append(innerJoinKeys, innerCol)
 				}
 			}
-			// Continue to check children recursively
 		} else if ds, ok := p.(*logicalop.DataSource); ok {
-			// Check conditions in DataSource (PushedDownConds may contain join key conditions)
 			for _, cond := range ds.PushedDownConds {
 				if innerCol := extractJoinKeyFromCondition(apply, cond, ds.Schema()); innerCol != nil {
 					innerJoinKeys = append(innerJoinKeys, innerCol)
 				}
 			}
-			// Stop recursion at DataSource
 			return
 		}
-		// Continue recursion for other nodes
 		for _, child := range p.Children() {
 			extractConditions(child)
 		}
@@ -651,24 +635,27 @@ func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bo
 		return false
 	}
 
-	// Find the underlying DataSource to get PKOrUK
 	ds := findDataSource(plan)
-	if ds == nil {
+	if ds == nil || len(ds.Schema().PKOrUK) == 0 {
 		return false
 	}
 
-	// Use PKOrUK from DataSource Schema directly
-	if len(ds.Schema().PKOrUK) == 0 {
+	filteredJoinKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	for _, joinKey := range innerJoinKeys {
+		if ds.Schema().Contains(joinKey) {
+			filteredJoinKeys = append(filteredJoinKeys, joinKey)
+		}
+	}
+	if len(filteredJoinKeys) == 0 {
 		return false
 	}
 
-	// Check if join keys form a unique key
 	for _, keyInfo := range ds.Schema().PKOrUK {
 		allMatch := true
 		for _, keyCol := range keyInfo {
 			found := false
-			for _, joinKey := range innerJoinKeys {
-				if keyCol.ID == joinKey.ID && keyCol.ID != 0 {
+			for _, joinKey := range filteredJoinKeys {
+				if keyCol.UniqueID == joinKey.UniqueID {
 					found = true
 					break
 				}

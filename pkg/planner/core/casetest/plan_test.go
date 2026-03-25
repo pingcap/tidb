@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -119,32 +120,32 @@ func TestPreferRangeScanForDNF(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a_b(a, b))")
 
 	// DNF with only equal predicates - should prefer IndexLookUp
-	result := tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)")
+	result := tk.MustQuery("explain format = 'plan_tree' select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)")
 	require.Contains(t, result.Rows()[0][0], "IndexLookUp")
 
 	// Longer DNF with only equal predicates - should prefer IndexLookUp
-	result = tk.MustQuery("explain format='brief' select * from t where a = 1 or a = 3 or a = 5 or a = 7 or a = 9 or a = 11 or a = 13 or a = 15 or a = 17 or a = 19 or a = 21 or a = 23 or a = 25 or a = 27 or a = 29 or a = 31 or a = 33 or a = 35 or a = 37 or a = 39 or a = 41 or a = 43 or a = 45 or a = 47 or a = 49 or a = 51 or a = 53 or a = 55 or a = 57 or a = 59")
+	result = tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1 or a = 3 or a = 5 or a = 7 or a = 9 or a = 11 or a = 13 or a = 15 or a = 17 or a = 19 or a = 21 or a = 23 or a = 25 or a = 27 or a = 29 or a = 31 or a = 33 or a = 35 or a = 37 or a = 39 or a = 41 or a = 43 or a = 45 or a = 47 or a = 49 or a = 51 or a = 53 or a = 55 or a = 57 or a = 59")
 	require.Contains(t, result.Rows()[0][0], "IndexLookUp")
 
 	// DNF with leading equal conditions plus range predicates - should prefer IndexLookUp
-	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b > 0) or (a = 2 and b < 5)")
+	result = tk.MustQuery("explain format = 'plan_tree' select * from t where (a = 1 and b > 0) or (a = 2 and b < 5)")
 	require.Contains(t, result.Rows()[0][0], "IndexLookUp")
 
 	// DNF with NOT operators - should not prefer IndexLookUp
 	// This should fall back to TableReader since NOT operators don't qualify
-	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or not (a = 2 and b = 2)")
+	result = tk.MustQuery("explain format = 'plan_tree' select * from t where (a = 1 and b = 1) or not (a = 2 and b = 2)")
 	require.Contains(t, result.Rows()[0][0], "TableReader")
 
 	// DNF with mixed predicates - should not prefer IndexLookUp
 	// This should fall back to TableReader since it contains non-equal predicates
-	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or (a >= 2 and b <= 3) or (a = 4 and b = 4) or (a = 5 and b > 0) or (a < 6 and b < 6)")
+	result = tk.MustQuery("explain format = 'plan_tree' select * from t where (a = 1 and b = 1) or (a >= 2 and b <= 3) or (a = 4 and b = 4) or (a = 5 and b > 0) or (a < 6 and b < 6)")
 	require.Contains(t, result.Rows()[0][0], "TableReader")
 
 	// Disabling prefer_range_scan should not use IndexLookUp for long set of DNF conditions
 	// NOTE: This test could become flaky if "cost" of IndexLookup is lowered in future. Consider adding
 	// more "or a = N" terms if that happens.
 	tk.MustExec("set @@session.tidb_opt_prefer_range_scan=0")
-	result = tk.MustQuery("explain format='brief' select * from t where a = 1 or a = 3 or a = 5 or a = 7 or a = 9 or a = 11 or a = 13 or a = 15 or a = 17 or a = 19 or a = 21 or a = 23 or a = 25 or a = 27 or a = 29 or a = 31 or a = 33 or a = 35 or a = 37 or a = 39 or a = 41 or a = 43 or a = 45 or a = 47 or a = 49 or a = 51 or a = 53 or a = 55 or a = 57 or a = 59")
+	result = tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1 or a = 3 or a = 5 or a = 7 or a = 9 or a = 11 or a = 13 or a = 15 or a = 17 or a = 19 or a = 21 or a = 23 or a = 25 or a = 27 or a = 29 or a = 31 or a = 33 or a = 35 or a = 37 or a = 39 or a = 41 or a = 43 or a = 45 or a = 47 or a = 49 or a = 51 or a = 53 or a = 55 or a = 57 or a = 59")
 	require.Contains(t, result.Rows()[0][0], "TableReader")
 
 	// Restore settings
@@ -222,7 +223,6 @@ func TestPlanDigest4InList(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a int);")
-		tk.MustExec("set global tidb_ignore_inlist_plan_digest=true;")
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		var queriesGroup1, queriesGroup2 []string
 		queriesGroup1 = []string{
@@ -253,18 +253,44 @@ func TestPlanDigest4InList(t *testing.T) {
 			})
 		}
 
+		// Issue 66623: same plans with different in-list lengths should have the same plan digest
+		t.Run("issue 66623: select * from t where a in (...) with varying lengths", func(t *testing.T) {
+			queries := []string{
+				"select * from t where a in (1, 2);",
+				"select * from t where a in (1, 2, 3);",
+				"select * from t where a in (1, 2, 3, 4);",
+				"select * from t where a in (1, 2, 3, 4, 5);",
+				"select * from t where a in (1, 2, 3, 4, 5, 6);",
+				"select * from t where a in (1, 2, 3, 4, 5, 6, 7);",
+			}
+			var firstDigest *parser.Digest
+			for i, query := range queries {
+				tk.MustExec(query)
+				info := tk.Session().ShowProcess()
+				require.NotNil(t, info)
+				p, ok := info.Plan.(base.Plan)
+				require.True(t, ok)
+				_, digest := core.NormalizePlan(p)
+				if i == 0 {
+					firstDigest = digest
+				} else {
+					require.Equal(t, firstDigest, digest, "query %d: %s", i, query)
+				}
+			}
+		})
+
 		tk.MustExec("drop table if exists t3,t4,t5")
 		tk.MustExec("create table t3(a int, b int, c int);")
 		tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered);")
 		tk.MustExec("create table t5(a int, b int, c int, key idx_a_b (a, b));")
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		queriesGroup1 = []string{
-			"explain select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;",
-			"explain select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 1;",
+			"explain format = 'plan_tree' select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;",
+			"explain format = 'plan_tree' select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 1;",
 		}
 		queriesGroup2 = []string{
-			"explain select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
-			"explain select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
+			"explain format = 'plan_tree' select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
+			"explain format = 'plan_tree' select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
 		}
 		for i := range queriesGroup1 {
 			query1 := queriesGroup1[i]
@@ -402,6 +428,14 @@ func TestHandleEQAll(t *testing.T) {
 		tk.MustQuery("select c1 from t2 where (c1 = all (select /*+ use_INDEX(t2, i1) */ c1 from t2))").Check(testkit.Rows("7", "7"))
 		tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ IGNORE_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
 		tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ use_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (c int)")
+		tk.MustExec("insert into t values (1)")
+
+		expr := "(not exists (select 1 from t)) <= all (select c from t)"
+		tk.MustQuery("select " + expr).Check(testkit.Rows("1"))
+		tk.MustQuery("select * from t where " + expr).Check(testkit.Rows("1"))
+		tk.MustNotHavePlan("select * from t where "+expr, "TableDual")
 	})
 }
 

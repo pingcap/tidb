@@ -134,8 +134,6 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column) (base.
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (p *LogicalExpand) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	// if p.LevelExprs is nil, it means the GenLevelProjections has not been called yet,

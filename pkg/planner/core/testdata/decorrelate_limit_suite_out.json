@@ -183,18 +183,6 @@
           "      └─TableReader root  data:TableRangeScan",
           "        └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
         ]
-      },
-      {
-        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT DISTINCT e2.dept_id  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS distinct_dept_id FROM employees e",
-        "Plan": [
-          "Projection root  test.employees.name, test.employees.salary, test.employees.dept_id",
-          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
-          "    └─TableReader root  data:TableRangeScan",
-          "      └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
-        ]
       }
     ]
   }

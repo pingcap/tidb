@@ -66,6 +66,10 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
 	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
+
+	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
+	// Apply outer/inner order after decorrelation.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes PhysicalIndexJoin.
@@ -99,6 +103,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
 	return cloned, nil
 }
 

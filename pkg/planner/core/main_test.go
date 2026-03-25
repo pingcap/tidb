@@ -65,7 +65,3 @@ func GetRuntimeFilterGeneratorData() testdata.TestData {
 func GetDecorrelateLimitSuiteData() testdata.TestData {
 	return testDataMap["decorrelate_limit_suite"]
 }
-
-func GetCascadesSuiteData() testdata.TestData {
-	return testDataMap["cascades_suite"]
-}

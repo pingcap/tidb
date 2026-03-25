@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/atomic"
 )
 
@@ -44,6 +45,8 @@ type DistSQLContext struct {
 	OriginalSQL            string
 	KVVars                 *tikvstore.Variables
 	KvExecCounter          *stmtstats.KvExecCounter
+	RUV2Metrics            *execdetails.RUV2Metrics
+	RUV2RPCInterceptor     interceptor.RPCInterceptor
 	SessionMemTracker      *memory.Tracker
 
 	Location         *time.Location

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/atomic"
 )
 
@@ -53,7 +54,11 @@ func TestContextDetach(t *testing.T) {
 		OriginalSQL:            "a",
 		KVVars:                 kvVars,
 		KvExecCounter:          &stmtstats.KvExecCounter{},
-		SessionMemTracker:      &memory.Tracker{},
+		RUV2Metrics:            execdetails.NewRUV2Metrics(),
+		RUV2RPCInterceptor: interceptor.NewRPCInterceptor("test", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+			return next
+		}),
+		SessionMemTracker: &memory.Tracker{},
 
 		Location:         time.Local,
 		RuntimeStatsColl: &execdetails.RuntimeStatsColl{},
@@ -108,6 +113,7 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.RUV2RPCInterceptor",
 		}))
 
 	staticObj := obj.Detach()
@@ -123,6 +129,8 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.RUV2Metrics",
+			"$.RUV2RPCInterceptor",
 			"$.KVVars.Killed",
 			"$.KvExecCounter",
 			"$.SessionMemTracker",

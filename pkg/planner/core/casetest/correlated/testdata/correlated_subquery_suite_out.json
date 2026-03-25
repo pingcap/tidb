@@ -1,0 +1,87 @@
+[
+  {
+    "Name": "TestNaturalJoinWithCorrelatedSubquery",
+    "Cases": [
+      {
+        "SQL": "select /* issue:60602 */ 0 from t t1 where exists (select a2.a from t a1 natural join t a2 where t1.a = (select min(t1.a)))",
+        "Plan": [
+          "Projection root  0->Column",
+          "└─Apply root  semi join, left side:TableReader, equal:[eq(test.t.a, Column)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─Selection(Build) root  not(isnull(Column))",
+          "    │ └─MaxOneRow root  ",
+          "    │   └─StreamAgg root  funcs:min(test.t.a)->Column",
+          "    │     └─TableDual root  rows:1",
+          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─TableReader(Build) root  data:Selection",
+          "      │ └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "      │   └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) root  data:Selection",
+          "        └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "          └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      {
+        "SQL": "select /* issue:60602 */ 0 from t t1 where exists (select a1.a from t a1 natural join t a2 where t1.a = (select min(t1.a)))",
+        "Plan": [
+          "Projection root  0->Column",
+          "└─Apply root  semi join, left side:TableReader, equal:[eq(test.t.a, Column)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─Selection(Build) root  not(isnull(Column))",
+          "    │ └─MaxOneRow root  ",
+          "    │   └─StreamAgg root  funcs:min(test.t.a)->Column",
+          "    │     └─TableDual root  rows:1",
+          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─TableReader(Build) root  data:Selection",
+          "      │ └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "      │   └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) root  data:Selection",
+          "        └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "          └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      {
+        "SQL": "select /* issue:60602 */ 0 from t t1 where exists (select a2.a from t a1 natural left join t a2 where t1.a = (select min(t1.a)))",
+        "Plan": [
+          "Projection root  0->Column",
+          "└─Apply root  semi join, left side:TableReader, equal:[eq(test.t.a, Column)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─Selection(Build) root  not(isnull(Column))",
+          "    │ └─MaxOneRow root  ",
+          "    │   └─StreamAgg root  funcs:min(test.t.a)->Column",
+          "    │     └─TableDual root  rows:1",
+          "    └─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─TableReader(Build) root  data:Selection",
+          "      │ └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "      │   └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) root  data:TableFullScan",
+          "        └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "0",
+          "0"
+        ]
+      }
+    ]
+  }
+]

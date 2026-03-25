@@ -14,9 +14,7 @@
       "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND EXISTS (     SELECT 1     FROM employee_notes en     WHERE en.employee_id = e2.id ) LIMIT 1) AS salary_exists FROM employees e",
       "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT e2.salary  FROM employees e2  WHERE e2.id = e.id  ORDER BY e2.dept_id, e2.salary DESC  LIMIT 1) AS salary_order_multi FROM employees e",
       "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,  (SELECT DISTINCT e2.dept_id   FROM employees e2   WHERE e2.id = e.id   LIMIT 1) AS distinct_dept_id FROM employees e",
-      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT ROW_NUMBER() OVER (ORDER BY e2.salary DESC)  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS row_num FROM employees e",
-      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT DISTINCT e2.dept_id  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS distinct_dept_id FROM employees e"
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT ROW_NUMBER() OVER (ORDER BY e2.salary DESC)  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS row_num FROM employees e"
     ]
   }
 ]
-

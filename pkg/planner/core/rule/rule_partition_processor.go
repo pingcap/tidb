@@ -453,10 +453,11 @@ func (s *PartitionProcessor) PruneHashOrKeyPartition(ctx base.PlanContext, tbl t
 	return used, nil
 }
 
-// reconstructTableColNames reconstructs FieldsNames according to ds.TblCols.
-// ds.names may not match ds.TblCols since ds.names is pruned while ds.TblCols contains all original columns.
-// please see https://github.com/pingcap/tidb/issues/22635 for more details.
-func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([]*types.FieldName, error) {
+// ReconstructTableColNames reconstructs FieldNames according to ds.TblCols.
+// ds.OutputNames() may be pruned while ds.TblCols contains all original columns,
+// so partition pruning must not rely on OutputNames directly.
+// See https://github.com/pingcap/tidb/issues/22635 for details.
+func ReconstructTableColNames(ds *logicalop.DataSource) (types.NameSlice, error) {
 	names := make([]*types.FieldName, 0, len(ds.TblCols))
 	// Use DeletableCols to get all the columns.
 	colsInfo := ds.Table.DeletableCols()
@@ -510,7 +511,7 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 }
 
 func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource, pi *model.PartitionInfo) (base.LogicalPlan, error) {
-	names, err := s.reconstructTableColNames(ds)
+	names, err := ReconstructTableColNames(ds)
 	if err != nil {
 		return nil, err
 	}

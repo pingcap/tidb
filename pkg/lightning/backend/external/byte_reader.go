@@ -37,6 +37,9 @@ var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
+	// external readers within one task.
+	concurrentReaderTotalConcurrency = 256
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
