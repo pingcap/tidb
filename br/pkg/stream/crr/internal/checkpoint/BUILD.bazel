@@ -32,7 +32,7 @@ go_test(
         "randomized_integration_test.go",
     ],
     flaky = True,
-    shard_count = 14,
+    shard_count = 18,
     deps = [
         ":checkpoint",
         "//br/pkg/stream",

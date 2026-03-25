@@ -73,13 +73,15 @@ type statusStore struct {
 }
 
 func newStatusStore(taskName string) *statusStore {
-	return &statusStore{
+	s := &statusStore{
 		snapshot: StatusSnapshot{
 			TaskName: taskName,
 			State:    stateStarting,
 			Phase:    phaseIdle,
 		},
 	}
+	s.observeMetricsLocked()
+	return s
 }
 
 func (s *statusStore) start() {
@@ -89,6 +91,7 @@ func (s *statusStore) start() {
 	s.snapshot.Ready = true
 	s.snapshot.State = stateRunning
 	s.snapshot.Phase = phaseIdle
+	s.observeMetricsLocked()
 }
 
 func (s *statusStore) stop() {
@@ -97,6 +100,7 @@ func (s *statusStore) stop() {
 	s.snapshot.Live = false
 	s.snapshot.Ready = false
 	s.snapshot.State = stateStopped
+	s.observeMetricsLocked()
 }
 
 func (s *statusStore) setPersistentState(state PersistentState) {
@@ -104,6 +108,7 @@ func (s *statusStore) setPersistentState(state PersistentState) {
 	defer s.mu.Unlock()
 	s.snapshot.SafeCheckpoint = state.LastCheckpoint
 	s.snapshot.SyncedTS = state.SyncedTS
+	s.observeMetricsLocked()
 }
 
 func (s *statusStore) clearFailure() {
@@ -117,6 +122,7 @@ func (s *statusStore) clearFailure() {
 	s.snapshot.LastError = ""
 	s.snapshot.LastErrorTime = time.Time{}
 	s.snapshot.ConsecutiveFailures = 0
+	s.observeMetricsLocked()
 }
 
 func (s *statusStore) beginRound() uint64 {
@@ -126,6 +132,7 @@ func (s *statusStore) beginRound() uint64 {
 	s.snapshot.LastLoopIteration = 0
 	s.snapshot.PendingFileCount = 0
 	s.snapshot.Phase = phaseIdle
+	s.observeMetricsLocked()
 	return s.snapshot.CurrentRound
 }
 
@@ -174,6 +181,7 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 			s.snapshot.State = stateRunning
 		}
 	}
+	s.observeMetricsLocked()
 }
 
 func (s *statusStore) snapshotCopy() StatusSnapshot {
@@ -210,4 +218,28 @@ func newStatusStatistic(stat checkpoint.FileStatistic) StatusStatistic {
 		PlannedFileSuffixCounts:         maps.Clone(stat.PlannedFileSuffixCounts),
 		DownstreamCheckFileSuffixCounts: maps.Clone(stat.DownstreamCheckFileSuffixCounts),
 	}
+}
+
+func (s *statusStore) observeMetricsLocked() {
+	observeStatusMetrics(statusMetricSnapshot{
+		TaskName: s.snapshot.TaskName,
+		Live:     s.snapshot.Live,
+		Ready:    s.snapshot.Ready,
+		State:    s.snapshot.State,
+		Phase:    s.snapshot.Phase,
+
+		CurrentRound:      s.snapshot.CurrentRound,
+		LastLoopIteration: s.snapshot.LastLoopIteration,
+
+		LastUpstreamCheckpoint: s.snapshot.LastUpstreamCheckpoint,
+		SafeCheckpoint:         s.snapshot.SafeCheckpoint,
+		SyncedTS:               s.snapshot.SyncedTS,
+
+		AliveStoreCount:      s.snapshot.AliveStoreCount,
+		PendingFileCount:     s.snapshot.PendingFileCount,
+		ConsecutiveFailures:  s.snapshot.ConsecutiveFailures,
+		UpstreamReadMetaFile: s.snapshot.Statistic.UpstreamReadMetaFileCount,
+		EstimatedSyncLogFile: s.snapshot.Statistic.EstimatedSyncLogFileCount,
+		DownstreamCheckFile:  s.snapshot.Statistic.DownstreamCheckFileCount,
+	})
 }
