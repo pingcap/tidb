@@ -1490,3 +1490,25 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		})
 	}
 }
+
+func TestModifyColumnLoadTableRangeError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists modifycol;")
+	tk.MustExec("create database modifycol;")
+	tk.MustExec("use modifycol;")
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+
+	// Use a type conversion that definitely requires reorg.
+	tk.MustExec("create table t (a int primary key, b int, c int);")
+	batchInsert(tk, "t", 0, 100)
+
+	// Simulate transient PD errors (e.g. "regions have no leader") when splitting table ranges.
+	// We also disable the internal retry in loadTableRanges to make the error visible to the DDL job logic,
+	// otherwise it will be retried and recovered inside loadTableRanges.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesNoRetry", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr", "1*return")
+
+	tk.MustExec("alter table t change column b b varchar(16);")
+	tk.MustExec("admin check table t;")
+}
