@@ -3691,12 +3691,6 @@ func TestAuditPluginRetrying(t *testing.T) {
 		testResultsMu.Unlock()
 		return res
 	}
-	getTestResultsLen := func() int {
-		testResultsMu.Lock()
-		l := len(testResults)
-		testResultsMu.Unlock()
-		return l
-	}
 	appendTestResult := func(res normalTest) {
 		testResultsMu.Lock()
 		testResults = append(testResults, res)
@@ -3731,42 +3725,15 @@ func TestAuditPluginRetrying(t *testing.T) {
 		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
 		require.NoError(t, err)
 
-		// a big enough concurrency to trigger retries
-		concurrency := 500
-		db.SetMaxOpenConns(concurrency)
-		db.SetMaxIdleConns(concurrency)
 		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
-		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
-		// enough, it might need more times to trigger the retry.
-		require.Eventually(t, func() bool {
-			resetTestResults()
-			var wg sync.WaitGroup
-			errCh := make(chan error, concurrency)
-			for range concurrency {
-				wg.Go(func() {
-					_, err := db.ExecContext(context.Background(), updateSQL)
-					if err != nil {
-						errCh <- err
-					}
-				})
-			}
-			wg.Wait()
-			close(errCh)
-			for err := range errCh {
-				require.NoError(t, err)
-			}
-
-			return getTestResultsLen() > concurrency
-		}, time.Second*30, time.Millisecond*100)
-
-		testResults := getTestResults()
-		nonRetryingCount := 0
-		for _, res := range testResults {
-			if !res.retrying {
-				nonRetryingCount++
-			}
-		}
-		require.Equal(t, concurrency, nonRetryingCount)
+		resetTestResults()
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		}()
+		_, err = db.Exec(updateSQL)
+		require.NoError(t, err)
+		require.Equal(t, []normalTest{{sql: updateSQL, retrying: true}}, getTestResults())
 	})
 
 	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
@@ -3838,13 +3805,13 @@ func TestAuditPluginRetrying(t *testing.T) {
 			}
 		}
 
-		require.Greater(t, retryingCount, 0)
 		// (BEGIN + UPDATE + COMMIT) * 2 transactions = 6
 		expectedSQLCount := 6
 		if isOptimistic {
 			expectedSQLCount += 2 // extra `SET` variable SQL
 		}
-		require.Equal(t, expectedSQLCount, nonRetryingCount)
+		require.Equal(t, 1, retryingCount)
+		require.Equal(t, expectedSQLCount-1, nonRetryingCount)
 	}
 
 	// 2. Pessimistic DML retry

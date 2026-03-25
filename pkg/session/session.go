@@ -1156,7 +1156,9 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
+	originalStmtCtx := s.sessionVars.StmtCtx
 	defer func() {
+		s.sessionVars.StmtCtx = originalStmtCtx
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		if s.sessionVars.InRestrictedSQL {
@@ -1177,6 +1179,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
+	if originalStmtCtx != nil {
+		originalStmtCtx.ExecRetryCount = 1
+	}
 
 	nh := GetHistory(s)
 	var schemaVersion int64
@@ -1193,6 +1198,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
+			s.sessionVars.StmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
@@ -1253,6 +1259,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			return err
 		}
 		retryCnt++
+		if originalStmtCtx != nil {
+			originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
+		}
 		if retryCnt >= maxCnt {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),

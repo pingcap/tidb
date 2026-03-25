@@ -1091,7 +1091,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	var err error
 	defer func() {
 		terror.Log(exec.Close(e))
-		a.logAudit()
 	}()
 
 	// Check if "tidb_snapshot" is set for the write executors.
@@ -1462,7 +1461,7 @@ func (a *ExecStmt) logAudit() {
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
-			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, sessVars.StmtCtx.ExecRetryCount > 0 || sessVars.RetryInfo.Retrying)
 			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
 				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
 				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
@@ -1563,6 +1562,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
+	sessVars.StmtCtx.ExecRetryCount += uint64(a.retryCount)
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
 	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil || execDetail.SharedLockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
@@ -1653,6 +1653,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+	a.logAudit()
 }
 
 func (a *ExecStmt) recordAffectedRows2Metrics() {
@@ -1796,7 +1797,6 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
-	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 }
 
@@ -1858,7 +1858,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 
 		sessVars.StmtCtx.ExecSuccess = succ
-		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
 		globalRules := vardef.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
 		// EffectiveFields is not empty (unique fields for this session including global rules),
@@ -2181,7 +2180,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.Succeed = succ
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
-	stmtExecInfo.ExecRetryCount = a.retryCount
+	stmtExecInfo.ExecRetryCount = uint(sessVars.StmtCtx.ExecRetryCount)
 	stmtExecInfo.StmtExecDetails = stmtDetail
 	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
