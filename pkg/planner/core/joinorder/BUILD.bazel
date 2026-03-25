@@ -5,12 +5,14 @@ go_library(
     srcs = [
         "conflict_detector.go",
         "join_order.go",
+        "ordered_leading.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/joinorder",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/planner/core/base",
