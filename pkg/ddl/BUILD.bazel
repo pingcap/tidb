@@ -219,6 +219,7 @@ go_test(
     srcs = [
         "affinity_test.go",
         "attributes_sql_test.go",
+        "backfilling_dist_scheduler_internal_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",
         "bdr_test.go",
@@ -288,6 +289,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//br/pkg/storage",
         "//pkg/autoid_service",
         "//pkg/config",
         "//pkg/ddl/copr",
