@@ -49,18 +49,15 @@ select * from t;
 
 # TestCharsetDatabase
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
---error 0,1273
 create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 use cd_test_utf8;
 select @@character_set_database;
 select @@collation_database;
---error 0,1049
 use cd_test_latin1;
 select @@character_set_database;
 select @@collation_database;
 
 # DefaultDBAfterDropCurDB
---error 0,1273
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 
 # CollationUnion
@@ -71,6 +68,12 @@ set names utf8mb4 collate utf8mb4_general_ci;
 select position('a' in 'AA');
 select locate('a', 'AA');
 select locate('a', 'a');
+
+# Issue36057
+set names latin1;
+select @@collation_connection;
+set names latin1 collate latin1_swedish_ci;
+select @@collation_connection;
 set names utf8mb4;
 
 # CharacterSetCollations

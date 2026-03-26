@@ -78,6 +78,14 @@ locate('a', 'AA')
 select locate('a', 'a');
 locate('a', 'a')
 1
+set names latin1;
+select @@collation_connection;
+@@collation_connection
+latin1_bin
+set names latin1 collate latin1_swedish_ci;
+select @@collation_connection;
+@@collation_connection
+latin1_swedish_ci
 set names utf8mb4;
 SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
 default_collate_name	maxlen
