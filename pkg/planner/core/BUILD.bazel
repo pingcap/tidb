@@ -231,7 +231,11 @@ go_test(
         "indexmerge_test.go",
         "integration_partition_test.go",
         "integration_test.go",
+<<<<<<< HEAD
         "logical_plan_trace_test.go",
+=======
+        "lateral_join_test.go",
+>>>>>>> e07318bec6a (planner: Add optimizer support to LATERAL join (#67131))
         "logical_plans_test.go",
         "main_test.go",
         "optimizer_test.go",

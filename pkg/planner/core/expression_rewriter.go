@@ -2617,10 +2617,62 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
 		}
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so it also has FullSchema/FullNames for USING/NATURAL joins.
+		// When FullSchema is nil, treat Apply as a transparent wrapper and recurse into the outer
+		// (left) child, which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+		if x.FullSchema == nil {
+			return findFieldNameFromNaturalUsingJoin(x.Children()[0], v)
+		}
+		idx, err := expression.FindFieldName(x.FullNames, v)
+		if err != nil {
+			return nil, nil, err
+		}
+		if idx >= 0 {
+			return x.FullSchema.Columns[idx], x.FullNames[idx], nil
+		}
 	}
 	return nil, nil, nil
 }
 
+<<<<<<< HEAD
+=======
+func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *expression.Column) (*expression.Column, *types.FieldName) {
+	switch x := p.(type) {
+	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+		// These nodes preserve child's column identity; continue tracing down.
+		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so handle it the same way for USING/NATURAL remapping.
+		if x.JoinType == base.InnerJoin && x.FullSchema != nil && x.FullSchema.Contains(col) {
+			if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+	case *logicalop.LogicalJoin:
+		// Remapping is only defined for inner JOIN ... USING/NATURAL semantics.
+		// When an ancestor join contains this column but has no mapping, continue
+		// descending so child joins can provide the canonical output mapping.
+		if x.JoinType == base.InnerJoin && x.FullSchema != nil && x.FullSchema.Contains(col) {
+			if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+	}
+	return nil, nil
+}
+
+>>>>>>> e07318bec6a (planner: Add optimizer support to LATERAL join (#67131))
 func (er *expressionRewriter) evalDefaultExprForTable(v *ast.DefaultExpr, tbl *model.TableInfo) {
 	idx, err := expression.FindFieldName(er.names, v.Name)
 	if err != nil {

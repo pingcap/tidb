@@ -133,13 +133,98 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 	return defaultValueMap
 }
 
+<<<<<<< HEAD
+=======
+// pruneRedundantApply: Removes the Apply operator if the parent SELECT clause does not filter any rows from the source.
+// Example: SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1))
+// In this case, the subquery can be removed entirely since the WHERE clause always evaluates to True.
+// This results in a SELECT node with a True condition and an Apply operator as its child.
+// If this pattern is detected, we remove both the SELECT and Apply nodes, returning the left child of the Apply operator as the result.
+// For the example above, the result would be a table scan on t1.
+func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool) {
+	// Check if the current plan is a LogicalSelection
+	logicalSelection, ok := p.(*logicalop.LogicalSelection)
+	if !ok {
+		return nil, false
+	}
+
+	// Retrieve the child of LogicalSelection
+	selectSource := logicalSelection.Children()[0]
+
+	// Check if the child is a LogicalApply
+	apply, ok := selectSource.(*logicalop.LogicalApply)
+	if !ok {
+		return nil, false
+	}
+
+	// Ensure the Apply operator is of a suitable join type to match the required pattern.
+	// Only LeftOuterJoin or LeftOuterSemiJoin are considered valid here.
+	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
+		return nil, false
+	}
+	// LATERAL joins may return multiple rows per outer row; see LogicalApply.IsLateral.
+	if apply.IsLateral {
+		return nil, false
+	}
+	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
+	// But this problem has affected tiflash CI.
+	// Simplify predicates from the LogicalSelection
+	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions,
+		true, nil)
+
+	// Determine if this is a "true selection"
+	trueSelection := false
+	if len(simplifiedPredicates) == 0 {
+		trueSelection = true
+	} else if len(simplifiedPredicates) == 1 {
+		_, simplifiedPredicatesType := rule.FindPredicateType(p.SCtx(), simplifiedPredicates[0])
+		if simplifiedPredicatesType == rule.TruePredicate {
+			trueSelection = true
+		}
+	}
+
+	if trueSelection {
+		finalResult := apply
+
+		// Traverse through LogicalApply nodes to find the last one
+		for {
+			child := finalResult.Children()[0]
+			nextApply, ok := child.(*logicalop.LogicalApply)
+			if !ok {
+				if len(groupByColumn) == 0 {
+					return child, true
+				}
+				for col := range groupByColumn {
+					if apply.Schema().Contains(col) && !child.Schema().Contains(col) {
+						return nil, false
+					}
+				}
+				return child, true // Return the child of the last LogicalApply
+			}
+			finalResult = nextApply
+		}
+	}
+
+	return nil, false
+}
+
+>>>>>>> e07318bec6a (planner: Add optimizer support to LATERAL join (#67131))
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
-		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+		// Use FullSchema when outer plan is a USING/NATURAL join, so we capture
+		// correlated columns that reference the redundant (merged) join columns.
+		// Walk through wrapper operators (e.g., LogicalSelection from ON clauses)
+		// to find the underlying LogicalJoin, matching the schema used for name
+		// resolution in LATERAL subqueries (see logical_plan_builder.go buildJoin).
+		outerSchema := outerPlan.Schema()
+		if fullSchema, _ := findJoinFullSchema(outerPlan); fullSchema != nil {
+			outerSchema = fullSchema
+		}
+		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan, outerSchema)
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin

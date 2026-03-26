@@ -540,6 +540,28 @@ func (*TableSource) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
+<<<<<<< HEAD
+=======
+	// Validate AST invariants before emitting any SQL.
+	// Source can be TableName, SelectStmt, SetOprStmt, or JoinNode (parenthesized join).
+	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt);
+	// TableName and JoinNode are both excluded.
+	isDerived := false
+	switch n.Source.(type) {
+	case *SelectStmt, *SetOprStmt:
+		isDerived = true
+	}
+	if n.Lateral && !isDerived {
+		return errors.New("LATERAL cannot be applied to a table name, only to derived tables")
+	}
+	if len(n.ColumnNames) > 0 && !isDerived {
+		return errors.New("column alias list cannot be applied to a table name")
+	}
+	if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
+		return errors.New("column list provided without alias for derived table")
+	}
+
+>>>>>>> e07318bec6a (planner: Add optimizer support to LATERAL join (#67131))
 	needParen := false
 	switch n.Source.(type) {
 	case *SelectStmt, *SetOprStmt:
