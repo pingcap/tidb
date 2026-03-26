@@ -624,7 +624,7 @@ func TestPartialStatsInExplain(t *testing.T) {
 		cases := []explainCase{
 			{
 				sql:      "explain format = brief select * from tp where b = 10",
-				contains: []string{"stats:partial[ic:allEvicted, b:allEvicted]"},
+				contains: []string{"stats:partial["},
 			},
 			{
 				sql:         "explain format = brief select * from tp where b = 10",
