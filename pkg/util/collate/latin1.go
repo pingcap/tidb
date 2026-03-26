@@ -15,25 +15,50 @@
 package collate
 
 import (
-	"encoding/binary"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"golang.org/x/text/encoding/charmap"
 )
 
+// invalidCharWeight is the weight assigned to characters that cannot be encoded
+// in Latin-1. It corresponds to the '?' character.
+//
+// TiDB treated [Latin-1 charset as the same as UTF-8][18955] for compatibility
+// with mistakes back in v4.0 days, when "new collation" was not a thing and
+// everything is assumed compatible with `utf8mb4`. This means `_latin1'中文'` is
+// and will forever be legal, even if it makes no sense in MySQL proper.
+//
+// Here in this collator, we are going to treat `_latin1'X'` to be the same as
+// `CONVERT(_utf8mb4'X' USING latin1)`. So all non-Windows-1252 characters will
+// be mapped to '?' during comparison.
+//
+// [18955]: https://github.com/pingcap/tidb/issues/18955
+const invalidCharWeight = 0x3f
+
 type latin1ByteWeightTable [256]uint8
+
+func (wt *latin1ByteWeightTable) sortKey(r rune) byte {
+	if b, ok := charmap.Windows1252.EncodeRune(r); ok {
+		return wt[b]
+	}
+	return invalidCharWeight
+}
 
 type latin1Collator struct {
 	weights *latin1ByteWeightTable
 }
 
-// latin1SwedishCIByteWeightTable is the weight table for `latin1_swedish_ci“.
+// latin1SwedishCIByteWeightTable is the weight table for latin1_swedish_ci.
 //
 // It performs mappings so that all valid ISO-8859-1 letters that only differ by
 // case are equal (e.g. 'x'='X', 'ø'='Ø'), and follows Swedish ordering rules
 // i.e. 'A' < ... < 'Z' < 'Å' < 'Ä' < 'Ö', and the other accented letters are
 // treated as the same as their base letters (e.g. 'É'='E'), and additionally
 // 'Æ'='Ä' and 'Ü'='Y'.
+//
+// Valid Windows-1252 but invalid ISO-8859-1 characters ('œ', 'š', 'ž', 'Ÿ')
+// are considered not coalescable, following the behavior in MySQL v8.4.
 var latin1SwedishCIByteWeightTable = latin1ByteWeightTable{
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
 	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -57,10 +82,7 @@ var _ Collator = (*latin1Collator)(nil)
 
 func (c *latin1Collator) Compare(a, b string) int {
 	return compareCommon(a, b, func(r rune) uint32 {
-		if r <= 0xFF {
-			return uint32(c.weights[byte(r)])
-		}
-		return uint32(r)
+		return uint32(c.weights.sortKey(r))
 	})
 }
 
@@ -74,24 +96,12 @@ func (c *latin1Collator) ImmutableKey(str string) []byte {
 
 func (c *latin1Collator) KeyWithoutTrimRightSpace(str string) []byte {
 	key := make([]byte, 0, len(str))
-	var runeBuf [4]byte
 	for i := 0; i < len(str); {
 		r, rLen := utf8.DecodeRuneInString(str[i:])
 		if r == utf8.RuneError && rLen == 1 {
 			return key
 		}
-		if r <= 0xFF {
-			weight := c.weights[byte(r)]
-			if weight < 0xFF {
-				key = append(key, weight)
-			} else {
-				key = append(key, 0xFF, 0x00)
-			}
-			i += rLen
-			continue
-		}
-		binary.BigEndian.PutUint32(runeBuf[:], uint32(r)|0xFF800000)
-		key = append(key, runeBuf[:]...)
+		key = append(key, c.weights.sortKey(r))
 		i += rLen
 	}
 	return key
@@ -106,7 +116,7 @@ func (c *latin1Collator) Clone() Collator {
 }
 
 func (*latin1Collator) MaxKeyLen(s string) int {
-	return len(s) * 2
+	return len(s)
 }
 
 type latin1Pattern struct {
@@ -121,9 +131,6 @@ func (p *latin1Pattern) Compile(patternStr string, escape byte) {
 
 func (p *latin1Pattern) DoMatch(str string) bool {
 	return stringutil.DoMatchCustomized(str, p.patRunes, p.patTypes, func(a, b rune) bool {
-		if a <= 0xFF && b <= 0xFF {
-			return p.weights[byte(a)] == p.weights[byte(b)]
-		}
-		return a == b
+		return p.weights.sortKey(a) == p.weights.sortKey(b)
 	})
 }

@@ -247,7 +247,7 @@ func TestLatin1SwedishCIOrdering(t *testing.T) {
 	require.Less(t, collator.Compare("ö", "~"), 0)
 }
 
-func TestLatin1SwedishCIKeyFallbackForNonLatin1Runes(t *testing.T) {
+func TestLatin1SwedishCIKey(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 
@@ -260,19 +260,26 @@ func TestLatin1SwedishCIKeyFallbackForNonLatin1Runes(t *testing.T) {
 
 	// start comparing with empty string which is smallest.
 	prevCase := testCase{"", nil}
-	// the test cases should be sorted in strictly increasing latin1_swedish_ci order
+	// the test cases should be sorted in increasing latin1_swedish_ci order
 	cases := []testCase{
+		{">", []byte{0x3E}},
+		{"?", []byte{0x3F}},
+		{"Ā", []byte{0x3F}},
+		{"😀", []byte{0x3F}},
+		{"@", []byte{0x40}},
+		{"€‚ƒ„…†‡ˆ‰Š‹ŒŽ", []byte{0x80, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8E}},
+		{"‘’“”•–—˜™š›œžŸ", []byte{0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9E, 0x9F}},
 		{"÷", []byte{0xF7}},
-		{"ÿ", []byte{0xFF, 0x00}},
-		{"ÿxx", []byte{0xFF, 0x00, 0x58, 0x58}},
-		{"Ā", []byte{0xFF, 0x80, 0x01, 0x00}},
-		{"😀", []byte{0xFF, 0x81, 0xF6, 0x00}},
+		{"ÿ", []byte{0xFF}},
+		{"ÿxx", []byte{0xFF, 0x58, 0x58}},
 	}
 
 	for _, c := range cases {
 		require.Equal(t, c.key, collator.Key(c.str), c.str)
-		require.Less(t, bytes.Compare(prevCase.key, c.key), 0, c.str)
-		require.Less(t, collator.Compare(prevCase.str, c.str), 0, c.str)
+		keyCmpResult := bytes.Compare(prevCase.key, c.key)
+		strCmpResult := collator.Compare(prevCase.str, c.str)
+		require.LessOrEqual(t, keyCmpResult, 0, c.str)
+		require.Equal(t, keyCmpResult, strCmpResult, c.str)
 		prevCase = c
 	}
 }

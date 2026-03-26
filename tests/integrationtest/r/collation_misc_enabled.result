@@ -259,12 +259,15 @@ insert into t values
 (222, 'Þ'),
 (254, 'þ'),
 (255, 'ÿ'),
+(140, 'Œ'),
+(156, 'œ'),
 (3, '中文／＃１８９５５');
 select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
 id	eq_prev	w
 33	NULL	21
 3290422	0	323536
 13106	0	3332
+3	0	3F3F3F3F3F3F3F3F3F
 1	0	414141414141414143434444454545454545454549494949494949494E4E4F4F4F4F4F4F4F4F55555555555559595959
 2	1	414141414141414143434444454545454545454549494949494949494E4E4F4F4F4F4F4F4F4F55555555555559595959
 6385252	0	414E44
@@ -282,12 +285,13 @@ id	eq_prev	w
 63084	0	5D4C
 23901	0	5D5D
 95	0	5F
+140	0	8C
+156	0	9C
 216	0	D8
 248	1	D8
 222	0	DE
 254	1	DE
-255	0	FF00
-3	0	FF804E2DFF806587FF80FF0FFF80FF03FF80FF11FF80FF18FF80FF19FF80FF15FF80FF15
+255	0	FF
 explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
 id	task	access object	operator info
 IndexReader	root		index:IndexRangeScan
@@ -312,7 +316,8 @@ Sort	root		cd_test_latin1_swedish_ci.t.id
   └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:("_",+inf], keep order:false, stats:pseudo
 select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
 id	val
-3	中文／＃１８９５５
+140	Œ
+156	œ
 216	Ø
 222	Þ
 248	ø

@@ -165,6 +165,8 @@ insert into t values
     (222, 'Þ'),
     (254, 'þ'),
     (255, 'ÿ'),
+    (140, 'Œ'),
+    (156, 'œ'),
     (3, '中文／＃１８９５５');
 select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
 
