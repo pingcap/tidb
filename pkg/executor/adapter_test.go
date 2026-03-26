@@ -510,6 +510,7 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	t.Run("stmt summary ignores optimistic autocommit retry count", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
+		// Toggle stmt summary off and back on to clear any in-memory rows left by earlier tests.
 		tk.MustExec("set global tidb_enable_stmt_summary = 0")
 		tk.MustExec("set global tidb_enable_stmt_summary = 1")
 
