@@ -1259,15 +1259,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			return err
 		}
 		retryCnt++
-		if originalStmtCtx != nil {
-			originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
-		}
 		if retryCnt >= maxCnt {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Uint("retry reached max count", retryCnt))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
+		}
+		if originalStmtCtx != nil {
+			originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 		}
 		logutil.Logger(ctx).Warn("sql",
 			zap.String("label", label),

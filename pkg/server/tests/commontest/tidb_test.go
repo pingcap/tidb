@@ -3795,11 +3795,15 @@ func TestAuditPluginRetrying(t *testing.T) {
 		wg.Wait()
 
 		testResults := getTestResults()
-		retryingCount := 0
+		retryingSQL := "UPDATE retry_test SET val = val + 10 WHERE id = 1"
+		if isOptimistic {
+			retryingSQL = "COMMIT"
+		}
+		retryingSQLs := make([]string, 0, 1)
 		nonRetryingCount := 0
 		for _, res := range testResults {
 			if res.retrying {
-				retryingCount++
+				retryingSQLs = append(retryingSQLs, res.sql)
 			} else {
 				nonRetryingCount++
 			}
@@ -3810,7 +3814,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		if isOptimistic {
 			expectedSQLCount += 2 // extra `SET` variable SQL
 		}
-		require.Equal(t, 1, retryingCount)
+		require.Equal(t, []string{retryingSQL}, retryingSQLs)
 		require.Equal(t, expectedSQLCount-1, nonRetryingCount)
 	}
 

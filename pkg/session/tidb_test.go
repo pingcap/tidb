@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -130,6 +131,24 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	require.NotNil(t, metrics2)
 	require.NotSame(t, metricsBegin, metrics1, "stmt1 should have different metrics from BEGIN")
 	require.NotSame(t, metrics1, metrics2, "stmt2 should have different metrics from stmt1")
+
+	t.Run("autocommit retry count respects retry limit", func(t *testing.T) {
+		MustExec(t, se, "use test")
+		MustExec(t, se, "drop table if exists max_retry_count")
+		MustExec(t, se, "create table max_retry_count (id int primary key, v int)")
+		MustExec(t, se, "insert into max_retry_count values (1, 1)")
+		MustExec(t, se, "set @@session.tidb_retry_limit = 1")
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
+		_, err := exec(se, "update max_retry_count set v = v + 1 where id = 1")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+
+		require.Error(t, err)
+		require.True(t, kv.ErrTxnRetryable.Equal(err), "error: %s", err)
+		require.Equal(t, uint64(1), se.GetSessionVars().StmtCtx.ExecRetryCount)
+
+		MustExec(t, se, "insert into max_retry_count values (2, 2)")
+	})
 }
 
 func TestSchemaCacheSizeVar(t *testing.T) {

@@ -2180,7 +2180,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.Succeed = succ
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
-	stmtExecInfo.ExecRetryCount = uint(sessVars.StmtCtx.ExecRetryCount)
+	stmtExecInfo.ExecRetryCount = a.retryCount
 	stmtExecInfo.StmtExecDetails = stmtDetail
 	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
