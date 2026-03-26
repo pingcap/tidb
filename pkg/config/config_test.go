@@ -924,12 +924,18 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
-	// Make sure the example config is the same as default config except `auto_tls`.
+	// Make sure the example config is the same as default config except
+	// explicitly documented example-only overrides.
+	exampleTiKVRUScale := conf.TiKVClient.RUV2.RUScale
+	exampleTiDBRUScale := conf.RUV2.RUScale
 	conf.Security.AutoTLS = false
+	conf.TiKVClient.RUV2.RUScale = GetGlobalConfig().TiKVClient.RUV2.RUScale
 	if kerneltype.IsNextGen() {
 		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
 	}
 	require.Equal(t, GetGlobalConfig(), conf)
+	require.Equal(t, 1.34, exampleTiDBRUScale)
+	require.Equal(t, 1.34, exampleTiKVRUScale)
 
 	// Test for log config.
 	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
