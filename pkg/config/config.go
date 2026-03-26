@@ -366,7 +366,7 @@ type RUV2Config struct {
 // DefaultRUV2Config returns the default RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
-		RUScale: 5697.054498,
+		RUScale: 1.34,
 
 		ResultChunkCells:        0.00010000,
 		ExecutorL1:              0.00013278,
