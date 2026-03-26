@@ -1086,9 +1086,46 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 			copTask.indexPlan = pushedDownTopN
 		} else {
 			// It works for both normal index scan and index merge scan.
+<<<<<<< HEAD
 			copTask.finishIndexPlan()
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
+=======
+			copTask.FinishIndexPlan()
+			if copTask.TablePlan == nil {
+				// Keep TopN at root when the order-by columns cannot be resolved against the
+				// index plan but the reader still has no table-side after finishing the index plan.
+				// This can happen when a virtual generated column is covered by an expression index.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
+			copTask.TablePlan = pushedDownTopN
+			if newGlobalTopN != nil {
+				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+				// Skip TopN with partition on the root. This is a derived topN and window function
+				// will take care of the filter.
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(newGlobalTopN, rootTask)
+			}
+		}
+	} else if mppTask, ok := t.(*physicalop.MppTask); ok && needPushDown && canPushDownToTiFlash(p, mppTask) {
+		pushedDownTopN, newGlobalTopN := getPushedDownTopN(p, mppTask.Plan(), kv.TiFlash)
+		mppTask.SetPlan(pushedDownTopN)
+		if newGlobalTopN != nil {
+			rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+			// Skip TopN with partition on the root. This is a derived topN and window function
+			// will take care of the filter.
+			if len(p.GetPartitionBy()) > 0 {
+				return t
+			}
+			return attachPlan2Task(newGlobalTopN, rootTask)
+>>>>>>> 264de6ce191 (planner: avoid TopN panic on expr index virtual column (#67319))
 		}
 	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
