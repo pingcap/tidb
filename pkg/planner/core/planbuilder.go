@@ -2650,10 +2650,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	var predicateCols, mustAnalyzedCols calcOnceMap
 	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	isPartitioned := tbl.TableInfo.GetPartitionInfo() != nil
-	versionMatches, err := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, physicalIDs, version)
-	if err != nil {
-		return err
-	}
+	versionMatches := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, physicalIDs, version)
 	if !isAnalyzeTable && dynamicPrune && isPartitioned {
 		// Dynamic partition analyze later merges all partitions into table-level stats, so this
 		// rewrite decision must follow table-level/global stats compatibility rather than only the
@@ -2947,15 +2944,15 @@ func pickColumnList(astColChoice ast.ColumnChoice, astColList []*model.ColumnInf
 	return tblSavedColChoice, tblSavedColList
 }
 
-func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) (bool, error) {
+func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) bool {
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	intest.Assert(statsHandle != nil, "statsHandle should not be nil")
 	for _, physicalID := range physicalIDs {
 		if _, versionMatches := statistics.ResolveAnalyzeVersionOnTable(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion); !versionMatches {
-			return false, nil
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
@@ -3000,10 +2997,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	if err != nil {
 		return nil, err
 	}
-	versionIsSame, err := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
-	if err != nil {
-		return nil, err
-	}
+	versionIsSame := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
 	if !versionIsSame {
 		b.appendAnalyzeVersionOverwriteWarning()
 	}
@@ -3017,10 +3011,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if err != nil {
 		return nil, err
 	}
-	versionIsSame, err := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
-	if err != nil {
-		return nil, err
-	}
+	versionIsSame := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
 	if !versionIsSame {
 		b.appendAnalyzeVersionOverwriteWarning()
 	}
