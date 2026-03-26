@@ -293,12 +293,12 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	return
 }
 
-// AnalyzeVersionMatches reports whether the table already matches the requested session
-// version. For partitioned tables it checks the global stats and every partition; for
-// non-partitioned tables it checks the table stats alone.
-func (sa *statsAnalyze) AnalyzeVersionMatches(tblInfo *model.TableInfo, requestedVersion int) bool {
+// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
+// session version. For partitioned tables it checks the global stats and every partition;
+// for non-partitioned tables it checks the table stats alone.
+func (sa *statsAnalyze) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
 	globalStats := sa.statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	if !statistics.AnalyzeVersionMatchesOnTable(globalStats, requestedVersion) {
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
 		return false
 	}
 
@@ -308,7 +308,7 @@ func (sa *statsAnalyze) AnalyzeVersionMatches(tblInfo *model.TableInfo, requeste
 	}
 	for _, def := range pi.Definitions {
 		partitionStats := sa.statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
-		if !statistics.AnalyzeVersionMatchesOnTable(partitionStats, requestedVersion) {
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
 			return false
 		}
 	}
@@ -762,7 +762,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 }
 
 func analyzeVersionMatches(requestedVersion int, tblStats *statistics.Table) bool {
-	return statistics.AnalyzeVersionMatchesOnTable(tblStats, requestedVersion)
+	return statistics.AnalyzeVersionMatchesForTableStats(tblStats, requestedVersion)
 }
 
 func analyzeVersionMatchesForPartitions(
@@ -771,7 +771,7 @@ func analyzeVersionMatchesForPartitions(
 	partitionStats map[int64]*statistics.Table,
 ) bool {
 	for _, def := range partitionDefs {
-		if !statistics.AnalyzeVersionMatchesOnTable(partitionStats[def.ID], requestedVersion) {
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats[def.ID], requestedVersion) {
 			return false
 		}
 	}

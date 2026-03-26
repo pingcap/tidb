@@ -160,7 +160,7 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 }
 
 func (f *AnalysisJobFactory) analyzeVersionMatches(tblStats *statistics.Table) bool {
-	return statistics.AnalyzeVersionMatchesOnTable(tblStats, f.sctx.GetSessionVars().AnalyzeVersion)
+	return statistics.AnalyzeVersionMatchesForTableStats(tblStats, f.sctx.GetSessionVars().AnalyzeVersion)
 }
 
 func (f *AnalysisJobFactory) partitionedTableAnalyzeVersionMatches(
@@ -168,11 +168,11 @@ func (f *AnalysisJobFactory) partitionedTableAnalyzeVersionMatches(
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 ) bool {
 	requestedVersion := f.sctx.GetSessionVars().AnalyzeVersion
-	if !statistics.AnalyzeVersionMatchesOnTable(globalTblStats, requestedVersion) {
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalTblStats, requestedVersion) {
 		return false
 	}
 	for _, tblStats := range partitionStats {
-		if !statistics.AnalyzeVersionMatchesOnTable(tblStats, requestedVersion) {
+		if !statistics.AnalyzeVersionMatchesForTableStats(tblStats, requestedVersion) {
 			return false
 		}
 	}

@@ -1062,15 +1062,15 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	return t
 }
 
-// AnalyzeVersionMatchesOnTable reports whether the existing analyzed stats on tbl already match
-// the requested analyze version. Auto-analyze still writes with the requested version for now,
-// and callers use the mismatch to record legacy rewrites when needed.
-func AnalyzeVersionMatchesOnTable(tbl *Table, requestedVersion int) bool {
+// AnalyzeVersionMatchesForTableStats reports whether the existing analyzed stats on tblStats
+// already match the requested analyze version. Auto-analyze still writes with the requested
+// version for now, and callers use the mismatch to record legacy rewrites when needed.
+func AnalyzeVersionMatchesForTableStats(tblStats *Table, requestedVersion int) bool {
 	intest.Assert(requestedVersion == Version2, "requested analyze version should be 2")
-	if tbl == nil || tbl.Pseudo {
+	if tblStats == nil || tblStats.Pseudo {
 		return true
 	}
-	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != requestedVersion {
+	if IsAnalyzed(int64(tblStats.StatsVer)) && tblStats.StatsVer != requestedVersion {
 		return false
 	}
 	return true

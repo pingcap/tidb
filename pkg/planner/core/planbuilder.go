@@ -2651,12 +2651,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	var predicateCols, mustAnalyzedCols calcOnceMap
 	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	isPartitioned := tbl.TableInfo.GetPartitionInfo() != nil
-	versionMatches := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, physicalIDs, version)
+	targetPhysicalIDsVersionMatch := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, physicalIDs, version)
 	if !isAnalyzeTable && dynamicPrune && isPartitioned {
 		// Dynamic partition analyze later merges all partitions into table-level stats, so this
 		// rewrite decision must follow table-level/global stats compatibility rather than only the
 		// requested partition IDs.
-		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AnalyzeVersionMatches(tbl.TableInfo, version)
+		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AnalyzeVersionMatchesForTable(tbl.TableInfo, version)
 		if !tableVersionMatches {
 			// Reanalyze all partitions so the global merge rewrites table-level stats with the
 			// session-selected version.
@@ -2668,11 +2668,11 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 				"The analyze version from the session is not compatible with the existing statistics of the table. TiDB will analyze all partitions to rewrite the table statistics with the session-selected version",
 			))
 			// Force downstream logic to rewrite all stats after expanding to all partitions.
-			versionMatches = false
+			targetPhysicalIDsVersionMatch = false
 		}
 	}
 	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.
-	mustAllColumns := !versionMatches
+	mustAllColumns := !targetPhysicalIDsVersionMatch
 
 	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
@@ -2951,7 +2951,7 @@ func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableIn
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	intest.Assert(statsHandle != nil, "statsHandle should not be nil")
 	for _, physicalID := range physicalIDs {
-		if !statistics.AnalyzeVersionMatchesOnTable(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion) {
+		if !statistics.AnalyzeVersionMatchesForTableStats(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion) {
 			return false
 		}
 	}

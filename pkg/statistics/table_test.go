@@ -94,6 +94,6 @@ func TestResolveAnalyzeVersionOnTableKeepsRequestedVersion(t *testing.T) {
 		LastAnalyzeVersion: 1,
 	}
 
-	versionMatches := AnalyzeVersionMatchesOnTable(tbl, Version2)
+	versionMatches := AnalyzeVersionMatchesForTableStats(tbl, Version2)
 	require.False(t, versionMatches)
 }
