@@ -181,10 +181,10 @@ type StatsAnalyze interface {
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
 
-	// ResolveAnalyzeVersion returns the analyze version to use for this table and whether it
-	// matches the requested session version. For partitioned tables it checks the global stats
-	// and every partition; for non-partitioned tables it checks the table stats alone.
-	ResolveAnalyzeVersion(tblInfo *model.TableInfo, requestedVersion int) (resolvedVersion int, versionMatches bool)
+	// AnalyzeVersionMatches reports whether the table already matches the requested session
+	// version. For partitioned tables it checks the global stats and every partition; for
+	// non-partitioned tables it checks the table stats alone.
+	AnalyzeVersionMatches(tblInfo *model.TableInfo, requestedVersion int) bool
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
