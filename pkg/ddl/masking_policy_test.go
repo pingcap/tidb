@@ -116,6 +116,30 @@ func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
 		Check(testkit.Rows("1"))
 }
 
+func TestMaskingPolicyCTEScenarios(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_cte_src, t_cte_join, t_cte_dst")
+	tk.MustExec("create table t_cte_src(id int primary key, c varchar(20))")
+	tk.MustExec("create table t_cte_join(id int primary key, name varchar(20))")
+	tk.MustExec("create table t_cte_dst(c varchar(20))")
+	tk.MustExec("insert into t_cte_src values (1, 'secret'), (2, 'public')")
+	tk.MustExec("insert into t_cte_join values (1, 'alice'), (2, 'bob')")
+	tk.MustExec("create masking policy p_cte on t_cte_src(c) as mask_full(c, '*') restrict on (insert_into_select) enable")
+
+	tk.MustQuery("with cte as (select c from t_cte_src) select c from cte order by c").Check(testkit.Rows("******", "******"))
+	tk.MustQuery("with cte as (select c from t_cte_src) select count(*) from cte where c = 'secret'").Check(testkit.Rows("1"))
+	tk.MustQuery("with cte as (select id, c from t_cte_src) select j.name, cte.c from t_cte_join j join cte on j.id = cte.id order by j.id").
+		Check(testkit.Rows("alice ******", "bob ******"))
+	tk.MustQuery("with cte1 as (select c from t_cte_src), cte2 as (select c from cte1) select count(*) from cte2 where c = '******'").
+		Check(testkit.Rows("2"))
+	tk.MustQuery("with cte as (select c from t_cte_src) select count(*) from (select c from cte group by c) g").
+		Check(testkit.Rows("2"))
+
+	tk.MustGetErrCode("with cte as (select c from t_cte_src) insert into t_cte_dst select c from cte", errno.ErrAccessDeniedToMaskedColumn)
+}
+
 func TestMaskingPolicyCascadeCleanupOnDrop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
