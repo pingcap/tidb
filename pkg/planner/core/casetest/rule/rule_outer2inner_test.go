@@ -175,6 +175,42 @@ FROM t0
 	})
 }
 
+// TestOuter2InnerLateralSelection verifies LATERAL join decorrelation behavior:
+//
+//   - Cases 1–2 (simple correlated Selection): DecorrelateSolver pulls the
+//     correlated predicate (e.g. t2.b2 = t1.a1) up as a join condition, which
+//     empties CorCols and converts Apply→HashJoin. This is semantically correct
+//     and is NOT the outer2inner rule — the outer2inner IsLateral guard is a
+//     separate code path (pruneRedundantApply).
+//
+//   - Case 3 (aggregate): after the Selection is pulled up, correlated columns
+//     remain inside the aggregate, so DecorrelateSolver cannot proceed and the
+//     Apply is preserved.
+func TestOuter2InnerLateralSelection(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a1 int, b1 int)")
+		tk.MustExec("create table t2(a2 int, b2 int)")
+
+		var input Input
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		suiteData := GetOuter2InnerSuiteData()
+		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+}
+
 // can not add this test case to TestOuter2Inner because the collation_connection is different
 func TestOuter2InnerIssue55886(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {

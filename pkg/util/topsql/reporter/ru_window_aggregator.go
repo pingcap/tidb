@@ -17,8 +17,10 @@ package reporter
 import (
 	"sync"
 
+	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -41,6 +43,8 @@ type ruPointBucket struct {
 // ruWindowAggregator keeps online 15s buckets for TopRU reporting.
 type ruWindowAggregator struct {
 	buckets           map[uint64]*ruPointBucket // 15s startTs -> bucket
+	currentVersion    rmclient.RUVersion
+	dropUntilTs       uint64
 	lastReportedEndTs uint64
 	mu                sync.Mutex
 }
@@ -58,19 +62,31 @@ func alignToInterval(ts, interval uint64) uint64 {
 	return ts - ts%interval
 }
 
-func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RUIncrementMap) {
-	if len(increments) == 0 {
+func (a *ruWindowAggregator) addBatch(batch ruBatch) {
+	if len(batch.data) == 0 {
 		return
 	}
-	bucketStart := alignToInterval(ts, ruBaseBucketSeconds)
+	bucketStart := alignToInterval(batch.timestamp, ruBaseBucketSeconds)
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if a.currentVersion == 0 {
+		// The first accepted batch establishes the reporter-side initial RU version.
+		a.currentVersion = stmtstats.NormalizeRUVersion(batch.version)
+	}
+	if (batch.version != a.currentVersion) || (a.dropUntilTs > 0 && bucketStart < a.dropUntilTs) {
+		return
+	}
+
 	// Best-effort contract: late batches are shifted to the earliest still-open
-	// report window instead of being dropped.
+	// report window when possible. Under concurrent reporting they may still be
+	// dropped if the remapped bucket has already been compacted, and that path is
+	// tracked via dedicated metrics.
+	wasLateBatch := false
 	if a.lastReportedEndTs > 0 && bucketStart < a.lastReportedEndTs {
 		bucketStart = a.lastReportedEndTs
+		wasLateBatch = true
 	}
 
 	a.rotateBucketsBefore(bucketStart)
@@ -84,13 +100,36 @@ func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RU
 		a.buckets[bucketStart] = bucket
 	}
 	if bucket.collecting == nil {
-		// Out-of-order data hitting an already compacted bucket.
+		// Best-effort contract: a remapped late batch may still hit an already
+		// compacted bucket under concurrent reporting. Keep this observable.
+		if wasLateBatch {
+			droppedRU := 0.0
+			for _, incr := range batch.data {
+				if incr != nil {
+					droppedRU += incr.TotalRU
+				}
+			}
+			reporter_metrics.IgnoreLateCompactedRUKeysCounter.Add(float64(len(batch.data)))
+			reporter_metrics.IgnoreLateCompactedRUTotalCounter.Add(droppedRU)
+		}
 		return
 	}
 
 	// Collapse all points in this 15s bucket to the bucket start timestamp.
 	// bucket.collecting is protected by a.mu in this path.
-	bucket.collecting.addBatch(bucketStart, increments)
+	bucket.collecting.addBatch(bucketStart, batch.data)
+}
+
+func (a *ruWindowAggregator) resetForHandover(version rmclient.RUVersion, nowTs uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.currentVersion = version
+	a.buckets = make(map[uint64]*ruPointBucket)
+	a.dropUntilTs = alignToInterval(nowTs, ruReportWindowSeconds)
+	if nowTs%ruReportWindowSeconds != 0 {
+		a.dropUntilTs += ruReportWindowSeconds
+	}
 }
 
 // takeReportRecords emits one aligned closed 60s window for nowTs.
@@ -123,7 +162,7 @@ func (a *ruWindowAggregator) takeBucketsForWindow(windowEnd uint64) map[uint64]*
 		return nil
 	}
 
-	// Rotate buckets that are no longer writable for this report boundary.
+	// Rotate buckets that are no longer writable for this report-window boundary.
 	a.rotateBucketsBefore(windowEnd)
 
 	windowStart := windowEnd - ruReportWindowSeconds

@@ -36,22 +36,13 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 ### Failpoint-enabled run
 
 ```bash
-(
-  enabled=0
-  cleanup() { [ "${enabled}" -eq 1 ] && make failpoint-disable; }
-  trap cleanup EXIT INT TERM
-
-  make failpoint-enable
-  enabled=1
-
-  pushd pkg/<package_name>
-  go test -run <TestName> -tags=intest,deadlock
-  rc=$?
-  popd
-  exit $rc
-)
+./tools/check/failpoint-go-test.sh pkg/<package_name> -run <TestName>
 ```
 
+- The script enables failpoints, runs `go test`, and always disables failpoints during cleanup.
+- Pass additional `go test` flags after the package path, for example `./tools/check/failpoint-go-test.sh pkg/<package_name> -run <TestName> -count=1`.
+- If `-tags` is omitted, the script defaults to `-tags=intest,deadlock`.
+- Pass `-tags=intest,deadlock,nextgen` when a test run also needs `nextgen`.
 - If running Bazel directly (for example `bazel test`), run `make bazel-failpoint-enable` first, then `make bazel-failpoint-disable` after tests.
 - If using `make bazel_test`, do not run `make bazel-failpoint-enable` separately because `bazel_test` already depends on it; still run `make bazel-failpoint-disable` after tests.
 

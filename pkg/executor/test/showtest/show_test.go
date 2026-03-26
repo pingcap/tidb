@@ -480,41 +480,40 @@ func TestShow2(t *testing.T) {
 				);`)
 
 	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
-		"" +
-			"c_int int(11) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_float float <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ]\n" +
-			"[c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_year year(4) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_date date <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_time time <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_datetime datetime <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
-			"[c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ]\n" +
-			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
-			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
-			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
-			"[c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
-			"[c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
-			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_longblob longblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_text text ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_json json <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
+		"c_int int(11) <nil> YES  <nil>  select,insert,update,references ",
+		"c_float float <nil> YES  <nil>  select,insert,update,references ",
+		"c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ",
+		"c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_year year(4) <nil> YES  <nil>  select,insert,update,references ",
+		"c_date date <nil> YES  <nil>  select,insert,update,references ",
+		"c_time time <nil> YES  <nil>  select,insert,update,references ",
+		"c_datetime datetime <nil> YES  <nil>  select,insert,update,references ",
+		"c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ",
+		"c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ",
+		"c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ",
+		"c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ",
+		"c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ",
+		"c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ",
+		"c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ",
+		"c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ",
+		"c_blob blob <nil> YES  <nil>  select,insert,update,references ",
+		"c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_longblob longblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_text text ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_json json <nil> YES  <nil>  select,insert,update,references ",
+		"c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
 
 	tk.MustExec("drop table if exists test_full_column")
 

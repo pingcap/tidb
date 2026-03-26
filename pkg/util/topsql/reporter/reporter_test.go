@@ -31,6 +31,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -832,7 +833,7 @@ func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
 	tsr.collectRUIncrementsChan <- ruBatch{timestamp: uint64(nowFunc().Unix()), data: ruData} // fill collectRUIncrementsChan (buffer=2)
 	doneCollect := make(chan struct{})
 	go func() {
-		tsr.CollectRUIncrements(ruData) // should drop immediately when channel is full
+		tsr.CollectRUIncrements(ruData, rmclient.DefaultRUVersion) // should drop immediately when channel is full
 		close(doneCollect)
 	}()
 	select {
@@ -901,7 +902,7 @@ func TestReporterBackpressureAndDropScenario(t *testing.T) {
 				ExecCount:    1,
 				ExecDuration: 1,
 			},
-		})
+		}, rmclient.DefaultRUVersion)
 		bucketStart := uint64(ts) - uint64(ts)%15
 		require.Eventually(t, func() bool {
 			tsr.ruAggregator.mu.Lock()
@@ -1015,14 +1016,14 @@ func TestTopRUPipelineInProcessIntegration(t *testing.T) {
 			ExecCount:    1,
 			ExecDuration: 30,
 		},
-	})
+	}, rmclient.DefaultRUVersion)
 	tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
 		hotKey: &stmtstats.RUIncrement{
 			TotalRU:      7,
 			ExecCount:    2,
 			ExecDuration: 70,
 		},
-	})
+	}, rmclient.DefaultRUVersion)
 
 	require.Eventually(t, func() bool {
 		tsr.ruAggregator.mu.Lock()
@@ -1114,7 +1115,7 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 			ExecCount:    1,
 			ExecDuration: 50,
 		},
-	})
+	}, rmclient.DefaultRUVersion)
 	require.Eventually(t, func() bool {
 		tsr.ruAggregator.mu.Lock()
 		defer tsr.ruAggregator.mu.Unlock()
@@ -1162,7 +1163,95 @@ func TestTopRUPipelineGracefulShutdown(t *testing.T) {
 	}
 }
 
-func TestTopRUBestEffortBoundaryShift(t *testing.T) {
+func TestTopRUHandoverEdgeCases(t *testing.T) {
+	t.Run("collect worker drops stale RU version batch", testCollectWorkerDropsStaleRUVersionBatch)
+	t.Run("report worker sends queued RU records after handover", testReportWorkerSendsQueuedRURecordsAfterHandover)
+	t.Run("best effort boundary shift", testTopRUBestEffortBoundaryShift)
+}
+
+func testCollectWorkerDropsStaleRUVersionBatch(t *testing.T) {
+	origNowFunc := nowFunc
+	nowFunc = func() time.Time { return time.Unix(121, 0) }
+	t.Cleanup(func() { nowFunc = origNowFunc })
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+
+	collectDone := make(chan struct{})
+	go func() {
+		tsr.collectWorker()
+		close(collectDone)
+	}()
+
+	tsr.OnRUVersionChange(rmclient.RUVersionV2)
+	tsr.CollectRUIncrements(stmtstats.RUIncrementMap{
+		{
+			User:       "u-stale",
+			SQLDigest:  stmtstats.BinaryDigest("sql-stale"),
+			PlanDigest: stmtstats.BinaryDigest("plan-stale"),
+		}: {
+			TotalRU:      1,
+			ExecCount:    1,
+			ExecDuration: 1,
+		},
+	}, rmclient.RUVersionV1)
+
+	require.Eventually(t, func() bool {
+		return len(tsr.collectRUIncrementsChan) == 0
+	}, time.Second, 10*time.Millisecond)
+
+	tsr.ruAggregator.mu.Lock()
+	bucketCount := len(tsr.ruAggregator.buckets)
+	tsr.ruAggregator.mu.Unlock()
+	require.Zero(t, bucketCount)
+
+	tsr.Close()
+	select {
+	case <-collectDone:
+	case <-time.After(time.Second):
+		t.Fatal("collectWorker should exit on reporter close")
+	}
+}
+
+func testReportWorkerSendsQueuedRURecordsAfterHandover(t *testing.T) {
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	ch := make(chan *ReportData, 1)
+	require.NoError(t, tsr.Register(newMockDataSink(ch)))
+
+	sqlMetas := newNormalizedSQLMap()
+	sqlMetas.register([]byte("sql-meta"), "select 1", false)
+	tsr.reportCollectedDataChan <- collectedData{
+		collected:         newCollecting(),
+		ruRecords:         []tipb.TopRURecord{{User: "u1", SqlDigest: []byte("sql1"), PlanDigest: []byte("plan1")}},
+		normalizedSQLMap:  sqlMetas.take(),
+		normalizedPlanMap: newNormalizedPlanMap(),
+	}
+
+	tsr.OnRUVersionChange(rmclient.RUVersionV2)
+
+	reportDone := make(chan struct{})
+	go func() {
+		tsr.reportWorker()
+		close(reportDone)
+	}()
+
+	select {
+	case payload := <-ch:
+		require.Len(t, payload.RURecords, 1)
+		require.Len(t, payload.SQLMetas, 1)
+	case <-time.After(time.Second):
+		t.Fatal("reportWorker should still send queued RU payload after handover")
+	}
+
+	tsr.Close()
+	select {
+	case <-reportDone:
+	case <-time.After(time.Second):
+		t.Fatal("reportWorker should exit on reporter close")
+	}
+}
+
+func testTopRUBestEffortBoundaryShift(t *testing.T) {
 	origNowFunc := nowFunc
 	var currentUnix int64 = 61
 	nowFunc = func() time.Time {
@@ -1184,7 +1273,7 @@ func TestTopRUBestEffortBoundaryShift(t *testing.T) {
 			ExecCount:    1,
 			ExecDuration: 1,
 		},
-	})
+	}, rmclient.DefaultRUVersion)
 	// Drain queued RU into aggregator to make the attribution deterministic in UT.
 	drainRUBatchesForTest(tsr)
 
@@ -1210,7 +1299,7 @@ func drainRUBatchesForTest(tsr *RemoteTopSQLReporter) {
 			if len(batch.data) == 0 {
 				continue
 			}
-			tsr.ruAggregator.addBatchToBucket(batch.timestamp, batch.data)
+			tsr.ruAggregator.addBatch(batch)
 		default:
 			return
 		}

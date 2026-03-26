@@ -17,7 +17,29 @@
 // This file defines RU data types used by TopRU.
 package stmtstats
 
-import "github.com/tikv/client-go/v2/util"
+import (
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
+)
+
+// RUVersionProvider returns the current RU version used by TopRU accounting.
+type RUVersionProvider interface {
+	GetRUVersion() rmclient.RUVersion
+}
+
+// DefaultRUVersion returns the default RU version used when no provider is bound.
+func DefaultRUVersion() rmclient.RUVersion {
+	return rmclient.DefaultRUVersion
+}
+
+// NormalizeRUVersion converts zero-value or unknown versions to the default.
+func NormalizeRUVersion(version rmclient.RUVersion) rmclient.RUVersion {
+	if version == 0 {
+		return rmclient.DefaultRUVersion
+	}
+	return version
+}
 
 // RUKey identifies an RU aggregation key by user, SQL digest, and plan digest.
 type RUKey struct {
@@ -28,14 +50,12 @@ type RUKey struct {
 
 // ExecutionContext stores RU sampling state for one active SQL execution.
 type ExecutionContext struct {
-	// RUDetails caches *util.RUDetails from execution begin.
-	RUDetails *util.RUDetails
-
-	// Key identifies this execution by (user, sql_digest, plan_digest).
-	Key RUKey
-
-	// LastRUTotal is the last observed cumulative RU total (RRU + WRU).
+	RUDetails   *util.RUDetails
+	RUV2Metrics *execdetails.RUV2Metrics
+	Key         RUKey
+	RUV2Weights execdetails.RUV2Weights
 	LastRUTotal float64
+	RUVersion   rmclient.RUVersion
 }
 
 // RUIncrement represents a delta RU consumption for a specific RUKey.
