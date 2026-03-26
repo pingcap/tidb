@@ -132,8 +132,9 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	require.NotSame(t, metricsBegin, metrics1, "stmt1 should have different metrics from BEGIN")
 	require.NotSame(t, metrics1, metrics2, "stmt2 should have different metrics from stmt1")
 
-	t.Run("autocommit retry count respects retry limit", func(t *testing.T) {
+	t.Run("optimistic autocommit retry count respects retry limit", func(t *testing.T) {
 		MustExec(t, se, "use test")
+		MustExec(t, se, "set @@session.tidb_txn_mode = 'optimistic'")
 		MustExec(t, se, "drop table if exists max_retry_count")
 		MustExec(t, se, "create table max_retry_count (id int primary key, v int)")
 		MustExec(t, se, "insert into max_retry_count values (1, 1)")

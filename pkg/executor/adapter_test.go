@@ -507,7 +507,7 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	require.Equal(t, expected, reporter.tidbRUV2)
 	require.Equal(t, float64(412), reporter.tiflashRU)
 
-	t.Run("stmt summary keeps pessimistic retry count", func(t *testing.T) {
+	t.Run("stmt summary ignores optimistic autocommit retry count", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("set global tidb_enable_stmt_summary = 0")
@@ -516,6 +516,7 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 		tk = testkit.NewTestKit(t, store)
 		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_txn_mode = 'optimistic'")
 		tk.MustExec("create table stmt_summary_retry (id int primary key, v int)")
 		tk.MustExec("insert into stmt_summary_retry values (1, 1)")
 

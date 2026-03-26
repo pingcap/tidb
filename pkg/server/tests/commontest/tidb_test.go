@@ -3717,12 +3717,18 @@ func TestAuditPluginRetrying(t *testing.T) {
 	// 1. Auto-commit retry
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
 
-		_, err := db.Exec("DROP TABLE IF EXISTS auto_retry_test")
+		_, err = conn.ExecContext(ctx, "SET @@session.tidb_txn_mode = 'optimistic'")
 		require.NoError(t, err)
-		_, err = db.Exec("CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		_, err = conn.ExecContext(ctx, "DROP TABLE IF EXISTS auto_retry_test")
 		require.NoError(t, err)
-		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
+		_, err = conn.ExecContext(ctx, "CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "INSERT INTO auto_retry_test VALUES (1, 0)")
 		require.NoError(t, err)
 
 		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
@@ -3731,7 +3737,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		defer func() {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
 		}()
-		_, err = db.Exec(updateSQL)
+		_, err = conn.ExecContext(ctx, updateSQL)
 		require.NoError(t, err)
 		require.Equal(t, []normalTest{{sql: updateSQL, retrying: true}}, getTestResults())
 	})
