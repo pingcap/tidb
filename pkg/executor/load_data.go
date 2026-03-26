@@ -400,7 +400,7 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
-			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+			if err = importer.HandleSkipNRows(dataParser, w.controller.IgnoreLines); err != nil {
 				return err
 			}
 			err = w.processOneStream(ctx, dataParser, outCh)

@@ -16,11 +16,16 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
@@ -28,6 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
+	metastorage "github.com/tikv/pd/client/clients/metastorage"
+	"github.com/tikv/pd/client/opt"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 type stmtStatsTestContext struct {
@@ -91,7 +100,7 @@ func ruKeyForStmt(t *testing.T, stmt *ExecStmt) stmtstats.RUKey {
 	}
 }
 
-// TestObserveStmtBeginOnTopProfiling verifies observe stmt begin on top profiling and guards against regressions in begin-based RU accounting.
+// TestObserveStmtBeginOnTopProfiling verifies SQL and plan registration on profiling begin.
 func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
 	topsqlstate.DisableTopSQL()
 	for topsqlstate.TopRUEnabled() {
@@ -125,6 +134,48 @@ func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
 
 	require.Equal(t, normalizedSQL, topCollector.GetSQL(sqlDigest.Bytes()))
 	require.Equal(t, normalizedPlan, topCollector.GetPlan(planDigest.Bytes()))
+}
+
+func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
+	resetTopProfilingStateForTest(t)
+	topsqlstate.EnableTopRU()
+
+	t.Run("domain ru version v2 drives top ru sampling", func(t *testing.T) {
+		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
+		testCtx := stmt.Ctx.(*stmtStatsTestContext)
+		testCtx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
+
+		vars := stmt.Ctx.GetSessionVars()
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddPlanCnt(3)
+		vars.RUV2Metrics = metrics
+		expectedRU := metrics.TotalRU(vars.RUV2Weights(), 0, 0)
+
+		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
+
+		key := ruKeyForStmt(t, stmt)
+		m := stats.MergeRUInto()
+		require.Len(t, m, 1)
+		require.Equal(t, uint64(1), m[key].ExecCount)
+		require.InDelta(t, expectedRU, m[key].TotalRU, 1e-9)
+	})
+
+	t.Run("nil domain falls back to default ru version", func(t *testing.T) {
+		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
+
+		vars := stmt.Ctx.GetSessionVars()
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddPlanCnt(3)
+		vars.RUV2Metrics = metrics
+
+		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
+
+		key := ruKeyForStmt(t, stmt)
+		m := stats.MergeRUInto()
+		require.Len(t, m, 1)
+		require.Equal(t, uint64(1), m[key].ExecCount)
+		require.InDelta(t, 0.0, m[key].TotalRU, 1e-9)
+	})
 }
 
 // TestObserveStmtFinishedOnTopProfiling verifies stale RU exec context is cleared
@@ -227,9 +278,9 @@ func TestObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
 	}
 }
 
-// TestObserveStmtFinishedOnTopProfilingIgnores verifies unexpected RUDetails context
-// types do not panic and keep begin-based RU accounting stable.
-// Flow: begin(topRU-on, bad RUDetails type) -> finish -> no panic -> begin-based RU stays stable
+// TestObserveStmtFinishedOnTopProfilingIgnores verifies unexpected RUDetails
+// context types do not panic and keep TopRU sampling stable.
+// Flow: begin(topRU-on, bad RUDetails type) -> finish -> no panic -> zero RU delta
 func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopRU()
@@ -250,3 +301,79 @@ func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	require.Equal(t, uint64(1), incr.ExecCount)
 	require.InDelta(t, 0.0, incr.TotalRU, 1e-9)
 }
+
+type mockResourceGroupProvider struct {
+	config *rmclient.Config
+}
+
+func newMockDomainWithRUVersion(t *testing.T, version rmclient.RUVersion) *domain.Domain {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cfg := rmclient.DefaultConfig()
+	cfg.RUVersionPolicy = &rmclient.RUVersionPolicy{Default: version}
+	provider := &mockResourceGroupProvider{config: cfg}
+	controller, err := rmclient.NewResourceGroupController(ctx, 1, provider, nil, 1)
+	require.NoError(t, err)
+
+	do := domain.NewMockDomain()
+	do.SetResourceGroupsController(controller)
+	return do
+}
+
+func (m *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	value, err := json.Marshal(m.config)
+	if err != nil {
+		return nil, err
+	}
+	return &meta_storagepb.GetResponse{
+		Kvs: []*meta_storagepb.KeyValue{{Value: value}},
+	}, nil
+}
+
+func (*mockResourceGroupProvider) Watch(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
+	ch := make(chan []*meta_storagepb.Event)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
+
+func (*mockResourceGroupProvider) Put(context.Context, []byte, []byte, ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
+	return &meta_storagepb.PutResponse{}, nil
+}
+
+func (*mockResourceGroupProvider) GetResourceGroup(context.Context, string, ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (*mockResourceGroupProvider) ListResourceGroups(context.Context, ...pd.GetResourceGroupOption) ([]*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (*mockResourceGroupProvider) AddResourceGroup(context.Context, *rmpb.ResourceGroup) (string, error) {
+	return "", nil
+}
+
+func (*mockResourceGroupProvider) ModifyResourceGroup(context.Context, *rmpb.ResourceGroup) (string, error) {
+	return "", nil
+}
+
+func (*mockResourceGroupProvider) DeleteResourceGroup(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (*mockResourceGroupProvider) AcquireTokenBuckets(context.Context, *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+	return nil, nil
+}
+
+func (*mockResourceGroupProvider) LoadResourceGroups(context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	return nil, 0, nil
+}
+
+var (
+	_ metastorage.Client             = (*mockResourceGroupProvider)(nil)
+	_ rmclient.ResourceGroupProvider = (*mockResourceGroupProvider)(nil)
+)

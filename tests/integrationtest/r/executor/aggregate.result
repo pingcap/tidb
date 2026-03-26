@@ -1516,7 +1516,7 @@ a	b	c	d
 select * from (select * from t) as e group by b,d;
 a	b	c	d
 select * from (select * from t) as e group by b,c;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select c from t group by c,d order by d;
 c
 select c from t group by c order by d;

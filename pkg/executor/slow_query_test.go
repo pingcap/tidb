@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -164,6 +165,8 @@ func TestParseSlowLogFile(t *testing.T) {
 # Tikv_cpu_time: 0.021
 # Storage_from_kv: true
 # Storage_from_mpp: true
+# Request_unit_v2: 150.00
+# Request_unit_v2_detail: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -190,8 +193,8 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,select * from t;`
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,150,total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`,update t set i = 1;,null,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
 	// Issue 20928
@@ -213,8 +216,8 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,select * from t;`
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,150,total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`,update t set i = 1;,null,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
 	// fix sql contain '# ' bug
@@ -282,6 +285,57 @@ select * from t;
 	require.Equal(t, value, "a: b")
 	value, _ = rows[0][42].ToString()
 	require.Equal(t, value, "[t:i: a]")
+}
+
+func TestParseSlowLogSessionConnectAttrs(t *testing.T) {
+	// Slow log entry that includes Session_connect_attrs JSON.
+	slowLogStr := `# Time: 2019-04-28T15:24:04.309074+08:00
+# Txn_start_ts: 405888132465033227
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.216905
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+# Prev_stmt: begin;
+select * from t;
+`
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	ctx := mock.NewContext()
+	ctx.ResetSessionAndStmtTimeZone(loc)
+
+	// Use the retriever directly (without initialize) to avoid reading
+	// from actual slow log files on disk, which can produce extra rows.
+	retriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	retriever.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(retriever.outputCols))
+	for idx, col := range retriever.outputCols {
+		factory, err := getColumnValueFactoryByName(col.Name.O, idx)
+		require.NoError(t, err)
+		require.NotNil(t, factory, "column %s should have a factory", col.Name.O)
+		retriever.columnValueFactoryMap[col.Name.O] = factory
+	}
+
+	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
+	rows, err := parseLog(retriever, ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	// Find the Session_connect_attrs column.
+	colIdx := -1
+	for i, col := range retriever.outputCols {
+		if col.Name.L == strings.ToLower(variable.SlowLogSessionConnectAttrs) {
+			colIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, colIdx, "Session_connect_attrs column should exist")
+
+	// Verify the parsed JSON contains the expected keys.
+	bj := rows[0][colIdx].GetMysqlJSON()
+	bjStr := bj.String()
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, bjStr)
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.

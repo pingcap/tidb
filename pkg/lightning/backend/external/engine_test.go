@@ -326,6 +326,70 @@ func TestEngineOnDup(t *testing.T) {
 	})
 }
 
+func TestLoadIngestDataMultiBatch(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	// Create data spread across 4 key ranges, with 2 files to exercise
+	// cross-file offset reuse in the multi-batch path (start > 0).
+	contents := [][]KVPair{
+		{
+			{Key: []byte{1}, Value: []byte("v1")},
+			{Key: []byte{2}, Value: []byte("v2")},
+			{Key: []byte{3}, Value: []byte("v3")},
+			{Key: []byte{4}, Value: []byte("v4")},
+		},
+		{
+			{Key: []byte{5}, Value: []byte("v5")},
+			{Key: []byte{6}, Value: []byte("v6")},
+			{Key: []byte{7}, Value: []byte("v7")},
+			{Key: []byte{8}, Value: []byte("v8")},
+		},
+	}
+	dataFiles, statFiles := prepareKVFiles(t, store, contents)
+
+	// 5 job keys = 4 ranges. With workerConcurrency=2 the loop produces
+	// two batches: keys[0:3] (ranges 1-2) and keys[2:5] (ranges 3-4).
+	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
+	extEngine := NewExternalEngine(
+		ctx,
+		store, dataFiles, statFiles,
+		[]byte{1}, []byte{9},
+		jobKeys,
+		[][]byte{{1}, {5}, {9}},
+		2, // workerConcurrency — forces 2 batches
+		123,
+		456,
+		8,
+		true,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyError,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan engineapi.DataAndRanges, 4)
+	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
+
+	var allKVs []KVPair
+	for range 2 {
+		dr := <-loadDataCh
+		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
+	}
+	require.EqualValues(t, []KVPair{
+		{Key: []byte{1}, Value: []byte("v1")},
+		{Key: []byte{2}, Value: []byte("v2")},
+		{Key: []byte{3}, Value: []byte("v3")},
+		{Key: []byte{4}, Value: []byte("v4")},
+		{Key: []byte{5}, Value: []byte("v5")},
+		{Key: []byte{6}, Value: []byte("v6")},
+		{Key: []byte{7}, Value: []byte("v7")},
+		{Key: []byte{8}, Value: []byte("v8")},
+	}, allKVs)
+}
+
 type dummyWorker struct{}
 
 func (w *dummyWorker) Tune(int32, bool) {

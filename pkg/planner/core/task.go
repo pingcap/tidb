@@ -175,6 +175,9 @@ func indexJoinAttach2Task(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) b
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*physicalop.RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.FromDecorrelatedApply {
+		p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin()
+	}
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), innerTask.Plan())
 	} else {
@@ -1283,6 +1286,16 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.FinishIndexPlan()
+			if copTask.TablePlan == nil {
+				// Keep TopN at root when the order-by columns cannot be resolved against the
+				// index plan but the reader still has no table-side after finishing the index plan.
+				// This can happen when a virtual generated column is covered by an expression index.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
 			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
 			copTask.TablePlan = pushedDownTopN
 			if newGlobalTopN != nil {

@@ -285,7 +285,7 @@ select 3, 0 from qn
 select * from qn;
 Error 1222 (21000): The used SELECT statements have a different number of columns
 with recursive cte1 as (select 1 union all (select 1 from cte1 limit 10)) select * from cte1;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
 with recursive qn as (select 123 as a union all select null from qn where a is not null) select * from qn;
 a
 123
@@ -564,15 +564,14 @@ insert into t2 values(1, 1);
 insert into t2 values(3, 2);
 explain format='plan_tree' select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 id	task	access object	operator info
-Projection	root		cte.t1.c1, cte.t1.c2
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(Column)->Column
-    └─TableReader	root		data:StreamAgg
-      └─StreamAgg	cop[tikv]		funcs:max(cte.t2.c1)->Column, funcs:sum(isnull(cte.t2.c1))->Column, funcs:count(1)->Column
-        └─Selection	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
-          └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(Column)->Column
+  └─TableReader	root		data:StreamAgg
+    └─StreamAgg	cop[tikv]		funcs:max(cte.t2.c1)->Column, funcs:sum(isnull(cte.t2.c1))->Column, funcs:count(1)->Column
+      └─Selection	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -603,13 +602,12 @@ c1	c2
 // Same as above, but test recursive cte.
 explain format='plan_tree' select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
 id	task	access object	operator info
-Projection	root		cte.t1.c1, cte.t1.c2
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
-    └─Projection	root		cte.t2.c1->Column, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column
-      └─CTEFullScan	root	CTE:cte1	data:CTE_0
+Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+  └─Projection	root		cte.t2.c1->Column, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column
+    └─CTEFullScan	root	CTE:cte1	data:CTE_0
 CTE_0	root		Recursive CTE, limit(offset:0, count:1)
 ├─TableReader(Seed Part)	root		data:Projection
 │ └─Projection	cop[tikv]		cte.t2.c1
@@ -641,13 +639,12 @@ c1	c2
 // Test correlated col is in recursive part.
 explain format='plan_tree' select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 id	task	access object	operator info
-Projection	root		cte.t1.c1, cte.t1.c2
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
-    └─Projection	root		cte.t2.c1->Column, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column
-      └─CTEFullScan	root	CTE:cte1	data:CTE_0
+Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(gt(cte.t1.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(cte.t1.c1), NULL, 0)))
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+  └─Projection	root		cte.t2.c1->Column, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column
+    └─CTEFullScan	root	CTE:cte1	data:CTE_0
 CTE_0	root		Recursive CTE
 ├─TableReader(Seed Part)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo

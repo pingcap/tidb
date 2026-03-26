@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -258,6 +259,33 @@ type TxnCtxNoNeedToRestore struct {
 	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
 	// its pessimistic locks.
 	CurrentStmtPessimisticLockCache map[string][]byte
+}
+
+// RUV2Weights returns the active TiDB-side RU v2 weights for the current
+// session. The weights come from the global config, but the conversion is kept
+// in the session layer so lower-level utility packages remain config-free.
+func (s *SessionVars) RUV2Weights() execdetails.RUV2Weights {
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		return ruv2WeightsFromConfig(cfg.RUV2)
+	}
+	return ruv2WeightsFromConfig(config.DefaultRUV2Config())
+}
+
+func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
+	return execdetails.RUV2Weights{
+		RUScale:                 cfg.RUScale,
+		ResultChunkCells:        cfg.ResultChunkCells,
+		ExecutorL1:              cfg.ExecutorL1,
+		ExecutorL2:              cfg.ExecutorL2,
+		ExecutorL3:              cfg.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		SessionParserTotal:      cfg.SessionParserTotal,
+		TxnCnt:                  cfg.TxnCnt,
+	}
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -909,6 +937,10 @@ type SessionVars struct {
 
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
+	// RUV2Metrics stores statement-level RU v2 metrics for current statement.
+	RUV2Metrics *execdetails.RUV2Metrics
+	// RUV2PendingSessionParserTotal stores session parser count before statement context reset.
+	RUV2PendingSessionParserTotal atomic.Int64
 
 	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
 	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
@@ -1176,6 +1208,11 @@ type SessionVars struct {
 
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
+
+	// EnableAlternativeLogicalPlans enables building an extra non-decorrelate
+	// logical alternative when decorrelation does not produce an equivalent
+	// same-order index join candidate.
+	EnableAlternativeLogicalPlans bool
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
@@ -2300,6 +2337,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CartesianJoinOrderThreshold:      vardef.DefOptCartesianJoinOrderThreshold,
 		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,

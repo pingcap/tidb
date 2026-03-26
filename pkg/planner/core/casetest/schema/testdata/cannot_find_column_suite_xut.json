@@ -5,20 +5,39 @@
       {
         "SQL": "SELECT /* issue:66272 */ id AS t0_id FROM t1 JOIN t3 USING (id) WHERE (((t3.right_v = 749) AND (t3.id = 10)) AND (t1.left_v = 93)) AND (t3.right_v = ALL (SELECT t3.right_v AS c0 FROM t3 WHERE t3.right_v = 749))",
         "Plan": [
-          "HashJoin root  CARTESIAN inner join",
-          "├─MergeJoin(Build) root  inner join, left key:test.t1.id, right key:test.t3.id",
-          "│ ├─Selection(Build) root  eq(test.t3.right_v, 749)",
-          "│ │ └─Point_Get root table:t3 handle:10",
-          "│ └─Selection(Probe) root  eq(test.t1.left_v, 93)",
-          "│   └─Point_Get root table:t1 handle:10",
-          "└─Selection(Probe) root  or(and(le(Column, 1), and(eq(Column, 749), if(ne(Column, 0), NULL, 1))), eq(Column, 0))",
-          "  └─StreamAgg root  funcs:max(test.t3.right_v)->Column, funcs:count(distinct test.t3.right_v)->Column, funcs:sum(0)->Column, funcs:count(1)->Column",
-          "    └─TableReader root  data:Selection",
-          "      └─Selection cop[tikv]  eq(test.t3.right_v, 749)",
-          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "HashJoin root  CARTESIAN semi join, left side:MergeJoin",
+          "├─Selection(Build) root  or(and(le(Column, 1), and(eq(Column, 749), if(ne(Column, 0), NULL, 1))), eq(Column, 0))",
+          "│ └─StreamAgg root  funcs:max(test.t3.right_v)->Column, funcs:count(distinct test.t3.right_v)->Column, funcs:sum(0)->Column, funcs:count(1)->Column",
+          "│   └─TableReader root  data:Selection",
+          "│     └─Selection cop[tikv]  eq(test.t3.right_v, 749)",
+          "│       └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─MergeJoin(Probe) root  inner join, left key:test.t1.id, right key:test.t3.id",
+          "  ├─Selection(Build) root  eq(test.t3.right_v, 749)",
+          "  │ └─Point_Get root table:t3 handle:10",
+          "  └─Selection(Probe) root  eq(test.t1.left_v, 93)",
+          "    └─Point_Get root table:t1 handle:10"
         ],
         "Result": [
           "10"
+        ]
+      },
+      {
+        "SQL": "SELECT /* issue:65892 */ v_issue65892_lookup.c1, v_issue65892_topn.c1 FROM v_issue65892_lookup JOIN v_issue65892_topn ON v_issue65892_lookup.c0 = v_issue65892_topn.c0 WHERE v_issue65892_lookup.c1 > 44 AND v_issue65892_lookup.c1 < 76 AND v_issue65892_topn.c1 > 44 AND v_issue65892_topn.c1 < 76",
+        "Plan": [
+          "IndexJoin root  inner join, inner:TableReader, outer key:test.t_issue65892_topn.id, inner key:test.t_issue65892_lookup.id, equal cond:eq(test.t_issue65892_topn.id, test.t_issue65892_lookup.id)",
+          "├─Selection(Build) root  gt(test.t_issue65892_topn.payload, 44), lt(test.t_issue65892_topn.payload, 76)",
+          "│ └─Projection root  test.t_issue65892_topn.id, test.t_issue65892_topn.payload",
+          "│   └─TopN root  Column, offset:0, count:2",
+          "│     └─Projection root  test.t_issue65892_topn.id, test.t_issue65892_topn.payload, test.t_issue65892_topn.sort_key, minus(28, test.t_issue65892_topn.sort_key)->Column",
+          "│       └─TableReader root  data:TopN",
+          "│         └─TopN cop[tikv]  minus(28, test.t_issue65892_topn.sort_key), offset:0, count:2",
+          "│           └─TableFullScan cop[tikv] table:t_issue65892_topn keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  gt(test.t_issue65892_lookup.payload, 44), lt(test.t_issue65892_lookup.payload, 76)",
+          "    └─TableRangeScan cop[tikv] table:t_issue65892_lookup range: decided by [test.t_issue65892_topn.id], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "65 70"
         ]
       }
     ]

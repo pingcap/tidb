@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,5 +51,27 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	// we are running them concurrently, so the number of filenames may vary.
 	require.GreaterOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 2)
 	require.LessOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 9)
+	require.False(t, outSTMeta.ConflictedRowRecordingCapped)
 	require.False(t, outSTMeta.TooManyConflictsFromIndex)
+}
+
+func TestCollectConflictsStepExecutorFilesTruncated(t *testing.T) {
+	hdlCtx := prepareConflictedKVHandleContext(t)
+	stMeta := importinto.CollectConflictsStepMeta{Infos: hdlCtx.conflictedKVInfo}
+	bytes, err := json.Marshal(stMeta)
+	require.NoError(t, err)
+	st := &proto.Subtask{Meta: bytes}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockTotalConflictRowFileSizeLimit", func(limitP *int64) {
+		*limitP = 32
+	})
+
+	stepExe := importinto.NewCollectConflictsStepExecutor(&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
+	runConflictedKVHandleStep(t, st, stepExe)
+	outSTMeta := &importinto.CollectConflictsStepMeta{}
+	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
+	require.True(t, outSTMeta.ConflictedRowRecordingCapped)
+	require.Greater(t, outSTMeta.ConflictedRowCount, int64(0))
+	require.NotEmpty(t, outSTMeta.ConflictedRowFilenames)
 }

@@ -886,11 +886,11 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 		testKit.MustExec("alter table t32157 cache")
 
 		testKit.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-			"StreamAgg 1.00 root  funcs:count(1)->Column#9]\n" +
-				"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[  └─TableReader 10.00 root  data:Selection]\n" +
-				"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+			"StreamAgg 1.00 root  funcs:count(1)->Column#9",
+			"└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")",
+			"  └─TableReader 10.00 root  data:Selection",
+			"    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")",
+			"      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
 		require.Eventually(t, func() bool {
 			testKit.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
@@ -1910,6 +1910,18 @@ func TestVirtualExprPushDown(t *testing.T) {
 		}
 		tk.MustQuery("explain format = 'brief' select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
+		tk.MustExec("drop table if exists t_force_idx;")
+		tk.MustExec(`create table t_force_idx (
+			i bigint,
+			g bigint generated always as (i + 1) virtual,
+			key idx_g (g),
+			key idx_exp_i ((i + 1))
+		)`)
+		tk.MustExec("insert into t_force_idx (i) values (1);")
+		plan := tk.MustQuery("explain format='brief' select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Rows()
+		require.NotEmpty(t, plan)
+		tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
+
 		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 		is := dom.InfoSchema()
@@ -2301,4 +2313,14 @@ func TestIssue66619(t *testing.T) {
 
 	tk.MustQuery("select a, (select count(1) from t2 where t2.a = t1.a) from t1 order by a").
 		Check(testkit.Rows("1 1", "2 1", "3 0", "4 0"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 text(383) not null)")
+	tk.MustExec("insert into t0 values ('')")
+	tk.MustExec("replace into t0 values (' ')")
+
+	tk.MustQuery("select /* issue:66947 direct-having */ hex(t0.c0) from t0 group by t0.c0 having sum(t0.c0) > -1 and char_length(t0.c0)").
+		Check(testkit.Rows("20"))
+	tk.MustQuery("select /* issue:66947 derived-filter */ hex(ref0) from (select t0.c0 as ref0, (sum(t0.c0) > -1 and char_length(t0.c0)) as ref1 from t0 group by t0.c0) as s where ref1").
+		Check(testkit.Rows("20"))
 }

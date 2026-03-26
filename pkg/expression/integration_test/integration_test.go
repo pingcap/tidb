@@ -681,12 +681,11 @@ func TestVectorConstantExplain(t *testing.T) {
 	encodedPlanTree := plannercore.EncodeFlatPlan(flat)
 	planTree, err := plancodec.DecodePlan(encodedPlanTree)
 	require.NoError(t, err)
-	fmt.Println(planTree)
-	fmt.Println("++++")
-	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
-	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#4`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
+	// Don't check planTree directly, because it contains execution time info and planner-internal IDs
+	// which are not stable across unrelated optimizer changes.
+	require.Regexp(t, `(?m)^\tProjection_\d+\s+root\s+10000\s+vec_cosine_distance\(test\.t\.c, cast\(\[100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100\.\.\.\(len:401\), vector\)\)->Column#4`, planTree)
+	require.Regexp(t, `(?m)^\t└─TableReader_\d+\s+root\s+10000\s+data:TableFullScan_\d+`, planTree)
+	require.Regexp(t, `(?m)^\t  └─TableFullScan_\d+\s+cop\[tikv\]\s+10000\s+table:t, keep order:false, stats:pseudo`, planTree)
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
@@ -2754,11 +2753,11 @@ func TestCompareBuiltin(t *testing.T) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a date)")
-	result = tk.MustQuery("desc select a = a from t")
+	result = tk.MustQuery("explain format = 'plan_tree' select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#4",
-		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"Projection root  eq(test.t.a, test.t.a)->Column",
+		"└─TableReader root  data:TableFullScan",
+		"  └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval
