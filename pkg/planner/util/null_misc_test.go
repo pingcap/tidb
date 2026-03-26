@@ -59,6 +59,13 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		newNullRejectStringConst("A%"),
 		newNullRejectIntConst(92),
 	)
+	issue66824LikePredicate := newNullRejectFunc(t, exprCtx, ast.GE, types.NewFieldType(mysql.TypeTiny),
+		expression.NewOne(),
+		newNullRejectFunc(t, exprCtx, ast.LogicAnd, types.NewFieldType(mysql.TypeTiny),
+			newNullRejectFunc(t, exprCtx, ast.LogicOr, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewNull()),
+			newNullRejectFunc(t, exprCtx, ast.NE, types.NewFieldType(mysql.TypeTiny), outerC, outerC),
+		),
+	)
 	ifInnerANullThenZeroElseOuterC := newNullRejectFunc(t, exprCtx, ast.If, types.NewFieldType(mysql.TypeLonglong),
 		newNullRejectFunc(t, exprCtx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), innerA),
 		expression.NewZero(),
@@ -149,6 +156,13 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		{
 			name:     "quote_with_null_input_can_make_not_predicate_true",
 			expr:     newNullRejectFunc(t, exprCtx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), quoteInnerSLikeA),
+			expected: false,
+		},
+		{
+			// Issue #66824: an outer comparison can still evaluate TRUE when the
+			// inner AND branch is merely nonTrue rather than mustNull.
+			name:     "comparison_over_non_true_and_is_not_null_rejected",
+			expr:     issue66824LikePredicate,
 			expected: false,
 		},
 		{
