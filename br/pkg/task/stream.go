@@ -1693,6 +1693,12 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	// Pre-split regions based on total data volume across ALL files.
+	if err := client.PreSplitRegions(ctx, rewriteRules, g, mgr.GetStorage()); err != nil {
+		log.Warn("pre-split regions failed, continuing with per-batch splitting",
+			zap.Error(err))
+	}
+
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
