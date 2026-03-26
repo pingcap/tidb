@@ -1601,13 +1601,18 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				}
 			}
 
+			isHybridTiCIVectorPath := path.Index != nil && path.Index.IsTiCIIndex() &&
+				path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0
+			allowPlainSingleScanKeep := path.IsSingleScan &&
+				!(isHybridTiCIVectorPath && path.FtsQueryInfo == nil && prop.VectorProp.VSInfo == nil)
+
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil ||
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || allowPlainSingleScanKeep || matchPartialOrderIndex || path.FtsQueryInfo != nil ||
 				(prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0)
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
