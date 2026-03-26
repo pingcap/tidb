@@ -2387,6 +2387,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 
 	return nil, nil, nil
 }
+
 func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
 	tbl *resolve.TableNameW,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
@@ -2666,6 +2667,8 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
 				"The analyze version from the session is not compatible with the existing statistics of the table. TiDB will analyze all partitions to rewrite the table statistics with the session-selected version",
 			))
+			// Force downstream logic to rewrite all stats after expanding to all partitions.
+			versionMatches = false
 		}
 	}
 	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.

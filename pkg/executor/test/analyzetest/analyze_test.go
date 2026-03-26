@@ -2145,3 +2145,77 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
 }
+
+func TestDynamicExpandMustForceAllColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a))
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(11,11,11,11),(12,12,12,12)")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	pi := tblInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	p1ID := pi.Definitions[1].ID
+	p0ID := pi.Definitions[0].ID
+	h := dom.StatsHandle()
+
+	// Only mark columns a and b as predicate columns. c and d are not.
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
+
+	// First full-table analyze creates v2 stats for all columns on all partitions.
+	tk.MustExec("analyze table t all columns")
+
+	// Verify p1 has column histograms for all 4 columns.
+	p1AllColHists := tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and stats_ver = 2",
+		p1ID,
+	)).Rows()[0][0].(string)
+	require.Equal(t, "4", p1AllColHists)
+
+	// Override saved table-level column choice to PREDICATE.
+	// In dynamic mode, partition analyze reuses the saved table-level choice.
+	// With PREDICATE, only predicate columns (a, b) are analyzed — unless mustAllColumns
+	// forces all columns to be included.
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.analyze_options set column_choice = 'PREDICATE', column_ids = '' where table_id = %d",
+		tblInfo.ID,
+	))
+
+	// Downgrade ALL of p1's histograms to v1 to simulate legacy stats.
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.stats_histograms set stats_ver = 1 where table_id = %d", p1ID,
+	))
+	h.Clear()
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema(), p1ID, p0ID, tblInfo.ID))
+	require.Equal(t, statistics.Version1, h.GetPhysicalTableStats(p1ID, tblInfo).StatsVer)
+	require.Equal(t, statistics.Version2, h.GetPhysicalTableStats(p0ID, tblInfo).StatsVer)
+
+	tk.MustExec("analyze table t partition p0")
+	tk.MustQuery("show warnings").MultiCheckContain([]string{
+		"TiDB will analyze all partitions to rewrite the table statistics with the session-selected version",
+	})
+
+	// After the rewrite, ALL column histograms on p1 must be v2.
+	// If mustAllColumns was incorrectly false, c and d stay at v1.
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and stats_ver = 1",
+		p1ID,
+	)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and stats_ver = 2",
+		p1ID,
+	)).Check(testkit.Rows("4"))
+}
