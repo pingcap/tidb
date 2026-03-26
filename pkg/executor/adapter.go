@@ -1091,6 +1091,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	var err error
 	defer func() {
 		terror.Log(exec.Close(e))
+		a.logAudit()
 	}()
 
 	// Check if "tidb_snapshot" is set for the write executors.
@@ -1461,7 +1462,7 @@ func (a *ExecStmt) logAudit() {
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
-			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, sessVars.StmtCtx.ExecRetryCount > 0 || sessVars.RetryInfo.Retrying)
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
 			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
 				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
 				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
@@ -1653,7 +1654,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
-	a.logAudit()
 }
 
 func (a *ExecStmt) recordAffectedRows2Metrics() {
@@ -1797,6 +1797,7 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
+	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 }
 

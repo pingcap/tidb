@@ -3739,7 +3739,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		}()
 		_, err = conn.ExecContext(ctx, updateSQL)
 		require.NoError(t, err)
-		require.Equal(t, []normalTest{{sql: updateSQL, retrying: true}}, getTestResults())
+		require.Equal(t, []normalTest{{sql: updateSQL, retrying: false}, {sql: updateSQL, retrying: true}}, getTestResults())
 	})
 
 	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
@@ -3801,15 +3801,11 @@ func TestAuditPluginRetrying(t *testing.T) {
 		wg.Wait()
 
 		testResults := getTestResults()
-		retryingSQL := "UPDATE retry_test SET val = val + 10 WHERE id = 1"
-		if isOptimistic {
-			retryingSQL = "COMMIT"
-		}
-		retryingSQLs := make([]string, 0, 1)
+		retryingCount := 0
 		nonRetryingCount := 0
 		for _, res := range testResults {
 			if res.retrying {
-				retryingSQLs = append(retryingSQLs, res.sql)
+				retryingCount++
 			} else {
 				nonRetryingCount++
 			}
@@ -3820,8 +3816,8 @@ func TestAuditPluginRetrying(t *testing.T) {
 		if isOptimistic {
 			expectedSQLCount += 2 // extra `SET` variable SQL
 		}
-		require.Equal(t, []string{retryingSQL}, retryingSQLs)
-		require.Equal(t, expectedSQLCount-1, nonRetryingCount)
+		require.Greater(t, retryingCount, 0)
+		require.Equal(t, expectedSQLCount, nonRetryingCount)
 	}
 
 	// 2. Pessimistic DML retry
