@@ -15,8 +15,6 @@
 package server
 
 import (
-	"context"
-
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/privilege"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
@@ -109,7 +107,7 @@ func (cc *clientConn) getUserConnectionCount(user *auth.UserIdentity) int {
 
 // checkUserConnectionCount checks whether the count of connections exceeds the limits.
 func (cc *clientConn) checkUserConnectionCount(host string) error {
-	authUser, err := cc.ctx.MatchIdentity(context.Background(), cc.user, host)
+	authUser, err := cc.ctx.MatchIdentity(cc.user, host)
 	if err != nil {
 		return err
 	}
