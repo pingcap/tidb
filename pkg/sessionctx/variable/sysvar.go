@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -1022,7 +1023,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000,
+	{Scope: ScopeGlobal, Name: MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, vardef.DefMaxUserConnections)))
 			return nil
