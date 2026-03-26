@@ -1,5 +1,5 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "nogo")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test", "nogo")
 load("//build/linter/staticcheck:def.bzl", "staticcheck_analyzers")
 
 package(default_visibility = ["//visibility:public"])
@@ -194,4 +194,11 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/build",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "build_test",
+    srcs = ["get_changed_bazel_pkgs_test.go"],
+    embed = [":build"],
+    deps = ["@com_github_stretchr_testify//require"],
 )
