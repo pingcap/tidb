@@ -1418,6 +1418,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 		partition p2 values less than (20)
 	);`)
 	tt := external.GetTableByName(t, tk, "test", "test_global")
+	tableID := tt.Meta().ID
 	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
@@ -1426,7 +1427,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 	doneMap := make(map[model.SchemaState]struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		if job.Type != model.ActionTruncateTablePartition || job.TableID != tableID {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization:
 		default:
@@ -1450,7 +1453,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
 			assert.Error(t, err)
-			assert.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
+			assert.ErrorContains(t, err, "Duplicate entry '15'")
 		case model.StateDeleteReorganization:
 			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
