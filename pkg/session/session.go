@@ -1179,7 +1179,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
-	originalStmtCtx.ExecRetryCount = 1
 
 	nh := GetHistory(s)
 	var schemaVersion int64
@@ -1196,7 +1195,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
-			s.sessionVars.StmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
@@ -1224,6 +1222,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
 			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, st.GetStmtNode()); err == nil {
+				failpoint.Inject("txnRetryPreExecError", func(val failpoint.Value) {
+					if val.(bool) {
+						err = errors.New("mock txn retry pre-exec error")
+					}
+				})
+			}
+			if err == nil {
+				// Only surface the optimistic retry count after replay actually reaches statement execution.
+				s.sessionVars.StmtCtx.ExecRetryCount = uint64(retryCnt + 1)
+				originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 				_, err = st.Exec(ctx)
 			}
 			s.txn.onStmtEnd()
@@ -1264,7 +1272,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
 		}
-		originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 		logutil.Logger(ctx).Warn("sql",
 			zap.String("label", label),
 			zap.Error(err),

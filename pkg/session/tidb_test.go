@@ -155,6 +155,40 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 
 		MustExec(t, se, "insert into max_retry_count values (2, 2)")
 	})
+
+	t.Run("optimistic explicit retry count ignores pre-exec failure", func(t *testing.T) {
+		MustExec(t, se, "use test")
+		MustExec(t, se, "set @@session.tidb_txn_mode = 'optimistic'")
+		MustExec(t, se, "drop table if exists pre_exec_retry_count")
+		MustExec(t, se, "create table pre_exec_retry_count (id int primary key, v int)")
+		MustExec(t, se, "insert into pre_exec_retry_count values (1, 1)")
+		MustExec(t, se, "set @@session.tidb_retry_limit = 1")
+
+		func() {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable"))
+			}()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+			}()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/txnRetryPreExecError", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/txnRetryPreExecError"))
+			}()
+
+			MustExec(t, se, "begin")
+			MustExec(t, se, "update pre_exec_retry_count set v = v + 1 where id = 1")
+			_, err = exec(se, "commit")
+		}()
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "mock txn retry pre-exec error")
+		require.Equal(t, uint64(0), se.GetSessionVars().StmtCtx.ExecRetryCount)
+
+		MustExec(t, se, "insert into pre_exec_retry_count values (2, 2)")
+	})
 }
 
 func TestSchemaCacheSizeVar(t *testing.T) {
