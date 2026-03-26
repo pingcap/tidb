@@ -1179,9 +1179,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
-	if originalStmtCtx != nil {
-		originalStmtCtx.ExecRetryCount = 1
-	}
+	originalStmtCtx.ExecRetryCount = 1
 
 	nh := GetHistory(s)
 	var schemaVersion int64
@@ -1266,9 +1264,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
 		}
-		if originalStmtCtx != nil {
-			originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
-		}
+		originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 		logutil.Logger(ctx).Warn("sql",
 			zap.String("label", label),
 			zap.Error(err),
