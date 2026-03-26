@@ -1886,7 +1886,8 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 		chs = col.FieldType.GetCharset()
 		coll = col.FieldType.GetCollate()
 	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn, ctx.GetDefaultCollationForUTF8MB4())
+		var isExplicit bool
+		chs, coll, isExplicit, err = getCharsetAndCollateInColumnDef(specNewColumn, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1898,6 +1899,9 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if isExplicit {
+			newCol.FieldType.AddFlag(mysql.ExplicitCollateFlag)
 		}
 	}
 

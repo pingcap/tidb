@@ -1123,3 +1123,42 @@ func TestShowLimitReturnRow(t *testing.T) {
 	rows = result.Rows()
 	require.Equal(t, rows[0][2], "idx_b")
 }
+
+func TestIssue57283(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("DROP TABLE IF EXISTS foo1")
+	tk.MustExec("CREATE TABLE foo1 (bar VARCHAR(250) COLLATE utf8mb4_bin) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	// COLLATE should be present if explicitly specified, even when it matches the table default.
+	// CHARACTER SET should only appear when it differs from the table charset.
+	tk.MustQuery("show create table foo1").Check(testkit.Rows(
+		"foo1 CREATE TABLE `foo1` (\n" +
+			"  `bar` varchar(250) COLLATE utf8mb4_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("CREATE TABLE foo2 (bar VARCHAR(250)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustQuery("show create table foo2").Check(testkit.Rows(
+		"foo2 CREATE TABLE `foo2` (\n" +
+			"  `bar` varchar(250) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("ALTER TABLE foo2 MODIFY COLUMN bar VARCHAR(250) COLLATE utf8mb4_bin")
+	tk.MustQuery("show create table foo2").Check(testkit.Rows(
+		"foo2 CREATE TABLE `foo2` (\n" +
+			"  `bar` varchar(250) COLLATE utf8mb4_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("ALTER TABLE foo2 ADD COLUMN baz VARCHAR(250) COLLATE utf8mb4_bin")
+	tk.MustQuery("show create table foo2").Check(testkit.Rows(
+		"foo2 CREATE TABLE `foo2` (\n" +
+			"  `bar` varchar(250) COLLATE utf8mb4_bin DEFAULT NULL,\n" +
+			"  `baz` varchar(250) COLLATE utf8mb4_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
