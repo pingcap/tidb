@@ -1441,6 +1441,25 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 			testKit.MustQuery("show warnings").Check(testkit.Rows(
 				"Warning 1105 MPP mode may be blocked because operator `SelectLock` is not supported now."))
 		}
+
+		testKit.MustExec("drop table if exists t3")
+		testKit.MustExec("create table t3(a int, b int, c int, primary key(a))")
+		testKit.MustExec("insert into t3 values(1, 2, 3), (4, 5, 6)")
+		testKit.MustExec("drop table if exists t4")
+		testKit.MustExec("create table t4(a int, b int)")
+		tbl3, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t3", L: "t3"})
+		require.NoError(t, err)
+		tbl3.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		testKit.MustExec("set @@sql_mode = ''")
+		testKit.MustExec("set @@tidb_enforce_mpp=1")
+		testKit.MustExec("set @@tidb_isolation_read_engines = 'tidb, tikv'")
+		rs := testKit.MustQuery("explain insert into t4 select a, b from t3 where a in (1, 2)").Rows()
+		require.NotEmpty(t, rs)
+		for _, row := range rs {
+			require.NotEqual(t, "mpp[tiflash]", row[2])
+		}
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1105 MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tidb,tikv') not match, need 'tiflash'."))
 	})
 }
 

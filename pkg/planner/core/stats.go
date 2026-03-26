@@ -703,8 +703,10 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
 		keep := (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && selected.StoreType != kv.TiFlash
-		if keep {
-			// also keep tiflash path as well.
+		if keep && tiflashPath != nil {
+			// TiFlash replicas may exist while the current session has filtered TiFlash out of
+			// the available access paths, for example via tidb_isolation_read_engines.
+			// Only keep the TiFlash path when it was actually built.
 			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, tiflashPath)
 			return nil
 		}
