@@ -226,6 +226,20 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	return proveNullRejected(ctx, innerSchema, predicate).nonTrue
 }
 
+// proveNullRejected recursively proves the two proof bits for one expression.
+//
+// The proof first tries "nullify then fold": replace inner-side columns with
+// SQL NULL and fold the expression if that becomes possible. This covers
+// null-hiding wrappers such as COALESCE/IF that cannot be proven by looking at
+// the top-level builtin alone.
+//
+// Example:
+//   COALESCE(t2.a, 2) > 2
+// becomes
+//   COALESCE(NULL, 2) > 2
+// then folds to
+//   2 > 2
+// so the predicate is nonTrue.
 func proveNullRejected(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -238,6 +252,13 @@ func proveNullRejected(
 	switch x := expr.(type) {
 	case *expression.Column:
 		if innerSchema.Contains(x) {
+			// A bare inner-side column becomes NULL after outer-join null
+			// extension, so it can never be TRUE by itself.
+			//
+			// Example:
+			//   SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a WHERE t2.b;
+			// Here `t2.b` is the column `x`. For unmatched rows it becomes
+			// NULL, and `WHERE NULL` filters the row out.
 			return nullRejectProof{nonTrue: true, mustNull: true}
 		}
 	case *expression.Constant:
@@ -248,6 +269,16 @@ func proveNullRejected(
 	return nullRejectProof{}
 }
 
+// proveNullRejectedScalarFunc handles builtins whose proof can be derived from
+// child proofs plus SQL three-valued logic.
+//
+// Most builtins fall into one of two conservative buckets:
+//   1. NULL-preserving builtins: any mustNull child makes the result NULL.
+//   2. NULL-tests such as IS TRUE / IS FALSE: they turn NULL into a definite
+//      boolean, so they only contribute nonTrue, not always mustNull.
+//
+// A few builtins need bespoke rules because their truth tables are more subtle
+// than either bucket, notably AND / OR / NOT / IN / IS NULL.
 func proveNullRejectedScalarFunc(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -272,6 +303,12 @@ func proveNullRejectedScalarFunc(
 		// NOT(IS NULL(x)): when x is mustNull, IS NULL(NULL) = TRUE and
 		// NOT(TRUE) = FALSE, so nonTrue holds. mustNull does not hold
 		// because the result is FALSE, not NULL.
+		//
+		// Example:
+		//   SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a
+		//   WHERE NOT(IS NULL(t2.b));
+		// After null extension, the predicate becomes NOT(IS NULL(NULL)) =
+		// NOT(TRUE) = FALSE, so it is null-rejected.
 		if child, ok := expr.GetArgs()[0].(*expression.ScalarFunction); ok && child.FuncName.L == ast.IsNull {
 			return nullRejectProof{
 				nonTrue: proveNullRejected(ctx, innerSchema, child.GetArgs()[0]).mustNull,
@@ -338,6 +375,12 @@ func proveNullRejectedIn(
 	return nullRejectProof{}
 }
 
+// tryFoldNullifiedConstant tries to materialize the expression after replacing
+// inner-side columns with SQL NULL.
+//
+// This is the bridge between symbolic proof and exact constant evaluation:
+// whenever nullification turns the expression into a foldable constant, we can
+// delegate the final truth-value classification to proofFromConstant.
 func tryFoldNullifiedConstant(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -373,6 +416,21 @@ func tryFoldStaticConstant(ctx base.PlanContext, expr expression.Expression) (*e
 	return cons, true
 }
 
+// tryFoldNullifiedScalarFunc handles scalar functions after inner-side columns
+// are nullified.
+//
+// Generic NULL-preserving builtins can use the registry plus full constant
+// folding. COALESCE/IFNULL/IF must be handled specially because they may hide a
+// NULL and still collapse to a constant after nullification.
+//
+// Example:
+//   COALESCE(t2.a, 2) > 2
+// becomes
+//   COALESCE(NULL, 2) > 2
+// then
+//   2 > 2
+// so the predicate is provably nonTrue even though COALESCE itself is not
+// NULL-preserving.
 func tryFoldNullifiedScalarFunc(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -406,6 +464,11 @@ func tryFoldNullifiedScalarFunc(
 	return foldNullifiedFunction(ctx, expr, args)
 }
 
+// tryFoldNullifiedCoalesceLike nullifies every argument and then returns the
+// first non-NULL folded argument, exactly matching COALESCE/IFNULL semantics.
+//
+// We need this special path because COALESCE/IFNULL are explicitly not
+// NULL-preserving: a NULL child does not force the final result to be NULL.
 func tryFoldNullifiedCoalesceLike(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -423,6 +486,11 @@ func tryFoldNullifiedCoalesceLike(
 	return expression.NewNull(), true
 }
 
+// tryFoldNullifiedIf evaluates the condition after nullification and then only
+// folds the taken branch.
+//
+// IF also needs a special path: after inner columns become NULL, the condition
+// may collapse to a constant and reveal that only one branch matters.
 func tryFoldNullifiedIf(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -460,6 +528,10 @@ func foldNullifiedFunction(
 	return cons, true
 }
 
+// proofFromConstant classifies the exact folded constant result.
+//
+// NULL means both nonTrue and mustNull. Any exact FALSE-ish constant means
+// nonTrue only. TRUE or non-foldable values contribute no proof.
 func proofFromConstant(ctx base.PlanContext, cons *expression.Constant) nullRejectProof {
 	if cons == nil || cons.ParamMarker != nil || cons.DeferredExpr != nil {
 		return nullRejectProof{}
