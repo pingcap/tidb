@@ -140,9 +140,14 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 		MustExec(t, se, "insert into max_retry_count values (1, 1)")
 		MustExec(t, se, "set @@session.tidb_retry_limit = 1")
 
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
-		_, err := exec(se, "update max_retry_count set v = v + 1 where id = 1")
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		func() {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+			}()
+
+			_, err = exec(se, "update max_retry_count set v = v + 1 where id = 1")
+		}()
 
 		require.Error(t, err)
 		require.True(t, kv.ErrTxnRetryable.Equal(err), "error: %s", err)
