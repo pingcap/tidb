@@ -18,6 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -27,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -37,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -284,6 +289,119 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.Equal(t, proto.StepDone, task.Step)
 }
 
+func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, "handle")
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_pre(id bigint auto_random primary key)")
+	tk.MustExec("insert into t_pre values (), (), (), (), (), ()")
+	scanSnapshotTS := uint64(300)
+	task, _ := createAddIndexTask(t, dom, "test", "t_pre", proto.Backfill, false, scanSnapshotTS)
+
+	var taskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
+	taskMeta.Job.Type = model.ActionAddFullTextIndex
+	taskMeta.EleIDs = []int64{10}
+	sortDir := filepath.Join(t.TempDir(), "sorted", "addindex")
+	require.NoError(t, os.MkdirAll(sortDir, 0o755))
+	taskMeta.CloudStorageURI = "local://" + filepath.ToSlash(sortDir)
+	taskMetaBytes, err := json.Marshal(&taskMeta)
+	require.NoError(t, err)
+	task.Meta = taskMetaBytes
+	sortedKVMeta := writeSortedKVMetaForTest(
+		ctx,
+		t,
+		taskMeta.CloudStorageURI,
+		"/pre-split",
+		[][]byte{[]byte("ta"), []byte("tb"), []byte("tc")},
+		[][]byte{[]byte("va"), []byte("vb"), []byte("vc")},
+	)
+
+	sch := schManager.MockScheduler(task)
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
+	require.NoError(t, err)
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
+	sch.Extension = ext
+
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, "", 1, "", 0, proto.ExtraParams{}, task.Meta)
+	require.NoError(t, err)
+	task.ID = taskID
+	execIDs := []string{":4000"}
+
+	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+	nextStep := ext.GetNextStep(&task.TaskBase)
+	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
+	}
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks))
+	task.Step = nextStep
+
+	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, proto.BackfillStepReadIndex)
+	require.NoError(t, err)
+	sortStepMeta := &ddl.BackfillSubTaskMeta{
+		MetaGroups: []*external.SortedKVMeta{sortedKVMeta},
+		EleIDs:     []int64{10},
+	}
+	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
+		tici.ResetMockTiCIPreSplitImportShardsRequest()
+	})
+	tici.ResetMockTiCIPreSplitImportShardsRequest()
+
+	mergeSortSubtasks := []*proto.Subtask{
+		proto.NewSubtask(proto.BackfillStepMergeSort, task.ID, task.Type, execIDs[0], 1, sortStepMetaBytes, 1),
+	}
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, proto.BackfillStepMergeSort, mergeSortSubtasks))
+	task.Step = proto.BackfillStepMergeSort
+
+	gotSubtasks, err = mgr.GetSubtasksByExecIDAndStepAndStates(ctx, execIDs[0], taskID, proto.BackfillStepMergeSort, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+	}
+
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+
+	raw := tici.GetMockTiCIPreSplitImportShardsRequest()
+	require.NotEmpty(t, raw)
+	var req tici.PreSplitImportShardsRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	require.Equal(t, strconv.FormatInt(taskMeta.Job.ID, 10), req.TidbTaskId)
+	require.Equal(t, taskMeta.Job.TableID, req.TableId)
+	require.Equal(t, []int64{10}, req.IndexIds)
+	require.Equal(t, scanSnapshotTS, req.ScanSnapshotTs)
+	require.Equal(t, sortedKVMeta.TotalKVSize, req.TotalKvSize)
+	require.Equal(t, sortedKVMeta.TotalKVCnt, req.TotalKvCnt)
+	require.EqualValues(t, 1, req.DataFileCount)
+	require.EqualValues(t, 1, req.StatFileCount)
+	require.Len(t, req.MetaGroups, 1)
+	require.Equal(t, int64(10), req.MetaGroups[0].EleId)
+	require.Equal(t, sortedKVMeta.TotalKVSize, req.MetaGroups[0].TotalKvSize)
+	require.Equal(t, sortedKVMeta.TotalKVCnt, req.MetaGroups[0].TotalKvCnt)
+}
+
 func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{Step: proto.StepInit},
@@ -405,6 +523,36 @@ func createAddIndexTask(t *testing.T,
 	}
 
 	return task, server
+}
+
+func writeSortedKVMetaForTest(
+	ctx context.Context,
+	t *testing.T,
+	cloudStorageURI string,
+	prefix string,
+	keys [][]byte,
+	values [][]byte,
+) *external.SortedKVMeta {
+	t.Helper()
+
+	objStore, err := dxfhandle.NewObjStore(ctx, cloudStorageURI)
+	require.NoError(t, err)
+	t.Cleanup(objStore.Close)
+
+	var summary *external.WriterSummary
+	writer := external.NewWriterBuilder().
+		SetMemorySizeLimit(64).
+		SetBlockSize(64).
+		SetPropSizeDistance(1).
+		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *external.WriterSummary) { summary = s }).
+		Build(objStore, prefix, "writer")
+	for i := range keys {
+		require.NoError(t, writer.WriteRow(ctx, keys[i], values[i], nil))
+	}
+	require.NoError(t, writer.Close(ctx))
+	require.NotNil(t, summary)
+	return external.NewSortedKVMeta(summary)
 }
 
 func TestBackfillTaskMetaVersion(t *testing.T) {
