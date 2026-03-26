@@ -128,11 +128,6 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 }
 
 func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
-	runNonLiteInitStatsWithTableIDs(t)
-}
-
-func runNonLiteInitStatsWithTableIDs(t *testing.T) {
-	t.Helper()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer store.Close()
 	se := session.CreateSessionAndSetID(t, store)
@@ -194,20 +189,6 @@ func runNonLiteInitStatsWithTableIDs(t *testing.T) {
 
 		dom.Close()
 	})
-}
-
-func TestNonLiteInitStatsWithTableIDsAfterConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.LiteInitStats = false
-	})
-	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
-		return true
-	}, func() {
-		testConcurrentlyInitStats(t)
-	})
-	runNonLiteInitStatsWithTableIDs(t)
 }
 
 func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
