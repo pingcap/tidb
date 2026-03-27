@@ -1120,6 +1120,7 @@ create table t(
 	f varchar(10) collate utf8mb4_general_ci,
 	g enum('A','B','C') collate utf8mb4_general_ci,
 	h varchar(10) collate utf8_bin,
+	i enum('z','a') collate utf8mb4_general_ci,
 	index idx_ab(a(50), b),
 	index idx_cb(c, a),
 	index idx_d(d(2)),
@@ -1127,7 +1128,8 @@ create table t(
 	index idx_f(f),
 	index idx_de(d(2), e),
 	index idx_g(g),
-	index idx_h(h(3))
+	index idx_h(h(3)),
+	index idx_i(i)
 )`)
 
 	tests := []struct {
@@ -1451,6 +1453,34 @@ create table t(
 			require.Equal(t, tt.resultStr, got)
 		})
 	}
+
+	t.Run("enum in-list keeps ordinal range order", func(t *testing.T) {
+		sql := "select * from t where i in ('a', 'z', 'a')"
+		sctx := testKit.Session()
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		nodeW := resolve.NewNodeW(stmts[0])
+		err = plannercore.Preprocess(ctx, sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
+		require.NoError(t, err)
+		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
+		tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
+		idx := tbl.FindIndexByName("idx_i")
+		require.NotNil(t, idx)
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+		}
+		cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, idx)
+		require.NotNil(t, cols)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+		require.NoError(t, err)
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(sctx.GetExprCtx().GetEvalCtx(), res.RemainedConds))
+		require.Equal(t, "[[\"z\",\"z\"] [\"a\",\"a\"]]", fmt.Sprintf("%v", res.Ranges))
+	})
 }
 
 func TestTableShardIndex(t *testing.T) {
@@ -1862,7 +1892,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 }
 
-func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
+func getSelectionFromQuery(t testing.TB, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
 	ctx := context.Background()
 	stmts, err := session.Parse(sctx, sql)
 	require.NoError(t, err)
@@ -1923,6 +1953,36 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[]",
 		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
 	checkRangeFallbackAndReset(t, sctx, false)
+
+	t.Run("appending to one emitted range does not corrupt peer ranges", func(t *testing.T) {
+		appendTK := testkit.NewTestKit(t, store)
+		appendTK.MustExec("use test")
+		appendSctx := appendTK.Session()
+		appendRctx := appendSctx.GetRangerCtx()
+		sql := "select * from t1 where a in (10,20,30) and b in (40,50,60)"
+		selection := getSelectionFromQuery(t, appendSctx, sql)
+		conds := selection.Conditions
+		cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+		res, err := ranger.DetachCondAndBuildRangeForIndex(appendRctx, conds, cols, lengths, 0)
+		require.NoError(t, err)
+		require.Len(t, res.Ranges, 9)
+		peer := res.Ranges[1].Clone()
+		anotherPeer := res.Ranges[3].Clone()
+
+		res.Ranges[0].LowVal = append(res.Ranges[0].LowVal, types.NewIntDatum(999))
+		res.Ranges[0].HighVal = append(res.Ranges[0].HighVal, types.NewIntDatum(999))
+		res.Ranges[0].Collators = append(res.Ranges[0].Collators, nil)
+
+		require.Equal(t, peer.LowVal, res.Ranges[1].LowVal)
+		require.Equal(t, peer.HighVal, res.Ranges[1].HighVal)
+		require.NotNil(t, res.Ranges[1].Collators[0])
+		require.NotNil(t, res.Ranges[1].Collators[1])
+		require.Equal(t, anotherPeer.LowVal, res.Ranges[3].LowVal)
+		require.Equal(t, anotherPeer.HighVal, res.Ranges[3].HighVal)
+		require.NotNil(t, res.Ranges[3].Collators[0])
+		require.NotNil(t, res.Ranges[3].Collators[1])
+	})
+
 	quota := res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)

@@ -636,7 +636,7 @@ func (r *builder) buildFromIn(
 	convertToSortKey bool,
 ) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
-	rangePoints := make([]*point, 0, len(list)*2)
+	values := make([]types.Datum, 0, len(list))
 	hasNull := false
 	ft := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	colCollate := ft.GetCollate()
@@ -657,19 +657,18 @@ func (r *builder) buildFromIn(
 			hasNull = true
 			continue
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeEnum {
+		if ft.GetType() == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
-				targetType := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
-				enum, parseErr := types.ParseEnumName(targetType.GetElems(), dt.GetString(), targetType.GetCollate())
+				enum, parseErr := types.ParseEnumName(ft.GetElems(), dt.GetString(), ft.GetCollate())
 				if parseErr == nil {
-					dt.SetMysqlEnum(enum, targetType.GetCollate())
+					dt.SetMysqlEnum(enum, ft.GetCollate())
 				} else {
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
+				dt, err = dt.ConvertTo(tc, ft)
 			}
 
 			if err != nil {
@@ -677,45 +676,37 @@ func (r *builder) buildFromIn(
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
+		if ft.GetType() == mysql.TypeYear {
+			dt, err = dt.ConvertToMysqlYear(tc, ft)
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
-			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetCollate()) // refine the string like what we did in builder.buildFromBinOp
+		if ft.EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), ft.GetCollate()) // refine the string like what we did in builder.buildFromBinOp
 		}
-		var startValue, endValue types.Datum
-		dt.Copy(&startValue)
-		dt.Copy(&endValue)
-		startPoint := &point{value: startValue, start: true}
-		endPoint := &point{value: endValue}
-		rangePoints = append(rangePoints, startPoint, endPoint)
+		var value types.Datum
+		dt.Copy(&value)
+		values = append(values, value)
 	}
 	collator := collate.GetCollator(colCollate)
-	slices.SortFunc(rangePoints, func(a, b *point) (cmpare int) {
-		cmpare, r.err = rangePointCmp(tc, a, b, collator)
-		return cmpare
-	})
-	// check and remove duplicates
-	curPos, frontPos := 0, 0
-	for frontPos < len(rangePoints) {
-		if rangePoints[curPos].start == rangePoints[frontPos].start {
-			frontPos++
-		} else {
-			curPos++
-			rangePoints[curPos] = rangePoints[frontPos]
-			frontPos++
-		}
+	// Deduplicate before materializing points so the common long-IN path allocates
+	// fewer point objects. Do not deduplicate again after prefix cutting or sort-key
+	// conversion here, because those later transformations intentionally preserve the
+	// existing range-builder semantics.
+	values, err := sortAndDedupDatums(tc, values, collator)
+	if err != nil {
+		r.err = err
+		return getFullRange(), hasNull
 	}
-	if curPos > 0 {
-		curPos++
+
+	rangePoints := datumsToPoints(values)
+	if prefixLen == types.UnspecifiedLength && !convertToSortKey {
+		return rangePoints, hasNull
 	}
-	rangePoints = rangePoints[:curPos]
+
 	cutPrefixForPoints(rangePoints, prefixLen, ft)
-	var err error
 	if convertToSortKey {
 		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
 		if err != nil {
@@ -724,6 +715,55 @@ func (r *builder) buildFromIn(
 		}
 	}
 	return rangePoints, hasNull
+}
+
+func sortAndDedupDatums(tc types.Context, values []types.Datum, collator collate.Collator) ([]types.Datum, error) {
+	if len(values) <= 1 {
+		return values, nil
+	}
+
+	var sortErr error
+	slices.SortFunc(values, func(a, b types.Datum) (cmp int) {
+		cmp, sortErr = rangeDatumCmp(tc, &a, &b, collator)
+		return cmp
+	})
+	if sortErr != nil {
+		return nil, errors.Trace(sortErr)
+	}
+
+	curPos := 0
+	for frontPos := 1; frontPos < len(values); frontPos++ {
+		cmp, err := rangeDatumCmp(tc, &values[curPos], &values[frontPos], collator)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cmp == 0 {
+			continue
+		}
+		curPos++
+		values[curPos] = values[frontPos]
+	}
+	return values[:curPos+1], nil
+}
+
+func rangeDatumCmp(tc types.Context, a, b *types.Datum, collator collate.Collator) (int, error) {
+	// Keep the datum-level fast path aligned with rangePointCmp so ENUM IN-lists
+	// still sort and deduplicate by ordinal value rather than display name.
+	if a.Kind() == types.KindMysqlEnum && b.Kind() == types.KindMysqlEnum {
+		return cmp.Compare(a.GetInt64(), b.GetInt64()), nil
+	}
+	return a.Compare(tc, b, collator)
+}
+
+func datumsToPoints(values []types.Datum) []*point {
+	rangePoints := make([]*point, 0, len(values)*2)
+	for i := range values {
+		rangePoints = append(rangePoints,
+			&point{value: values[i], start: true},
+			&point{value: values[i]},
+		)
+	}
+	return rangePoints
 }
 
 func (r *builder) newBuildFromPatternLike(

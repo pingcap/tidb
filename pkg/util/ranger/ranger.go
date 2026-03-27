@@ -299,30 +299,42 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 }
 
 func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.FieldType) (Ranges, error) {
-	newRanges := make(Ranges, 0, len(rangePoints)/2)
+	rangeCount := len(rangePoints) / 2
+	newRanges := make(Ranges, 0, rangeCount)
+	width := len(origin.LowVal) + 1
+	originWidth := len(origin.LowVal)
+	extraCollator := collate.GetCollator(ft.GetCollate())
+
+	lowValBuf := make([]types.Datum, rangeCount*width)
+	highValBuf := make([]types.Datum, rangeCount*width)
+	collatorBuf := make([]collate.Collator, rangeCount*width)
 	for i := 0; i < len(rangePoints); i += 2 {
+		rangeIdx := i / 2
 		startPoint, endPoint := rangePoints[i], rangePoints[i+1]
 
-		lowVal := make([]types.Datum, len(origin.LowVal)+1)
+		offset := rangeIdx * width
+		// Batch-allocate the backing arrays, but clamp each slice to len==cap.
+		// Some callers append tail datums to an emitted range later, and that append
+		// must not overwrite the neighboring ranges that share the same buffer.
+		lowVal := lowValBuf[offset : offset+width : offset+width]
 		copy(lowVal, origin.LowVal)
-		lowVal[len(origin.LowVal)] = startPoint.value
+		lowVal[originWidth] = startPoint.value
 
-		highVal := make([]types.Datum, len(origin.HighVal)+1)
+		highVal := highValBuf[offset : offset+width : offset+width]
 		copy(highVal, origin.HighVal)
-		highVal[len(origin.HighVal)] = endPoint.value
+		highVal[originWidth] = endPoint.value
 
-		collators := make([]collate.Collator, len(origin.Collators)+1)
+		collators := collatorBuf[offset : offset+width : offset+width]
 		copy(collators, origin.Collators)
-		collators[len(origin.Collators)] = collate.GetCollator(ft.GetCollate())
+		collators[originWidth] = extraCollator
 
-		ir := &Range{
+		newRanges = append(newRanges, &Range{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
 			HighExclude: endPoint.excl,
 			Collators:   collators,
-		}
-		newRanges = append(newRanges, ir)
+		})
 	}
 	return newRanges, nil
 }
