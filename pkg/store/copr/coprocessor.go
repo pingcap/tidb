@@ -373,7 +373,7 @@ func buildVersionedPointLocations(bo *Backoffer, cache *RegionCache, ranges *Key
 		ran := ranges.RefAt(i)
 		routingRanges = append(routingRanges, kv.KeyRange{
 			StartKey: ran.StartKey,
-			EndKey:   kv.Key(ran.StartKey).Next(),
+			EndKey:   ran.StartKey.Next(),
 		})
 	}
 
