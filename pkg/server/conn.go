@@ -2409,7 +2409,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if cells <= 0 {
 			return
 		}
-		metrics.RUV2ResultChunkCells.Add(float64(cells))
 		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 		if ruv2Metrics == nil {
 			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
@@ -2528,7 +2527,13 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 	defer func() {
 		cells := int64(writtenRows) * int64(len(rs.Columns()))
 		if cells > 0 {
-			metrics.RUV2ResultChunkCells.Add(float64(cells))
+			ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+			if ruv2Metrics == nil {
+				ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
+			}
+			if ruv2Metrics != nil {
+				ruv2Metrics.AddResultChunkCells(cells)
+			}
 		}
 		resultset.ReportCursorRUV2Delta(rs, cells)
 	}()

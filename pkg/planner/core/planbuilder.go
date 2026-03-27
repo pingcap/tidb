@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -540,7 +539,6 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 }
 
 func (b *PlanBuilder) recordPlanBuilderMetric() {
-	metrics.RUV2PlanCnt.Inc()
 	if b.ctx != nil {
 		if vars := b.ctx.GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
 			vars.RUV2Metrics.AddPlanCnt(1)
