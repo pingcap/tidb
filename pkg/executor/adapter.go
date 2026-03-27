@@ -1593,6 +1593,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.recordInsertRows2Metrics()
 	a.finalizeStatementRUV2Metrics()
+	a.recordRUV2MetricsLog()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1730,6 +1731,69 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
 		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
 	}
+}
+
+func (a *ExecStmt) recordRUV2MetricsLog() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars == nil || sessVars.InRestrictedSQL || sessVars.RUV2Metrics == nil {
+		return
+	}
+
+	const ruv2MetricsLogSQLMaxLen = 512
+	sql, sqlTruncated := truncateRUV2MetricsLogSQL(sessVars.StmtCtx.OriginalSQL, a.StmtNode, ruv2MetricsLogSQLMaxLen)
+	if !strings.Contains(sql, "yitso_ru_bench") {
+		return
+	}
+
+	var (
+		ruv1      float64
+		tikvRU    float64
+		tiflashRU float64
+	)
+	if a.GoCtx != nil {
+		if ruDetail, _ := a.GoCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails); ruDetail != nil {
+			tikvRU = ruDetail.TiKVRUV2()
+			tiflashRU = ruDetail.TiflashRU()
+			ruv1 = ruDetail.RRU() + ruDetail.WRU()
+		}
+	}
+
+	weights := sessVars.RUV2Weights()
+	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
+	totalRU := tidbRU + tikvRU + tiflashRU
+	_, detail := execdetails.FormatRUV2Summary(sessVars.RUV2Metrics, weights, tikvRU, tiflashRU)
+
+	logutil.BgLogger().Info("statement ruv2 metrics",
+		zap.Uint64("conn", sessVars.ConnectionID),
+		zap.Bool("is_internal", sessVars.InRestrictedSQL),
+		zap.String("resource_group", sessVars.StmtCtx.ResourceGroupName),
+		zap.String("sql", sql),
+		zap.Bool("sql_truncated", sqlTruncated),
+		zap.Float64("ruv1", ruv1),
+		zap.Float64("tidb_ru", tidbRU),
+		zap.Float64("tikv_ru", tikvRU),
+		zap.Float64("tiflash_ru", tiflashRU),
+		zap.Float64("total_ru", totalRU),
+		zap.String("ruv2_metrics", detail),
+	)
+}
+
+func truncateRUV2MetricsLogSQL(sql string, stmtNode ast.StmtNode, maxRunes int) (string, bool) {
+	if sql == "" && stmtNode != nil {
+		sql = stmtNode.Text()
+	}
+	if len(sql) == 0 || maxRunes <= 0 {
+		return sql, false
+	}
+
+	runeCount := 0
+	for i := range sql {
+		if runeCount == maxRunes {
+			return sql[:i], true
+		}
+		runeCount++
+	}
+	return sql, false
 }
 
 func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {

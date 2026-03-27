@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -505,6 +506,111 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
 	require.Equal(t, expected, reporter.tidbRUV2)
 	require.Equal(t, float64(412), reporter.tiflashRU)
+}
+
+func TestFinishExecuteStmtLogsRUV2MetricsForYitsoRUBench(t *testing.T) {
+	original := config.GetGlobalConfig()
+	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
+	t.Cleanup(func() {
+		if original != nil {
+			config.StoreGlobalConfig(original)
+		}
+		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
+	})
+	variable.GenerateBinaryPlan.Store(false)
+
+	cfg := config.NewConfig()
+	cfg.RUV2 = config.DefaultRUV2Config()
+	cfg.Instance.EnableSlowLog.Store(false)
+	cfg.Instance.RecordPlanInSlowLog = 0
+	config.StoreGlobalConfig(cfg)
+
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+		Core:  core,
+		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+	})
+	defer restore()
+
+	ctx := mock.NewContext()
+	sessVars := ctx.GetSessionVars()
+	sessVars.StartTime = time.Now()
+	sessVars.StmtCtx.StmtType = "Select"
+	sessVars.StmtCtx.OriginalSQL = "select * from yitso_ru_bench where id = 1"
+	sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+	sessVars.StmtCtx.ResourceGroupName = "rg1"
+
+	goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+	require.NotNil(t, sessVars.RUV2Metrics)
+	sessVars.RUV2Metrics.AddResultChunkCells(100)
+	sessVars.RUV2Metrics.AddPlanCnt(2)
+	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	ruDetails.AddTiKVRUV2(123)
+
+	execStmt := &executor.ExecStmt{
+		Ctx:      ctx,
+		GoCtx:    goCtx,
+		StmtNode: &ast.SelectStmt{},
+	}
+	execStmt.FinishExecuteStmt(0, nil, false)
+
+	logs := recorded.FilterMessage("statement ruv2 metrics").All()
+	require.Len(t, logs, 1)
+	fields := logs[0].ContextMap()
+	require.Equal(t, sessVars.ConnectionID, fields["conn"])
+	require.Equal(t, false, fields["is_internal"])
+	require.Equal(t, "rg1", fields["resource_group"])
+	require.Equal(t, sessVars.StmtCtx.OriginalSQL, fields["sql"])
+	require.Equal(t, false, fields["sql_truncated"])
+	require.Equal(t, float64(123), fields["tikv_ru"])
+	require.Contains(t, fields["ruv2_metrics"], "result_chunk_cells")
+}
+
+func TestFinishExecuteStmtSkipsRUV2MetricsLogForNonBenchSQL(t *testing.T) {
+	original := config.GetGlobalConfig()
+	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
+	t.Cleanup(func() {
+		if original != nil {
+			config.StoreGlobalConfig(original)
+		}
+		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
+	})
+	variable.GenerateBinaryPlan.Store(false)
+
+	cfg := config.NewConfig()
+	cfg.RUV2 = config.DefaultRUV2Config()
+	cfg.Instance.EnableSlowLog.Store(false)
+	cfg.Instance.RecordPlanInSlowLog = 0
+	config.StoreGlobalConfig(cfg)
+
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+		Core:  core,
+		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+	})
+	defer restore()
+
+	ctx := mock.NewContext()
+	sessVars := ctx.GetSessionVars()
+	sessVars.StartTime = time.Now()
+	sessVars.StmtCtx.StmtType = "Select"
+	sessVars.StmtCtx.OriginalSQL = "select 1"
+	sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+
+	goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+	require.NotNil(t, sessVars.RUV2Metrics)
+	sessVars.RUV2Metrics.AddResultChunkCells(100)
+
+	execStmt := &executor.ExecStmt{
+		Ctx:      ctx,
+		GoCtx:    goCtx,
+		StmtNode: &ast.SelectStmt{},
+	}
+	execStmt.FinishExecuteStmt(0, nil, false)
+
+	require.Empty(t, recorded.FilterMessage("statement ruv2 metrics").All())
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {
