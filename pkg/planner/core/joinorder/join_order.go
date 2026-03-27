@@ -387,7 +387,8 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 
 	bestPlan := make([]*Node, 1<<uint(nodeCount))
 	for _, node := range nodes {
-		// TODO comment
+		// NOTE: Because hints are currently not effective in DP, the node here must be a single leaf vertex(i.e., only one bit is set to 1 and the rest are 0).
+		// Therefore, we can directly use node.bitSet as the mask. If hint support is added in the future, this part must be updated accordingly.
 		mask, err := node.bitSet.GetSmallUInt64()
 		if err != nil {
 			return nil, false, err
