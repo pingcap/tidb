@@ -860,6 +860,12 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 			continue
 		}
 		cond := conds[k]
+		if filterConds && !s.isInnerNullRejectedFilter(cond) {
+			// For outer joins, deriving inner-side join conditions from a null-tolerant post-join
+			// filter can change matched rows into null-extended rows and lead to wrong results.
+			visited[k+offset] = true
+			continue
+		}
 		if !ExprFromSchema(cond, schema) {
 			visited[k+offset] = true
 			continue
@@ -874,6 +880,30 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 		}
 	}
 	return visited
+}
+
+func (s *propOuterJoinConstSolver) isInnerNullRejectedFilter(cond Expression) bool {
+	if !ExprReferenceSchema(cond, s.innerSchema) {
+		return false
+	}
+	nullRejectCtx := exprctx.WithNullRejectCheck(s.ctx)
+	cond = PushDownNot(nullRejectCtx, cond)
+	if ContainOuterNot(cond) {
+		return false
+	}
+	result, err := EvaluateExprWithNull(nullRejectCtx, s.innerSchema, cond, true)
+	if err != nil {
+		return false
+	}
+	value, ok := result.(*Constant)
+	if !ok {
+		return false
+	}
+	if value.Value.IsNull() {
+		return true
+	}
+	isTrue, err := value.Value.ToBool(s.ctx.GetEvalCtx().TypeCtx())
+	return err == nil && isTrue == 0
 }
 
 // propagateColumnEQ propagates expressions like 'outerCol = innerCol' by adding extra filters
