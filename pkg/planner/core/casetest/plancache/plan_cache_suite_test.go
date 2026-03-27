@@ -325,14 +325,14 @@ func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_30, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
-		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_30(Probe) 37.46 root  ",
-		"  ├─Selection_29(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_27 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_9 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_28(Probe) 37.46 root  ",
+		"  ├─Selection_27(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_25 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_26(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustExec(`deallocate prepare stmt1`)
 }
 
@@ -370,7 +370,7 @@ func runPreparedPlanCacheInvalidRange(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]any{{"TableDual_6"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -413,13 +413,13 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_10"},
-			{"└─HashJoin_26"},
-			{"  ├─IndexReader_28(Build)"},
-			{"  │ └─IndexRangeScan_27"}, // RangeScan instead of FullScan
-			{"  └─TableReader_34(Probe)"},
-			{"    └─Selection_33"},
-			{"      └─TableFullScan_32"},
+			{"Projection_9"},
+			{"└─HashJoin_23"},
+			{"  ├─IndexReader_25(Build)"},
+			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
+			{"  └─TableReader_31(Probe)"},
+			{"    └─Selection_30"},
+			{"      └─TableFullScan_29"},
 		})
 
 	tk.MustExec("execute st using @b")
@@ -1049,7 +1049,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit) {
 	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Batch_Point_Get_6") // use BatchPointGet
+	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 
@@ -1061,7 +1061,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit) {
 	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Point_Get_6") // use Point_Get_5
+	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
 

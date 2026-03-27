@@ -65,9 +65,9 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			// Expect no warnings.
 			testKit.MustQuery("show warnings").Check(testkit.Rows())
 		}
@@ -177,13 +177,30 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 				continue
 			}
 			testdata.OnRecord(func() {
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(ts).Sort().Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 			// Expect no warnings.
 			testKit.MustQuery("show warnings").Check(testkit.Rows())
 		}
+
+		testKit.MustExec("drop table if exists t_issue_65791")
+		testKit.MustExec(`create table t_issue_65791 (
+  id bigint not null,
+  a bigint not null,
+  b bigint not null,
+  c varchar(32) not null,
+  primary key (id) clustered,
+  key ia(a)
+)`)
+		testKit.MustExec("insert into t_issue_65791 values (1, 10, 100, 'x'), (2, 20, 200, 'y'), (3, 30, 300, 'z')")
+		testKit.MustExec("analyze table t_issue_65791 all columns")
+		testKit.MustExec("set tidb_enable_index_merge=1")
+		sql := "select /*+ use_index_merge(t_issue_65791, primary, ia) */ * from t_issue_65791 where id = 1 or a = 20"
+		testKit.MustQuery(sql).Sort().Check(testkit.Rows("1 10 100 x", "2 20 200 y"))
+		require.True(t, testKit.HasPlanForLastExecution("IndexMerge"))
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 	})
 }

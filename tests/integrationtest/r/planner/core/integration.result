@@ -19,8 +19,8 @@ Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
-b	int	YES		NULL	
 a	varchar(10)	YES		NULL	
+b	int	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
@@ -310,16 +310,16 @@ drop table if exists t;
 create table t(a int);
 explain format='verbose' select /*+ stream_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_16	1.00	304652.01	root		funcs:count(Column#5)->Column#4
-└─TableReader_17	1.00	304602.11	root		data:StreamAgg_10
-  └─StreamAgg_10	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#5
-    └─TableFullScan_15	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+StreamAgg_14	1.00	304652.01	root		funcs:count(Column#5)->Column#4
+└─TableReader_15	1.00	304602.11	root		data:StreamAgg_8
+  └─StreamAgg_8	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#5
+    └─TableFullScan_13	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_11	1.00	286269.86	root		funcs:count(Column#5)->Column#4
-└─TableReader_12	1.00	284742.60	root		data:HashAgg_6
-  └─HashAgg_6	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#5
-    └─TableFullScan_10	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashAgg_9	1.00	286269.86	root		funcs:count(Column#5)->Column#4
+└─TableReader_10	1.00	284742.60	root		data:HashAgg_5
+  └─HashAgg_5	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#5
+    └─TableFullScan_8	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
 create table t(a int, b int);
 insert into t values(1, 1);
@@ -2344,9 +2344,9 @@ Error 3029 (HY000): Expression #1 of ORDER BY contains aggregate function and ap
 select v1 from ttest having count(v2);
 Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by
 select v2, v1 from (select * from ttest) t1 join (select 1, 2) t2 group by v1;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.t1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 't1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select v2, v1 from (select t1.v1, t2.v2 from ttest t1 join ttest t2) t3 join (select 1, 2) t2 group by v1;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.t3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 't3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 create table tt (x int, z int as (x+10) stored);
 insert into tt(x) values (1);
 update tt set x=2, z = default;
@@ -2841,7 +2841,7 @@ CREATE TABLE `BB` (
 PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001;
 explain format='plan_tree' SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b';
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column '.OUTR.' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'OUTR.col2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 drop table if exists member, agent, deposit, view_member_agents;
 create table member(login varchar(50) NOT NULL, agent_login varchar(100) DEFAULT NULL, PRIMARY KEY(login));
 create table agent(login varchar(50) NOT NULL, data varchar(100) DEFAULT NULL, share_login varchar(50) NOT NULL, PRIMARY KEY(login));
@@ -3348,10 +3348,10 @@ drop table if exists t;
 create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_9	33.33	65346.12	root		
-├─IndexRangeScan_6(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
-└─Selection_8(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
-  └─TableRowIDScan_7	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	33.33	65346.12	root		
+├─IndexRangeScan_5(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
+└─Selection_7(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
+  └─TableRowIDScan_6	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[idx1,idx2] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 drop table if exists t30094;

@@ -7,10 +7,100 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	pd "github.com/tikv/pd/client"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 )
+
+// mockGCStatesClient implements pdgc.GCStatesClient for unit tests.
+type mockGCStatesClient struct {
+	mu             sync.Mutex
+	setBarrierErr  error // injected error for SetGCBarrier
+	setBarrierInfo *pdgc.GCBarrierInfo
+	setCalls       int
+	delCalls       int
+}
+
+func (m *mockGCStatesClient) SetGCBarrier(_ context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GCBarrierInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.setCalls++
+	if m.setBarrierErr != nil {
+		return nil, m.setBarrierErr
+	}
+	info := &pdgc.GCBarrierInfo{BarrierID: barrierID, BarrierTS: barrierTS, TTL: ttl}
+	m.setBarrierInfo = info
+	return info, nil
+}
+
+func (m *mockGCStatesClient) DeleteGCBarrier(_ context.Context, _ string) (*pdgc.GCBarrierInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.delCalls++
+	return nil, nil
+}
+
+func (m *mockGCStatesClient) GetGCState(_ context.Context) (pdgc.GCState, error) {
+	return pdgc.GCState{}, nil
+}
+
+func (m *mockGCStatesClient) SetGlobalGCBarrier(_ context.Context, _ string, _ uint64, _ time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
+	return nil, nil
+}
+
+func (m *mockGCStatesClient) DeleteGlobalGCBarrier(_ context.Context, _ string) (*pdgc.GlobalGCBarrierInfo, error) {
+	return nil, nil
+}
+
+func (m *mockGCStatesClient) GetAllKeyspacesGCStates(_ context.Context) (pdgc.ClusterGCStates, error) {
+	return pdgc.ClusterGCStates{}, nil
+}
+
+// mockPDClientForGC implements a minimal pd.Client for GC-related tests.
+type mockPDClientForGC struct {
+	pd.Client // embed to satisfy the full interface; only override what we need
+
+	mu                     sync.Mutex
+	updateSafePointCalls   int
+	updateSafePointErr     error
+	lastSafePointServiceID string
+	lastSafePointTTL       int64
+	lastSafePointTS        uint64
+	gcStatesClient         *mockGCStatesClient
+	closed                 atomic.Bool
+}
+
+func newMockPDClientForGC() *mockPDClientForGC {
+	return &mockPDClientForGC{
+		gcStatesClient: &mockGCStatesClient{},
+	}
+}
+
+func (m *mockPDClientForGC) UpdateServiceGCSafePoint(_ context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.updateSafePointCalls++
+	m.lastSafePointServiceID = serviceID
+	m.lastSafePointTTL = ttl
+	m.lastSafePointTS = safePoint
+	if m.updateSafePointErr != nil {
+		return 0, m.updateSafePointErr
+	}
+	return safePoint, nil
+}
+
+func (m *mockPDClientForGC) GetGCStatesClient(_ uint32) pdgc.GCStatesClient {
+	return m.gcStatesClient
+}
+
+func (m *mockPDClientForGC) Close() {
+	m.closed.Store(true)
+}
 
 type mockPoisonWriter struct {
 	buf string

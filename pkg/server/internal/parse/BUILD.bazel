@@ -9,7 +9,9 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/server/internal/handshake",
         "//pkg/server/internal/util",
+        "//pkg/sessionctx/vardef",
         "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -23,10 +25,11 @@ go_test(
     ],
     embed = [":parse"],
     flaky = True,
-    shard_count = 2,
+    shard_count = 3,
     deps = [
         "//pkg/parser/mysql",
         "//pkg/server/internal/handshake",
+        "//pkg/sessionctx/vardef",
         "@com_github_stretchr_testify//require",
     ],
 )

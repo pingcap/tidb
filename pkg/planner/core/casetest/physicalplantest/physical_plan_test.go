@@ -318,9 +318,9 @@ func TestMPPHintsScope(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 		tk.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"))
 		tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"))
 		tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 		tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
@@ -978,6 +978,25 @@ func TestIndexHint(t *testing.T) {
 
 			require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 		}
+
+		t.Run("ignore long prefix-sharing index keeps shorter sibling", func(t *testing.T) {
+			tk.MustExec("drop table if exists t_issue66875")
+			tk.MustExec(`create table t_issue66875 (
+				id bigint primary key,
+				contract_sys_no bigint,
+				delete_flag tinyint,
+				key idx_contract_sys_no (contract_sys_no),
+				key idx_contract_sys_no_delete_flag (contract_sys_no, delete_flag)
+			)`)
+
+			rs := tk.MustQuery(`explain format = 'plan_tree'
+select /*+ FORCE_INDEX(t_issue66875, idx_contract_sys_no, idx_contract_sys_no_delete_flag), IGNORE_INDEX(t_issue66875, idx_contract_sys_no_delete_flag) */ *
+from t_issue66875
+where contract_sys_no = 1`)
+			rs.CheckContain("idx_contract_sys_no")
+			rs.CheckNotContain("idx_contract_sys_no_delete_flag")
+			rs.CheckNotContain("TableFullScan")
+		})
 	})
 }
 

@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -126,6 +128,143 @@ func TestFileScanner(t *testing.T) {
 
 		err = scanner.CreateSchemaAndTableByName(ctx, "db1", "nonexistent")
 		require.Error(t, err)
+	})
+
+	t.Run("EstimateImportDataSize", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		buildInsertSQL := func(table string) string {
+			var sb strings.Builder
+			for i := 1; i <= 200; i++ {
+				payload := strings.Repeat(string(rune('a'+(i%26))), 128)
+				_, err := fmt.Fprintf(&sb, "INSERT INTO db1.%s VALUES (%d, %d, '%s');\n", table, i, i, payload)
+				require.NoError(t, err)
+			}
+			return sb.String()
+		}
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.no_idx-schema.sql"),
+			[]byte("CREATE TABLE db1.no_idx (id INT PRIMARY KEY, k INT, v VARCHAR(255));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.no_idx.001.sql"),
+			[]byte(buildInsertSQL("no_idx")),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.with_idx-schema.sql"),
+			[]byte("CREATE TABLE db1.with_idx (id INT PRIMARY KEY, k INT, v VARCHAR(255), KEY idx_k (k), KEY idx_v (v), KEY idx_kv (k, v));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.with_idx.001.sql"),
+			[]byte(buildInsertSQL("with_idx")),
+			0o644,
+		))
+
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, defaultSDKConfig())
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 2)
+
+		tableEstimates := make(map[string]TableDataSizeEstimate, len(estimate.Tables))
+		var totalSourceSize, totalTiKVSize int64
+		for _, tableEstimate := range estimate.Tables {
+			tableEstimates[tableEstimate.Table] = tableEstimate
+			totalSourceSize += tableEstimate.SourceSize
+			totalTiKVSize += tableEstimate.TiKVSize
+			require.Positive(t, tableEstimate.TiKVSize)
+		}
+
+		require.Equal(t, totalSourceSize, estimate.TotalSourceSize)
+		require.Equal(t, totalTiKVSize, estimate.TotalTiKVSize)
+		require.Greater(t, tableEstimates["with_idx"].TiKVSize, tableEstimates["no_idx"].TiKVSize)
+	})
+
+	t.Run("EstimateImportDataSizeCSV", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.empty_csv-schema.sql"),
+			[]byte("CREATE TABLE db1.empty_csv (id INT PRIMARY KEY, v VARCHAR(255));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.empty_csv.001.csv"),
+			[]byte("id,v\n"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.with_csv-schema.sql"),
+			[]byte("CREATE TABLE db1.with_csv (id INT PRIMARY KEY, v VARCHAR(255), KEY idx_v (v));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.with_csv.001.csv"),
+			[]byte("id,v\n1,\"hello,world\"\n"),
+			0o644,
+		))
+
+		cfg := defaultSDKConfig()
+		cfg.csvConfig.Header = true
+		cfg.dataCharacterSet = "utf8mb4"
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, cfg)
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 2)
+
+		tableEstimates := make(map[string]TableDataSizeEstimate, len(estimate.Tables))
+		for _, tableEstimate := range estimate.Tables {
+			tableEstimates[tableEstimate.Table] = tableEstimate
+		}
+		require.Equal(t, int64(0), tableEstimates["empty_csv"].TiKVSize)
+		require.Positive(t, tableEstimates["with_csv"].TiKVSize)
+	})
+
+	t.Run("EstimateImportDataSizeSkipInvalidFiles", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.good-schema.sql"),
+			[]byte("CREATE TABLE db1.good (id INT PRIMARY KEY, v VARCHAR(255));"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.good.001.csv"),
+			[]byte("1,good\n"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.bad-schema.sql"),
+			[]byte("CREATE TABL db1.bad (id INT PRIMARY KEY);"),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.bad.001.csv"),
+			[]byte("1\n"),
+			0o644,
+		))
+
+		cfg := defaultSDKConfig()
+		cfg.skipInvalidFiles = true
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, cfg)
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 1)
+		require.Equal(t, "good", estimate.Tables[0].Table)
+		require.Positive(t, estimate.Tables[0].SourceSize)
+		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
+		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
 	})
 }
 

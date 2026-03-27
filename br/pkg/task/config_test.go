@@ -74,15 +74,17 @@ func TestConfigureRestoreClient(t *testing.T) {
 		Online: true,
 	}
 	restoreCfg := &RestoreConfig{
-		Config:              cfg,
-		RestoreCommonConfig: restoreComCfg,
-		DdlBatchSize:        128,
+		Config:                cfg,
+		RestoreCommonConfig:   restoreComCfg,
+		DdlBatchSize:          128,
+		RegionScanConcurrency: 3,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {

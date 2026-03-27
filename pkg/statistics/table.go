@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
 )
@@ -1061,12 +1062,15 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	return t
 }
 
-// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
-// If not, it will return false and set the version to the tbl's.
-// We use this check to make sure all the statistics of the table are in the same version.
-func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != *version {
-		*version = tbl.StatsVer
+// AnalyzeVersionMatchesForTableStats reports whether the existing analyzed stats on tblStats
+// already match the requested analyze version. Auto-analyze still writes with the requested
+// version for now, and callers use the mismatch to record legacy rewrites when needed.
+func AnalyzeVersionMatchesForTableStats(tblStats *Table, requestedVersion int) bool {
+	intest.Assert(requestedVersion == Version2, "requested analyze version should be 2")
+	if tblStats == nil || tblStats.Pseudo {
+		return true
+	}
+	if IsAnalyzed(int64(tblStats.StatsVer)) && tblStats.StatsVer != requestedVersion {
 		return false
 	}
 	return true

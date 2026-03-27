@@ -35,6 +35,7 @@ explain format = 'plan_tree' select json_unquote(a) from t2;
 explain format = 'plan_tree' select i * 2 from t;
 explain format = 'plan_tree' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;
 explain format = 'plan_tree' select md5(s) from t;
+explain format = 'plan_tree' select * from t where sha2(s, 256) = 'abc';
 explain format = 'plan_tree' select c from t where a+1=3;
 explain format = 'plan_tree' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A;
 explain format = 'plan_tree' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A;

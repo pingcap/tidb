@@ -1783,3 +1783,21 @@ DROP TABLE t;
 SET @@time_zone = @old_time_zone;
 SET @@sql_mode = @old_sql_mode;
 --disable_warnings
+
+# Regression test for issue #65832:
+# INSERT ... ON DUPLICATE KEY UPDATE with a subquery referencing a view whose
+# SELECT definition contains a constant boolean expression (e.g. WHERE '') should
+# not return ErrViewInvalid when the outer statement is an INSERT in strict SQL mode.
+# Root cause: planner-time constant folding inherited the outer INSERT's
+# truncate handling, causing WHERE '' to raise ErrTruncatedWrongVal and then
+# (incorrectly) surface as ErrViewInvalid during view expansion.
+SET @old_sql_mode_65832 = @@sql_mode;
+SET sql_mode = 'STRICT_TRANS_TABLES';
+CREATE TABLE t_65832_0(c0 BLOB(304));
+CREATE TABLE t_65832_1(c0 CHAR DEFAULT '0');
+CREATE VIEW v_65832(c0) AS SELECT 0.9699394901011086 FROM t_65832_0 INNER JOIN t_65832_0 AS t0_alias ON t_65832_0.c0 WHERE '';
+INSERT INTO t_65832_1 VALUES ('v') ON DUPLICATE KEY UPDATE c0=(SELECT true FROM v_65832 CROSS JOIN t_65832_0 ON (true));
+SELECT * FROM t_65832_1;
+DROP VIEW v_65832;
+DROP TABLE t_65832_0, t_65832_1;
+SET sql_mode = @old_sql_mode_65832;

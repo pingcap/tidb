@@ -3494,6 +3494,73 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 	tk.MustExec("commit")
 }
 
+func TestIssue66571(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	test := func(isRetried bool, isPrimaryChanged bool) {
+		tk := testkit.NewTestKit(t, store)
+		tk2 := testkit.NewTestKit(t, store)
+
+		additionalInitStmt := ""
+		earlyConflictingStmt := ""
+		testedStmt := "update t set v = v + 1 where uk = 10"
+		expectedFinalData := []string{"1 10 101"}
+
+		if isRetried {
+			if !isPrimaryChanged {
+				additionalInitStmt = "insert into t values (0, 0, 10)"
+				earlyConflictingStmt = "update t set v = 200 where uk = 10"
+				expectedFinalData = []string{"0 0 10", "1 10 201"}
+			} else {
+				additionalInitStmt = "insert into t values (0, 0, 9)"
+				earlyConflictingStmt = "update t set v = 10 where id = 0"
+				testedStmt = `
+					with 
+						x as (select /*+ MERGE() */ * from t where id = 0) 
+					update x join t on x.v = t.uk set t.v = t.v + 1 where t.uk = 10`
+				expectedFinalData = []string{"0 0 10", "1 10 101"}
+			}
+		}
+
+		defer setLockTTL(100).restore()
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, uk int unique, v int)")
+		if additionalInitStmt != "" {
+			tk.MustExec(additionalInitStmt)
+		}
+		tk.MustExec("insert into t values (1, 10, 100)")
+		tk2.MustExec("use test")
+		tk2.MustExec("set innodb_lock_wait_timeout = 1")
+
+		tk.MustExec("begin pessimistic")
+		if earlyConflictingStmt != "" {
+			tk3 := testkit.NewTestKit(t, store)
+			tk3.MustExec("use test")
+			tk3.MustExec(earlyConflictingStmt)
+		}
+		tk.MustExec(testedStmt)
+
+		tk2.MustExec("begin pessimistic")
+		err := tk2.ExecToErr("update t set v = v + 2 where uk = 10")
+		require.Error(t, err)
+		require.ErrorIs(t, err, storeerr.ErrLockWaitTimeout)
+		tk2.MustExec("commit")
+
+		tk.MustExec("commit")
+
+		tk.MustQuery("select * from t").Check(testkit.Rows(expectedFinalData...))
+	}
+
+	test(false, false)
+	test(true, false)
+	test(true, true)
+}
+
 func TestIssueBatchResolveLocks(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 

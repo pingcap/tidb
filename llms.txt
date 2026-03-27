@@ -1,0 +1,15 @@
+# TiDB Documentation Hub
+
+> A comprehensive hub for TiDB documentation, including developer guides and user manuals for the latest releases. This file provides structured access to key information for both developers and users of the TiDB distributed SQL database.
+
+This document serves as a central point of reference for accessing various TiDB documentation resources. It aims to streamline the process of finding relevant information, from in-depth developer guides to user-focused manuals and release notes for the most current versions of TiDB.
+
+## Developer Resources
+
+- [TiDB Developer Guide](https://pingcap.github.io/tidb-dev-guide/llms-full.txt): Comprehensive guide for TiDB development, covering architecture, contribution guidelines, and advanced topics.
+- [Uber Go Style Guide](https://raw.githubusercontent.com/uber-go/guide/refs/heads/master/style.md): Official style guide for Go programming at Uber.
+
+## User Manuals
+
+- [TiDB Documentation Manifest](https://docs.pingcap.com/llms.txt): Top-level documentation manifest linking to product, developer, API, best-practice, and release-note manifests.
+- [TiUP Documentation Map](https://docs.pingcap.com/tidb/stable/tiup-documentation-guide.md): Guides you through TiUP documentation with links and introductions.

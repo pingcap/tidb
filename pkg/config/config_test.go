@@ -924,6 +924,9 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
+	require.Equal(t, 1.34, conf.RUV2.RUScale)
+	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
+
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
 	if kerneltype.IsNextGen() {
@@ -1046,6 +1049,11 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 }
 
 func TestConflictInstanceConfig(t *testing.T) {
+	t.Cleanup(func() {
+		ConflictOptions = nil
+		DeprecatedOptions = nil
+	})
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1104,6 +1112,11 @@ func TestConflictInstanceConfig(t *testing.T) {
 }
 
 func TestDeprecatedConfig(t *testing.T) {
+	t.Cleanup(func() {
+		ConflictOptions = nil
+		DeprecatedOptions = nil
+	})
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1470,13 +1483,52 @@ func TestMetering(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("skip metering test in classic kernel")
 	}
+	testCases := []struct {
+		name      string
+		uri       string
+		checkFunc func(*testing.T, *meter_config.MeteringConfig)
+	}{
+		{
+			name: "s3",
+			uri:  "s3://test-bucket/test-prefix?region-id=test-region",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "s3", string(mcfg.Type))
+				require.Equal(t, "test-bucket", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.Equal(t, "test-region", mcfg.Region)
+			},
+		},
+		{
+			name: "azure",
+			uri:  "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "azure", string(mcfg.Type))
+				require.Equal(t, "metering-data", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.NotNil(t, mcfg.Azure)
+				require.Equal(t, "test-account", mcfg.Azure.AccountName)
+				require.Equal(t, "test-key", mcfg.Azure.AccountKey)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := NewConfig()
+			conf.MeteringStorageURI = tc.uri
+			require.NoError(t, conf.Valid())
+			mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
+			require.NoError(t, err)
+			tc.checkFunc(t, mcfg)
+		})
+	}
+}
+
+func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
 	conf := NewConfig()
-	conf.MeteringStorageURI = "s3://test-bucket/test-prefix?region-id=test-region"
-	require.NoError(t, conf.Valid())
-	mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
-	require.NoError(t, err)
-	require.Equal(t, "s3", string(mcfg.Type))
-	require.Equal(t, "test-bucket", mcfg.Bucket)
-	require.Equal(t, "test-prefix", mcfg.Prefix)
-	require.Equal(t, "test-region", mcfg.Region)
+	conf.RUV2.RUScale = 123
+	conf.TiKVClient.RUV2.RUScale = 0
+
+	tikvConf := conf.GetTiKVConfig()
+	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }

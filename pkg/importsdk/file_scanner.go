@@ -20,11 +20,19 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
+	execimporter "github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"go.uber.org/zap"
 )
 
@@ -35,6 +43,7 @@ type FileScanner interface {
 	GetTableMetas(ctx context.Context) ([]*TableMeta, error)
 	GetTableMetaByName(ctx context.Context, db, table string) (*TableMeta, error)
 	GetTotalSize(ctx context.Context) int64
+	EstimateImportDataSize(ctx context.Context) (*ImportDataSizeEstimate, error)
 	Close() error
 }
 
@@ -190,6 +199,39 @@ func (s *fileScanner) GetTotalSize(ctx context.Context) int64 {
 	return total
 }
 
+func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSizeEstimate, error) {
+	dbMetas := s.loader.GetDatabases()
+	if len(dbMetas) == 0 {
+		return nil, errors.Annotatef(ErrNoDatabasesFound, "source=%s", s.sourcePath)
+	}
+
+	result := &ImportDataSizeEstimate{
+		Tables: make([]TableDataSizeEstimate, 0),
+	}
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta)
+			if err != nil {
+				if s.config.skipInvalidFiles {
+					s.logger.Warn("skipping table during size estimation", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
+					continue
+				}
+				return nil, err
+			}
+			tableEstimate := TableDataSizeEstimate{
+				Database:   dbMeta.Name,
+				Table:      tblMeta.Name,
+				SourceSize: tblMeta.TotalSize,
+				TiKVSize:   singleReplicaSize,
+			}
+			result.Tables = append(result.Tables, tableEstimate)
+			result.TotalSourceSize += tableEstimate.SourceSize
+			result.TotalTiKVSize += tableEstimate.TiKVSize
+		}
+	}
+	return result, nil
+}
+
 func (s *fileScanner) Close() error {
 	if s.store != nil {
 		s.store.Close()
@@ -252,6 +294,130 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 		Size:        file.FileMeta.RealSize,
 		Format:      file.FileMeta.Type,
 		Compression: file.FileMeta.Compression,
+	}
+}
+
+func (s *fileScanner) estimateOneTableSize(
+	ctx context.Context,
+	tblMeta *mydump.MDTableMeta,
+) (int64, error) {
+	if len(tblMeta.DataFiles) == 0 {
+		return 0, nil
+	}
+	if tblMeta.SchemaFile.FileMeta.Path == "" {
+		return 0, common.ErrSchemaNotExists.GenWithStackByArgs(tblMeta.DB, tblMeta.Name)
+	}
+
+	format, err := sourceTypeToImportFormat(tblMeta.DataFiles[0].FileMeta.Type)
+	if err != nil {
+		return 0, err
+	}
+
+	tableInfo, err := s.buildEstimateTableInfo(ctx, tblMeta)
+	if err != nil {
+		return 0, err
+	}
+	tableInfo.State = model.StatePublic
+
+	dataFiles := make([]*mydump.SourceFileMeta, 0, len(tblMeta.DataFiles))
+	for i := range tblMeta.DataFiles {
+		dataFiles = append(dataFiles, &tblMeta.DataFiles[i].FileMeta)
+	}
+
+	sampledSize, err := execimporter.SampleFileImportKVSize(
+		ctx,
+		s.buildEstimateSampleConfig(format),
+		tables.MockTableFromMeta(tableInfo),
+		s.store,
+		dataFiles,
+		nil,
+		s.logger.Logger,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if sampledSize.SourceSize == 0 && sampledSize.TotalKVSize() == 0 {
+		return 0, nil
+	}
+	if sampledSize.SourceSize <= 0 || sampledSize.TotalKVSize() <= 0 {
+		return tblMeta.TotalSize, nil
+	}
+	return int64(float64(tblMeta.TotalSize) * float64(sampledSize.TotalKVSize()) / float64(sampledSize.SourceSize)), nil
+}
+
+func (s *fileScanner) buildEstimateSampleConfig(format string) *execimporter.KVSizeSampleConfig {
+	charset := s.config.dataCharacterSet
+	fieldNullDef := append([]string(nil), s.config.csvConfig.FieldNullDefinedBy...)
+	if len(fieldNullDef) == 0 {
+		fieldNullDef = []string{`\N`}
+	}
+	fieldsEscapedBy := s.config.csvConfig.FieldsEscapedBy
+	if fieldsEscapedBy == "" && s.config.csvConfig.BackslashEscape {
+		fieldsEscapedBy = `\`
+	}
+
+	importantSysVars := make(map[string]string, len(common.DefaultImportantVariables)+len(common.DefaultImportVariablesTiDB))
+	for k, v := range common.DefaultImportantVariables {
+		importantSysVars[k] = v
+	}
+	for k, v := range common.DefaultImportVariablesTiDB {
+		importantSysVars[k] = v
+	}
+
+	ignoreLines := uint64(0)
+	if format == execimporter.DataFormatCSV && s.config.csvConfig.Header {
+		ignoreLines = 1
+	}
+
+	return &execimporter.KVSizeSampleConfig{
+		Format:           format,
+		SQLMode:          s.config.sqlMode,
+		Charset:          &charset,
+		ImportantSysVars: importantSysVars,
+		FieldNullDef:     fieldNullDef,
+		LineFieldsInfo: plannercore.LineFieldsInfo{
+			FieldsTerminatedBy: s.config.csvConfig.FieldsTerminatedBy,
+			FieldsEnclosedBy:   s.config.csvConfig.FieldsEnclosedBy,
+			FieldsEscapedBy:    fieldsEscapedBy,
+			LinesStartingBy:    s.config.csvConfig.LinesStartingBy,
+			LinesTerminatedBy:  s.config.csvConfig.LinesTerminatedBy,
+		},
+		IgnoreLines: ignoreLines,
+	}
+}
+
+func (s *fileScanner) buildEstimateTableInfo(ctx context.Context, tblMeta *mydump.MDTableMeta) (*model.TableInfo, error) {
+	schemaSQL, err := tblMeta.GetSchema(ctx, s.store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	p := parser.New()
+	p.SetSQLMode(s.config.sqlMode)
+	stmt, err := p.ParseOneStmt(schemaSQL, "", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		return nil, errors.Errorf("schema file %s does not contain a CREATE TABLE statement", tblMeta.SchemaFile.FileMeta.Path)
+	}
+	tableInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), createStmt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tableInfo, nil
+}
+
+func sourceTypeToImportFormat(tp mydump.SourceType) (string, error) {
+	switch tp {
+	case mydump.SourceTypeCSV:
+		return execimporter.DataFormatCSV, nil
+	case mydump.SourceTypeSQL:
+		return execimporter.DataFormatSQL, nil
+	case mydump.SourceTypeParquet:
+		return execimporter.DataFormatParquet, nil
+	default:
+		return "", errors.Errorf("unsupported source format %v", tp)
 	}
 }
 

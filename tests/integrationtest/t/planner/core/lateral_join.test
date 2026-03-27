@@ -1,0 +1,261 @@
+# TestLateralJoinBasic
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2), (3);
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (3, 'e');
+
+## Basic LATERAL join with comma syntax
+select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat order by t1.a;
+
+## LATERAL with ORDER BY in subquery
+select * from t1, lateral (select b from t2 where t2.a = t1.a order by b limit 1) as lat order by t1.a;
+
+## LATERAL with aggregate in subquery
+select * from t1, lateral (select count(*) as cnt from t2 where t2.a = t1.a) as lat order by t1.a;
+
+# TestLateralJoinUnsupportedTypes
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+
+## LEFT JOIN LATERAL - not yet supported
+--error 3809
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+
+## CROSS JOIN LATERAL - works (same as comma syntax)
+select * from t1 cross join lateral (select b from t2 where t2.a = t1.a) as lat;
+
+# TestLateralJoinExplain
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+
+## Verify Apply operator is used for LATERAL (comma syntax); LIMIT prevents decorrelation
+explain format='plan_tree' select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat;
+
+## Verify Apply operator for INNER JOIN LATERAL; LIMIT prevents decorrelation
+explain format='plan_tree' select * from t1 join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
+
+# TestLateralJoinWithRecursiveCTE
+drop table if exists t2;
+create table t2 (a int, b varchar(10));
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
+
+## Recursive CTE with LATERAL join - empty string seed
+with recursive tr (level, b_col) as (
+    select 1, ''
+    union all
+    select level + 1, lat.result_col
+    from tr, lateral (select b as result_col from t2 where a = level order by b limit 1) as lat
+    where level < 3
+)
+select * from tr where level > 0 order by level;
+
+## Recursive CTE with LATERAL join - NULL seed
+with recursive tr (level, b_col) as (
+    select 1, cast(null as char(10))
+    union all
+    select level + 1, lat.result_col
+    from tr, lateral (select b as result_col from t2 where a = level order by b limit 1) as lat
+    where level < 3
+)
+select * from tr where level > 0 order by level;
+
+# TestLateralJoinMultipleTables
+drop table if exists t1, t2, t3;
+create table t1 (a int);
+create table t2 (a int, b int);
+create table t3 (b int, c varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 10), (1, 20), (2, 30);
+insert into t3 values (10, 'x'), (20, 'y'), (30, 'z');
+
+## LATERAL with multiple left-side tables
+select * from t1, t2, lateral (select c from t3 where t3.b = t2.b limit 1) as lat
+where t1.a = t2.a order by t1.a, t2.b;
+
+# TestLateralJoinNested
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+insert into t1 values (1), (2);
+insert into t2 values (1, 100), (1, 200), (2, 300);
+
+## Nested subquery in LATERAL
+select * from t1, lateral (
+    select sum(b) as total from t2 where t2.a = t1.a
+) as lat order by t1.a;
+
+# TestLateralJoinNoCorrelation
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (b int);
+insert into t1 values (1), (2);
+insert into t2 values (10), (20);
+
+## LATERAL without correlation (should still work)
+select * from t1, lateral (select b from t2 limit 1) as lat order by t1.a;
+
+# TestLateralJoinRightJoinError
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+
+## RIGHT JOIN with LATERAL not yet supported
+--error 3809
+select * from t1 right join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+
+# TestLateralJoinUSINGCorrelationDecorrelate
+# Regression: LATERAL subquery referencing a merged USING column through a
+# Selection-wrapped join tree (from ON clause) must keep Apply after
+# decorrelation. Without the IsLateral guard the Apply->Join rewrite would
+# drop the correlation and produce wrong results.
+drop table if exists t1, t2, t3, t4;
+create table t1 (a int, b int, c int);
+create table t2 (a int, b int, c int);
+create table t3 (a int, b int, c int);
+create table t4 (a int, b int, c int);
+insert into t1 values (1, 10, 100), (2, 20, 200);
+insert into t2 values (1, 10, 101), (2, 20, 202);
+insert into t3 values (1, 10, 301), (2, 20, 302);
+insert into t4 values (1, 10, 401), (1, 10, 402), (2, 20, 403);
+
+## EXPLAIN: LATERAL + USING + ON must show Apply, not plain Join
+explain format='plan_tree' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt;
+
+## Correctness: verify result set matches nested-loop semantics
+select t1.a, t2.b, t3.c, dt.c from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt order by t1.a;
+
+## EXPLAIN: LATERAL + USING + ON with aggregate that blocks decorrelation
+explain format='plan_tree' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select sum(t4.c) as s from t4 where t4.a=t2.a) as dt;
+
+# TestLateralJoinColumnAlias
+## Column alias list AS dt(col1, ...) renames output columns of a derived table.
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 'x'), (2, 'y');
+
+## Basic column alias: dt.mycol resolves correctly
+select t1.a, dt.mycol from t1, lateral (select b from t2 where t2.a = t1.a) as dt(mycol) order by t1.a;
+
+## Multiple column aliases
+select dt.id, dt.val from t1, lateral (select t2.a, t2.b from t2 where t2.a = t1.a) as dt(id, val) order by dt.id;
+
+## Wrong column count errors with ErrViewWrongList (1353)
+--error 1353
+select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2) order by t1.a;
+
+# TestLateralJoinRecursiveHierarchy
+# Customer use case: recursive CTE walking a parent-child table, using LATERAL
+# with ORDER BY + LIMIT to cap children fetched per level.  child_c, child_d,
+# and grandchild_a3 must be absent from the result (pruned by LIMIT 2).
+drop table if exists category;
+create table category (id int primary key, parent_id int, name varchar(50), sort_order int, index idx_parent(parent_id, sort_order, name));
+insert into category values
+  (1, null, 'root', 0),
+  (2, 1, 'child_a', 1), (3, 1, 'child_b', 2), (4, 1, 'child_c', 3), (5, 1, 'child_d', 4),
+  (6, 2, 'grandchild_a1', 1), (7, 2, 'grandchild_a2', 2), (8, 2, 'grandchild_a3', 3),
+  (9, 3, 'grandchild_b1', 1), (10, 3, 'grandchild_b2', 2);
+
+## CROSS JOIN LATERAL: at each level, fetch at most 2 children per parent,
+## ordered by sort_order.  child_c, child_d, grandchild_a3 are pruned by LIMIT 2.
+with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  cross join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by parent_id, sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## INNER JOIN LATERAL: same query, same result.
+with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  inner join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by sort_order
+    limit 2
+  ) as c on true
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## Comma syntax: same query, same result.
+with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree,
+  lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by parent_id, sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## EXPLAIN (with redundant parent_id in ORDER BY): ORDER BY parent_id, sort_order is a
+## direct prefix of idx_parent(parent_id, sort_order, name), so TiDB sets keep order:true
+## and pushes Limit to TiKV - scanning stops as soon as 2 rows are read per parent.
+explain format='plan_tree' with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  cross join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by parent_id, sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+
+## EXPLAIN (ORDER BY sort_order only - logically equivalent but suboptimal): TiDB does
+## not yet recognize that the equality filter WHERE parent_id = tree.id fixes parent_id,
+## making ORDER BY sort_order sufficient to match the index prefix. Without that
+## recognition keep order:false is used and TopN replaces Limit, fetching all children
+## per parent before discarding extras instead of stopping early.
+## TODO(planner): teach the Apply probe optimizer to strip equality-filtered leading
+## index columns from the ORDER BY check, so ORDER BY sort_order produces Limit here
+## instead of TopN - making the redundant parent_id column unnecessary.
+explain format='plan_tree' with recursive tree as (
+  select id, parent_id, name, 1 as depth
+  from category where parent_id is null
+  union all
+  select c.id, c.parent_id, c.name, tree.depth + 1
+  from tree
+  cross join lateral (
+    select id, parent_id, name
+    from category
+    where parent_id = tree.id
+    order by sort_order
+    limit 2
+  ) as c
+  where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;

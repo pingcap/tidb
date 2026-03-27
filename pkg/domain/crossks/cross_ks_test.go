@@ -236,6 +236,8 @@ func TestManager(t *testing.T) {
 			})
 			require.EqualValues(t, 1, tableIDCount)
 			require.True(t, coordinator.ContainsInternalSession(se))
+			// current session, and the min-job-id refresher might also use a
+			// session, so >= 1.
 			require.GreaterOrEqual(t, coordinator.InternalSessionCount(), 1)
 			return nil
 		}))

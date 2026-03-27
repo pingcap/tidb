@@ -367,6 +367,11 @@ func (s *builtinRpadUTF8Sig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinFindInSetSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinFromBase64Sig) SafeToShareAcrossSession() bool {
 	return false
 }

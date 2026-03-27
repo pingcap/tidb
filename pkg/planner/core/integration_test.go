@@ -886,11 +886,11 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 		testKit.MustExec("alter table t32157 cache")
 
 		testKit.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-			"StreamAgg 1.00 root  funcs:count(1)->Column#9]\n" +
-				"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[  └─TableReader 10.00 root  data:Selection]\n" +
-				"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+			"StreamAgg 1.00 root  funcs:count(1)->Column#9",
+			"└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")",
+			"  └─TableReader 10.00 root  data:Selection",
+			"    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")",
+			"      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
 		require.Eventually(t, func() bool {
 			testKit.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
@@ -1441,6 +1441,25 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 			testKit.MustQuery("show warnings").Check(testkit.Rows(
 				"Warning 1105 MPP mode may be blocked because operator `SelectLock` is not supported now."))
 		}
+
+		testKit.MustExec("drop table if exists t3")
+		testKit.MustExec("create table t3(a int, b int, c int, primary key(a))")
+		testKit.MustExec("insert into t3 values(1, 2, 3), (4, 5, 6)")
+		testKit.MustExec("drop table if exists t4")
+		testKit.MustExec("create table t4(a int, b int)")
+		tbl3, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t3", L: "t3"})
+		require.NoError(t, err)
+		tbl3.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		testKit.MustExec("set @@sql_mode = ''")
+		testKit.MustExec("set @@tidb_enforce_mpp=1")
+		testKit.MustExec("set @@tidb_isolation_read_engines = 'tidb, tikv'")
+		rs := testKit.MustQuery("explain insert into t4 select a, b from t3 where a in (1, 2)").Rows()
+		require.NotEmpty(t, rs)
+		for _, row := range rs {
+			require.NotEqual(t, "mpp[tiflash]", row[2])
+		}
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1105 MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tidb,tikv') not match, need 'tiflash'."))
 	})
 }
 
@@ -1910,6 +1929,18 @@ func TestVirtualExprPushDown(t *testing.T) {
 		}
 		tk.MustQuery("explain format = 'brief' select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
+		tk.MustExec("drop table if exists t_force_idx;")
+		tk.MustExec(`create table t_force_idx (
+			i bigint,
+			g bigint generated always as (i + 1) virtual,
+			key idx_g (g),
+			key idx_exp_i ((i + 1))
+		)`)
+		tk.MustExec("insert into t_force_idx (i) values (1);")
+		plan := tk.MustQuery("explain format='brief' select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Rows()
+		require.NotEmpty(t, plan)
+		tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
+
 		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 		is := dom.InfoSchema()
@@ -2301,4 +2332,47 @@ func TestIssue66619(t *testing.T) {
 
 	tk.MustQuery("select a, (select count(1) from t2 where t2.a = t1.a) from t1 order by a").
 		Check(testkit.Rows("1 1", "2 1", "3 0", "4 0"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 text(383) not null)")
+	tk.MustExec("insert into t0 values ('')")
+	tk.MustExec("replace into t0 values (' ')")
+
+	tk.MustQuery("select /* issue:66947 direct-having */ hex(t0.c0) from t0 group by t0.c0 having sum(t0.c0) > -1 and char_length(t0.c0)").
+		Check(testkit.Rows("20"))
+	tk.MustQuery("select /* issue:66947 derived-filter */ hex(ref0) from (select t0.c0 as ref0, (sum(t0.c0) > -1 and char_length(t0.c0)) as ref1 from t0 group by t0.c0) as s where ref1").
+		Check(testkit.Rows("20"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 float unique, c1 numeric zerofill, c2 text(192))")
+	tk.MustExec("insert into t0(c0, c1, c2) values (1.074197572E9, 0, '⋧h')")
+
+	tk.MustQuery(`select /* issue:66922-direct */ t0.c1, t0.c0, t0.c2
+from t0
+group by t0.c1, t0.c0, t0.c2
+having (
+    (count(t0.c1) != -1)
+        and
+    (
+        (case t0.c1 when false then t0.c0 else true end)
+            like
+        t0.c0
+    )
+)`).Check(testkit.Rows())
+
+	tk.MustQuery(`select /* issue:66922-derived */ ref0, ref1, ref2
+from (
+    select t0.c1 as ref0, t0.c0 as ref1, t0.c2 as ref2,
+           (
+               (count(t0.c1) != -1)
+                   and
+               (
+                   (case t0.c1 when false then t0.c0 else true end)
+                       like
+                   t0.c0
+               )
+           ) as ref3
+    from t0
+    group by t0.c1, t0.c0, t0.c2
+) as s where ref3`).Check(testkit.Rows())
 }

@@ -23,12 +23,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/pd/client/opt"
 )
@@ -95,6 +99,50 @@ func TestClientWriteServerError(t *testing.T) {
 	require.Contains(t, err.Error(), "internal server error")
 }
 
+func TestWriteClientDurationMetricObserveOnce(t *testing.T) {
+	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []byte{0}, Biggest: []byte{1}, MetaOffset: 1, CommitTs: 1}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		time.Sleep(80 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		sstMetaBytes, err := json.Marshal(sstMeta)
+		require.NoError(t, err)
+		_, err = w.Write(sstMetaBytes)
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	before := histogramSampleCount(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelWriteAPI)
+	beforeSum := histogramSampleSum(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelWriteAPI)
+
+	client := newWriteClient(server.URL, 12345, server.Client(), 67890)
+	defer client.Close()
+	err := client.init(context.Background())
+	require.NoError(t, err)
+
+	err = client.Write(&WriteRequest{
+		Pairs: []*import_sstpb.Pair{
+			{Key: []byte("key1"), Value: []byte("value1")},
+		},
+	})
+	require.NoError(t, err)
+	err = client.Write(&WriteRequest{
+		Pairs: []*import_sstpb.Pair{
+			{Key: []byte("key2"), Value: []byte("value2")},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.Recv()
+	require.NoError(t, err)
+
+	after := histogramSampleCount(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelWriteAPI)
+	afterSum := histogramSampleSum(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelWriteAPI)
+	require.Equal(t, before+1, after)
+	require.GreaterOrEqual(t, afterSum-beforeSum, 0.05)
+}
+
 func TestClientIngest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/ingest_s3", r.URL.Path)
@@ -114,6 +162,35 @@ func TestClientIngest(t *testing.T) {
 	}
 	err := client.Ingest(context.Background(), req)
 	require.NoError(t, err)
+}
+
+func TestClientIngestDurationMetric(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/ingest_s3", r.URL.Path)
+		time.Sleep(80 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	statusAddr := strings.TrimPrefix(server.URL, "http://")
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
+	req := &IngestRequest{
+		WriteResp: &WriteResponse{
+			nextGenSSTMeta: &nextGenSSTMeta{
+				ID: 1,
+			},
+		},
+		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
+	}
+
+	before := histogramSampleCount(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelIngestAPI)
+	beforeSum := histogramSampleSum(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelIngestAPI)
+	err := client.Ingest(context.Background(), req)
+	require.NoError(t, err)
+	after := histogramSampleCount(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelIngestAPI)
+	afterSum := histogramSampleSum(t, ingestmetric.WriteIngestAPIDuration, ingestmetric.LabelIngestAPI)
+	require.Equal(t, before+1, after)
+	require.GreaterOrEqual(t, afterSum-beforeSum, 0.05)
 }
 
 func TestClientIngestError(t *testing.T) {
@@ -174,4 +251,28 @@ func TestNextClientURL(t *testing.T) {
 		require.Equal(t, "https://", cli.urlSchema)
 		require.Equal(t, c.forHTTPS, cli.tikvWorkerURL)
 	}
+}
+
+func histogramSampleCount(t *testing.T, histogram *prometheus.HistogramVec, labelValues ...string) uint64 {
+	t.Helper()
+
+	observer, err := histogram.GetMetricWithLabelValues(labelValues...)
+	require.NoError(t, err)
+	metric, ok := observer.(prometheus.Metric)
+	require.True(t, ok)
+	pbMetric := &dto.Metric{}
+	require.NoError(t, metric.Write(pbMetric))
+	return pbMetric.GetHistogram().GetSampleCount()
+}
+
+func histogramSampleSum(t *testing.T, histogram *prometheus.HistogramVec, labelValues ...string) float64 {
+	t.Helper()
+
+	observer, err := histogram.GetMetricWithLabelValues(labelValues...)
+	require.NoError(t, err)
+	metric, ok := observer.(prometheus.Metric)
+	require.True(t, ok)
+	pbMetric := &dto.Metric{}
+	require.NoError(t, metric.Write(pbMetric))
+	return pbMetric.GetHistogram().GetSampleSum()
 }

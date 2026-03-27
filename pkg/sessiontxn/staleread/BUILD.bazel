@@ -27,6 +27,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/internal",
+        "//pkg/store/driver/txn",
         "//pkg/table/temptable",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
@@ -46,7 +47,7 @@ go_test(
         "provider_test.go",
     ],
     flaky = True,
-    shard_count = 9,
+    shard_count = 12,
     deps = [
         ":staleread",
         "//pkg/domain",

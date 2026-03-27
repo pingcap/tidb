@@ -24,12 +24,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -77,6 +79,7 @@ type writeClient struct {
 	clusterID     uint64
 	httpClient    *http.Client
 	commitTS      uint64
+	initTime      time.Time
 
 	wg         util.WaitGroupWrapper
 	sendReqErr atomic.Error
@@ -109,6 +112,7 @@ func (w *writeClient) init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	w.initTime = time.Now()
 	w.startChunkedHTTPRequest(req)
 	w.reader = pr // PipeReader will be closed by the httpClient.Do automatically
 	w.writer = pw
@@ -117,6 +121,10 @@ func (w *writeClient) init(ctx context.Context) error {
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 	w.wg.RunWithLog(func() {
+		defer func() {
+			ingestmetric.WriteAPIDuration.Observe(time.Since(w.initTime).Seconds())
+		}()
+
 		resp, err := w.httpClient.Do(req)
 		if err != nil {
 			w.sendReqErr.Store(errors.Trace(err))
@@ -259,6 +267,11 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	startTime := time.Now()
+	defer func() {
+		ingestmetric.IngestAPIDuration.Observe(time.Since(startTime).Seconds())
+	}()
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

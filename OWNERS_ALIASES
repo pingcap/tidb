@@ -56,11 +56,13 @@ aliases:
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - fzzf678
   sig-approvers-ddl:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
+    - fzzf678
   sig-approvers-disttask:
     - Benjamin2037
     - D3Hunter
@@ -75,15 +77,18 @@ aliases:
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
+    - fzzf678
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
+    - fzzf678
   sig-approvers-owner:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
+    - fzzf678
   sig-approvers-parser:
     - bb7133
     - Benjamin2037
@@ -99,6 +104,7 @@ aliases:
     - cfzjywxk
     - gmhdbjd
     - wjhuang2016
+    - fzzf678
   sig-approvers-lock:
     - Benjamin2037
     - wjhuang2016
