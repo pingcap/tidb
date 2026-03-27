@@ -769,12 +769,12 @@ type dpSubsetCandidate struct {
 //     subset still has real edges inside it that were never consumed.
 //
 // The reconstruction therefore does three things:
-//   1. Keep only finite, subset-complete candidates (no remaining real edges
-//      whose TES is fully inside the subset).
-//   2. Greedily pick a disjoint set of the largest/cheapest candidates to form
-//      forest roots.
-//   3. Add any uncovered leaf back into the forest so every base relation is
-//      represented before the final bushy-tree stitch.
+//  1. Keep only finite, subset-complete candidates (no remaining real edges
+//     whose TES is fully inside the subset).
+//  2. Greedily pick a disjoint set of the largest/cheapest candidates to form
+//     forest roots.
+//  3. Add any uncovered leaf back into the forest so every base relation is
+//     represented before the final bushy-tree stitch.
 func buildBushyTreeFromDP(ctx base.PlanContext, detector *ConflictDetector, leaves []*Node, bestPlan []*Node, vertexHints map[int]*JoinMethodHint) (*Node, error) {
 	candidates := make([]dpSubsetCandidate, 0, len(bestPlan))
 	for mask, node := range bestPlan {
