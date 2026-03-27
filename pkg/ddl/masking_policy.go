@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -577,8 +576,8 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 func (w *worker) updateMaskingPolicyNamesAfterRename(
 	ctx context.Context,
 	tableID int64,
-	oldDBName, newDBName pmodel.CIStr,
-	oldTableName, newTableName pmodel.CIStr,
+	oldDBName, newDBName ast.CIStr,
+	oldTableName, newTableName ast.CIStr,
 ) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
 	if err != nil {

@@ -258,7 +258,8 @@ func TestMaskingPolicyRenameTable(t *testing.T) {
 func TestMaskingPolicyRenameTableCrossDatabase(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists db1, db2")
+	tk.MustExec("drop database if exists db1")
+	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop table if exists db1.t")
 
 	// Create databases and table

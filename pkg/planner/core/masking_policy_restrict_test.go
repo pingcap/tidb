@@ -100,7 +100,7 @@ func TestMaskingPolicyRestrictOnInsertSelectStar(t *testing.T) {
 	tkRoot.MustExec("create table payment_details (id int primary key, customer_id int, card_no varchar(20), expiry_date date)")
 	tkRoot.MustExec("insert into payment_details values (1, 1, '23233438477283', '2030-05-06')")
 	tkRoot.MustExec(`create masking policy p_pan_mask on payment_details(card_no) as
-		case when current_user() = 'root@%' then card_no else mask_partial(card_no, 6, 4, '*') end enable`)
+		case when current_user() = 'root@%' then card_no else mask_partial(card_no, '*', 6, 4) end enable`)
 	tkRoot.MustExec("alter table payment_details modify masking policy p_pan_mask set restrict on (insert_into_select)")
 	tkRoot.MustExec("create table payment_details_copy like payment_details")
 
