@@ -72,8 +72,10 @@ select locate('a', 'a');
 # Issue36057
 set names latin1;
 select @@collation_connection;
+select collation('a'), 'a' = 'A';
 set names latin1 collate latin1_swedish_ci;
 select @@collation_connection;
+select collation('a'), 'a' = 'A';
 set names utf8mb4;
 
 # CharacterSetCollations
@@ -179,6 +181,8 @@ explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t wher
 select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
 explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
 select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+explain format='plan_tree' select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
 
 use test;
 drop database cd_test_latin1_swedish_ci;

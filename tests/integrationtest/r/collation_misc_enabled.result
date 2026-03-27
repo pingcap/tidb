@@ -82,10 +82,16 @@ set names latin1;
 select @@collation_connection;
 @@collation_connection
 latin1_bin
+select collation('a'), 'a' = 'A';
+collation('a')	'a' = 'A'
+latin1_bin	0
 set names latin1 collate latin1_swedish_ci;
 select @@collation_connection;
 @@collation_connection
 latin1_swedish_ci
+select collation('a'), 'a' = 'A';
+collation('a')	'a' = 'A'
+latin1_swedish_ci	1
 set names utf8mb4;
 SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
 default_collate_name	maxlen
@@ -331,5 +337,16 @@ id	val
 248	ø
 254	þ
 255	ÿ
+explain format='plan_tree' select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		ge(concat(cd_test_latin1_swedish_ci.t.val, cd_test_latin1_swedish_ci.t.val), "ä"), le(concat(cd_test_latin1_swedish_ci.t.val, cd_test_latin1_swedish_ci.t.val), "ö")
+  └─TableFullScan	cop[tikv]	table:t	keep order:true, stats:pseudo
+select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+id	val
+92	\
+23644	\\
+14972001	äta
+15103073	æta
 use test;
 drop database cd_test_latin1_swedish_ci;
