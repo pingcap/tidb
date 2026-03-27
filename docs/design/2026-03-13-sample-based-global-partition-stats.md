@@ -269,7 +269,7 @@ When a fallback occurs, a warning should be logged and returned to the client as
 
 This means auto-analyze gradually populates samples partition by partition, while global stats quality is maintained by the merge-based fallback when existing stats are available.
 
-**Upgrade**: No saved sample data exists in `mysql.stats_data` yet, but existing TopN/histograms are available from prior analyzes. The merge-based path is used for global stats while auto-analyze gradually populates saved samples. A full `ANALYZE TABLE` populates all partitions at once.
+**Upgrade**: No saved sample data exists in `mysql.stats_data` yet, but existing TopN/histograms are available from prior analyzes. The merge-based path is used for global stats while auto-analyze gradually populates saved samples. To immediately enable the sample-based path, a manual `ANALYZE TABLE` (without partition restriction) populates all partitions at once.
 
 **Downgrade**: Saved sample rows in `mysql.stats_data` are harmlessly ignored by older versions. The merge-based path works without samples.
 
