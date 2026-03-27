@@ -51,7 +51,7 @@ After all partitions are analyzed, global stats are built by merging per-partiti
 
 3. **Globally frequent values missed.** A value appearing in 1% of each partition (below each partition's TopN threshold) but 1% of the entire table (above the global TopN threshold) is never discovered by the current approach, because neither partition promoted it to TopN.
 
-Measured on a table with 8,000 partitions and 30M rows ([accuracy report](https://github.com/user-attachments/files/26221115/sample-based-accuracy.md)), building histograms directly from sample data instead of merging produced 3–5× more uniform buckets (CV 0.000–0.048 vs 0.062–0.158) and 1,000× better value range accuracy (+7 overshoot vs +7,999). The sample-based path also computes column correlation (the merge path always returns 0) and avoids the O(P × (T + B)) memory spike that caused a second full ANALYZE to crash with OOM in testing.
+Measured on a table with 8,000 partitions and 30M rows ([accuracy report](https://github.com/user-attachments/files/26221115/sample-based-accuracy.md)), building histograms directly from sample data instead of merging produced 3–5× more uniform buckets (coefficient of variation 0.000–0.048 vs 0.062–0.158) and 1,000× more accurate histogram value range boundaries (the histogram's upper bound overshoots the actual maximum value by only 7 vs 7,999 for the merge-based path — lower is better). The sample-based path also computes column correlation (the merge path always returns 0) and avoids the O(P × (T + B)) memory spike that caused a second full ANALYZE to crash with OOM in testing.
 
 ### Problem 2: Single-Partition ANALYZE Requires Full Rebuild
 
