@@ -289,6 +289,9 @@
 
       // All-inner group with disconnected components: DP should attempt Cartesian fallback.
       "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t3.b > 0 ORDER BY t1.a, t3.a",
+      // 4-table disconnected components with cartesian penalty disabled:
+      // DP should still finish each EQ-connected subset and stitch the final cartesian join as a bushy tree.
+      "SELECT /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ * FROM (t1 JOIN t2 ON t1.a = t2.a), (t3 JOIN t4 ON t3.a = t4.a) ORDER BY t1.a, t3.a",
 
       // =============================================
       // Group 4: Mixed outer joins with DP
