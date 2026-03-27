@@ -234,29 +234,25 @@ Cleanup is handled by the existing stats GC path (`GCStats`), which deletes rows
 
 ### User Interface
 
-A session variable `tidb_sample_based_global_stats` controls the feature as a three-level enum, allowing staged rollout and safe fallback:
+A session variable `tidb_sample_based_global_stats` guards the feature and serves as a fail-safe:
 
 | Property | Value |
 |----------|-------|
 | Scope | SESSION, GLOBAL |
 | Default | ON |
-| Type | Enum: OFF, SAVE, ON |
+| Type | Boolean |
 | Prerequisite | Analyze Version 2 with dynamic partition pruning |
 
-| Value | Behavior |
-|-------|----------|
-| `OFF` | No new code exercised. Merge-based path used for global stats. No samples saved. |
-| `SAVE` | Samples are saved to `mysql.stats_data` after each partition ANALYZE, but merge-based path is still used for global stats. This validates the persistence code without affecting stats quality. |
-| `ON` | Samples are saved and used for building global stats. Falls back to merge-based when needed (see Fallback and Compatibility). |
+When ON, samples are saved and used for building global stats, falling back to merge-based when needed (see Fallback and Compatibility). When OFF, the merge-based path is used and no samples are saved.
 
-The variable defaults to `ON` and serves as a fail-safe: if issues are discovered after release, operators can set it to `SAVE` (continues populating samples without using them, allowing investigation) or `OFF` (disables all new code paths) without requiring a version rollback. SESSION scope allows testing individual ANALYZE runs. The goal is to eventually remove the variable (effectively always `ON`).
+The variable defaults to ON. If issues are discovered after release, operators can set it to OFF without requiring a version rollback. SESSION scope allows testing individual ANALYZE runs. The long-term plan is to remove the variable once the sample-based path is proven stable, making it the only path for global stats.
 
-**Interaction with `tidb_enable_async_merge_global_stats`**: The existing `tidb_enable_async_merge_global_stats` variable continues to control only the legacy merge-based path used in fallback scenarios (`OFF`, `SAVE`, upgrade transition, missing saved samples, or policy-driven fallback). Once merge-based fallback is retired and sample-based global stats becomes the only path, `tidb_enable_async_merge_global_stats` should be removed.
+**Interaction with `tidb_enable_async_merge_global_stats`**: The existing `tidb_enable_async_merge_global_stats` variable continues to control only the legacy merge-based path used in fallback scenarios (variable OFF, upgrade transition, missing saved samples, or policy-driven fallback). Once merge-based fallback is retired and sample-based global stats becomes the only path, `tidb_enable_async_merge_global_stats` should be removed.
 
 ### Fallback and Compatibility
 
 The sample-based path falls back transparently to the merge-based path when:
-- The variable is set to `OFF` or `SAVE`
+- The variable is set to `OFF`
 - No sample collector is available (e.g., all partition analyses failed)
 - Saved sample layout is not exact or explicitly-compatible with the current ANALYZE request (per-column: columns not covered by a partition's saved samples fall back individually — see note below)
 - Any partition has no saved sample data in `mysql.stats_data` but has existing TopN/histograms from a prior analyze (see Gradual Transition below)
@@ -341,7 +337,7 @@ Measurements: wall-clock duration, CPU time, memory usage, and accuracy (row cou
 - **Faster single-partition re-analyze**: Rebuilding global stats after a single-partition ANALYZE loads saved samples from storage and concatenates them in memory, instead of loading and re-merging all partitions' histograms and TopN arrays — which has been shown to cause high CPU usage and OOM in tables with many partitions.
 - **Improved global stats quality**: Histograms built from actual sampled data avoid the information loss inherent in histogram merging, potentially improving cardinality estimation.
 - **Additional storage**: Since the total pruning budget is fixed (~110K samples), total storage is roughly constant regardless of partition count — approximately 10–20 MB for 50 mixed-type columns (see blob size table in the Persisting Samples section). Narrower tables or predicate-column analysis produce proportionally less.
-- **Reduced dependence on `mysql.stats_fm_sketch`**: FMSketches are only read from `stats_fm_sketch` when merging partition stats into global stats — non-partitioned tables and normal query planning never read them. In the steady-state sample-based path, the persisted collector already contains per-column FMSketches, so the partition-to-global rebuild no longer needs per-column reads from `stats_fm_sketch`. This can eliminate substantial I/O in the common case (e.g., 8,000 partitions × 50 columns = 400,000 individual queries in the current merge path, replaced by one blob read per partition). However, as long as merge-based fallback remains supported (`OFF`, `SAVE`, upgrade transition, missing saved samples, or policy-driven fallback), `stats_fm_sketch` still needs to exist for those paths. The new `stats_data` table also has a proper PRIMARY KEY, unlike `stats_fm_sketch` which only has a non-unique INDEX (see [#66303](https://github.com/pingcap/tidb/pull/66303)). Once merge-based fallback is retired, `stats_fm_sketch` could be removed in a follow-up change.
+- **Reduced dependence on `mysql.stats_fm_sketch`**: FMSketches are only read from `stats_fm_sketch` when merging partition stats into global stats — non-partitioned tables and normal query planning never read them. In the steady-state sample-based path, the persisted collector already contains per-column FMSketches, so the partition-to-global rebuild no longer needs per-column reads from `stats_fm_sketch`. This can eliminate substantial I/O in the common case (e.g., 8,000 partitions × 50 columns = 400,000 individual queries in the current merge path, replaced by one blob read per partition). However, as long as merge-based fallback remains supported (variable OFF, upgrade transition, missing saved samples, or policy-driven fallback), `stats_fm_sketch` still needs to exist for those paths. The new `stats_data` table also has a proper PRIMARY KEY, unlike `stats_fm_sketch` which only has a non-unique INDEX (see [#66303](https://github.com/pingcap/tidb/pull/66303)). Once merge-based fallback is retired, `stats_fm_sketch` could be removed in a follow-up change.
 
 ### Risks
 
