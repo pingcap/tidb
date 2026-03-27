@@ -41,6 +41,19 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	e, _ := foldConstant(ctx, expr)
 	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
+	// fold handlers may return shared Column/CorrelatedColumn objects from other expressions.
+	// Clone and detach their field types before mutating charset/collation to avoid leaking
+	// folded type changes to sibling expressions.
+	if col, ok := e.(*Column); ok {
+		col = col.Clone().(*Column)
+		col.RetType = col.RetType.Clone()
+		e = col
+	}
+	if col, ok := e.(*CorrelatedColumn); ok {
+		col = col.Clone().(*CorrelatedColumn)
+		col.RetType = col.RetType.Clone()
+		e = col
+	}
 
 	charset, collate := expr.GetType(ctx.GetEvalCtx()).GetCharset(), expr.GetType(ctx.GetEvalCtx()).GetCollate()
 	e.GetType(ctx.GetEvalCtx()).SetCharset(charset)
