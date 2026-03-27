@@ -5,17 +5,10 @@ go 1.23.12
 require (
 	cloud.google.com/go/kms v1.15.8
 	cloud.google.com/go/storage v1.39.1
-<<<<<<< HEAD
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.14.0
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.7.0
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.0.0
-	github.com/BurntSushi/toml v1.5.0
-=======
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
-	github.com/BurntSushi/toml v1.6.0
->>>>>>> c2c1342e87b (*: support Azure Blob metering storage URI (#67304))
+	github.com/BurntSushi/toml v1.5.0
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Masterminds/semver v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
@@ -262,13 +255,8 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-<<<<<<< HEAD
-	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
-	github.com/golang/glog v1.2.4 // indirect
-=======
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
-	github.com/golang/glog v1.2.5 // indirect
->>>>>>> c2c1342e87b (*: support Azure Blob metering storage URI (#67304))
+	github.com/golang/glog v1.2.4 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/licensecheck v0.3.1 // indirect

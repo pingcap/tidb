@@ -5028,7 +5028,6 @@ def go_deps():
         ],
     )
     go_repository(
-<<<<<<< HEAD
         name = "com_github_kballard_go_shellquote",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/kballard/go-shellquote",
@@ -5039,7 +5038,9 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
             "https://cache.hawkingrei.com/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
-=======
+        ],
+    )
+    go_repository(
         name = "com_github_keybase_go_keychain",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/keybase/go-keychain",
@@ -5050,7 +5051,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/keybase/go-keychain/com_github_keybase_go_keychain-v0.0.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/keybase/go-keychain/com_github_keybase_go_keychain-v0.0.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/keybase/go-keychain/com_github_keybase_go_keychain-v0.0.1.zip",
->>>>>>> c2c1342e87b (*: support Azure Blob metering storage URI (#67304))
         ],
     )
     go_repository(
