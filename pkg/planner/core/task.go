@@ -1334,8 +1334,19 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalProjection)
 	t := tasks[0].Copy()
+	// when it's a copTask, we can push down projection to indexPlan or tablePlan respectively, say logical plan: proj->ds, when ds can supply the needed columns to proj
+	// doesn't mean its index plan can supply needed columns to proj when it's double read and index plan is not finished. When it's not, we should finish the index plan
+	// immediately and push down projection to table plan if possible. For the case of index merge, we can only push down projection to table plan since index plan and table
+	// plan will be union-ed together and the final output will be used by projection, so both of them should provide needed columns to projection.
 	if cop, ok := t.(*physicalop.CopTask); ok {
 		if (len(cop.RootTaskConds) == 0 && len(cop.IdxMergePartPlans) == 0) && expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, cop.GetStoreType()) {
+			if !cop.IndexPlanFinished {
+				// when index plan is not finished, and index plan can not supply the columns the proj needed.
+				if !canPushToIndexPlan(cop.IndexPlan, expression.ExtractColumnsFromExpressions(p.Exprs, nil)) {
+					// finish index plan and push down projection to table plan.
+					cop.FinishIndexPlan()
+				}
+			}
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}

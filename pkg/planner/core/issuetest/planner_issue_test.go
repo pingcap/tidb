@@ -16,6 +16,7 @@ package issuetest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -201,7 +202,7 @@ FROM
     (SELECT 1 AS c1, 'Alice' AS c2 UNION SELECT NULL AS c1, 'Bob' AS c2) AS base
 INNER JOIN
     (SELECT 1 AS c1, 100 AS c3 UNION SELECT NULL AS c1, NULL AS c3) AS base2
-ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
+	ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 		"1 Alice 1 100",
 		"<nil> Bob <nil> <nil>"))
 }
@@ -233,6 +234,42 @@ GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer 
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
+}
+
+func TestIssue65938(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@tidb_opt_index_join_build_v2 = on")
+	tk.MustExec("create table a (u varchar(20), q varchar(20), index iu(u))")
+	tk.MustExec("create table b (u varchar(20), index iu2(u))")
+	tk.MustExec("create table c (g varchar(20), index ig(g))")
+	tk.MustExec(`insert into a values ('u1', '{"g":"g1"}')`)
+	tk.MustExec(`insert into b values ('u1')`)
+	tk.MustExec(`insert into c values ('g1')`)
+
+	plan := fmt.Sprint(tk.MustQuery(`explain format='brief'
+select /* issue:65938 */ 1
+from
+  (select u, json_unquote(json_extract(cast(q as json), '$.g')) as g
+  from a) x
+join
+  (select u from b where u = 'u1') b1
+on x.u = b1.u
+left join c on c.g = x.g`).Rows())
+	require.Contains(t, plan, "IndexLookUp")
+	require.Contains(t, plan, "table:a")
+	require.Contains(t, plan, "test.a.q")
+	require.Contains(t, plan, "TableRowIDScan")
+
+	tk.MustQuery(`select /* issue:65938 */ 1
+from
+  (select u, json_unquote(json_extract(cast(q as json), '$.g')) as g
+  from a) x
+join
+  (select u from b where u = 'u1') b1
+on x.u = b1.u
+left join c on c.g = x.g`).Check(testkit.Rows("1"))
 }
 
 func TestIssue59902(t *testing.T) {
