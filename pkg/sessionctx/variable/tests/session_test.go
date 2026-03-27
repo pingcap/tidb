@@ -943,11 +943,11 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 		})
 	})
 
-	t.Run(vardef.TiDBReplayerCloudStorageURI, func(t *testing.T) {
-		runStorageURITest(t, vardef.TiDBReplayerCloudStorageURI, func() string {
-			return vardef.ReplayerCloudStorageURI.Load()
+	t.Run(vardef.TiDBPlanReplayerExternalStorageURI, func(t *testing.T) {
+		runStorageURITest(t, vardef.TiDBPlanReplayerExternalStorageURI, func() string {
+			return vardef.PlanReplayerExternalStorageURI.Load()
 		}, func(val string) {
-			vardef.ReplayerCloudStorageURI.Store(val)
+			vardef.PlanReplayerExternalStorageURI.Store(val)
 		})
 	})
 }

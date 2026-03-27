@@ -1977,7 +1977,7 @@ func TestCloudStorageURIValidators(t *testing.T) {
 	require.Equal(t, 1, readCalls)
 	require.Zero(t, writeCalls)
 
-	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBReplayerCloudStorageURI, "noop://replayer")
+	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBPlanReplayerExternalStorageURI, "noop://replayer")
 	require.NoError(t, err)
 	require.Equal(t, 1, readCalls)
 	require.Equal(t, 1, writeCalls)

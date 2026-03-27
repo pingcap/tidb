@@ -186,14 +186,14 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 	origLogFile := config.GetGlobalConfig().Log.File.Filename
 	origTempDir := config.GetGlobalConfig().TempDir
 	origCloudStorageURI := vardef.CloudStorageURI.Load()
-	origReplayerCloudStorageURI := vardef.ReplayerCloudStorageURI.Load()
+	origPlanReplayerExternalStorageURI := vardef.PlanReplayerExternalStorageURI.Load()
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Log.File.Filename = origLogFile
 			conf.TempDir = origTempDir
 		})
 		vardef.CloudStorageURI.Store(origCloudStorageURI)
-		vardef.ReplayerCloudStorageURI.Store(origReplayerCloudStorageURI)
+		vardef.PlanReplayerExternalStorageURI.Store(origPlanReplayerExternalStorageURI)
 		SetGlobalExtStorageForTest(nil)
 		testLocalPathFS = nil
 	}()
@@ -220,11 +220,11 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 	uri := s.URI()
 	require.Contains(t, uri, logDir, "storage URI should use log dir when writable")
 
-	t.Run("configured replayer cloud storage uri", func(t *testing.T) {
+	t.Run("configured plan replayer external storage uri", func(t *testing.T) {
 		configuredDir := t.TempDir()
 		cloudDir := t.TempDir()
 		vardef.CloudStorageURI.Store("file://" + cloudDir)
-		vardef.ReplayerCloudStorageURI.Store("file://" + configuredDir)
+		vardef.PlanReplayerExternalStorageURI.Store("file://" + configuredDir)
 		SetGlobalExtStorageForTest(nil)
 
 		s, err := GetGlobalExtStorage(ctx)
@@ -236,7 +236,7 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 		if kerneltype.IsClassic() {
 			require.NotContains(t, uri, configuredDir, "classic kernel should keep existing local extstore behavior")
 		} else {
-			require.Contains(t, uri, configuredDir, "storage URI should use tidb_replayer_cloud_storage_uri when configured")
+			require.Contains(t, uri, configuredDir, "storage URI should use tidb_plan_replayer_external_storage_uri when configured")
 		}
 		require.NotContains(t, uri, cloudDir, "storage URI should ignore tidb_cloud_storage_uri for extstore")
 	})
@@ -248,14 +248,14 @@ func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
 	origLogFile := config.GetGlobalConfig().Log.File.Filename
 	origTempDir := config.GetGlobalConfig().TempDir
 	origCloudStorageURI := vardef.CloudStorageURI.Load()
-	origReplayerCloudStorageURI := vardef.ReplayerCloudStorageURI.Load()
+	origPlanReplayerExternalStorageURI := vardef.PlanReplayerExternalStorageURI.Load()
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Log.File.Filename = origLogFile
 			conf.TempDir = origTempDir
 		})
 		vardef.CloudStorageURI.Store(origCloudStorageURI)
-		vardef.ReplayerCloudStorageURI.Store(origReplayerCloudStorageURI)
+		vardef.PlanReplayerExternalStorageURI.Store(origPlanReplayerExternalStorageURI)
 		SetGlobalExtStorageForTest(nil)
 		testLocalPathFS = nil
 	}()
