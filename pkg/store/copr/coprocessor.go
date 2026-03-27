@@ -2203,6 +2203,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 					respChan:                    false,
 					eventCb:                     task.eventCb,
 					ignoreTiKVClientReadTimeout: true,
+					handleVersionMap:            task.handleVersionMap,
 					skipBuckets:                 true,
 					exceedsBoundRetry:           task.exceedsBoundRetry + 1,
 				})
@@ -2236,6 +2237,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				respChan:                    false,
 				eventCb:                     task.eventCb,
 				ignoreTiKVClientReadTimeout: true,
+				handleVersionMap:            task.handleVersionMap,
 				skipBuckets:                 true,
 				exceedsBoundRetry:           task.exceedsBoundRetry + 1,
 			})
