@@ -160,13 +160,13 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 		})
-		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 			HistColl: &statistics.HistColl{Pseudo: true},
 		})
-		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		wideColumns := make([]*expression.Column, 0, 40)
 		for i := range 40 {
@@ -186,7 +186,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			RowCount: 2048,
 			HistColl: &statistics.HistColl{},
 		})
-		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,

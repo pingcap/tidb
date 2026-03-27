@@ -1226,9 +1226,9 @@ var (
 //	average size of overlong columns * min(estimated row count, MaxChunkSize)
 //
 // All relaxed paths first require server memory >= MaxMemoryLimitForOverlongType; otherwise chunk
-// reuse is unconditionally disabled. When memory is sufficient, point gets and readers without a
-// trusted row bound fall back to the schema-declared flen check. Only readers with trusted row-count
-// stats use observed average sizes.
+// reuse is unconditionally disabled. Point gets and batch point gets have an exact operator-level
+// row bound, while non-point readers only take the relaxed path when row-count stats are trusted.
+// Only readers with trusted row-count stats use observed average sizes.
 func shouldSkipReuseChunkForPhysicalPlan(plan base.PhysicalPlan) bool {
 	schema := plan.Schema()
 	if schema == nil {
@@ -1270,8 +1270,8 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 	}
 	estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(plan)
 	if estimatedRows <= 0 {
-		// Without a trusted row bound, keep the old schema-level gate instead of forcing disable.
-		return totalFlen <= maxFlenForOverlongType
+		// Without a trusted row bound, keep the old conservative behavior for non-point readers.
+		return false
 	}
 
 	// Estimate the retained reusable chunk size as rows per chunk * bytes per row.
