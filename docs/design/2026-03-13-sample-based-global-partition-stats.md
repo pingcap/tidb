@@ -179,7 +179,7 @@ The per-partition blob size depends on the number of pruned samples (determined 
 
 ### Progressive Pruning
 
-After region merge within a partition, the sample set can be large (~110K for the default Bernoulli rate). Persisting this full set per partition would use excessive storage, and merging full sets from all partitions would exceed the memory budget. Instead, samples are pruned by keeping only the highest-priority samples under a global budget:
+After region merge within a partition, the sample set can be large (~110K for the default Bernoulli rate). Persisting this full set per partition would use excessive storage, and merging full sets from all partitions would exceed the memory budget. Instead, samples are pruned by keeping only the highest-priority samples under a global budget — the target total number of samples for the whole table's global stats, derived from `WITH <NUM> SAMPLES` or `WITH <FLOATNUM> SAMPLERATE` (defaulting to ~110K via `DefRowsForSampleRate` when neither is specified):
 
 ```text
 for Bernoulli:
