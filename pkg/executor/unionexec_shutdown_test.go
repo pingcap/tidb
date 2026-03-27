@@ -1,3 +1,17 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -5,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -43,15 +56,6 @@ func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
 func (e *unionPanicExec) Close() error { return nil }
 
 func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
-	fp := "github.com/pingcap/tidb/pkg/executor/pauseUnionExecResultPuller"
-	require.NoError(t, failpoint.Enable(fp, "pause"))
-	fpEnabled := true
-	t.Cleanup(func() {
-		if fpEnabled {
-			require.NoError(t, failpoint.Disable(fp))
-		}
-	})
-
 	ctx := mock.NewContext()
 	schema := expression.NewSchema()
 	closeCh := make(chan struct{})
@@ -88,8 +92,6 @@ func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	require.NoError(t, failpoint.Disable(fp))
-	fpEnabled = false
 	close(closeCh)
 
 	select {

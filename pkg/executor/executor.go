@@ -1854,7 +1854,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		}
 		e.wg.Done()
 	}()
-	failpoint.Inject("pauseUnionExecResultPuller", func() {})
 	for childID := range e.childIDChan {
 		e.mu.Lock()
 		if childID > e.mu.maxOpenedChildID {
