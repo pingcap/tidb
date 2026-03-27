@@ -440,6 +440,7 @@ func TestString(t *testing.T) {
 		{ActionCreateSchema, "create schema"},
 		{ActionDropSchema, "drop schema"},
 		{ActionCreateTable, "create table"},
+		{ActionCreateMaterializedViewShadow, "create materialized view shadow table"},
 		{ActionDropTable, "drop table"},
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},

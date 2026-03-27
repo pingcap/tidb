@@ -77,6 +77,13 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	}
 }
 
+func TestShouldUseImportIntoForMVRefreshOutOfPlace(t *testing.T) {
+	require.True(t, shouldUseImportIntoForMVRefreshOutOfPlace("TiKV"))
+	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("tikv"))
+	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace(kv.TiDB.Name()))
+	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("mock-storage"))
+}
+
 func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))

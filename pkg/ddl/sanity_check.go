@@ -100,6 +100,8 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 1, nil
 		}
 		return 0, nil
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		return 1, nil
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
@@ -255,6 +257,12 @@ func checkHistoryJobStmtType(jobType model.ActionType, st ast.StmtNode) bool {
 		return ok
 	case model.ActionCreateMaterializedViewLog:
 		_, ok := st.(*ast.CreateMaterializedViewLogStmt)
+		return ok
+	case model.ActionCreateMaterializedViewShadow:
+		_, ok := st.(*ast.RefreshMaterializedViewStmt)
+		return ok
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		_, ok := st.(*ast.RefreshMaterializedViewStmt)
 		return ok
 	case model.ActionCreateSchema:
 		_, ok := st.(*ast.CreateDatabaseStmt)

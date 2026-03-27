@@ -82,6 +82,31 @@ func requireRefreshTiFlashSessionVarsApplied(
 	require.Equal(t, expectedFineGrainedBatchSize, gotFineGrainedBatchSize)
 }
 
+func requireRowsContainAnyPrefix(t *testing.T, rows [][]any, prefixes ...string) {
+	for _, prefix := range prefixes {
+		for _, row := range rows {
+			if len(row) == 0 {
+				continue
+			}
+			if strings.HasPrefix(fmt.Sprintf("%v", row[0]), prefix) {
+				return
+			}
+		}
+	}
+	require.Failf(t, "prefixes not found", "prefixes=%v rows=%v", prefixes, rows)
+}
+
+func joinRowsAsText(rows [][]any) string {
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%v", row[0]))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -149,7 +174,28 @@ func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
 	requireRowsContainPrefix(t, completeRows, "[S08 FINALIZE_HIST]")
 }
 
-func TestMaterializedViewRefreshUsesCurrentSessionMVMaintainMemQuota(t *testing.T) {
+func TestMaterializedViewRefreshOutOfPlaceObserveLoadShadowPlanUsesBuildSQL(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_oop_observe (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_oop_observe values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_oop_observe (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_oop_observe (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_oop_observe group by a")
+	tk.MustExec("insert into t_mv_oop_observe values (2, 3), (3, 4)")
+
+	dryRunRows := tk.MustQuery("refresh materialized view mv_mv_oop_observe complete out of place dry run").Rows()
+	requireRowsContainPrefix(t, dryRunRows, "[S03 OUT_OF_PLACE_LOAD_SHADOW]")
+	requireRowsContainAnyPrefix(t, dryRunRows, "  Insert", "  ImportInto")
+
+	tk.MustExec("insert into t_mv_oop_observe values (4, 8)")
+	profileRows := tk.MustQuery("refresh materialized view mv_mv_oop_observe complete out of place with profile").Rows()
+	requireRowsContainPrefix(t, profileRows, "[S03 OUT_OF_PLACE_LOAD_SHADOW]")
+	requireRowsContainAnyPrefix(t, profileRows, "  Insert", "  ImportInto")
+	require.NotContains(t, joinRowsAsText(profileRows), "@@tidb_last_query_info")
+}
+
+func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -183,6 +229,30 @@ func TestMaterializedViewRefreshUsesCurrentSessionMVMaintainMemQuota(t *testing.
 	require.True(t, applied)
 	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
 	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+
+	buildApplied := false
+	lastBuildAppliedMemQuotaQuery := int64(0)
+	lastBuildAppliedMaintainQuota := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession", func(memQuotaQuery int64, maintainMemQuota int64) {
+		buildApplied = true
+		lastBuildAppliedMemQuotaQuery = memQuotaQuery
+		lastBuildAppliedMaintainQuota = maintainMemQuota
+	})
+
+	tk.MustExec("insert into t_mv_quota_refresh values (3, 30)")
+	tk.MustExec("refresh materialized view mv_mv_quota_refresh complete out of place")
+	require.True(t, buildApplied)
+	require.Equal(t, int64(268435456), lastBuildAppliedMaintainQuota)
+	require.Equal(t, lastBuildAppliedMaintainQuota, lastBuildAppliedMemQuotaQuery)
+
+	buildApplied = false
+	lastBuildAppliedMemQuotaQuery = 0
+	lastBuildAppliedMaintainQuota = 0
+	tk.MustExec("insert into t_mv_quota_refresh values (4, 40)")
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_quota_refresh complete out of place")
+	require.True(t, buildApplied)
+	require.Equal(t, int64(536870912), lastBuildAppliedMaintainQuota)
+	require.Equal(t, lastBuildAppliedMaintainQuota, lastBuildAppliedMemQuotaQuery)
 }
 
 func TestMaterializedViewRefreshManualSQLUsesCurrentSessionTiFlashSessionVars(t *testing.T) {
@@ -323,6 +393,43 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
 	)).Check(testkit.Rows("complete automatically"))
+}
+
+func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_internal_oop_next (a int not null, b int not null)")
+	tk.MustExec("insert into t_internal_oop_next values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_internal_oop_next (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_internal_oop_next (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_oop_next group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_internal_oop_next"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = null where MVIEW_ID = %d", oldMViewID))
+	tk.MustExec("insert into t_internal_oop_next values (3, 30)")
+
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_oop_next complete out of place")
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_internal_oop_next"))
+	require.NoError(t, err)
+	newMViewID := mvTable.Meta().ID
+	require.NotEqual(t, oldMViewID, newMViewID)
+
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).
+		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		newMViewID,
+	)).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		oldMViewID,
+	)).Check(testkit.Rows("complete out of place auto"))
 }
 
 /*
@@ -982,6 +1089,231 @@ func TestMaterializedViewRefreshWithAsyncModeComplete(t *testing.T) {
 	err := tk.ExecToErr("refresh materialized view mv with async mode complete")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "WITH ASYNC MODE is not supported yet")
+}
+
+func TestMaterializedViewRefreshFastOutOfPlaceRejected(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+
+	err := tk.ExecToErr("refresh materialized view mv fast out of place")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "OUT OF PLACE is only supported for COMPLETE")
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+	tk.MustExec("refresh materialized view mv complete out of place")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	newMViewID := mvTable.Meta().ID
+	require.NotEqual(t, oldMViewID, newMViewID)
+
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.Contains(t, baseTable.Meta().MaterializedViewBase.MViewIDs, newMViewID)
+	require.NotContains(t, baseTable.Meta().MaterializedViewBase.MViewIDs, oldMViewID)
+
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).
+		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", newMViewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		oldMViewID,
+	)).Check(testkit.Rows("success complete manually 1 1"))
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+
+	rows := tk.MustQuery("admin show ddl jobs where JOB_TYPE='refresh materialized view complete out-of-place cutover'").Rows()
+	require.NotEmpty(t, rows)
+	jobID := fmt.Sprint(rows[0][0])
+	tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + jobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + jobID + ")) > 0").Check(testkit.Rows("1"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_shadow_guard (a int not null, b int not null)")
+	tk.MustExec("insert into t_shadow_guard values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_shadow_guard (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_shadow_guard (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_shadow_guard group by a")
+	tk.MustExec("insert into t_shadow_guard values (2, 3), (3, 4)")
+
+	const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
+	require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+		}
+	}()
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_shadow_guard complete out of place")
+	}()
+
+	var shadowTableName string
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		shadowTableName = fmt.Sprint(rows[0][0])
+		return shadowTableName != ""
+	}, 30*time.Second, 100*time.Millisecond)
+
+	err := tk.ExecToErr(fmt.Sprintf("insert into `%s` values (9, 9, 9)", shadowTableName))
+	require.ErrorContains(t, err, "not updatable")
+	err = tk.ExecToErr(fmt.Sprintf("alter table `%s` add column x int", shadowTableName))
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view shadow table")
+
+	require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+	enabled = false
+	require.NoError(t, <-refreshDone)
+
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+	tk.MustQuery("select a, s, cnt from mv_shadow_guard order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverWithUnsignedBuildReadTSO(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	// Keep buildReadTSO above MaxInt64 to guard against any signed-int conversion in cutover path.
+	buildReadTSO := (uint64(1) << 63) + 12345
+	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildReadTSO"
+	require.NoError(t, failpoint.Enable(overrideBuildTSFailpoint, fmt.Sprintf(`return("%d")`, buildReadTSO)))
+	defer func() {
+		require.NoError(t, failpoint.Disable(overrideBuildTSFailpoint))
+	}()
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+	tk.MustExec("refresh materialized view mv complete out of place")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	newMViewID := mvTable.Meta().ID
+	require.NotEqual(t, oldMViewID, newMViewID)
+
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).
+		Check(testkit.Rows("0"))
+	persistedTSRows := tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		newMViewID,
+	)).Rows()
+	require.Len(t, persistedTSRows, 1)
+	persistedBuildReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", persistedTSRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, buildReadTSO, persistedBuildReadTSO)
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceBuildFailureCleansShadow(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+	mviewIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv'").Rows()
+	require.Len(t, mviewIDRows, 1)
+	mviewID, err := strconv.ParseInt(fmt.Sprintf("%v", mviewIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	tk.MustExec("create unique index idx_unique_s on mv (s)")
+	tk.MustExec("insert into t values (2, 8)")
+
+	err = tk.ExecToErr("refresh materialized view mv complete out of place")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Duplicate")
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("failed complete manually 1 1"))
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+	// Out-of-place build failure should not modify old MV serving table.
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverCASMismatch(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tkConcurrent := testkit.NewTestKit(t, store)
+	tkConcurrent.MustExec("use test")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func(uint64) {
+		tkConcurrent.MustExec(fmt.Sprintf(
+			"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = LAST_SUCCESS_READ_TSO + 1 where MVIEW_ID = %d",
+			mviewID,
+		))
+	})
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+	err = tk.ExecToErr("refresh materialized view mv complete out of place")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "stale LAST_SUCCESS_READ_TSO")
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	require.Equal(t, mviewID, mvTable.Meta().ID)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("failed complete manually 1 1"))
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+	// Cutover CAS mismatch should keep old MV serving table unchanged.
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }
 
 func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testing.T) {

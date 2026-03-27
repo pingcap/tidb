@@ -419,7 +419,7 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 func CheckMViewUpdatable(
 	sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName, op string,
 ) error {
-	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil {
+	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil && tableInfo.MaterializedViewShadow == nil {
 		return nil
 	}
 

@@ -218,7 +218,7 @@ type CreateTableArgs struct {
 
 func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 	switch job.Type {
-	case ActionCreateTable:
+	case ActionCreateTable, ActionCreateMaterializedViewShadow:
 		return []any{a.TableInfo, a.FKCheck}
 	case ActionCreateView:
 		return []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
@@ -231,7 +231,7 @@ func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 func (a *CreateTableArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
 	switch job.Type {
-	case ActionCreateTable:
+	case ActionCreateTable, ActionCreateMaterializedViewShadow:
 		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck))
 	case ActionCreateView:
 		return errors.Trace(job.decodeArgs(a.TableInfo, &a.OnExistReplace, &a.OldViewTblID))
@@ -779,6 +779,48 @@ func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
 // GetAlterMaterializedViewLogPurgeArgs gets the args for ActionAlterMaterializedViewLogPurge.
 func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPurgeArgs, error) {
 	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
+}
+
+// RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs is the arguments for
+// ActionMViewRefreshOutOfPlaceCutover ddl.
+type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
+	OldMViewID                     int64   `json:"old_mview_id,omitempty"`
+	ShadowTableID                  int64   `json:"shadow_table_id,omitempty"`
+	BuildReadTSO                   uint64  `json:"build_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSO     uint64  `json:"expected_last_success_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSONull bool    `json:"expected_last_success_read_tso_null,omitempty"`
+	NextTime                       *string `json:"next_time,omitempty"`
+	ShouldUpdateNextTime           bool    `json:"should_update_next_time,omitempty"`
+}
+
+func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
+	return []any{
+		a.OldMViewID,
+		a.ShadowTableID,
+		a.BuildReadTSO,
+		a.ExpectedLastSuccessReadTSO,
+		a.ExpectedLastSuccessReadTSONull,
+		a.NextTime,
+		a.ShouldUpdateNextTime,
+	}
+}
+
+func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(
+		&a.OldMViewID,
+		&a.ShadowTableID,
+		&a.BuildReadTSO,
+		&a.ExpectedLastSuccessReadTSO,
+		&a.ExpectedLastSuccessReadTSONull,
+		&a.NextTime,
+		&a.ShouldUpdateNextTime,
+	))
+}
+
+// GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets the args for
+// ActionMViewRefreshOutOfPlaceCutover.
+func GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job *Job) (*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs, error) {
+	return getOrDecodeArgs[*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs](&RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{}, job)
 }
 
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.

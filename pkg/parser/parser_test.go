@@ -5507,14 +5507,23 @@ func TestMaterializedViewStatements(t *testing.T) {
 			true,
 			"REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE WITH PROFILE",
 		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE OUT OF PLACE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DRY RUN",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE OUT OF PLACE DRY RUN",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE WITH PROFILE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE OUT OF PLACE WITH PROFILE",
+		},
 	}
 	RunTest(t, table, false)
-}
-
-func TestRefreshMaterializedViewWithSyncModeSyntax(t *testing.T) {
-	p := parser.New()
-	_, err := p.ParseOneStmt("REFRESH MATERIALIZED VIEW mv WITH SYNC MODE COMPLETE", "", "")
-	require.Error(t, err)
 }
 
 func TestMaterializedViewCreateRefreshOnClauseSyntax(t *testing.T) {

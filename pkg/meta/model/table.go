@@ -170,9 +170,10 @@ type TableInfo struct {
 
 	View *ViewInfo `json:"view"`
 
-	MaterializedViewBase *MaterializedViewBaseInfo `json:"materialized_view_base,omitempty"`
-	MaterializedView     *MaterializedViewInfo     `json:"materialized_view,omitempty"`
-	MaterializedViewLog  *MaterializedViewLogInfo  `json:"materialized_view_log,omitempty"`
+	MaterializedViewBase   *MaterializedViewBaseInfo   `json:"materialized_view_base,omitempty"`
+	MaterializedView       *MaterializedViewInfo       `json:"materialized_view,omitempty"`
+	MaterializedViewShadow *MaterializedViewShadowInfo `json:"materialized_view_shadow,omitempty"`
+	MaterializedViewLog    *MaterializedViewLogInfo    `json:"materialized_view_log,omitempty"`
 
 	Sequence *SequenceInfo `json:"sequence"`
 
@@ -255,6 +256,9 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.MaterializedView != nil {
 		nt.MaterializedView = t.MaterializedView.Clone()
+	}
+	if t.MaterializedViewShadow != nil {
+		nt.MaterializedViewShadow = t.MaterializedViewShadow.Clone()
 	}
 	if t.MaterializedViewLog != nil {
 		nt.MaterializedViewLog = t.MaterializedViewLog.Clone()
@@ -761,6 +765,21 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 	}
 	ni := *i
 	ni.BaseTableIDs = append([]int64(nil), i.BaseTableIDs...)
+	return &ni
+}
+
+// MaterializedViewShadowInfo is stored in TableInfo for an out-of-place refresh shadow table.
+type MaterializedViewShadowInfo struct {
+	// SourceMViewID is the logical MV table ID this protected shadow belongs to.
+	SourceMViewID int64 `json:"source_mview_id"`
+}
+
+// Clone clones MaterializedViewShadowInfo.
+func (i *MaterializedViewShadowInfo) Clone() *MaterializedViewShadowInfo {
+	if i == nil {
+		return nil
+	}
+	ni := *i
 	return &ni
 }
 

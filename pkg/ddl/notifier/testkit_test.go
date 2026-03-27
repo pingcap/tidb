@@ -281,6 +281,64 @@ func TestPubSub(t *testing.T) {
 	}, tps)
 }
 
+func TestMViewRefreshOutOfPlaceCutoverEventPublished(t *testing.T) {
+	var (
+		cutoverEventsMu sync.Mutex
+		cutoverEvents   []*notifier.SchemaChangeEvent
+	)
+	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
+		if c.GetType() != model.ActionMViewRefreshOutOfPlaceCutover {
+			return nil
+		}
+		cutoverEventsMu.Lock()
+		defer cutoverEventsMu.Unlock()
+		cutoverEvents = append(cutoverEvents, c)
+		return nil
+	}
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/domain/afterDDLNotifierCreated",
+		func(registry *notifier.DDLNotifier) {
+			registry.RegisterHandler(notifier.TestHandlerID, handler)
+		},
+	)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (3, 4)")
+	tk.MustExec("refresh materialized view mv complete out of place")
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	newMViewID := mvTable.Meta().ID
+
+	require.Eventually(t, func() bool {
+		cutoverEventsMu.Lock()
+		defer cutoverEventsMu.Unlock()
+		return len(cutoverEvents) == 1
+	}, 5*time.Second, 100*time.Millisecond)
+
+	cutoverEventsMu.Lock()
+	defer cutoverEventsMu.Unlock()
+	newMVInfo, oldMVInfo := cutoverEvents[0].GetMViewRefreshOutOfPlaceCutoverInfo()
+	require.Equal(t, newMViewID, newMVInfo.ID)
+	require.Equal(t, oldMViewID, oldMVInfo.ID)
+	require.Equal(t, "mv", newMVInfo.Name.L)
+	require.Equal(t, "mv", oldMVInfo.Name.L)
+}
+
 func TestPublishEventError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

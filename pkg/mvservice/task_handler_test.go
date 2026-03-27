@@ -1151,9 +1151,14 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	require.NoError(t, gotHandler(context.Background(), nil, alterMLogPurgeEvent))
 	require.Equal(t, int32(4), called.Load())
 
+	outOfPlaceCutoverEvent := &notifier.SchemaChangeEvent{}
+	require.NoError(t, outOfPlaceCutoverEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionMViewRefreshOutOfPlaceCutover))))
+	require.NoError(t, gotHandler(context.Background(), nil, outOfPlaceCutoverEvent))
+	require.Equal(t, int32(5), called.Load())
+
 	dropTableEvent := notifier.NewDropTableEvent(&meta.TableInfo{ID: 4})
 	require.NoError(t, gotHandler(context.Background(), nil, dropTableEvent))
-	require.Equal(t, int32(4), called.Load())
+	require.Equal(t, int32(5), called.Load())
 
 	dropMVTableEvent := notifier.NewDropTableEvent(&meta.TableInfo{
 		ID: 5,
@@ -1162,7 +1167,7 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 		},
 	})
 	require.NoError(t, gotHandler(context.Background(), nil, dropMVTableEvent))
-	require.Equal(t, int32(5), called.Load())
+	require.Equal(t, int32(6), called.Load())
 }
 
 func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {

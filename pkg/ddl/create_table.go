@@ -201,6 +201,65 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	return ver, errors.Trace(err)
 }
 
+func (*worker) onCreateMaterializedViewShadow(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+
+	shadowTblInfo := args.TableInfo
+	if shadowTblInfo == nil || shadowTblInfo.MaterializedViewShadow == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"create materialized view shadow table: invalid shadow metadata",
+		)
+	}
+	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"create materialized view shadow table: shadow table must be a protected physical table",
+		)
+	}
+
+	sourceMViewID := shadowTblInfo.MaterializedViewShadow.SourceMViewID
+	if sourceMViewID == 0 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"create materialized view shadow table: invalid source materialized view id",
+		)
+	}
+	sourceMViewInfo, err := getTableInfo(jobCtx.metaMut, sourceMViewID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	if sourceMViewInfo.MaterializedView == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, sourceMViewInfo.Name, "MATERIALIZED VIEW")
+	}
+	if sourceMViewInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", sourceMViewInfo.State)
+	}
+
+	shadowTblInfo, err = createTable(jobCtx, job, args)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, shadowTblInfo)
+	return ver, nil
+}
+
 func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetCreateMaterializedViewLogArgs(job)
 	if err != nil {
@@ -887,6 +946,19 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 		}
 		failpoint.Return(errors.New("mock create materialized view build error"))
 	})
+
+	method := "insert-into"
+	if storeName == "TiKV" {
+		method = "import-into"
+	}
+	logutil.DDLLogger().Info(
+		"create materialized view: choose init build method",
+		zap.Int64("jobID", job.ID),
+		zap.String("schema", job.SchemaName),
+		zap.String("mview", mvTblInfo.Name.O),
+		zap.String("storeName", storeName),
+		zap.String("method", method),
+	)
 
 	if storeName != "TiKV" {
 		return w.buildCreateMaterializedViewDataByInsert(ctx, job, mvTblInfo)
@@ -2481,6 +2553,7 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	// Do not carry MV/MV LOG/base reverse metadata from the source table.
 	tblInfo.MaterializedViewBase = nil
 	tblInfo.MaterializedView = nil
+	tblInfo.MaterializedViewShadow = nil
 	tblInfo.MaterializedViewLog = nil
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil

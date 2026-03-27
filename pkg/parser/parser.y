@@ -763,6 +763,7 @@ import (
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
+	place                 "PLACE"
 	placement             "PLACEMENT"
 	planCache             "PLAN_CACHE"
 	plan                  "PLAN"
@@ -1446,6 +1447,7 @@ import (
 	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
+	RefreshOutOfPlaceOpt                   "REFRESH MATERIALIZED VIEW OUT OF PLACE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5619,10 +5621,16 @@ PurgeMaterializedViewLogStmt:
 	}
 
 RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt RefreshMaterializedViewType RefreshMaterializedViewObserveOpt
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt RefreshMaterializedViewType RefreshOutOfPlaceOpt RefreshMaterializedViewObserveOpt
 	{
-		observeType := $7.(ast.RefreshMaterializedViewObserveType)
-		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithAsyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType), ObserveType: observeType}
+		observeType := $8.(ast.RefreshMaterializedViewObserveType)
+		$$ = &ast.RefreshMaterializedViewStmt{
+			ViewName:      $4.(*ast.TableName),
+			WithAsyncMode: $5.(bool),
+			Type:          $6.(ast.RefreshMaterializedViewType),
+			OutOfPlace:    $7.(bool),
+			ObserveType:   observeType,
+		}
 	}
 
 RefreshMaterializedViewType:
@@ -5655,6 +5663,16 @@ RefreshWithAsyncModeOpt:
 		$$ = false
 	}
 |	"WITH" "ASYNC" "MODE"
+	{
+		$$ = true
+	}
+
+RefreshOutOfPlaceOpt:
+	/* EMPTY */
+	{
+		$$ = false
+	}
+|	"OUT" "OF" "PLACE"
 	{
 		$$ = true
 	}
@@ -7696,6 +7714,7 @@ NotKeywordToken:
 |	"RECENT"
 |	"REPLAYER"
 |	"RUNNING"
+|	"PLACE"
 |	"PLACEMENT"
 |	"PLAN"
 |	"PLAN_CACHE"

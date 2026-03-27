@@ -492,6 +492,7 @@ var Keywords = []KeywordsType{
 	{"PERCENT", false, "unreserved"},
 	{"PER_DB", false, "unreserved"},
 	{"PER_TABLE", false, "unreserved"},
+	{"PLACE", false, "unreserved"},
 	{"PLUGINS", false, "unreserved"},
 	{"POINT", false, "unreserved"},
 	{"POLICY", false, "unreserved"},

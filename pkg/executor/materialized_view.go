@@ -23,6 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -58,11 +60,15 @@ type RefreshMaterializedViewExec struct {
 }
 
 var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")
+var errMVRefreshAdvisoryLockConflict = errors.NewNoStackError("materialized view refresh advisory lock conflict")
 
 const (
-	purgeHistStatusRunning = "running"
-	purgeHistStatusSuccess = "success"
-	purgeHistStatusFailed  = "failed"
+	purgeHistStatusRunning          = "running"
+	purgeHistStatusSuccess          = "success"
+	purgeHistStatusFailed           = "failed"
+	mvRefreshAdvisoryLockTimeoutSec = int64(1)
+	mvRefreshShadowTablePrefix      = "__mv_shadow_"
+	mvRefreshImportIntoStoreName    = "TiKV"
 )
 
 // PurgeMaterializedViewLogExec executes "PURGE MATERIALIZED VIEW LOG" as a utility-style statement.
@@ -860,7 +866,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
-	stepSet, err := newMVRefreshStepSet(s.Type)
+	stepSet, err := newMVRefreshStepSet(s.Type, s.OutOfPlace)
 	if err != nil {
 		return err
 	}
@@ -898,6 +904,115 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	defer restoreSessVars()
 	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String())
 
+	mviewID = tblInfo.ID
+	advisoryLockName, err := acquireMVRefreshAdvisoryLock(refreshSctx, schemaName, tblInfo)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		releasedCnt := releaseMVRefreshAdvisoryLockFully(refreshSctx, advisoryLockName)
+		if releasedCnt == 1 {
+			return
+		}
+		invariantErr := errors.Errorf(
+			"refresh materialized view: advisory lock cleanup invariant violated (lock=%s released=%d)",
+			advisoryLockName,
+			releasedCnt,
+		)
+		logutil.BgLogger().Error(
+			"refresh materialized view advisory lock cleanup invariant violated",
+			zap.String("schema", schemaName.O),
+			zap.String("mview", tblInfo.Name.O),
+			zap.Int64("schemaID", tblInfo.DBID),
+			zap.Int64("mviewID", mviewID),
+			zap.String("lockName", advisoryLockName),
+			zap.Int("releasedCount", releasedCnt),
+		)
+		if err == nil {
+			err = invariantErr
+			return
+		}
+		err = errors.Annotate(err, invariantErr.Error())
+	}()
+	failpoint.InjectCall("refreshMaterializedViewAfterAcquireAdvisoryLock")
+
+	if s.Type == ast.RefreshMaterializedViewTypeComplete && s.OutOfPlace {
+		expectedLastSuccessReadTSO, expectedLastSuccessReadTSONull, err := readRefreshInfoReadTSO(kctx, sqlExec, mviewID)
+		if err != nil {
+			return err
+		}
+		refreshJobID, err := allocRefreshMaterializedViewJobID(e.Ctx().GetStore())
+		if err != nil {
+			return err
+		}
+		histSctx, err := e.GetSysSession()
+		if err != nil {
+			return err
+		}
+		defer e.ReleaseSysSession(kctx, histSctx)
+		histSQLExec := histSctx.GetSQLExecutor()
+
+		if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
+			return insertRefreshHistRunning(kctx, histSQLExec, refreshJobID, mviewID, refreshMethod)
+		}); err != nil {
+			return err
+		}
+		failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
+		failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
+
+		finalizeFailure := func(refreshErr error) error {
+			refreshErrMsg := refreshErr.Error()
+			histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+				return finalizeRefreshHistWithRetry(
+					finalizeCtx,
+					histSQLExec,
+					refreshJobID,
+					mviewID,
+					refreshHistStatusFailed,
+					nil,
+					nil,
+					&refreshErrMsg,
+				)
+			})
+			if histErr != nil {
+				return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", refreshErr)
+			}
+			return errors.Trace(refreshErr)
+		}
+
+		buildReadTSO, err := e.executeRefreshMaterializedViewCompleteOutOfPlace(
+			kctx,
+			s,
+			refreshSctx,
+			isInternalSQL,
+			schemaName,
+			tblInfo,
+			stepSet,
+			expectedLastSuccessReadTSO,
+			expectedLastSuccessReadTSONull,
+			refreshExecutionVars.maintainMemQuota,
+		)
+		if err != nil {
+			return finalizeFailure(err)
+		}
+		if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+			return finalizeRefreshHistWithRetry(
+				finalizeCtx,
+				histSQLExec,
+				refreshJobID,
+				mviewID,
+				refreshHistStatusSuccess,
+				&buildReadTSO,
+				nil,
+				nil,
+			)
+		}); err != nil {
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+				errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
+			)
+		}
+		return nil
+	}
 	var scheduleEvalSctx sessionctx.Context
 	if isInternalSQL {
 		scheduleEvalSctx, err = e.GetSysSession()
@@ -1108,6 +1223,182 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	return nil
 }
 
+func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutOfPlace(
+	kctx context.Context,
+	s *ast.RefreshMaterializedViewStmt,
+	refreshSctx sessionctx.Context,
+	isInternalSQL bool,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+	stepSet mvRefreshStepSet,
+	expectedLastSuccessReadTSO uint64,
+	expectedLastSuccessReadTSONull bool,
+	targetMaintainMemQuota int64,
+) (buildReadTSO uint64, err error) {
+	buildSctx, err := e.GetSysSession()
+	if err != nil {
+		return 0, err
+	}
+	defer e.ReleaseSysSession(kctx, buildSctx)
+
+	buildSessVars := buildSctx.GetSessionVars()
+	restoreBuildMemQuota, err := applyMVMaintenanceMemQuota(buildSessVars, targetMaintainMemQuota)
+	if err != nil {
+		return 0, err
+	}
+	defer restoreBuildMemQuota()
+	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession", buildSessVars.MemQuotaQuery, targetMaintainMemQuota)
+
+	restoreBuildSessVars, err := initRefreshMaterializedViewSession(buildSessVars, tblInfo.MaterializedView)
+	if err != nil {
+		return 0, err
+	}
+	defer restoreBuildSessVars()
+
+	origInMaterializedViewMaintenance := buildSessVars.InMaterializedViewMaintenance
+	buildSessVars.InMaterializedViewMaintenance = true
+	defer func() {
+		buildSessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+	}()
+
+	if buildSessVars.InTxn() {
+		return 0, errors.New("refresh materialized view complete OUT OF PLACE: build session unexpectedly in transaction")
+	}
+
+	shadowTableName := buildMVRefreshShadowTableName(tblInfo.ID)
+	shadowCreated := false
+	buildSQLExec := buildSctx.GetSQLExecutor()
+	defer func() {
+		if err == nil || !shadowCreated {
+			return
+		}
+		dropShadowSQL := sqlescape.MustEscapeSQL("DROP TABLE IF EXISTS %n.%n", schemaName.O, shadowTableName)
+		if dropErr := executeRefreshMaterializedViewInternalSQL(context.WithoutCancel(kctx), buildSQLExec, dropShadowSQL); dropErr != nil {
+			logutil.BgLogger().Warn(
+				"failed to cleanup shadow table after out-of-place complete refresh error",
+				zap.String("schema", schemaName.O),
+				zap.String("mview", s.ViewName.Name.O),
+				zap.String("shadowTable", shadowTableName),
+				zap.Error(dropErr),
+			)
+			err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+		}
+	}()
+
+	shadowTableInfo, err := buildMVRefreshOutOfPlaceShadowTableInfo(schemaName, shadowTableName, tblInfo)
+	if err != nil {
+		return 0, err
+	}
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceCreateShadow, func() error {
+		if execErr := domain.GetDomain(e.Ctx()).DDLExecutor().CreateMaterializedViewShadowTable(
+			refreshSctx,
+			tblInfo.DBID,
+			schemaName,
+			shadowTableInfo,
+		); execErr != nil {
+			return execErr
+		}
+		shadowCreated = true
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+
+	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterCreateShadow")
+	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {})
+	storeName := e.Ctx().GetStore().Name()
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, func() error {
+		expectedStoreName := mvRefreshImportIntoStoreName
+		caseSensitiveEqual := storeName == expectedStoreName
+		buildMethod := "insert-into"
+		if shouldUseImportIntoForMVRefreshOutOfPlace(storeName) {
+			buildMethod = "import-into"
+		}
+		logutil.BgLogger().Info(
+			"refresh materialized view complete out-of-place: choose shadow build method",
+			zap.String("schema", schemaName.O),
+			zap.String("mview", s.ViewName.Name.O),
+			zap.String("storeName", storeName),
+			zap.String("expectedStoreName", expectedStoreName),
+			zap.Bool("caseSensitiveEqual", caseSensitiveEqual),
+			zap.Bool("caseInsensitiveEqual", strings.EqualFold(storeName, expectedStoreName)),
+			zap.String("method", buildMethod),
+		)
+
+		buildSQL, buildErr := buildMVRefreshOutOfPlaceBuildSQL(schemaName.O, shadowTableName, tblInfo, storeName)
+		if buildErr != nil {
+			return buildErr
+		}
+		if buildErr = executeRefreshMaterializedViewInternalSQL(kctx, buildSQLExec, buildSQL); buildErr != nil {
+			return buildErr
+		}
+		// Capture profile rows for the real shadow-load statement before any follow-up SQL (for example read tso query)
+		// overwrites session statement context.
+		emitMVRefreshStepPlanRows(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, buildSessVars, e.planFormatForObserver)
+		buildReadTSO, buildErr = getMVRefreshOutOfPlaceBuildReadTSO(kctx, buildSQLExec)
+		return buildErr
+	}); err != nil {
+		return 0, err
+	}
+	failpoint.Inject("mockRefreshMaterializedViewOutOfPlaceBuildReadTSO", func(val failpoint.Value) {
+		s, ok := val.(string)
+		if !ok {
+			return
+		}
+		overrideTSO, parseErr := strconv.ParseUint(s, 10, 64)
+		if parseErr == nil && overrideTSO > 0 {
+			buildReadTSO = overrideTSO
+		}
+	})
+	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", buildReadTSO)
+	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func() {})
+	var shadowTableID int64
+	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceCutover, func() error {
+		var lookupErr error
+		shadowTableID, lookupErr = getMVRefreshOutOfPlaceShadowTableID(kctx, buildSctx, schemaName, shadowTableName)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		var nextTime *string
+		var shouldUpdateNextTime bool
+		if isInternalSQL {
+			scheduleEvalSctx, scheduleErr := e.GetSysSession()
+			if scheduleErr != nil {
+				return scheduleErr
+			}
+			defer e.ReleaseSysSession(kctx, scheduleEvalSctx)
+			nextTime, shouldUpdateNextTime, scheduleErr = deriveRuntimeMaterializedScheduleNextTime(
+				kctx,
+				scheduleEvalSctx,
+				refreshSctx,
+				tblInfo.MaterializedView.RefreshStartWith,
+				tblInfo.MaterializedView.RefreshNext,
+				isInternalSQL,
+				tblInfo.MaterializedView.DefinitionSQLMode,
+			)
+			if scheduleErr != nil {
+				return scheduleErr
+			}
+		}
+		return domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+			e.Ctx(),
+			tblInfo.DBID,
+			schemaName,
+			s.ViewName.Name,
+			tblInfo.ID,
+			shadowTableID,
+			buildReadTSO,
+			expectedLastSuccessReadTSO,
+			expectedLastSuccessReadTSONull,
+			nextTime,
+			shouldUpdateNextTime,
+		)
+	}); err != nil {
+		return 0, err
+	}
+	return buildReadTSO, nil
+}
+
 func applyMVMaintenanceMemQuota(sessVars *variable.SessionVars, targetMemQuota int64) (func(), error) {
 	if sessVars == nil {
 		return nil, errors.New("mv maintenance: session vars is nil")
@@ -1229,6 +1520,105 @@ func restoreRefreshExecutionSessionVars(sessVars *variable.SessionVars, origin, 
 	}
 }
 
+func buildMVRefreshShadowTableName(mviewID int64) string {
+	return fmt.Sprintf("%s%d_%d", mvRefreshShadowTablePrefix, mviewID, time.Now().UnixNano())
+}
+
+func buildMVRefreshOutOfPlaceShadowTableInfo(
+	schemaName pmodel.CIStr,
+	shadowTableName string,
+	tblInfo *model.TableInfo,
+) (*model.TableInfo, error) {
+	if tblInfo == nil || tblInfo.MaterializedView == nil {
+		return nil, errors.New("refresh materialized view complete OUT OF PLACE: invalid materialized view metadata")
+	}
+	shadowTableInfo, err := ddl.BuildTableInfoWithLike(
+		ast.Ident{Schema: schemaName, Name: pmodel.NewCIStr(shadowTableName)},
+		tblInfo,
+		&ast.CreateTableStmt{},
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	shadowTableInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: tblInfo.ID}
+	return shadowTableInfo, nil
+}
+
+func buildMVRefreshOutOfPlaceBuildSQL(
+	schemaName string,
+	shadowTableName string,
+	tblInfo *model.TableInfo,
+	storeName string,
+) (string, error) {
+	if tblInfo.MaterializedView == nil || len(tblInfo.MaterializedView.SQLContent) == 0 {
+		return "", errors.New("refresh materialized view: invalid select sql")
+	}
+	selectSQL := tblInfo.MaterializedView.SQLContent
+	if shouldUseImportIntoForMVRefreshOutOfPlace(storeName) {
+		prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, shadowTableName)
+		return prefix + "(" + selectSQL + ") WITH disable_precheck", nil
+	}
+	prefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName, shadowTableName)
+	return prefix + selectSQL, nil
+}
+
+func shouldUseImportIntoForMVRefreshOutOfPlace(storeName string) bool {
+	return storeName == mvRefreshImportIntoStoreName
+}
+
+func getMVRefreshOutOfPlaceBuildReadTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+) (uint64, error) {
+	rs, err := sqlExec.ExecuteInternal(
+		kctx,
+		"SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if rs == nil {
+		return 0, errors.New("refresh materialized view complete OUT OF PLACE: cannot fetch build read tso")
+	}
+	rows, drainErr := sqlexec.DrainRecordSet(kctx, rs, 1)
+	closeErr := rs.Close()
+	if drainErr != nil {
+		return 0, errors.Trace(drainErr)
+	}
+	if closeErr != nil {
+		return 0, errors.Trace(closeErr)
+	}
+	if len(rows) == 0 {
+		return 0, errors.New("refresh materialized view complete OUT OF PLACE: cannot fetch build read tso")
+	}
+	buildReadTSO := rows[0].GetUint64(0)
+	if buildReadTSO == 0 {
+		return 0, errors.New("refresh materialized view complete OUT OF PLACE: invalid build read tso")
+	}
+	return buildReadTSO, nil
+}
+
+func getMVRefreshOutOfPlaceShadowTableID(
+	kctx context.Context,
+	sctx sessionctx.Context,
+	schemaName pmodel.CIStr,
+	shadowTableName string,
+) (int64, error) {
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	shadowTbl, err := is.TableByName(kctx, schemaName, pmodel.NewCIStr(shadowTableName))
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, errors.New("refresh materialized view complete OUT OF PLACE: cannot resolve shadow table id")
+		}
+		return 0, errors.Trace(err)
+	}
+	shadowTableID := shadowTbl.Meta().ID
+	if shadowTableID == 0 {
+		return 0, errors.New("refresh materialized view complete OUT OF PLACE: invalid shadow table id")
+	}
+	return shadowTableID, nil
+}
+
 func initRefreshMaterializedViewSession(
 	sessVars *variable.SessionVars,
 	mviewInfo *model.MaterializedViewInfo,
@@ -1288,6 +1678,9 @@ func refreshErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (string, error) {
 	if s == nil || s.ViewName == nil {
 		return "", errors.New("refresh materialized view: missing view name")
+	}
+	if s.OutOfPlace && s.Type != ast.RefreshMaterializedViewTypeComplete {
+		return "", errors.New("refresh materialized view: OUT OF PLACE is only supported for COMPLETE")
 	}
 	methodType := ""
 	switch s.Type {
@@ -1379,6 +1772,42 @@ func lockRefreshInfoRow(
 	return lockedReadTSO, lockedReadTSONull, nil
 }
 
+func buildMVRefreshAdvisoryLockName(schemaID int64, mviewID int64) string {
+	return fmt.Sprintf("mv_refresh_%d_%d", schemaID, mviewID)
+}
+
+func acquireMVRefreshAdvisoryLock(
+	refreshSctx sessionctx.Context,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+) (string, error) {
+	lockName := buildMVRefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
+	if err := refreshSctx.GetAdvisoryLock(lockName, mvRefreshAdvisoryLockTimeoutSec); err != nil {
+		if isMVRefreshAdvisoryLockConflict(err) {
+			return lockName, errors.Annotatef(
+				errMVRefreshAdvisoryLockConflict,
+				"another refresh is running for materialized view %s.%s, please retry later",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+		return lockName, errors.Trace(err)
+	}
+	return lockName, nil
+}
+
+func isMVRefreshAdvisoryLockConflict(err error) bool {
+	return err != nil && storeerr.ErrLockWaitTimeout.Equal(err)
+}
+
+func releaseMVRefreshAdvisoryLockFully(refreshSctx sessionctx.Context, lockName string) int {
+	releasedCnt := 0
+	for refreshSctx.ReleaseAdvisoryLock(lockName) {
+		releasedCnt++
+	}
+	return releasedCnt
+}
+
 func readRefreshInfoReadTSO(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
@@ -1439,49 +1868,100 @@ func executeRefreshMaterializedViewDataChanges(
 
 	switch s.Type {
 	case ast.RefreshMaterializedViewTypeComplete:
-		deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM %n.%n", schemaName.O, s.ViewName.Name.O)
-		insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, s.ViewName.Name.O)
-		/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
-		insertSQL := insertPrefix + tblInfo.MaterializedView.SQLContent
-		if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDelete, func() error {
-			_, deleteErr := sqlExec.ExecuteInternal(kctx, deleteSQL)
-			return deleteErr
-		}); err != nil {
-			return err
+		if s.OutOfPlace {
+			return errors.New("refresh materialized view: complete OUT OF PLACE should use dedicated execution path")
 		}
-		emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteDelete, sessVars, explainFormat)
-
-		if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteInsert, func() error {
-			_, insertErr := sqlExec.ExecuteInternal(kctx, insertSQL)
-			return insertErr
-		}); err != nil {
-			return err
-		}
-		emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteInsert, sessVars, explainFormat)
-		return nil
+		return executeRefreshMaterializedViewCompleteInPlace(
+			kctx,
+			sqlExec,
+			sessVars,
+			s,
+			schemaName,
+			tblInfo,
+			stepSet,
+			stepObserver,
+			explainFormat,
+		)
 	case ast.RefreshMaterializedViewTypeFast:
-		implementStmt := &ast.RefreshMaterializedViewImplementStmt{
-			RefreshStmt:                  s,
-			LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
-		}
-		if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeFastMerge, func() error {
-			return executeFastRefreshImplementStmt(kctx, sqlExec, sessVars, implementStmt)
-		}); err != nil {
-			return err
-		}
-		emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeFastMerge, sessVars, explainFormat)
-		return nil
+		return executeRefreshMaterializedViewFast(
+			kctx,
+			sqlExec,
+			sessVars,
+			s,
+			lastSuccessfulRefreshReadTSO,
+			stepSet,
+			stepObserver,
+			explainFormat,
+		)
 	default:
 		return errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}
 }
 
-func executeFastRefreshImplementStmt(
+func executeRefreshMaterializedViewCompleteInPlace(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,
-	implementStmt *ast.RefreshMaterializedViewImplementStmt,
+	s *ast.RefreshMaterializedViewStmt,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+	stepSet mvRefreshStepSet,
+	stepObserver mvRefreshStepObserver,
+	explainFormat string,
 ) error {
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM %n.%n", schemaName.O, s.ViewName.Name.O)
+	insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, s.ViewName.Name.O)
+	/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
+	insertSQL := insertPrefix + tblInfo.MaterializedView.SQLContent
+	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDelete, func() error {
+		_, deleteErr := sqlExec.ExecuteInternal(kctx, deleteSQL)
+		return deleteErr
+	}); err != nil {
+		return err
+	}
+	emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteDelete, sessVars, explainFormat)
+
+	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteInsert, func() error {
+		_, insertErr := sqlExec.ExecuteInternal(kctx, insertSQL)
+		return insertErr
+	}); err != nil {
+		return err
+	}
+	emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteInsert, sessVars, explainFormat)
+	return nil
+}
+
+func executeRefreshMaterializedViewFast(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sessVars *variable.SessionVars,
+	s *ast.RefreshMaterializedViewStmt,
+	lastSuccessfulRefreshReadTSO uint64,
+	stepSet mvRefreshStepSet,
+	stepObserver mvRefreshStepObserver,
+	explainFormat string,
+) error {
+	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeFastMerge, func() error {
+		return executeRefreshMaterializedViewFastImpl(kctx, sqlExec, sessVars, s, lastSuccessfulRefreshReadTSO)
+	}); err != nil {
+		return err
+	}
+	emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeFastMerge, sessVars, explainFormat)
+	return nil
+}
+
+func executeRefreshMaterializedViewFastImpl(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sessVars *variable.SessionVars,
+	s *ast.RefreshMaterializedViewStmt,
+	lastSuccessfulRefreshReadTSO uint64,
+) error {
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt:                  s,
+		LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
+	}
+
 	if internalExec, ok := sqlExec.(interface {
 		ExecuteInternalStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	}); ok {
@@ -1519,6 +1999,16 @@ func drainAndCloseRefreshRecordSet(
 	return execErr
 }
 
+func executeRefreshMaterializedViewInternalSQL(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sql string,
+	args ...any,
+) error {
+	rs, err := sqlExec.ExecuteInternal(kctx, sql, args...)
+	return drainAndCloseRefreshRecordSet(kctx, rs, err)
+}
+
 func drainRefreshRecordSet(kctx context.Context, rs sqlexec.RecordSet) error {
 	chk := rs.NewChunk(nil)
 	for {
@@ -1530,6 +2020,20 @@ func drainRefreshRecordSet(kctx context.Context, rs sqlexec.RecordSet) error {
 			return nil
 		}
 	}
+}
+
+func allocRefreshMaterializedViewJobID(store kv.Storage) (uint64, error) {
+	if store == nil {
+		return 0, errors.New("refresh materialized view: invalid store")
+	}
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if ver.Ver == 0 {
+		return 0, errors.New("refresh materialized view: invalid refresh job id")
+	}
+	return ver.Ver, nil
 }
 
 func getRefreshReadTSOForSuccess(sessVars *variable.SessionVars) (uint64, error) {

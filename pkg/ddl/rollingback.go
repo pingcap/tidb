@@ -675,11 +675,14 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionTruncateTablePartition:
 		ver, err = rollingbackTruncateTablePartition(jobCtx, job)
+	case model.ActionCreateMaterializedViewShadow:
+		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate, model.ActionAlterMaterializedViewRefresh,
 		model.ActionAlterMaterializedViewAttributes,
 		model.ActionAlterMaterializedViewLogPurge,
+		model.ActionMViewRefreshOutOfPlaceCutover,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIDCache, model.ActionAlterIndexVisibility,
 		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:
