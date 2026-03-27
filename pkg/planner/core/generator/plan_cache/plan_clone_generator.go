@@ -240,7 +240,7 @@ type codeGen struct {
 }
 
 func (c *codeGen) write(format string, args ...any) {
-	c.buffer.WriteString(fmt.Sprintf(format, args...))
+	fmt.Fprintf(&c.buffer, format, args...)
 	c.buffer.WriteString("\n")
 }
 
