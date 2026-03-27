@@ -649,6 +649,239 @@ func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
 	}
 }
 
+func TestBuildMinMaxNullableWithoutCountExpr(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(210)
+	mlogID := int64(220)
+	mvID := int64(230)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_minmax_nullable_no_count_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "mx", 2, mysql.TypeLong),
+			mkCol(4, "mn", 3, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mvmerge.AggMax:
+			requireDependencies(t, ai, []int{1, 2, 3, 4})
+		case mvmerge.AggMin:
+			requireDependencies(t, ai, []int{5, 6, 7, 8})
+		}
+	}
+}
+
+func TestBuildSumNullableWithDuplicateCountExpr(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(211)
+	mlogID := int64(221)
+	mvID := int64(231)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_sum_nullable_dup_count_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b1", 2, mysql.TypeLonglong),
+			mkCol(4, "cnt_b2", 3, mysql.TypeLonglong),
+			mkCol(5, "s", 4, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), count(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mvmerge.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			if ai.MVOffset == 2 {
+				requireDependencies(t, ai, []int{1})
+			} else {
+				require.Equal(t, 3, ai.MVOffset)
+				requireDependencies(t, ai, []int{2})
+			}
+		case mvmerge.AggSum:
+			requireDependencies(t, ai, []int{3, 6})
+		}
+	}
+}
+
+func TestBuildMinMaxNullableWithDuplicateCountExpr(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(212)
+	mlogID := int64(222)
+	mvID := int64(232)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_minmax_nullable_dup_count_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b1", 2, mysql.TypeLonglong),
+			mkCol(4, "cnt_b2", 3, mysql.TypeLonglong),
+			mkCol(5, "mx", 4, mysql.TypeLong),
+			mkCol(6, "mn", 5, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), count(b), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mvmerge.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			if ai.MVOffset == 2 {
+				requireDependencies(t, ai, []int{1})
+			} else {
+				require.Equal(t, 3, ai.MVOffset)
+				requireDependencies(t, ai, []int{2})
+			}
+		case mvmerge.AggMax:
+			requireDependencies(t, ai, []int{3, 4, 5, 6, 13})
+		case mvmerge.AggMin:
+			requireDependencies(t, ai, []int{7, 8, 9, 10, 13})
+		}
+	}
+}
+
 func TestBuildSumWithoutCountExpr(t *testing.T) {
 	sctx := core.MockContext()
 

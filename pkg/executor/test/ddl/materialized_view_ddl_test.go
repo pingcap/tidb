@@ -156,11 +156,17 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_where (a, c) as select a, count(1) from t where rand() > 0 group by a")
 	require.ErrorContains(t, err, "WHERE clause must be deterministic")
 
-	// SUM/MIN/MAX currently require NOT NULL argument columns.
+	// SUM on nullable columns requires matching COUNT(column); MIN/MAX does not.
 	tk.MustExec("create table t_sum_nullable (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_sum_nullable (a, b) purge next date_add(now(), interval 1 hour)")
 	err = tk.ExecToErr("create materialized view mv_bad_sum_nullable (a, s, c) as select a, sum(b), count(1) from t_sum_nullable group by a")
-	require.ErrorContains(t, err, "only supports SUM/MIN/MAX on NOT NULL column")
+	require.ErrorContains(t, err, "requires matching COUNT")
+	tk.MustExec("create materialized view mv_sum_nullable (a, s, cnt_b, c) as select a, sum(b), count(b), count(1) from t_sum_nullable group by a")
+	tk.MustExec("create materialized view mv_sum_nullable_dup_cnt (a, s, cnt_b1, cnt_b2, c) as select a, sum(b), count(b) as cnt_b1, count(b) as cnt_b2, count(1) from t_sum_nullable group by a")
+
+	tk.MustExec("create table t_minmax_nullable (a int not null, b int, index idx_ab(a, b))")
+	tk.MustExec("create materialized view log on t_minmax_nullable (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_minmax_nullable (a, minb, maxb, c) as select a, min(b), max(b), count(1) from t_minmax_nullable group by a")
 
 	// SUM does not support time or duration columns.
 	tk.MustExec("create table t_sum_time (a int not null, d date not null default '2020-01-01', dt datetime not null default '2020-01-01 00:00:00', ts timestamp not null default '2020-01-01 00:00:00', dur time not null default '00:00:00')")
@@ -276,7 +282,10 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_upper_agg")
 	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
+	tk.MustExec("drop materialized view mv_sum_nullable")
+	tk.MustExec("drop materialized view mv_sum_nullable_dup_cnt")
 	tk.MustExec("drop materialized view mv_minmax_ok")
+	tk.MustExec("drop materialized view mv_minmax_nullable")
 	tk.MustExec("drop materialized view mv_presplit")
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
@@ -284,6 +293,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view log on t_sum_time")
 	tk.MustExec("drop materialized view log on t_minmax_bad")
 	tk.MustExec("drop materialized view log on t_minmax_ok")
+	tk.MustExec("drop materialized view log on t_minmax_nullable")
 	tk.MustExec("drop materialized view log on t_presplit")
 	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 

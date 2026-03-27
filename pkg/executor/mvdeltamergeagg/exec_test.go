@@ -1457,8 +1457,9 @@ func TestMinMaxFallbackToCountStarWithoutFinalCountDependency(t *testing.T) {
 	require.True(t, maxCol.IsNull(0))
 }
 
-func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
+func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	sctx := mock.NewContext()
+	sctx.GetSessionVars().ExecutorConcurrency = 1
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{
 		ftInt, // [0] delta_count(*)
@@ -1470,7 +1471,16 @@ func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		ftInt, // [6] mv_count(*)
 		ftInt, // [7] mv_max(v)
 	}
-	src := newMockSource(sctx, fts, nil)
+	chk := chunk.NewChunkWithCapacity(fts, 1)
+	chk.AppendInt64(0, 0)
+	chk.AppendNull(1)
+	chk.AppendInt64(2, 0)
+	chk.AppendInt64(3, 10)
+	chk.AppendInt64(4, 1)
+	chk.AppendInt64(5, 1)
+	chk.AppendInt64(6, 3)
+	chk.AppendInt64(7, 10)
+	src := newMockSource(sctx, fts, []*chunk.Chunk{chk})
 
 	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	require.NoError(t, err)
@@ -1478,6 +1488,21 @@ func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	maxArg := &expression.Column{Index: 1, RetType: ftInt}
 	maxDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncMax, []expression.Expression{maxArg}, false)
 	require.NoError(t, err)
+
+	keyDatum := new(types.Datum)
+	keyCol := &expression.CorrelatedColumn{
+		Column: expression.Column{Index: 0, RetType: ftInt},
+		Data:   keyDatum,
+	}
+	recomputeExec := &mockSingleRowRecomputeExec{
+		BaseExecutor: exec.NewBaseExecutor(
+			sctx,
+			expression.NewSchema(&expression.Column{Index: 0, RetType: ftInt}),
+			0,
+		),
+		keyCols: []*expression.CorrelatedColumn{keyCol},
+		values:  map[int64]int64{},
+	}
 
 	mergeExec := &Exec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
@@ -1488,8 +1513,15 @@ func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 				ColID:           []int{7},
 				DependencyColID: []int{1, 2, 3, 4},
 				MinMaxRecompute: &MinMaxRecomputeSpec{
-					Strategy:            MinMaxRecomputeBatch,
-					BatchResultColIdxes: []int{1},
+					Strategy: MinMaxRecomputeSingleRow,
+					SingleRow: &MinMaxRecomputeSingleRowExec{
+						Workers: []MinMaxRecomputeSingleRowWorker{
+							{
+								KeyCols: []*expression.CorrelatedColumn{keyCol},
+								Exec:    recomputeExec,
+							},
+						},
+					},
 				},
 			},
 		},
@@ -1497,11 +1529,25 @@ func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
 			KeyInputColIDs: []int{5},
-			BatchBuilder:   &mockBatchRecomputeBuilder{},
 		},
 	}
-	err = mergeExec.Open(context.Background())
-	require.ErrorContains(t, err, "max(nullable expr) requires final-count dependency")
+	writer := &collectWriter{}
+	mergeExec.Writer = writer
+
+	require.NoError(t, mergeExec.Open(context.Background()))
+	outChk := exec.NewFirstChunk(mergeExec)
+	require.NoError(t, mergeExec.Next(context.Background(), outChk))
+	require.NoError(t, mergeExec.Close())
+
+	require.Equal(t, 1, recomputeExec.calls)
+	require.Len(t, writer.results, 1)
+	res := writer.results[0]
+	require.Len(t, res.RowOps, 1)
+	require.Equal(t, RowOpUpdate, res.RowOps[0].Tp)
+
+	maxCol := res.ComputedCols[7]
+	require.NotNil(t, maxCol)
+	require.True(t, maxCol.IsNull(0))
 }
 
 func TestRejectMinMaxFinalCountForNonNullableExpr(t *testing.T) {

@@ -405,6 +405,45 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	))
 }
 
+func TestMaterializedViewRefreshFastNullableAggregatesWithDuplicateCountExpr(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mv_fast_nullable_dup_count (a int not null, b int, key idx_ab(a, b))")
+	tk.MustExec("create materialized view log on t_mv_fast_nullable_dup_count (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec(`create materialized view mv_fast_nullable_dup_count (a, cnt, cnt_b1, cnt_b2, s, mx, mn)
+		refresh fast as
+		select a, count(1), count(b) as cnt_b1, count(b) as cnt_b2, sum(b), max(b), min(b)
+		from t_mv_fast_nullable_dup_count
+		group by a`)
+
+	tk.MustExec("insert into t_mv_fast_nullable_dup_count values (1, 10), (1, null), (1, 5), (2, null)")
+	tk.MustExec("refresh materialized view mv_fast_nullable_dup_count complete")
+	tk.MustQuery("select a, cnt, cnt_b1, cnt_b2, s, mx, mn from mv_fast_nullable_dup_count order by a").Check(testkit.Rows(
+		"1 3 2 2 15 10 5",
+		"2 1 0 0 <nil> <nil> <nil>",
+	))
+
+	tk.MustExec("delete from t_mv_fast_nullable_dup_count where a = 1 and b = 10")
+	tk.MustExec("insert into t_mv_fast_nullable_dup_count values (1, 20), (1, null), (2, 7), (3, null), (3, 4)")
+	tk.MustExec("refresh materialized view mv_fast_nullable_dup_count fast")
+	tk.MustQuery("select a, cnt, cnt_b1, cnt_b2, s, mx, mn from mv_fast_nullable_dup_count order by a").Check(testkit.Rows(
+		"1 4 2 2 25 20 5",
+		"2 2 1 1 7 7 7",
+		"3 2 1 1 4 4 4",
+	))
+
+	tk.MustExec("delete from t_mv_fast_nullable_dup_count where a = 1 and b in (5, 20)")
+	tk.MustExec("delete from t_mv_fast_nullable_dup_count where a = 2 and b = 7")
+	tk.MustExec("refresh materialized view mv_fast_nullable_dup_count fast")
+	tk.MustQuery("select a, cnt, cnt_b1, cnt_b2, s, mx, mn from mv_fast_nullable_dup_count order by a").Check(testkit.Rows(
+		"1 2 0 0 <nil> <nil> <nil>",
+		"2 1 0 0 <nil> <nil> <nil>",
+		"3 2 1 1 4 4 4",
+	))
+}
+
 func TestMaterializedViewRefreshFastMinMaxWhereSeparateIndexes(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
