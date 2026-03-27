@@ -1642,15 +1642,15 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		)
 		childCols := colsToStr(fkRecord.Cols)
 		parentCols := colsToStr(fkRecord.RefCols)
-		addSQL.WriteString(fmt.Sprintf(alterTableAddForeignKeyFormat, childCols, parentCols))
+		fmt.Fprintf(&addSQL, alterTableAddForeignKeyFormat, childCols, parentCols)
 		addArgs = append(addArgs,
 			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
 		)
 		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
-			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
+			fmt.Fprintf(&addSQL, " ON DELETE %s", onDelete.String())
 		}
 		if onUpdate := ast.ReferOptionType(fkRecord.OnUpdate); onUpdate != ast.ReferOptionNoOption {
-			addSQL.WriteString(fmt.Sprintf(" ON UPDATE %s", onUpdate.String()))
+			fmt.Fprintf(&addSQL, " ON UPDATE %s", onUpdate.String())
 		}
 		fkSqls = append(fkSqls, checkpoint.CheckpointForeignKeyUpdateSQL{
 			FKID:       fkRecord.ID,
@@ -1670,15 +1670,15 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addArgs []any = make([]any, 0, 5+len(info.ColumnArgs))
 		)
 		if info.IsPrimary {
-			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
+			fmt.Fprintf(&addSQL, alterTableAddPrimaryFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
-			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
+			fmt.Fprintf(&addSQL, alterTableAddUniqueIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
-			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
+			fmt.Fprintf(&addSQL, alterTableAddIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
