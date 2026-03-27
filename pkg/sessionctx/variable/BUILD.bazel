@@ -38,7 +38,6 @@ go_library(
         "//pkg/resourcegroup",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",

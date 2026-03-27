@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/privilege"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // calculateConnectionLimit gets the limit of connection.
@@ -39,7 +39,7 @@ func calculateConnectionLimit(globalLimit uint32, userLimit uint32) uint32 {
 func (cc *clientConn) increaseUserConnectionsCount() error {
 	user := cc.ctx.GetSessionVars().User
 	targetUser := user.String()
-	globalLimit := vardef.MaxUserConnectionsValue.Load()
+	globalLimit := variable.MaxUserConnectionsValue.Load()
 
 	pm := privilege.GetPrivilegeManager(cc.ctx.Session)
 	userLimit, err := pm.GetUserResources(user.AuthUsername, user.AuthHostname)

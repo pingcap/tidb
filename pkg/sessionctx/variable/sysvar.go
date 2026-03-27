@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/pkg/util"
@@ -1023,12 +1022,12 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxUserConnectionsLimit,
+	{Scope: ScopeGlobal, Name: MaxUserConnections, Value: strconv.FormatUint(DefMaxUserConnections, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: MaxUserConnectionsLimit,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			vardef.MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, vardef.DefMaxUserConnections)))
+			MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, DefMaxUserConnections)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatUint(uint64(vardef.MaxUserConnectionsValue.Load()), 10), nil
+			return strconv.FormatUint(uint64(MaxUserConnectionsValue.Load()), 10), nil
 		},
 	},
 	// variable for top SQL feature.
