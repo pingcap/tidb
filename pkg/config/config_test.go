@@ -924,6 +924,9 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
+	require.Equal(t, 1.34, conf.RUV2.RUScale)
+	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
+
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
 	if kerneltype.IsNextGen() {
