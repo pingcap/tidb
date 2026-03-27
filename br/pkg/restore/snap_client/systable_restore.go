@@ -536,11 +536,17 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// skip when the backed up mysql.user table is missing columns.
+				// mysql.user may gain new columns in newer TiDB versions. In that case the
+				// schemas are still logically compatible, but loading the backed-up data
+				// directly into the temporary table with the newer schema can fail checksum
+				// validation because the upstream snapshot does not contain the new column.
+				// Fall back to non-physical loading for mysql.user when the backup is
+				// missing target columns.
 				if backupTi.Name.L == sysUserTableName {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					canLoadSysTablePhysical = false
 					continue
 				}
 				log.Error("missing column in backup data",
