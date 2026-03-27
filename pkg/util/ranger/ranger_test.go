@@ -1983,6 +1983,62 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		require.NotNil(t, res.Ranges[3].Collators[1])
 	})
 
+	t.Run("appending to point-plus-tail ranges does not corrupt peer ranges", func(t *testing.T) {
+		binaryCollator := collate.GetBinaryCollator()
+		pointRanges := ranger.Ranges{
+			{
+				LowVal:     []types.Datum{types.NewIntDatum(10)},
+				HighVal:    []types.Datum{types.NewIntDatum(10)},
+				Collators:  []collate.Collator{binaryCollator},
+				LowExclude: false,
+			},
+			{
+				LowVal:     []types.Datum{types.NewIntDatum(20)},
+				HighVal:    []types.Datum{types.NewIntDatum(20)},
+				Collators:  []collate.Collator{binaryCollator},
+				LowExclude: false,
+			},
+		}
+		tailRanges := ranger.Ranges{
+			{
+				LowVal:      []types.Datum{types.NewIntDatum(40), types.NewIntDatum(70)},
+				HighVal:     []types.Datum{types.NewIntDatum(40), types.NewIntDatum(80)},
+				Collators:   []collate.Collator{binaryCollator, binaryCollator},
+				LowExclude:  false,
+				HighExclude: false,
+			},
+			{
+				LowVal:      []types.Datum{types.NewIntDatum(50), types.NewIntDatum(70)},
+				HighVal:     []types.Datum{types.NewIntDatum(50), types.NewIntDatum(80)},
+				Collators:   []collate.Collator{binaryCollator, binaryCollator},
+				LowExclude:  false,
+				HighExclude: false,
+			},
+		}
+
+		appended, rangeFallback := ranger.AppendRanges2PointRanges(pointRanges, tailRanges, 0)
+		require.False(t, rangeFallback)
+		require.Len(t, appended, 4)
+		require.Equal(t, "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]", fmt.Sprintf("%v", appended))
+
+		peer := appended[1].Clone()
+		anotherPeer := appended[2].Clone()
+		appended[0].LowVal = append(appended[0].LowVal, types.NewIntDatum(999))
+		appended[0].HighVal = append(appended[0].HighVal, types.NewIntDatum(999))
+		appended[0].Collators = append(appended[0].Collators, nil)
+
+		require.Equal(t, peer.LowVal, appended[1].LowVal)
+		require.Equal(t, peer.HighVal, appended[1].HighVal)
+		require.NotNil(t, appended[1].Collators[0])
+		require.NotNil(t, appended[1].Collators[1])
+		require.NotNil(t, appended[1].Collators[2])
+		require.Equal(t, anotherPeer.LowVal, appended[2].LowVal)
+		require.Equal(t, anotherPeer.HighVal, appended[2].HighVal)
+		require.NotNil(t, appended[2].Collators[0])
+		require.NotNil(t, appended[2].Collators[1])
+		require.NotNil(t, appended[2].Collators[2])
+	})
+
 	quota := res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2282,6 +2338,24 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
 	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, true)
+
+	t.Run("same-type IN values keep exact point ranges", func(t *testing.T) {
+		sql = "select * from t where b in (10,20,30)"
+		selection = getSelectionFromQuery(t, sctx, sql)
+		conds = selection.Conditions
+		require.Equal(t, 1, len(conds))
+		colb := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[1])
+		conds, filters = ranger.DetachCondsForColumn(rctx, conds, colb)
+		require.Equal(t, 1, len(conds))
+		require.Equal(t, 0, len(filters))
+		ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, colb.RetType, types.UnspecifiedLength, 0)
+		require.NoError(t, err)
+		require.Equal(t, "[[10,10] [20,20] [30,30]]", fmt.Sprintf("%v", ranges))
+		require.Equal(t, "[in(test.t.b, 10, 20, 30)]", expression.StringifyExpressionsWithCtx(ectx, access))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
+		checkRangeFallbackAndReset(t, sctx, false)
+	})
+
 	sql = "select * from t where b in (10,20,30)"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions

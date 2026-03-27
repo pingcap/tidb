@@ -40,7 +40,41 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
+// supportsValueEqualsIntervalFastPath reports whether Datum.Equals is strong
+// enough to prove that two endpoints will encode to the same interval boundary.
+// This lets validInterval skip codec.EncodeKey for exact-equality point ranges on
+// common scalar kinds without changing ordering semantics.
+func supportsValueEqualsIntervalFastPath(d types.Datum) bool {
+	switch d.Kind() {
+	case types.KindNull,
+		types.KindInt64,
+		types.KindUint64,
+		types.KindFloat32,
+		types.KindFloat64,
+		types.KindString,
+		types.KindBytes,
+		types.KindBinaryLiteral,
+		types.KindMysqlDecimal,
+		types.KindMysqlDuration,
+		types.KindMysqlEnum,
+		types.KindMysqlBit,
+		types.KindMysqlSet,
+		types.KindMysqlTime,
+		types.KindMinNotNull,
+		types.KindMaxValue,
+		types.KindRaw:
+		return true
+	default:
+		return false
+	}
+}
+
 func validInterval(ec errctx.Context, loc *time.Location, low, high *point) (bool, error) {
+	if low.value.Kind() == high.value.Kind() &&
+		supportsValueEqualsIntervalFastPath(low.value) &&
+		low.value.Equals(&high.value) {
+		return !low.excl && !high.excl, nil
+	}
 	l, err := codec.EncodeKey(loc, nil, low.value)
 	err = ec.HandleError(err)
 	if err != nil {
@@ -215,6 +249,9 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 		}
 		//revive:enable:empty-block
 	}
+	if point.value.Equals(&casted) {
+		return point, nil
+	}
 	valCmpCasted, err := point.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
@@ -367,29 +404,6 @@ func estimateMemUsageForAppendRanges2PointRanges(pointRanges Ranges, ranges Rang
 	return (EmptyRangeSize+collatorSize)*len1*len2 + getRangesTotalDatumSize(pointRanges)*len2 + getRangesTotalDatumSize(ranges)*len1
 }
 
-// appendRange2PointRange appends suffixRange to pointRange.
-func appendRange2PointRange(pointRange, suffixRange *Range) *Range {
-	lowVal := make([]types.Datum, 0, len(pointRange.LowVal)+len(suffixRange.LowVal))
-	lowVal = append(lowVal, pointRange.LowVal...)
-	lowVal = append(lowVal, suffixRange.LowVal...)
-
-	highVal := make([]types.Datum, 0, len(pointRange.HighVal)+len(suffixRange.HighVal))
-	highVal = append(highVal, pointRange.HighVal...)
-	highVal = append(highVal, suffixRange.HighVal...)
-
-	collators := make([]collate.Collator, 0, len(pointRange.Collators)+len(suffixRange.Collators))
-	collators = append(collators, pointRange.Collators...)
-	collators = append(collators, suffixRange.Collators...)
-
-	return &Range{
-		LowVal:      lowVal,
-		LowExclude:  suffixRange.LowExclude,
-		HighVal:     highVal,
-		HighExclude: suffixRange.HighExclude,
-		Collators:   collators,
-	}
-}
-
 // AppendRanges2PointRanges appends additional ranges to point ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory after appending additional ranges to point ranges
@@ -402,10 +416,58 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 	if rangeMaxSize > 0 && estimateMemUsageForAppendRanges2PointRanges(pointRanges, ranges) > rangeMaxSize {
 		return pointRanges, true
 	}
-	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
+	rangeCount := len(pointRanges) * len(ranges)
+	totalDatumCount := 0
+	totalCollatorCount := 0
 	for _, pointRange := range pointRanges {
+		pointWidth := len(pointRange.LowVal)
+		pointCollatorWidth := len(pointRange.Collators)
 		for _, r := range ranges {
-			newRanges = append(newRanges, appendRange2PointRange(pointRange, r))
+			totalDatumCount += pointWidth + len(r.LowVal)
+			totalCollatorCount += pointCollatorWidth + len(r.Collators)
+		}
+	}
+
+	newRanges := make(Ranges, rangeCount)
+	rangeObjs := make([]Range, rangeCount)
+	lowValBuf := make([]types.Datum, totalDatumCount)
+	highValBuf := make([]types.Datum, totalDatumCount)
+	collatorBuf := make([]collate.Collator, totalCollatorCount)
+	rangeIdx := 0
+	datumOffset := 0
+	collatorOffset := 0
+	for _, pointRange := range pointRanges {
+		pointWidth := len(pointRange.LowVal)
+		pointCollatorWidth := len(pointRange.Collators)
+		for _, r := range ranges {
+			width := pointWidth + len(r.LowVal)
+			// Batch-allocate the backing arrays, but clamp each slice to len==cap.
+			// Some callers append tail datums to an emitted range later, and that append
+			// must not overwrite the neighboring ranges that share the same buffer.
+			lowVal := lowValBuf[datumOffset : datumOffset+width : datumOffset+width]
+			copy(lowVal, pointRange.LowVal)
+			copy(lowVal[pointWidth:], r.LowVal)
+
+			highVal := highValBuf[datumOffset : datumOffset+width : datumOffset+width]
+			copy(highVal, pointRange.HighVal)
+			copy(highVal[pointWidth:], r.HighVal)
+
+			collatorWidth := pointCollatorWidth + len(r.Collators)
+			collators := collatorBuf[collatorOffset : collatorOffset+collatorWidth : collatorOffset+collatorWidth]
+			copy(collators, pointRange.Collators)
+			copy(collators[pointCollatorWidth:], r.Collators)
+
+			rangeObjs[rangeIdx] = Range{
+				LowVal:      lowVal,
+				LowExclude:  r.LowExclude,
+				HighVal:     highVal,
+				HighExclude: r.HighExclude,
+				Collators:   collators,
+			}
+			newRanges[rangeIdx] = &rangeObjs[rangeIdx]
+			rangeIdx++
+			datumOffset += width
+			collatorOffset += collatorWidth
 		}
 	}
 	return newRanges, false

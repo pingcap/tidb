@@ -756,12 +756,20 @@ func rangeDatumCmp(tc types.Context, a, b *types.Datum, collator collate.Collato
 }
 
 func datumsToPoints(values []types.Datum) []*point {
-	rangePoints := make([]*point, 0, len(values)*2)
+	pointCount := len(values) * 2
+	rangePoints := make([]*point, pointCount)
+	// Keep the point structs in one backing array so long-IN workloads do not pay
+	// one heap object per emitted endpoint.
+	pointObjs := make([]point, pointCount)
 	for i := range values {
-		rangePoints = append(rangePoints,
-			&point{value: values[i], start: true},
-			&point{value: values[i]},
-		)
+		startPoint := &pointObjs[i*2]
+		startPoint.value = values[i]
+		startPoint.start = true
+		rangePoints[i*2] = startPoint
+
+		endPoint := &pointObjs[i*2+1]
+		endPoint.value = values[i]
+		rangePoints[i*2+1] = endPoint
 	}
 	return rangePoints
 }
