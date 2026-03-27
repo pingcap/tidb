@@ -276,6 +276,8 @@ Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
+CREATE OR REPLACE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS MASK_FULL(c, '*');
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');

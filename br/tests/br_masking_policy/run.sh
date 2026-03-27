@@ -33,7 +33,8 @@ run_sql "INSERT INTO ${DB}.t VALUES (2, 'def');"
 run_sql "CREATE MASKING POLICY test_policy ON ${DB}.t(c) AS CASE WHEN 1=1 THEN 'masked' END;"
 
 # Verify masking policy exists before backup
-policy_count_before=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;" | grep -c "test_policy" || echo "0")
+policy_output_before=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;")
+policy_count_before=$(printf '%s\n' "$policy_output_before" | grep -c "test_policy" || true)
 if [ "$policy_count_before" != "1" ]; then
     echo "TEST: [$TEST_NAME] failed! Expected 1 masking policy before backup, got $policy_count_before"
     exit 1
@@ -62,7 +63,8 @@ fi
 # Note: After restore, the masking policy should be recreated
 # This is the key verification for the fix
 echo "Checking masking policy after restore..."
-policy_count_after=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;" | grep -c "test_policy" || echo "0")
+policy_output_after=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;")
+policy_count_after=$(printf '%s\n' "$policy_output_after" | grep -c "test_policy" || true)
 if [ "$policy_count_after" != "1" ]; then
     echo "TEST: [$TEST_NAME] failed! Expected 1 masking policy after restore, got $policy_count_after"
     exit 1

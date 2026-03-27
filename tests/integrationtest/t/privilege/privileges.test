@@ -112,6 +112,8 @@ connect (mask_creator, localhost, mask_creator,, privilege__privileges);
 connection mask_creator;
 create masking policy p on mask_t(c) as c;
 --error 1227
+create or replace masking policy p on mask_t(c) as mask_full(c, '*');
+--error 1227
 alter table mask_t disable masking policy p;
 --error 1227
 alter table mask_t modify masking policy p set expression = mask_full(c, '*');

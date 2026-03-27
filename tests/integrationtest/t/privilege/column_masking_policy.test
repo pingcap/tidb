@@ -256,6 +256,8 @@ connect (cmp_mask_creator_conn, localhost, cmp_mask_creator,, privilege__column_
 connection cmp_mask_creator_conn;
 CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
 --error 1227
+CREATE OR REPLACE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS MASK_FULL(c, '*');
+--error 1227
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 --error 1227
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');

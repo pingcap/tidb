@@ -6351,6 +6351,12 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
 		return err
 	}
+	if stmt.OrReplace {
+		// OR REPLACE can update an existing policy, so ALTER privilege is required.
+		if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+			return err
+		}
+	}
 
 	tableIdent := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	if tableIdent.Schema.L == "" {

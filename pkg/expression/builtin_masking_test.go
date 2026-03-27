@@ -52,6 +52,12 @@ func TestMaskFull(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1970-01-01", d.GetMysqlTime().String())
 
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dateInput, "*"})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "1970-01-01", d.GetMysqlTime().String())
+
 	dtInput := types.NewTime(types.FromDate(2020, 1, 2, 3, 4, 5, 0), mysql.TypeDatetime, 0)
 	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dtInput})...)
 	require.NoError(t, err)
