@@ -617,7 +617,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	}
 	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins,
 	// It handles situations where there is no edges between different subgraphs,
-	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, false)
+	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, true)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +821,7 @@ func buildBushyTreeFromDP(ctx base.PlanContext, detector *ConflictDetector, leav
 	if len(forest) == 1 {
 		return forest[0], nil
 	}
-	return makeBushyTree(ctx, detector, forest, vertexHints, true)
+	return makeBushyTree(ctx, detector, forest, vertexHints, false)
 }
 
 // makeJoinWithDetector is for the final bushy-tree stitching stage.
@@ -848,20 +848,20 @@ func makeJoinWithDetector(detector *ConflictDetector, left, right *Node, vertexH
 
 // makeBushyTree connects the remaining nodes into a bushy tree.
 //
-// `fastPath` controls how each pairwise merge is constructed:
+// `fastPath` controls how each pairwise merge is performed:
 //   - true: build a pure cartesian join directly with newCartesianJoin(),
-//     without consulting ConflictDetector. You can use it when there is no remaining edges left,
-//     and you just want to construct a bushy tree using cartesian edge.
-//   - false: use makeJoinWithDetector(), which choose a real edge from
-//     ConflictDetector and only falls back to an explicit cartesian edge when
-//     no real edge exists. This path returns a fully populated *Node.
+//     without consulting the ConflictDetector. In this mode, only Node.p is
+//     valid; the other fields are not initialized. This should be used only
+//     in the final step of bushy-tree construction.
+//   - false: use makeJoinWithDetector(), which prefers a real edge selected
+//     through the ConflictDetector and falls back to an explicit cartesian
+//     edge only if no real edge exists. This path returns a fully initialized
+//     *Node.
 //
-// NOTE: Be careful when changing the true branch: this helper returns *Node, but the
-// pure-cartesian path is currently only used by greedy's final stitching step,
-// where the caller only consumes root.p. That means the true branch does not
-// populate detector-style metadata such as usedEdges. If a future caller needs
-// bitSet/cumCost/usedEdges from the returned node, this branch must be extended
-// to build a fully initialized Node instead of just wrapping the plan.
+// NOTE: The `true` branch currently serves only the greedy algorithm's final
+// stitching step, where the caller reads only root.p. It does not populate
+// metadata such as usedEdges. If future callers need bitSet/cumCost/usedEdges,
+// this branch must be extended to build a fully initialized Node.
 func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNodes []*Node, vertexHints map[int]*JoinMethodHint, fastPath bool) (*Node, error) {
 	var iterNodes []*Node
 	var err error
