@@ -24,7 +24,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/prometheus/client_golang/prometheus"
@@ -94,9 +94,9 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 }
 
 var (
-	systemSchemaCIStr          = ast.NewCIStr("mysql")
-	runawayWatchTableCIStr     = ast.NewCIStr(runawayWatchTableName)
-	runawayWatchDoneTableCIStr = ast.NewCIStr(runawayWatchDoneTableName)
+	systemSchemaCIStr          = model.NewCIStr("mysql")
+	runawayWatchTableCIStr     = model.NewCIStr(runawayWatchTableName)
+	runawayWatchDoneTableCIStr = model.NewCIStr(runawayWatchDoneTableName)
 )
 
 func (s *syncer) checkWatchTableExist() bool {
@@ -108,7 +108,7 @@ func (s *syncer) checkWatchDoneTableExist() bool {
 }
 
 // checkTableExist checks if the table exists using infoschema cache (memory lookup, no SQL).
-func (s *syncer) checkTableExist(tableName ast.CIStr) bool {
+func (s *syncer) checkTableExist(tableName model.CIStr) bool {
 	if s.infoCache == nil {
 		return false
 	}
