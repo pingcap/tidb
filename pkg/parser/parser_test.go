@@ -359,27 +359,29 @@ type testErrMsgCase struct {
 	err error
 }
 
-func RunTest(t *testing.T, table []testCase, enableWindowFunc bool) {
+func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool) {
 	p := parser.New()
 	p.EnableWindowFunc(enableWindowFunc)
+	p.SetMariaDB(MariaDB)
 	for _, tbl := range table {
 		_, _, err := p.Parse(tbl.src, "", "")
 		if !tbl.ok {
-			require.Errorf(t, err, "source %v", tbl.src, errors.Trace(err))
+			require.Errorf(t, err, "source %v, error %v", tbl.src, errors.Trace(err))
 			continue
 		}
-		require.NoErrorf(t, err, "source %v", tbl.src, errors.Trace(err))
+		require.NoErrorf(t, err, "source:\n%v\nerror:\n%v", tbl.src, errors.Trace(err))
 		// restore correctness test
 		if tbl.ok {
-			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc)
+			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc, MariaDB)
 		}
 	}
 }
 
-func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFunc bool) {
+func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFunc bool, MariaDB bool) {
 	var sb strings.Builder
 	p := parser.New()
 	p.EnableWindowFunc(enableWindowFunc)
+	p.SetMariaDB(MariaDB)
 	comment := fmt.Sprintf("source %v", sourceSQLs)
 	stmts, _, err := p.Parse(sourceSQLs, "", "")
 	require.NoErrorf(t, err, "source %v", sourceSQLs)
@@ -481,7 +483,7 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index set A = 1, B = 2", true, "RECOMMEND INDEX SET A = 1, B = 2"},
 		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestAdminStmt(t *testing.T) {
@@ -552,7 +554,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin alter ddl jobs 1 max_write_speed = ", false, ""},
 		{"admin alter ddl jobs 1 max_write_speed", false, ""},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestDMLStmt(t *testing.T) {
@@ -1216,7 +1218,7 @@ AAAAAAAAAAAA5gm5Mg==
 		// for issue 34325, "replace into" with hints
 		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = 'ALLOW_INVALID_DATES')*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestDBAStmt(t *testing.T) {
@@ -1478,7 +1480,7 @@ func TestDBAStmt(t *testing.T) {
 		{"call `x`.`y`();", true, "CALL `x`.`y`()"},
 		{"call `x`.`y`('p', 'q', 'r');", true, "CALL `x`.`y`(_UTF8MB4'p', _UTF8MB4'q', _UTF8MB4'r')"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestSetVariable(t *testing.T) {
@@ -1601,7 +1603,7 @@ func TestExpression(t *testing.T) {
 		{"select .t.a from t", false, ""},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestBuiltin(t *testing.T) {
@@ -2347,7 +2349,7 @@ func TestBuiltin(t *testing.T) {
 		// Test ilike functions
 		{"select 'aBc' ilike 'abc';", true, "SELECT _UTF8MB4'aBc' ILIKE _UTF8MB4'abc'"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	// Test in REAL_AS_FLOAT SQL mode.
 	table2 := []testCase{
@@ -2418,7 +2420,7 @@ func TestIdentifier(t *testing.T) {
 		{`select .78"123"`, true, "SELECT 0.78 AS `123`"},
 		{"select 111 as \xd6\xf7", true, "SELECT 111 AS `??`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestBuiltinFuncAsIdentifier(t *testing.T) {
@@ -2467,7 +2469,7 @@ func TestBuiltinFuncAsIdentifier(t *testing.T) {
 			}
 			require.NoErrorf(t, err, "source %v", c.src)
 			if c.ok && !ignoreSpace {
-				RunRestoreTest(t, c.src, c.restore, false)
+				RunRestoreTest(t, c.src, c.restore, false, false)
 			}
 		}
 	}
@@ -4217,7 +4219,7 @@ func TestDDL(t *testing.T) {
 		// Restore INSERT_METHOD table option
 		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestHintError(t *testing.T) {
@@ -5164,7 +5166,7 @@ func TestType(t *testing.T) {
 		// for json type
 		{`create table t (a JSON);`, true, "CREATE TABLE `t` (`a` JSON)"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestPrivilege(t *testing.T) {
@@ -5312,7 +5314,23 @@ func TestPrivilege(t *testing.T) {
 		{"revoke all privileges, grant option from u1", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`"},                             // special case syntax
 		{"revoke all privileges, grant option from u1, u2, u3", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`, `u2`@`%`, `u3`@`%`"}, // special case syntax
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
+}
+
+func TestPrivilegeMariaDBEnabled(t *testing.T) {
+	// Test with additional MariaDB syntax ENABLED (arg three for RunTest==true)
+	table := []testCase{
+		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", true, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
+	}
+	RunTest(t, table, false, true)
+}
+
+func TestPrivilegeMariaDBDisabled(t *testing.T) {
+	// Test with additional MariaDB syntax DISABLED (arg three for RunTest==false)
+	table := []testCase{
+		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", false, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
+	}
+	RunTest(t, table, false, false)
 }
 
 func TestComment(t *testing.T) {
@@ -5346,7 +5364,7 @@ func TestComment(t *testing.T) {
 		{"create user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "CREATE USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
 		{"alter user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "ALTER USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestParserErrMsg(t *testing.T) {
@@ -5415,7 +5433,7 @@ func TestSubquery(t *testing.T) {
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
 		{"(WITH v0 AS (SELECT TRUE) (SELECT 'abc' EXCEPT (SELECT TRUE)))", true, "WITH `v0` AS (SELECT TRUE) (SELECT _UTF8MB4'abc' EXCEPT (SELECT TRUE))"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	tests := []struct {
 		input string
@@ -5553,7 +5571,7 @@ func TestSetOperator(t *testing.T) {
 		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk", true,
 			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func checkOrderBy(t *testing.T, s ast.Node, hasOrderBy []bool, i int) int {
@@ -5613,7 +5631,7 @@ func TestLikeEscape(t *testing.T) {
 		{"select '''_' like '''_' escape ''''", true, "SELECT _UTF8MB4'''_' LIKE _UTF8MB4'''_' ESCAPE ''''"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestLockUnlockTables(t *testing.T) {
@@ -5646,7 +5664,7 @@ func TestLockUnlockTables(t *testing.T) {
 		{"ALTER TABLE t READ WRITE", true, "ALTER TABLE `t` READ WRITE"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestWithRollup(t *testing.T) {
@@ -5657,7 +5675,7 @@ func TestWithRollup(t *testing.T) {
 		{`select * from t group by (a, b) with rollup`, true, "SELECT * FROM `t` GROUP BY ROW(`a`,`b`) WITH ROLLUP"},
 		{`select * from t group by (a+b) with rollup`, true, "SELECT * FROM `t` GROUP BY (`a`+`b`) WITH ROLLUP"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestIndexHint(t *testing.T) {
@@ -5674,7 +5692,7 @@ func TestIndexHint(t *testing.T) {
 		{`select * from t use index for group by (idx1) use index for order by (idx2), t2`, true, "SELECT * FROM (`t` USE INDEX FOR GROUP BY (`idx1`) USE INDEX FOR ORDER BY (`idx2`)) JOIN `t2`"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestPriority(t *testing.T) {
@@ -5695,7 +5713,7 @@ func TestPriority(t *testing.T) {
 		{`replace LOW_PRIORITY into t values (1)`, true, "REPLACE LOW_PRIORITY INTO `t` VALUES (1)"},
 		{`replace delayed into t values (1)`, true, "REPLACE DELAYED INTO `t` VALUES (1)"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	p := parser.New()
 	stmt, _, err := p.Parse("select HIGH_PRIORITY * from t", "", "")
@@ -5714,7 +5732,7 @@ func TestSQLResult(t *testing.T) {
 		{`select SQL_CALC_FOUND_ROWS DISTINCT * from t`, true, "SELECT SQL_CALC_FOUND_ROWS DISTINCT * FROM `t`"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestSQLNoCache(t *testing.T) {
@@ -5744,7 +5762,7 @@ func TestEscape(t *testing.T) {
 		{`select "\a\r\n"`, true, "SELECT _UTF8MB4'a\r\n'"},
 		{`select "\xFF"`, true, "SELECT _UTF8MB4'xFF'"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestExplain(t *testing.T) {
@@ -5804,7 +5822,7 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN format='json' 'sqldigest'", true, "EXPLAIN FORMAT = 'json' 'sqldigest'"},
 		{"EXPLAIN ANALYZE format='json' 'sqldigest'", true, "EXPLAIN ANALYZE FORMAT = 'json' 'sqldigest'"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestPrepare(t *testing.T) {
@@ -5813,7 +5831,7 @@ func TestPrepare(t *testing.T) {
 		{"PREPARE pname FROM @test", true, "PREPARE `pname` FROM @`test`"},
 		{"PREPARE `` FROM @test", true, "PREPARE `` FROM @`test`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestDeallocate(t *testing.T) {
@@ -5821,7 +5839,7 @@ func TestDeallocate(t *testing.T) {
 		{"DEALLOCATE PREPARE test", true, "DEALLOCATE PREPARE `test`"},
 		{"DEALLOCATE PREPARE ``", true, "DEALLOCATE PREPARE ``"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestExecute(t *testing.T) {
@@ -5830,7 +5848,7 @@ func TestExecute(t *testing.T) {
 		{"EXECUTE test USING @var1,@var2", true, "EXECUTE `test` USING @`var1`,@`var2`"},
 		{"EXECUTE `` USING @var1,@var2", true, "EXECUTE `` USING @`var1`,@`var2`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestTrace(t *testing.T) {
@@ -5851,7 +5869,7 @@ func TestTrace(t *testing.T) {
 		{"trace plan target = 'estimation' select c1 from t1", true, "TRACE PLAN TARGET = 'estimation' SELECT `c1` FROM `t1`"},
 		{"trace plan target = 'arandomstring' select c1 from t1", true, "TRACE PLAN TARGET = 'arandomstring' SELECT `c1` FROM `t1`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestBinding(t *testing.T) {
@@ -5936,7 +5954,7 @@ func TestBinding(t *testing.T) {
 		{"explain explore 'select a from t'", true, "EXPLAIN EXPLORE 'select a from t'"},
 		{"explain explore '23adc8e6f62'", true, "EXPLAIN EXPLORE '23adc8e6f62'"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	p := parser.New()
 	sms, _, err := p.Parse("create global binding for select * from t using select * from t use index(a)", "", "")
@@ -6019,7 +6037,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	// Test case for the text of the select statement in create view statement.
 	p := parser.New()
@@ -6097,7 +6115,7 @@ func TestTimestampDiffUnit(t *testing.T) {
 		{"SELECT TIMESTAMPDIFF(DAY_HOUR,'2003-02-01','2003-05-01')", false, ""},
 		{"SELECT TIMESTAMPDIFF(YEAR_MONTH,'2003-02-01','2003-05-01')", false, ""},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestFuncCallExprOffset(t *testing.T) {
@@ -6142,7 +6160,7 @@ func TestSessionManage(t *testing.T) {
 		{"shutdown", true, "SHUTDOWN"},
 		{"restart", true, "RESTART"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestParseShowOpenTables(t *testing.T) {
@@ -6151,7 +6169,7 @@ func TestParseShowOpenTables(t *testing.T) {
 		{"SHOW OPEN TABLES IN test", true, "SHOW OPEN TABLES IN `test`"},
 		{"SHOW OPEN TABLES FROM test", true, "SHOW OPEN TABLES IN `test`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestSQLModeANSIQuotes(t *testing.T) {
@@ -6303,7 +6321,7 @@ func TestAnalyze(t *testing.T) {
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestTableSample(t *testing.T) {
@@ -6341,7 +6359,7 @@ func TestTableSample(t *testing.T) {
 		{"select * from tbl tablesample system (33) repeatable;", false, ""},
 		{"select 1 from dual tablesample system (50);", false, ""},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 	p := parser.New()
 	cases := []string{
 		"select * from tbl tablesample (33.3 + 44.4);",
@@ -6636,7 +6654,7 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 			"CREATE TABLE `t1` (`a` INT,`b` INT) PARTITION BY RANGE (`a`) SUBPARTITION BY HASH (`b`) SUBPARTITIONS 1 (PARTITION `x` VALUES LESS THAN (MAXVALUE) (SUBPARTITION `y` ENGINE = InnoDB COMMENT = 'xxxx' DATA DIRECTORY = '/var/data' INDEX DIRECTORY = '/var/index' MAX_ROWS = 70000 MIN_ROWS = 50 TABLESPACE = `innodb_file_per_table` NODEGROUP = 255))",
 		},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	// Check comment content.
 	p := parser.New()
@@ -6692,12 +6710,12 @@ func TestWindowFunctionIdentifier(t *testing.T) {
 	for key := range parser.WindowFuncTokenMapForTest {
 		table = append(table, testCase{fmt.Sprintf("select 1 %s", key), false, fmt.Sprintf("SELECT 1 AS `%s`", key)})
 	}
-	RunTest(t, table, true)
+	RunTest(t, table, true, false)
 
 	for i := range table {
 		table[i].ok = true
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestWindowFunctions(t *testing.T) {
@@ -6770,7 +6788,7 @@ func TestWindowFunctions(t *testing.T) {
 		{`select from_unixtime(404411537129996288)`, true, "SELECT FROM_UNIXTIME(404411537129996288)"},
 		{`select from_unixtime(404411537129996288.22)`, true, "SELECT FROM_UNIXTIME(404411537129996288.22)"},
 	}
-	RunTest(t, table, true)
+	RunTest(t, table, true, false)
 }
 
 type windowFrameBoundChecker struct {
@@ -7050,7 +7068,7 @@ func TestStartTransaction(t *testing.T) {
 		{"START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', '2021-04-27 11:26:13')", true, "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')"},
 	}
 
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }
 
 func TestSignedInt64OutOfRange(t *testing.T) {
@@ -7249,7 +7267,7 @@ func TestBRIE(t *testing.T) {
 		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log' start_ts='20230101' restored_ts='20230123'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' START_TS = '20230101' RESTORED_TS = '20230123'"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestStatisticsOps(t *testing.T) {
@@ -7265,7 +7283,7 @@ func TestStatisticsOps(t *testing.T) {
 		{"create statistics stats1(cardinality) on t(a,b,c)", true, "CREATE STATISTICS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"},
 		{"drop statistics stats1", true, "DROP STATISTICS `stats1`"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	p := parser.New()
 	sms, _, err := p.Parse("create statistics if not exists stats1 (cardinality) on t(a,b,c)", "", "")
@@ -7347,7 +7365,7 @@ func TestCTE(t *testing.T) {
 		{"( with cte(n) as ( select 1 )  (select n+1 from cte)) union select 1", true, "(WITH `cte` (`n`) AS (SELECT 1) (SELECT `n`+1 FROM `cte`)) UNION SELECT 1"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 // For CTE Merge
@@ -7371,7 +7389,7 @@ func TestCTEMerge(t *testing.T) {
 		{"( with cte(n) as ( select 1 )  (select n+1 from cte)) union select 1", true, "(WITH `cte` (`n`) AS (SELECT 1) (SELECT `n`+1 FROM `cte`)) UNION SELECT 1"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestAsOfClause(t *testing.T) {
@@ -7387,7 +7405,7 @@ func TestAsOfClause(t *testing.T) {
 		{"START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", true, "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{"START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', '2021-04-27 11:26:13')", true, "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 // For `PARTITION BY [LINEAR] KEY ALGORITHM` syntax
@@ -7399,7 +7417,7 @@ func TestPartitionKeyAlgorithm(t *testing.T) {
 		{"CREATE TABLE t  (c1 integer ,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = 3 (c1,c2) PARTITIONS 4", false, ""},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 // server side help syntax
@@ -7408,7 +7426,7 @@ func TestHelp(t *testing.T) {
 		{"HELP 'select'", true, "HELP 'select'"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestWithoutCharsetFlags(t *testing.T) {
@@ -7583,7 +7601,7 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER CAPTURE '123' '123'", true, "PLAN REPLAYER CAPTURE '123' '123'"},
 		{"PLAN REPLAYER CAPTURE REMOVE '123' '123'", true, "PLAN REPLAYER CAPTURE REMOVE '123' '123'"},
 	}
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 
 	p := parser.New()
 	sms, _, err := p.Parse("PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t", "", "")
@@ -7873,7 +7891,7 @@ func TestNonTransactionalDML(t *testing.T) {
 			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
 	}
 
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }
 
 func TestIntervalPartition(t *testing.T) {
@@ -7893,7 +7911,7 @@ func TestIntervalPartition(t *testing.T) {
 		{`ALTER TABLE t first PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` FIRST PARTITION LESS THAN (1000)"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestTTLTableOption(t *testing.T) {
@@ -7931,7 +7949,7 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10.10.255h'", false, ""},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestIssue45898(t *testing.T) {
@@ -7985,7 +8003,7 @@ func TestCompatTypes(t *testing.T) {
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 NUMERIC)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestVector(t *testing.T) {
@@ -7998,7 +8016,7 @@ func TestVector(t *testing.T) {
 		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestExplainExplore(t *testing.T) {
@@ -8008,7 +8026,7 @@ func TestExplainExplore(t *testing.T) {
 		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
 		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
 	}
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }
 
 // TestCompatMariaDB is to test for MariaDB specific table options
@@ -8021,7 +8039,7 @@ func TestCompatMariaDB(t *testing.T) {
 		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
 	}
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }
 
 func TestSecondaryEngineAttribute(t *testing.T) {
@@ -8168,7 +8186,7 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 		},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestPartialIndex(t *testing.T) {
@@ -8177,7 +8195,7 @@ func TestPartialIndex(t *testing.T) {
 		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
 		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
 	}
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }
 
 func TestTableAffinityOption(t *testing.T) {
@@ -8203,7 +8221,7 @@ func TestTableAffinityOption(t *testing.T) {
 		{"create table t (a int) AFFINITY", false, ""},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
 
 func TestSplitPartition(t *testing.T) {
@@ -8215,5 +8233,5 @@ func TestSplitPartition(t *testing.T) {
 		{`create table t (id BIGINT, INDEX idx(id)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx BETWEEN (0) AND (1000000) REGIONS 2`, true, "CREATE TABLE `t` (`id` BIGINT,INDEX `idx`(`id`)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx` BETWEEN (0) AND (1000000) REGIONS 2"},
 		{`alter table t SPLIT BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT BETWEEN (0) AND (1000000) REGIONS 3"},
 	}
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }

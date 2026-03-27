@@ -108,6 +108,6 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 		defer func() {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/CheckMPPWindowSchemaLength"))
 		}()
-		tk.MustExec("explain select /* issue:34765 */ count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
+		tk.MustExec("explain format = 'plan_tree' select /* issue:34765 */ count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
 	})
 }

@@ -22,15 +22,69 @@ import (
 	"fmt"
 	"testing"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
+
+type mockCursorRUV2ConsumptionReporter struct {
+	group     string
+	tikvRUV2  float64
+	tidbRUV2  float64
+	tiflashRU float64
+}
+
+func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 += tikvRUV2
+	m.tidbRUV2 += tidbRUV2
+	m.tiflashRU += tiflashRUV2
+}
+
+type mockCursorTrackerRecordSet struct{}
+
+func (*mockCursorTrackerRecordSet) Fields() []*resolve.ResultField { return nil }
+func (*mockCursorTrackerRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return nil
+}
+func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+func (*mockCursorTrackerRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
+
+type firstNextErrRecordSet struct{}
+
+func (*firstNextErrRecordSet) Fields() []*resolve.ResultField {
+	panic("Fields should not be called before the first successful Next")
+}
+
+func (*firstNextErrRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return fmt.Errorf("first next failed")
+}
+
+func (*firstNextErrRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*firstNextErrRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &firstNextErrRecordSet{}
 
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -102,6 +156,75 @@ func TestCursorExistsFlag(t *testing.T) {
 }
 
 func TestCursorWithParams(t *testing.T) {
+	t.Run("cursor ruv2 delta reporting", func(t *testing.T) {
+		original := config.GetGlobalConfig()
+		t.Cleanup(func() {
+			if original != nil {
+				config.StoreGlobalConfig(original)
+			}
+		})
+		cfg := config.NewConfig()
+		cfg.RUV2 = config.DefaultRUV2Config()
+		config.StoreGlobalConfig(cfg)
+
+		reporter := &mockCursorRUV2ConsumptionReporter{}
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ruv2Metrics)
+		ruv2Metrics.AddPlanCnt(2)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddTiKVRUV2(11)
+		weights := execdetails.RUV2Weights{
+			RUScale:                 cfg.RUV2.RUScale,
+			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+			ExecutorL1:              cfg.RUV2.ExecutorL1,
+			ExecutorL2:              cfg.RUV2.ExecutorL2,
+			ExecutorL3:              cfg.RUV2.ExecutorL3,
+			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+			PlanCnt:                 cfg.RUV2.PlanCnt,
+			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+			TxnCnt:                  cfg.RUV2.TxnCnt,
+		}
+		baselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
+
+		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights)
+		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
+		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
+		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
+
+		require.Equal(t, "rg1", reporter.group)
+		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
+		require.Equal(t, expectedCursorDelta, reporter.tidbRUV2)
+		require.Equal(t, 0.0, reporter.tikvRUV2)
+		require.Equal(t, 0.0, reporter.tiflashRU)
+
+		ruDetails.AddTiKVRUV2(7)
+		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 5, WRU: 8})
+		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
+		require.Equal(t, "rg1", reporter.group)
+		require.Equal(t, float64(7), reporter.tikvRUV2)
+		require.Equal(t, float64(13), reporter.tiflashRU)
+	})
+
+	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		c := CreateMockConn(t, srv).(*mockConn)
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		rs := resultset.New(&firstNextErrRecordSet{}, nil)
+
+		retryable, err := c.writeChunks(ctx, rs, false, mysql.ServerStatusAutocommit)
+		require.True(t, retryable)
+		require.ErrorContains(t, err, "first next failed")
+		require.Zero(t, execdetails.RUV2MetricsFromContext(ctx).ResultChunkCells())
+	})
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)

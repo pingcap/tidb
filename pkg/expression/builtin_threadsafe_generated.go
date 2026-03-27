@@ -930,11 +930,6 @@ func (s *builtinFieldStringSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinFindInSetSig) SafeToShareAcrossSession() bool {
-	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinFloorDecToDecSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }

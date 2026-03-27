@@ -1,5 +1,4 @@
 # TestShowSubquery
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a varchar(10), b int, c int);
 show columns from t where true;
@@ -42,7 +41,6 @@ create table bit_col_t (a bit(65));
 
 
 # TestAggPushDownLeftJoin
-set tidb_cost_model_version=2;
 drop table if exists customer;
 create table customer (C_CUSTKEY bigint(20) NOT NULL, C_NAME varchar(25) NOT NULL, C_ADDRESS varchar(25) NOT NULL, PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */);
 drop table if exists orders;
@@ -639,7 +637,6 @@ select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
 
 
 # TestSelectLimit
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int);
 insert into t values(1),(1),(2);
@@ -1575,7 +1572,6 @@ select greatest(a, b) from t union select null;
 
 # TestIssues27130
 drop table if exists t1;
-set tidb_cost_model_version=2;
 create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));
 explain format='plan_tree' select * from t1 where a like "A%";
 explain format='plan_tree' select * from t1 where b like "A%";
@@ -2249,7 +2245,6 @@ set tidb_enable_ordered_result_mode = DEFAULT;
 
 
 # TestViewHintWithBinding
-set tidb_cost_model_version=2;
 drop view if exists v, v1, v2;
 drop table if exists t, t1, t2, t3;
 create table t(a int, b int);
@@ -2272,11 +2267,9 @@ select @@last_plan_from_binding;
 --replace_column 5 <create_time> 6 <update_time>
 show global bindings where original_sql like '%planner__core__integration%';
 
-set tidb_cost_model_version=default;
 
 
 # TestKeepOrderHintWithBinding
-set tidb_cost_model_version=2;
 drop table if exists t1;
 create table t1(a int, b int, index idx_a(a));
 --echo
@@ -2308,7 +2301,6 @@ select @@last_plan_from_binding;
 --replace_column 5 <create_time> 6 <update_time>
 show global bindings where original_sql like '%planner__core__integration%';
 
-set tidb_cost_model_version=default;
 
 
 # TestIssue20139

@@ -467,6 +467,18 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	}
 	if ts > 0 {
 		backupTS = ts
+		// check that the user-specified backup ts is not in the future
+		p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		currentTS := oracle.ComposeTS(p, l)
+		if backupTS > currentTS {
+			return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+				"backup timestamp %d(%s) must not be later than current timestamp %d(%s)",
+				backupTS, oracle.GetTimeFromTS(backupTS),
+				currentTS, oracle.GetTimeFromTS(currentTS))
+		}
 	} else {
 		p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
 		if err != nil {

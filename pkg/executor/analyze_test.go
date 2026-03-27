@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
@@ -217,6 +218,7 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
@@ -263,10 +265,14 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.ErrorContains(t, err, "Query execution was interrupted")
+		require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
 	case <-time.After(5 * time.Second):
 		t.Fatal("analyze hangs after kill during save")
 	}
+	interruptedRows := tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and lower(state) = 'failed' and fail_reason like ?", "%"+exeerrors.ErrQueryInterrupted.Error()+"%").Rows()
+	require.Len(t, interruptedRows, 1)
+	require.NotEqual(t, "0", interruptedRows[0][0])
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and lower(state) = 'failed' and fail_reason like ?", "%context canceled%").Check(testkit.Rows("0"))
 }
 
 func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {

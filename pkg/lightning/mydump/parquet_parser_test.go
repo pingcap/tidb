@@ -762,3 +762,48 @@ func TestParquetDecimalFromInt64(t *testing.T) {
 	raw := bytes.Repeat([]byte{0x7f}, 40)
 	require.ErrorIs(t, types.ErrOverflow, dec.FromParquetArray(raw, 0))
 }
+
+func TestTrackingAllocatorReallocatePreservesPrefix(t *testing.T) {
+	allocator := &trackingAllocator{}
+	buf := allocator.Allocate(8)
+	require.Equal(t, uintptr(0), addressOf(buf)%allocatorAlignment)
+	require.Equal(t, int64(8+allocatorAlignment), allocator.currentAllocation.Load())
+	for i := range len(buf) {
+		buf[i] = byte(i + 1)
+	}
+
+	grown := allocator.Reallocate(16, buf)
+	require.Equal(t, 16, len(grown))
+	require.Equal(t, uintptr(0), addressOf(grown)%allocatorAlignment)
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, grown[:8])
+	require.Equal(t, int64(16+allocatorAlignment), allocator.currentAllocation.Load())
+	require.Equal(t, int64(8+16+2*allocatorAlignment), allocator.peakAllocation.Load())
+
+	shrunk := allocator.Reallocate(4, grown)
+	require.Equal(t, 4, len(shrunk))
+	require.Equal(t, []byte{1, 2, 3, 4}, shrunk)
+	require.Equal(t, int64(16+allocatorAlignment), allocator.currentAllocation.Load())
+
+	allocator.Free(shrunk)
+	require.Equal(t, int64(0), allocator.currentAllocation.Load())
+}
+
+func TestTrackingAllocatorReallocateZeroLengthAndGrow(t *testing.T) {
+	allocator := &trackingAllocator{}
+	buf := allocator.Allocate(8)
+	require.Equal(t, int64(8+allocatorAlignment), allocator.currentAllocation.Load())
+
+	zero := allocator.Reallocate(0, buf)
+	require.Len(t, zero, 0)
+	// Reallocating to zero length doesn't free the backing allocation.
+	require.Equal(t, int64(8+allocatorAlignment), allocator.currentAllocation.Load())
+
+	grown := allocator.Reallocate(16, zero)
+	require.Len(t, grown, 16)
+	require.Equal(t, uintptr(0), addressOf(grown)%allocatorAlignment)
+	require.Equal(t, int64(16+allocatorAlignment), allocator.currentAllocation.Load())
+	require.Equal(t, int64(8+16+2*allocatorAlignment), allocator.peakAllocation.Load())
+
+	allocator.Free(grown)
+	require.Equal(t, int64(0), allocator.currentAllocation.Load())
+}

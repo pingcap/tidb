@@ -1016,7 +1016,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_FieldString:
 		f = &builtinFieldStringSig{base}
 	case tipb.ScalarFuncSig_FindInSet:
-		f = &builtinFindInSetSig{base}
+		f = &builtinFindInSetSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Format:
 		f = &builtinFormatSig{base}
 	case tipb.ScalarFuncSig_FormatWithLocale:

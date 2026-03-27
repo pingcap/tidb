@@ -992,6 +992,15 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
+	// Disable the background txn safe-point cache updater (10 s poll) so it
+	// does not race with snapshot reads in checkCollected/mustGetNone.
+	// Without this, the updater may cache the advanced safe point before the
+	// test reads old probe timestamps, causing [tikv:9006] errors.
+	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
+	})
+
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(time.Hour))
@@ -1038,6 +1047,12 @@ func TestLeaderTick(t *testing.T) {
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
+	// The "skip gcWaitTime" leaderTick above ran prepare() which advanced the
+	// PD txn safe point as a side effect. Bump the oracle so the next
+	// prepare() computes a strictly higher target (GoTimeToTS truncates to ms,
+	// so without this bump both calls can land in the same millisecond and
+	// AdvanceTxnSafePoint returns NewSafePoint == OldSafePoint → GC skipped).
+	s.oracle.AddOffset(time.Second)
 
 	// Continue GC if all those checks passed.
 	err = s.gcWorker.leaderTick(gcContext())

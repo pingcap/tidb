@@ -914,12 +914,15 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		if ds.Table.Type().IsClusterTable() {
+		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
+			handleCols = ds.UnMutableHandleCols
+		} else if ds.Table.Type().IsClusterTable() {
 			// For cluster tables without handles, ts.HandleCols remains nil.
 			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
 			return nil
+		} else {
+			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 		}
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)

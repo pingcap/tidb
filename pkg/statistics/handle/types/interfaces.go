@@ -181,8 +181,10 @@ type StatsAnalyze interface {
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
 
-	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+	// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
+	// session version. For partitioned tables it checks the global stats and every partition;
+	// for non-partitioned tables it checks the table stats alone.
+	AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
