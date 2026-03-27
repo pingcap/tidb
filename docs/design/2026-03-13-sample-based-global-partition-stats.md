@@ -157,9 +157,19 @@ In addition to the collector itself, the persisted payload should carry the meta
 
 This `minWeight` should mean "samples with `Weight < minWeight` were not retained in the saved partition sample." For Bernoulli, it is the cutoff implied by the `pruneRate` used when saving the partition, not the least observed saved sample. For A-Res, it is the local top-K cutoff.
 
-The schema compatibility fingerprint should be based on the exact ANALYZE sample layout, not just the table schema version. This is a correctness safeguard for saved-sample reuse, not a separate feature goal. It is already stricter than a length-only check and avoids reusing incompatible saved samples. At minimum it should include:
+The schema compatibility fingerprint should be based on the exact ANALYZE sample layout, not just the table schema version. This is a correctness safeguard for saved-sample reuse, not a separate feature goal. It is already stricter than a length-only check and avoids reusing incompatible saved samples. The persisted payload should include the column IDs of the sampled columns, for example by extending the protobuf:
 
-- the ordered list of analyzed column IDs
+```protobuf
+message SampleDataMeta {
+    repeated int64 column_ids = 1;      // ordered column IDs included in samples
+    int64 min_weight = 2;               // retention cutoff (minWeight)
+    // future: index/column-group definitions, type/collation info
+}
+```
+
+At minimum the fingerprint should include:
+
+- the ordered list of analyzed column IDs (as shown above)
 - the ordered list of analyzed index / column-group definitions
 - each sampled column's type and collation-sensitive attributes needed to decode and compare the saved values correctly
 
