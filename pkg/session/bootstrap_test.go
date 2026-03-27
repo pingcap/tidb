@@ -2604,10 +2604,10 @@ func TestTiDBUpgradeToVer224(t *testing.T) {
 	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver223))
 	require.NoError(t, err)
-	RevertVersionAndVariables(t, seV223, ver223)
+	revertVersionAndVariables(t, seV223, ver223)
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
-	store.SetOption(StoreBootstrappedKey, nil)
+	unsetStoreBootstrapped(store.UUID())
 
 	getTableCreateSQLFn := func(se sessiontypes.Session, tableName string) string {
 		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
@@ -2626,7 +2626,7 @@ func TestTiDBUpgradeToVer224(t *testing.T) {
 
 	// Remove the indexes to simulate the old version
 	seV223.SetValue(sessionctx.Initing, true)
-	seV223.GetSessionVars().SQLMode = mysql.ModeNone
+	seV223.GetSessionVars().SQLMode = 0
 	mustExecute(seV223, "ALTER TABLE mysql.tidb_runaway_watch DROP INDEX idx_start_time")
 	mustExecute(seV223, "ALTER TABLE mysql.tidb_runaway_watch_done DROP INDEX idx_done_time")
 	createWatchSQL = getTableCreateSQLFn(seV223, "tidb_runaway_watch")
@@ -2640,7 +2640,7 @@ func TestTiDBUpgradeToVer224(t *testing.T) {
 	require.NoError(t, err)
 	defer domCurVer.Close()
 	seCurVer := CreateSessionAndSetID(t, store)
-	ver, err := GetBootstrapVersion(seCurVer)
+	ver, err := getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 
