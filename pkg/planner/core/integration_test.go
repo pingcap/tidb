@@ -2460,6 +2460,7 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+<<<<<<< HEAD
 	tk.MustExec("CREATE TABLE test1 (\ncol1 bigint(20) NOT NULL ,\ncol2 varchar(36) NOT NULL ,\ncol3 int(11) DEFAULT NULL ,\ncol4 varchar(36) NOT NULL ,\ncol5 varchar(255) DEFAULT NULL ,\nmodify_time bigint(20) DEFAULT NULL,\ncreate_time bigint(20) DEFAULT NULL,\ncol6 json DEFAULT NULL ,\n" +
 		"col7 json DEFAULT NULL ," +
 		"col8 json GENERATED ALWAYS AS (json_merge_patch(ifnull(col6, _utf8mb4\"{}\"), ifnull(col7, _utf8mb4\"{}\"))) STORED," +
@@ -2585,4 +2586,66 @@ func TestEnableCascadesPlannerIsDeprecated(t *testing.T) {
 	// Global scope behaves the same way.
 	tk.MustExec("set global tidb_enable_cascades_planner = on")
 	tk.MustQuery("select @@global.tidb_enable_cascades_planner").Check(testkit.Rows("0"))
+=======
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1), (2), (3), (4)")
+	tk.MustExec("insert into t2 values(1), (2)")
+
+	tk.MustQuery("select a, (select count(1) as cnt from t2 where t2.a = t1.a having cnt > 0) from t1 order by a").
+		Check(testkit.Rows("1 1", "2 1", "3 <nil>", "4 <nil>"))
+
+	tk.MustQuery("select a, (select /*+ NO_DECORRELATE() */ count(1) as cnt from t2 where t2.a = t1.a having cnt > 0) from t1 order by a").
+		Check(testkit.Rows("1 1", "2 1", "3 <nil>", "4 <nil>"))
+
+	tk.MustQuery("select a, (select count(1) as cnt from t2 where t2.a = t1.a having cnt < 1) from t1 order by a").
+		Check(testkit.Rows("1 <nil>", "2 <nil>", "3 0", "4 0"))
+
+	tk.MustQuery("select a, (select count(1) from t2 where t2.a = t1.a) from t1 order by a").
+		Check(testkit.Rows("1 1", "2 1", "3 0", "4 0"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 text(383) not null)")
+	tk.MustExec("insert into t0 values ('')")
+	tk.MustExec("replace into t0 values (' ')")
+
+	tk.MustQuery("select /* issue:66947 direct-having */ hex(t0.c0) from t0 group by t0.c0 having sum(t0.c0) > -1 and char_length(t0.c0)").
+		Check(testkit.Rows("20"))
+	tk.MustQuery("select /* issue:66947 derived-filter */ hex(ref0) from (select t0.c0 as ref0, (sum(t0.c0) > -1 and char_length(t0.c0)) as ref1 from t0 group by t0.c0) as s where ref1").
+		Check(testkit.Rows("20"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 float unique, c1 numeric zerofill, c2 text(192))")
+	tk.MustExec("insert into t0(c0, c1, c2) values (1.074197572E9, 0, '⋧h')")
+
+	tk.MustQuery(`select /* issue:66922-direct */ t0.c1, t0.c0, t0.c2
+from t0
+group by t0.c1, t0.c0, t0.c2
+having (
+    (count(t0.c1) != -1)
+        and
+    (
+        (case t0.c1 when false then t0.c0 else true end)
+            like
+        t0.c0
+    )
+)`).Check(testkit.Rows())
+
+	tk.MustQuery(`select /* issue:66922-derived */ ref0, ref1, ref2
+from (
+    select t0.c1 as ref0, t0.c0 as ref1, t0.c2 as ref2,
+           (
+               (count(t0.c1) != -1)
+                   and
+               (
+                   (case t0.c1 when false then t0.c0 else true end)
+                       like
+                   t0.c0
+               )
+           ) as ref3
+    from t0
+    group by t0.c1, t0.c0, t0.c2
+) as s where ref3`).Check(testkit.Rows())
+>>>>>>> 99b1086ca54 (planner: add test case for spliting CNF conjuncts in aggregation predicate pushdown (#67301))
 }
