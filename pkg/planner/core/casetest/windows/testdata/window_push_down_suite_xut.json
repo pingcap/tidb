@@ -12,7 +12,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "  └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -24,7 +24,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(order by test.employee.salary rows between current row and current row)",
+          "  └─Window mpp[tiflash]  row_number()->Column over(order by test.employee.salary rows between current row and current row)",
           "    └─Sort mpp[tiflash]  test.employee.salary",
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
@@ -37,7 +37,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "  └─Window mpp[tiflash]  row_number()->Column over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
           "    └─Sort mpp[tiflash]  test.employee.deptid, stream_count: 8",
           "      └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
@@ -65,7 +65,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row), stream_count: 8",
+          "  └─Window mpp[tiflash]  row_number()->Column over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row), stream_count: 8",
           "    └─Sort mpp[tiflash]  test.employee.deptid, test.employee.salary:desc, stream_count: 8",
           "      └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
@@ -107,7 +107,7 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window mpp[tiflash]  rank()->Column#9 over()",
-          "    └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "    └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -123,7 +123,7 @@
           "    └─Sort mpp[tiflash]  test.employee.deptid, stream_count: 8",
           "      └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "          └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "          └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "            └─ExchangeReceiver mpp[tiflash]  ",
           "              └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "                └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -135,7 +135,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "  └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─Projection mpp[tiflash]  test.employee.deptid",
@@ -162,7 +162,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "  └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -174,7 +174,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  rank()->Column#7 over()",
+          "  └─Window mpp[tiflash]  rank()->Column over()",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -186,7 +186,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  dense_rank()->Column#7 over()",
+          "  └─Window mpp[tiflash]  dense_rank()->Column over()",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -198,7 +198,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  lead(test.employee.empid)->Column#7 over()",
+          "  └─Window mpp[tiflash]  lead(test.employee.empid)->Column over()",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -210,7 +210,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  lag(test.employee.empid)->Column#7 over()",
+          "  └─Window mpp[tiflash]  lag(test.employee.empid)->Column over()",
           "    └─ExchangeReceiver mpp[tiflash]  ",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -222,7 +222,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.empid order by test.employee.salary rows between current row and current row), stream_count: 8",
+          "  └─Window mpp[tiflash]  row_number()->Column over(partition by test.employee.empid order by test.employee.salary rows between current row and current row), stream_count: 8",
           "    └─Sort mpp[tiflash]  test.employee.empid, test.employee.salary, stream_count: 8",
           "      └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.empid, collate: binary], stream_count: 8",
@@ -321,7 +321,7 @@
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column",
-          "      └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "      └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "        └─ExchangeReceiver mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -341,7 +341,7 @@
           "            └─ExchangeReceiver mpp[tiflash]  ",
           "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.empid, collate: binary]",
           "                └─HashAgg mpp[tiflash]  group by:test.employee.empid, , stream_count: 8",
-          "                  └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "                  └─Window mpp[tiflash]  row_number()->Column over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
           "                    └─Sort mpp[tiflash]  test.employee.deptid, stream_count: 8",
           "                      └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "                        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
@@ -356,7 +356,7 @@
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, funcs:count(test.employee.empid)->Column",
-          "      └─Window mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "      └─Window mpp[tiflash]  row_number()->Column over(rows between current row and current row)",
           "        └─ExchangeReceiver mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -373,7 +373,7 @@
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "          └─HashAgg mpp[tiflash]  group by:Column, funcs:count(test.employee.empid)->Column, stream_count: 8",
-          "            └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "            └─Window mpp[tiflash]  row_number()->Column over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
           "              └─Sort mpp[tiflash]  test.employee.deptid, stream_count: 8",
           "                └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
@@ -564,7 +564,7 @@
         "Plan": [
           "Projection root  Column",
           "└─Sort root  test.t2.c1, test.t2.c2",
-          "  └─Window root  count(1)->Column#7 over(partition by Column)",
+          "  └─Window root  count(1)->Column over(partition by Column)",
           "    └─Projection root  0->Column, test.t2.c1, test.t2.c2",
           "      └─TableReader root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
