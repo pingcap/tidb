@@ -91,6 +91,20 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 	require.NotNil(t, dctx.RUV2RPCInterceptor)
 }
 
+func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSessionWithOpt(store, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	se.sessionVars.StmtCtx.ResourceGroupName = "default"
+
+	dctx := se.GetDistSQLCtx()
+	require.True(t, dctx.RUConsumptionReporter == nil)
+}
+
 func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

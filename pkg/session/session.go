@@ -91,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
@@ -146,7 +147,6 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -3261,9 +3261,11 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		// cross ks session does not have domain.
 		dom := s.GetDomain().(*domain.Domain)
-		var rgCtl *rmclient.ResourceGroupsController
+		var ruConsumptionReporter resourcegroup.ConsumptionReporter
 		if dom != nil {
-			rgCtl = dom.ResourceGroupsController()
+			if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+				ruConsumptionReporter = rgCtl
+			}
 		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
@@ -3311,7 +3313,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ResourceGroupName:             sc.ResourceGroupName,
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
-			RUConsumptionReporter:         rgCtl,
+			RUConsumptionReporter:         ruConsumptionReporter,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 
