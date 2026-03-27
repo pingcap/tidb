@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -351,7 +352,7 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 
 	errContext := utils.NewErrorContext("test", 1)
-	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil)
+	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
@@ -366,11 +367,11 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 	// case #1: error resposne
 	// first error can be ignored due to errContext.
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	// second error cannot be ignored.
-	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.Error(t, err)
 
 	// case #2: normal resposne
@@ -384,13 +385,13 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.Nil(t, lock)
 	require.NoError(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
@@ -403,12 +404,41 @@ func TestOnBackupResponse(t *testing.T) {
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
 	r.Resp.EndKey = []byte("c")
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	incomplete, err = tree.GetIncompleteRanges()
 	require.NoError(t, err)
 	require.Len(t, incomplete, 0)
+
+	// case #4.1: rewrite response files before they are persisted into the progress tree.
+	tree = rtree.NewProgressRangeTree(nil, false)
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
+	r = &backup.ResponseAndStore{
+		StoreID: 7,
+		Resp: &backuppb.BackupResponse{
+			StartKey: []byte("aa"),
+			EndKey:   []byte("c"),
+			Files:    []*backuppb.File{{Name: "file.sst"}},
+		},
+	}
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
+		rewritten := make([]*backuppb.File, 0, len(files))
+		for _, file := range files {
+			fileCopy := *file
+			fileCopy.Name = fmt.Sprintf("store-%d/%s", storeID, file.Name)
+			rewritten = append(rewritten, &fileCopy)
+		}
+		return rewritten, nil
+	})
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	found, findErr := tree.FindContained([]byte("aa"), []byte("c"))
+	require.NoError(t, findErr)
+	require.NotNil(t, found)
+	rangeItem := found.Res.Find(&rtree.Range{KeyRange: rtree.KeyRange{StartKey: []byte("aa"), EndKey: []byte("c")}})
+	require.NotNil(t, rangeItem)
+	require.Equal(t, "store-7/file.sst", rangeItem.Files[0].Name)
 
 	// case #5: failed case, key is locked
 	r = &backup.ResponseAndStore{
@@ -430,7 +460,7 @@ func TestOnBackupResponse(t *testing.T) {
 			},
 		},
 	}
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("b"), lock.Primary)
 }

@@ -69,6 +69,41 @@ func TestRewriteDataBackendForStore(t *testing.T) {
 	err = rewriteDataBackendForStore(s3, 7, repo.BackupID(0xbeef))
 	require.NoError(t, err)
 	require.Equal(t, "root/_data/snapshot/7/000000000000BEEF", s3.GetS3().Prefix)
+
+	s3.GetS3().Prefix = "root/../base"
+	err = rewriteDataBackendForStore(s3, 7, repo.BackupID(0xbeef))
+	require.NoError(t, err)
+	require.Equal(t, "root/../base/_data/snapshot/7/000000000000BEEF", s3.GetS3().Prefix)
+}
+
+func TestRewriteDataFilesForStore(t *testing.T) {
+	files, err := rewriteDataFilesForStore([]*backuppb.File{
+		{Name: "123/file.sst"},
+		{Name: "file2.sst"},
+	}, 7, repo.BackupID(0xf00d))
+	require.NoError(t, err)
+	require.Equal(t, "_data/snapshot/7/000000000000F00D/123/file.sst", files[0].Name)
+	require.Equal(t, "_data/snapshot/7/000000000000F00D/file2.sst", files[1].Name)
+	require.Equal(t, "123/file.sst", files[0].Name[len("_data/snapshot/7/000000000000F00D/"):])
+
+	files, err = rewriteDataFilesForStore([]*backuppb.File{{Name: "foo/../bar.sst"}}, 7, repo.BackupID(0xf00d))
+	require.NoError(t, err)
+	require.Equal(t, "_data/snapshot/7/000000000000F00D/foo/../bar.sst", files[0].Name)
+}
+
+func TestSnapshotRepoBackupLifecycleRewriteResponseFiles(t *testing.T) {
+	lifecycle := &snapshotRepoBackupLifecycle{
+		resolvedStorage: &resolvedSnapshotStorage{Layout: repo.LayoutRepoV1, BackupID: repo.BackupID(0xbeef)},
+	}
+	rewriter := lifecycle.RewriteResponseFiles()
+	require.NotNil(t, rewriter)
+
+	files, err := rewriter(9, []*backuppb.File{{Name: "7/file.sst"}})
+	require.NoError(t, err)
+	require.Equal(t, "_data/snapshot/9/000000000000BEEF/7/file.sst", files[0].Name)
+
+	var nilLifecycle *snapshotRepoBackupLifecycle
+	require.Nil(t, nilLifecycle.RewriteResponseFiles())
 }
 
 func TestValidateSnapshotBackupRepoConfigRejectsNoCheckpoint(t *testing.T) {

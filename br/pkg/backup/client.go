@@ -97,6 +97,7 @@ type MainBackupLoop struct {
 	ProgressCallBack          func(ProgressUnit)
 	GetBackupClientCallBack   func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
 	RewriteStorageBackend     func(storeID uint64, backend *backuppb.StorageBackend) error
+	RewriteResponseFiles      func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
 	BeforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error
 
 	beforeFirstRequestToStoreOnce sync.Map
@@ -427,7 +428,7 @@ mainLoop:
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
+				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree, loop.RewriteResponseFiles)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 3 kinds of errors will be returned here:
@@ -1207,6 +1208,7 @@ func (bc *Client) BackupRanges(
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	rewriteStorageBackend func(storeID uint64, backend *backuppb.StorageBackend) error,
+	rewriteResponseFiles func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error),
 	beforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error,
 	progressCallBack func(ProgressUnit),
 ) (map[int64]*metautil.ChecksumStats, error) {
@@ -1240,6 +1242,7 @@ func (bc *Client) BackupRanges(
 		StateNotifier:             stateNotifier,
 		Limiter:                   NewResourceMemoryLimiter(rangeLimit),
 		RewriteStorageBackend:     rewriteStorageBackend,
+		RewriteResponseFiles:      rewriteResponseFiles,
 		BeforeFirstRequestToStore: beforeFirstRequestToStore,
 		ProgressCallBack:          progressCallBack,
 		// always use reset connection here.
@@ -1293,6 +1296,7 @@ func (bc *Client) OnBackupResponse(
 	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
+	rewriteResponseFiles func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error),
 ) (*txnlock.Lock, error) {
 	if r == nil || r.GetResponse() == nil {
 		return nil, nil
@@ -1301,6 +1305,13 @@ func (bc *Client) OnBackupResponse(
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
+		if rewriteResponseFiles != nil && len(resp.Files) > 0 {
+			files, err := rewriteResponseFiles(storeID, resp.Files)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			resp.Files = files
+		}
 		start := time.Now()
 		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
 		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))

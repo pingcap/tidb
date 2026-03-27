@@ -772,6 +772,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		cfg.ReplicaReadLabel,
 		metawriter,
 		repoLifecycle.RewriteStorageBackend(),
+		repoLifecycle.RewriteResponseFiles(),
 		repoLifecycle.BeforeFirstRequestToStore(),
 		progressCallBack,
 	)

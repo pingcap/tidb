@@ -203,6 +203,16 @@ func (l *snapshotRepoBackupLifecycle) RewriteStorageBackend() func(storeID uint6
 	}
 }
 
+func (l *snapshotRepoBackupLifecycle) RewriteResponseFiles() func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
+	if l == nil {
+		return nil
+	}
+	backupID := l.resolvedStorage.BackupID
+	return func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
+		return rewriteDataFilesForStore(files, storeID, backupID)
+	}
+}
+
 func (l *snapshotRepoBackupLifecycle) BeforeFirstRequestToStore() func(storeID uint64, request backuppb.BackupRequest) error {
 	if l == nil {
 		return nil
@@ -466,21 +476,46 @@ func rewriteDataBackendForStore(backend *backuppb.StorageBackend, storeID uint64
 	prefix := snapshotpaths.StoreDataPrefix(storeID, backupID)
 	switch {
 	case backend.GetLocal() != nil:
-		backend.GetLocal().Path = path.Join(backend.GetLocal().Path, prefix)
+		backend.GetLocal().Path = joinObjectStorageKey(backend.GetLocal().Path, prefix)
 	case backend.GetS3() != nil:
-		backend.GetS3().Prefix = joinBackendPrefix(backend.GetS3().Prefix, prefix)
+		backend.GetS3().Prefix = joinObjectStorageKey(backend.GetS3().Prefix, prefix)
 	case backend.GetGcs() != nil:
-		backend.GetGcs().Prefix = joinBackendPrefix(backend.GetGcs().Prefix, prefix)
+		backend.GetGcs().Prefix = joinObjectStorageKey(backend.GetGcs().Prefix, prefix)
 	case backend.GetAzureBlobStorage() != nil:
-		backend.GetAzureBlobStorage().Prefix = joinBackendPrefix(backend.GetAzureBlobStorage().Prefix, prefix)
+		backend.GetAzureBlobStorage().Prefix = joinObjectStorageKey(backend.GetAzureBlobStorage().Prefix, prefix)
 	default:
 		return errors.Errorf("repo-v1 is unsupported for backend %T", backend.Backend)
 	}
 	return nil
 }
 
-func joinBackendPrefix(current, suffix string) string {
-	return strings.Trim(path.Join("/", current, suffix), "/")
+func rewriteDataFilesForStore(files []*backuppb.File, storeID uint64, backupID repo.BackupID) ([]*backuppb.File, error) {
+	prefix := snapshotpaths.StoreDataPrefix(storeID, backupID)
+	rewritten := make([]*backuppb.File, 0, len(files))
+	for _, file := range files {
+		if file == nil {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 backup response contains nil file")
+		}
+		fileCopy := *file
+		fileCopy.Name = joinObjectStorageKey(prefix, file.GetName())
+		rewritten = append(rewritten, &fileCopy)
+	}
+	return rewritten, nil
+}
+
+func joinObjectStorageKey(base, suffix string) string {
+	switch {
+	case base == "":
+		return suffix
+	case suffix == "":
+		return base
+	case strings.HasSuffix(base, "/") && strings.HasPrefix(suffix, "/"):
+		return base + strings.TrimLeft(suffix, "/")
+	case strings.HasSuffix(base, "/") || strings.HasPrefix(suffix, "/"):
+		return base + suffix
+	default:
+		return base + "/" + suffix
+	}
 }
 
 func validateRepoV1Backend(backend *backuppb.StorageBackend) error {
