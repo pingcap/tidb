@@ -2650,4 +2650,3 @@ func TestTiDBUpgradeToVer224(t *testing.T) {
 	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
 	require.Contains(t, createWatchDoneSQL, "idx_done_time")
 }
-
