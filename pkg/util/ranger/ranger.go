@@ -141,17 +141,33 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 		}
 		return fullRange, true, nil
 	}
-	ranges := make(Ranges, 0, len(convertedPoints)/2)
-	for i := 0; i < len(convertedPoints); i += 2 {
-		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
-		ran := &Range{
-			LowVal:      []types.Datum{startPoint.value},
+	rangeCount := len(convertedPoints) / 2
+	ranges := make(Ranges, rangeCount)
+	rangeObjs := make([]Range, rangeCount)
+	lowValBuf := make([]types.Datum, rangeCount)
+	highValBuf := make([]types.Datum, rangeCount)
+	collatorBuf := make([]collate.Collator, rangeCount)
+	rangeCollator := collate.GetCollator(newTp.GetCollate())
+	for i := 0; i < rangeCount; i++ {
+		startPoint, endPoint := convertedPoints[i*2], convertedPoints[i*2+1]
+		// Batch-allocate the backing arrays, but clamp each slice to len==cap.
+		// Some callers append tail datums to an emitted range later, and that append
+		// must not overwrite the neighboring ranges that share the same buffer.
+		lowVal := lowValBuf[i : i+1 : i+1]
+		lowVal[0] = startPoint.value
+		highVal := highValBuf[i : i+1 : i+1]
+		highVal[0] = endPoint.value
+		collators := collatorBuf[i : i+1 : i+1]
+		collators[0] = rangeCollator
+
+		rangeObjs[i] = Range{
+			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
-			HighVal:     []types.Datum{endPoint.value},
+			HighVal:     highVal,
 			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
+			Collators:   collators,
 		}
-		ranges = append(ranges, ran)
+		ranges[i] = &rangeObjs[i]
 	}
 	return ranges, false, nil
 }
@@ -300,7 +316,8 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 
 func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.FieldType) (Ranges, error) {
 	rangeCount := len(rangePoints) / 2
-	newRanges := make(Ranges, 0, rangeCount)
+	newRanges := make(Ranges, rangeCount)
+	rangeObjs := make([]Range, rangeCount)
 	width := len(origin.LowVal) + 1
 	originWidth := len(origin.LowVal)
 	extraCollator := collate.GetCollator(ft.GetCollate())
@@ -328,13 +345,14 @@ func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.Fiel
 		copy(collators, origin.Collators)
 		collators[originWidth] = extraCollator
 
-		newRanges = append(newRanges, &Range{
+		rangeObjs[rangeIdx] = Range{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
 			HighExclude: endPoint.excl,
 			Collators:   collators,
-		})
+		}
+		newRanges[rangeIdx] = &rangeObjs[rangeIdx]
 	}
 	return newRanges, nil
 }
