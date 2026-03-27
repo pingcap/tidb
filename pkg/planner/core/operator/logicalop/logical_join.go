@@ -22,6 +22,7 @@ import (
 	"math/bits"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -1869,6 +1870,11 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
+				lCastCol, lCasted := extractCastSourceColumn(lKey)
+				rCastCol, rCasted := extractCastSourceColumn(rKey)
+				if lCasted && rCasted {
+					p.appendImplicitJoinKeyConversionWarning(lCastCol, rCastCol)
+				}
 				if lProj != nil {
 					lKey = lProj.AppendExpr(lKey)
 				}
@@ -1878,6 +1884,12 @@ func (p *LogicalJoin) updateEQCond() {
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				eqSf := eqCond.(*expression.ScalarFunction)
 				if _, _, isColOpCol := expression.IsColOpCol(eqSf); !isColOpCol {
+					origLCol, lIsCol := lKey.(*expression.Column)
+					origRCol, rIsCol := rKey.(*expression.Column)
+					if lIsCol && rIsCol &&
+						(isCastWrappedJoinKey(eqSf.GetArgs()[0], origLCol) || isCastWrappedJoinKey(eqSf.GetArgs()[1], origRCol)) {
+						p.appendImplicitJoinKeyConversionWarning(origLCol, origRCol)
+					}
 					// Join reorder and several join implementations assume each EqualCondition
 					// is strictly `col = col`. However, NewFunctionInternal may inject implicit
 					// casts (for example tinyint = bit/bool from a view), turning one side into
@@ -1943,6 +1955,40 @@ func (p *LogicalJoin) updateEQCond() {
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
+}
+
+func isCastWrappedJoinKey(expr expression.Expression, originalCol *expression.Column) bool {
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return false
+	}
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	return castArg.EqualColumn(originalCol)
+}
+
+func extractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return nil, false
+	}
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	return castArg, true
+}
+
+func (p *LogicalJoin) appendImplicitJoinKeyConversionWarning(leftCol, rightCol *expression.Column) {
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	warn := errors.NewNoStackErrorf(
+		"Implicit type or collation conversion on join keys (%s = %s) may make indexes unusable",
+		leftCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
+		rightCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
+	)
+	p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warn)
 }
 
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
