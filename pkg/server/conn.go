@@ -183,6 +183,7 @@ type clientConn struct {
 	serverHost    string                // server host
 	peerHost      string                // peer host
 	peerPort      string                // peer port
+	countedUser   string                // counted user identity for max_user_connections tracking
 	status        int32                 // dispatching/reading/shutdown/waitshutdown
 	lastCode      uint16                // last error code
 	collation     uint8                 // collation used by client, may be different from the collation used by database.
@@ -644,7 +645,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		}
 	}
 
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel, true)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -789,7 +790,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int, reserveUserConnection bool) (err error) {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -808,11 +809,6 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 		return err
 	}
 
-	err = cc.checkUserConnectionCount(host)
-	if err != nil {
-		return err
-	}
-
 	if !cc.isUnixSocket && authPlugin == mysql.AuthSocket {
 		return servererr.ErrAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
 	}
@@ -820,6 +816,18 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
 	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
+	}
+	reservedUserConnection := false
+	defer func() {
+		if err != nil && reservedUserConnection {
+			cc.decreaseUserConnectionCount()
+		}
+	}()
+	if reserveUserConnection {
+		if err = cc.increaseUserConnectionsCount(); err != nil {
+			return err
+		}
+		reservedUserConnection = true
 	}
 	cc.ctx.SetPort(port)
 	cc.ctx.SetCompressionLevel(zstdLevel)
@@ -2546,7 +2554,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel, false); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)

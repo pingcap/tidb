@@ -13832,7 +13832,7 @@ ConnectionOptions:
 			}
 		}
 		if needWarning {
-			yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions but MAX_USER_CONNECTIONS now, they would be parsed but ignored."))
+			yylex.AppendError(yylex.Errorf("TiDB only supports MAX_USER_CONNECTIONS in WITH ConnectionOptions; other options will be parsed but ignored."))
 			parser.lastErrorAsWarn()
 		}
 	}

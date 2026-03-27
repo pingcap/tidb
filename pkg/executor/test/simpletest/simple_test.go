@@ -251,7 +251,7 @@ func TestMaxUserConnections(t *testing.T) {
 	// create user with the default max_user_connections 0
 	createUserSQL := `CREATE USER 'test'@'localhost';`
 	tk.MustExec(createUserSQL)
-	result = tk.MustQuery(`select user, max_user_connections from mysql.user`)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user where user in ('root', 'test') order by user`)
 	result.Check(testkit.Rows("root 0", "test 0"))
 
 	// create user with max_user_connections 3
@@ -273,6 +273,15 @@ func TestMaxUserConnections(t *testing.T) {
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
 	result.Check(testkit.Rows("test1 0"))
+
+	createUserSQL = `CREATE USER 'test2'@'localhost' WITH MAX_USER_CONNECTIONS 50000;`
+	tk.MustExec(createUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test2"`)
+	result.Check(testkit.Rows("test2 50000"))
+	alterUserSQL = `ALTER USER 'test2'@'localhost' WITH MAX_USER_CONNECTIONS 50000;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test2"`)
+	result.Check(testkit.Rows("test2 50000"))
 
 	// grant the privilege of 'create user' to 'test1'@'localhost'
 	tkTest1 := testkit.NewTestKit(t, store)

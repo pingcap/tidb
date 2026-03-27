@@ -1516,6 +1516,7 @@ const (
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
 	DefMaxUserConnections                             = 0
+	MaxUserConnectionsLimit                           = 100000
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false

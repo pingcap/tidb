@@ -34,7 +34,6 @@ func TestUserConnectionCount(t *testing.T) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
-	// The global config is read during creating the store.
 	store := testkit.CreateMockStore(t)
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
@@ -42,6 +41,121 @@ func TestUserConnectionCount(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER `zak`@`%`")
+
+	newConn := func(host string) *clientConn {
+		cc := &clientConn{
+			connectionID: 1,
+			alloc:        arena.NewAllocator(1024),
+			chunkAlloc:   chunk.NewAllocator(),
+			collation:    mysql.DefaultCollationID,
+			peerHost:     "localhost",
+			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			server:       srv,
+			user:         "zak",
+		}
+		cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+		cc.ctx.GetSessionVars().User = &auth.UserIdentity{
+			Username:     "zak",
+			Hostname:     host,
+			AuthUsername: "zak",
+			AuthHostname: "%",
+		}
+		return cc
+	}
+
+	checkCount := func(expected int) {
+		require.Equal(t, expected, newConn("127.0.0.1").getUserConnectionCount(&auth.UserIdentity{
+			Username:     "zak",
+			Hostname:     "127.0.0.1",
+			AuthUsername: "zak",
+			AuthHostname: "%",
+		}))
+	}
+
+	acquireMany := func(hosts ...string) []*clientConn {
+		conns := make([]*clientConn, 0, len(hosts))
+		for _, host := range hosts {
+			cc := newConn(host)
+			require.NoError(t, cc.increaseUserConnectionsCount())
+			conns = append(conns, cc)
+		}
+		return conns
+	}
+	closeAll := func(conns []*clientConn) {
+		for _, cc := range conns {
+			cc.decreaseUserConnectionCount()
+		}
+	}
+
+	// test1: global MAX_USER_CONNECTIONS = 0 and max_user_connections = 0 in mysql.user for `zak`@`%`
+	conns := acquireMany("127.0.0.1", "127.0.0.1", "127.0.0.1")
+	checkCount(3)
+	closeAll(conns)
+	checkCount(0)
+
+	// test2: global MAX_USER_CONNECTIONS = 0 and max_user_connections = 2 in mysql.user for `zak`@`%`
+	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 2")
+	conns = acquireMany("127.0.0.1", "127.0.0.1")
+	require.ErrorContains(t, newConn("127.0.0.1").increaseUserConnectionsCount(),
+		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
+	checkCount(2)
+	closeAll(conns)
+	checkCount(0)
+
+	// test3: global MAX_USER_CONNECTIONS = 3 and max_user_connections = 0 in mysql.user for `zak`@`%`
+	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 0")
+	tk.MustExec("set global max_user_connections = 3")
+	conns = acquireMany("127.0.0.1", "127.0.0.1", "127.0.0.1")
+	require.ErrorContains(t, newConn("127.0.0.1").increaseUserConnectionsCount(),
+		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
+	checkCount(3)
+	closeAll(conns)
+	checkCount(0)
+
+	// test4: global MAX_USER_CONNECTIONS = 2 and max_user_connections = 3 in mysql.user for `zak`@`%`
+	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 3")
+	tk.MustExec("set global max_user_connections = 2")
+	conns = acquireMany("127.0.0.1", "127.0.0.1", "127.0.0.1")
+	require.ErrorContains(t, newConn("127.0.0.1").increaseUserConnectionsCount(),
+		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
+	checkCount(3)
+	closeAll(conns)
+	checkCount(0)
+
+	// test5: global MAX_USER_CONNECTIONS = 3 and max_user_connections = 2 in mysql.user for `zak`@`%`
+	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 2")
+	tk.MustExec("set global max_user_connections = 3")
+	conns = acquireMany("127.0.0.1", "127.0.0.1")
+	require.ErrorContains(t, newConn("127.0.0.1").increaseUserConnectionsCount(),
+		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
+	checkCount(2)
+	closeAll(conns)
+	checkCount(0)
+
+	// test6: zak@127.0.0.1 and zak@127.0.0.2 share the same zak@% limit.
+	tk.MustExec("set global max_user_connections = 0")
+	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 3")
+	conns = acquireMany("127.0.0.1", "127.0.0.1", "127.0.0.2")
+	require.ErrorContains(t, newConn("127.0.0.2").increaseUserConnectionsCount(),
+		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
+	checkCount(3)
+	closeAll(conns)
+	checkCount(0)
+}
+
+func TestUserConnectionCountTracksOriginalIdentityAcrossChangeUser(t *testing.T) {
+	cfg := util.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	store := testkit.CreateMockStore(t)
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER `zak`@`%` WITH MAX_USER_CONNECTIONS 1")
+	tk.MustExec("CREATE USER `other`@`%`")
 
 	cc := &clientConn{
 		connectionID: 1,
@@ -54,96 +168,23 @@ func TestUserConnectionCount(t *testing.T) {
 		user:         "zak",
 	}
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
-	sess := cc.ctx.GetSessionVars()
-	sess.User = &auth.UserIdentity{
+	cc.ctx.GetSessionVars().User = &auth.UserIdentity{
 		Username:     "zak",
 		Hostname:     "127.0.0.1",
 		AuthUsername: "zak",
 		AuthHostname: "%",
 	}
 
-	// test1: global MAX_USER_CONNECTIONS = 0 and max_user_conections = 0 in mysql.user for `zak`@`%`
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
+	require.NoError(t, cc.increaseUserConnectionsCount())
+	require.Equal(t, 1, cc.getUserConnectionCount(&auth.UserIdentity{Username: "zak", Hostname: "127.0.0.1", AuthUsername: "zak", AuthHostname: "%"}))
 
-	// test2: global MAX_USER_CONNECTIONS = 0 and max_user_conections = 2 in mysql.user for `zak`@`%`
-	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 2")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
-		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 2)
-	cc.decreaseUserConnectionCount()
-
-	cc.decreaseUserConnectionCount()
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
-
-	// test3: global MAX_USER_CONNECTIONS = 3 and max_user_conections = 0 in mysql.user for `zak`@`%`
-	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 0")
-	tk.MustExec("set global max_user_connections = 3")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
-		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
-
-	// test4: global MAX_USER_CONNECTIONS = 2 and max_user_conections = 3 in mysql.user for `zak`@`%`
-	// the max_user_connection attribute has a higher priority than global MAX_USER_CONNECTIONS.
-	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 3")
-	tk.MustExec("set global max_user_connections = 2")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
-		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
-
-	// test5: global MAX_USER_CONNECTIONS = 3 and max_user_conections = 2 in mysql.user for `zak`@`%`
-	// the max_user_connection attribute has a higher priority than global MAX_USER_CONNECTIONS.
-	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 2")
-	tk.MustExec("set global max_user_connections = 3")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
-		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 2)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
-
-	// test6: the user zak@127.0.0.1 and zak@127.0.0.2 have same limit(zak@127.0.0.1 + zap@127.0.0.2 <= 3).
-	tk.MustExec("set global max_user_connections = 0")
-	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 3")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	sess2 := cc.ctx.GetSessionVars()
-	sess2.User = &auth.UserIdentity{
-		Username:     "zak",
-		Hostname:     "127.0.0.2",
-		AuthUsername: "zak",
+	cc.ctx.GetSessionVars().User = &auth.UserIdentity{
+		Username:     "other",
+		Hostname:     "127.0.0.1",
+		AuthUsername: "other",
 		AuthHostname: "%",
 	}
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
-		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
 	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
+	require.Equal(t, 0, cc.getUserConnectionCount(&auth.UserIdentity{Username: "zak", Hostname: "127.0.0.1", AuthUsername: "zak", AuthHostname: "%"}))
+	require.Empty(t, cc.countedUser)
 }

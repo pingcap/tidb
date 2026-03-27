@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -827,7 +828,7 @@ func (info *resourceOptionsInfo) loadResourceOptions(userResource []*ast.Resourc
 		case ast.MaxConnectionsPerHour:
 			info.maxConnectionsPerHour = min(option.Count, math.MaxInt16)
 		case ast.MaxUserConnections:
-			info.maxUserConnections = min(option.Count, math.MaxInt16)
+			info.maxUserConnections = min(option.Count, int64(vardef.MaxUserConnectionsLimit))
 		}
 	}
 	return nil
