@@ -781,6 +781,71 @@ func TestBuildCopTasksWithVersionedPointRangeSplitByRegionBoundary(t *testing.T)
 	require.Equal(t, uint64(1), pbRanges[0].GetReadTs())
 }
 
+func buildVersionedTaskForExceedsBoundRetryTest(t *testing.T, skipBuckets bool, exceedsBoundRetry int) (*Backoffer, *copIteratorWorker, *copTask) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		pdClient.Close()
+	})
+
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"))
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, tikvStore.Close())
+	})
+
+	store := &Store{kvStore: &kvStore{store: tikvStore, mppStoreCnt: &mppStoreCnt{}}}
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+	tasks, err := buildCopTasks(bo, NewKeyRanges([]kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}}), &buildCopTaskOpt{
+		req:               req,
+		cache:             store.GetRegionCache(),
+		respChan:          false,
+		handleVersionMap:  map[string]uint64{"a": 1},
+		skipBuckets:       skipBuckets,
+		exceedsBoundRetry: exceedsBoundRetry,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	worker := &copIteratorWorker{store: store, req: req}
+	return bo, worker, tasks[0]
+}
+
+func assertVersionedTaskPreservedAfterRetry(t *testing.T, task *copTask, expectedRetry int) {
+	require.True(t, task.skipBuckets)
+	require.Equal(t, expectedRetry, task.exceedsBoundRetry)
+	require.Equal(t, map[string]uint64{"a": 1}, task.handleVersionMap)
+
+	pbRanges, err := versionedKeyRangesToPB(task.ranges, task.handleVersionMap)
+	require.NoError(t, err)
+	require.Len(t, pbRanges, 1)
+	require.Equal(t, []byte("a"), pbRanges[0].GetRange().GetStart())
+	require.Equal(t, []byte("b"), pbRanges[0].GetRange().GetEnd())
+	require.Equal(t, uint64(1), pbRanges[0].GetReadTs())
+}
+
+func TestHandleCopResponsePreservesHandleVersionMapOnExceedsBoundRetry(t *testing.T) {
+	t.Run("initial retry without buckets keeps handle version map", func(t *testing.T) {
+		bo, worker, task := buildVersionedTaskForExceedsBoundRetryTest(t, false, 0)
+
+		result, err := worker.handleCopResponse(bo, nil, &copResponse{pbResp: &coprocessor.Response{OtherError: "Request range exceeds bound"}}, nil, nil, task, 0)
+		require.NoError(t, err)
+		require.Len(t, result.remains, 1)
+		assertVersionedTaskPreservedAfterRetry(t, result.remains[0], 1)
+	})
+
+	t.Run("persist-after-skipBuckets retry keeps handle version map", func(t *testing.T) {
+		bo, worker, task := buildVersionedTaskForExceedsBoundRetryTest(t, true, 1)
+
+		result, err := worker.handleCopResponse(bo, nil, &copResponse{pbResp: &coprocessor.Response{OtherError: "Request range exceeds bound"}}, nil, nil, task, 0)
+		require.NoError(t, err)
+		require.Len(t, result.remains, 1)
+		assertVersionedTaskPreservedAfterRetry(t, result.remains[0], 2)
+	})
+}
+
 func TestCopTaskToPBBatchTasksVersionedRangesDecodeFail(t *testing.T) {
 	parent := &copTask{
 		batchTaskList: map[uint64]*batchedCopTask{},
