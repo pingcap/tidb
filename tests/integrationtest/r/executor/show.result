@@ -1064,6 +1064,7 @@ gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+latin1_swedish_ci	latin1	8		Yes	1	PAD SPACE
 utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
@@ -1081,6 +1082,7 @@ gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+latin1_swedish_ci	latin1	8		Yes	1	PAD SPACE
 utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
@@ -1108,6 +1110,7 @@ gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+latin1_swedish_ci	latin1	8		Yes	1	PAD SPACE
 utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
@@ -1125,6 +1128,7 @@ gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+latin1_swedish_ci	latin1	8		Yes	1	PAD SPACE
 utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
