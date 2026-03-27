@@ -264,7 +264,7 @@ When a fallback occurs, a warning should be logged and returned to the client as
 
 1. Each partition's ANALYZE saves its pruned samples to `mysql.stats_data` regardless of whether all partitions have saved sample data yet (a partition with zero rows or very few rows still gets an entry — it just contains zero or few samples)
 2. For building global stats, if any partition has no saved sample data in `mysql.stats_data` but has existing TopN/histograms from a prior analyze, the merge-based path is used instead — the existing stats are more representative than partial sample coverage
-3. If no partition has existing TopN/histograms (e.g., a freshly created table), global stats are built from whatever samples are available — there is nothing to fall back to
+3. A newly added partition that has never been analyzed (no saved samples and no existing TopN/histograms) does not trigger a fallback — it simply contributes zero samples to the global merge, which is correct since it contains no known data. This is a common case (e.g., adding a new partition before auto-analyze runs)
 4. Once all partitions have saved sample data in `mysql.stats_data` (after a full `ANALYZE TABLE` or after auto-analyze has covered every partition), the sample-based path takes over
 
 This means auto-analyze gradually populates samples partition by partition, while global stats quality is maintained by the merge-based fallback when existing stats are available.
