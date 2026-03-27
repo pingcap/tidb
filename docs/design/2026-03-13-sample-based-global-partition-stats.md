@@ -253,7 +253,6 @@ The variable defaults to ON. If issues are discovered after release, operators c
 
 The sample-based path falls back transparently to the merge-based path when:
 - The variable is set to `OFF`
-- No sample collector is available (e.g., all partition analyses failed)
 - Saved sample layout is not exact or explicitly-compatible with the current ANALYZE request (per-column: columns not covered by a partition's saved samples fall back individually — see note below)
 - Any partition has no saved sample data in `mysql.stats_data` but has existing TopN/histograms from a prior analyze (see Gradual Transition below)
 
