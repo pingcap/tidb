@@ -4458,3 +4458,19 @@ func TestDeepCopyRetType(t *testing.T) {
 	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
 	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
 }
+
+func TestIssue66827OuterJoinWithIsNotTrue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(c0 int)")
+	tk.MustExec("create table t1(c0 int)")
+	tk.MustExec("insert into t0 values (0)")
+	tk.MustExec("insert into t1 values (0)")
+
+	tk.MustQuery("select t0.c0, t1.c0 from t0 left join t1 on t0.c0=t1.c0").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select t0.c0, t1.c0 from t0 left join t1 on t0.c0=t1.c0 where (t0.c0=t1.c0) is not true").Check(testkit.Rows())
+	tk.MustQuery("select t0.c0, t1.c0 from t0 right join t1 on t0.c0=t1.c0 where (t0.c0=t1.c0) is not true").Check(testkit.Rows())
+}
