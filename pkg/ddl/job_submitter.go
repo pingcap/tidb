@@ -492,7 +492,7 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 		case model.ActionCreateMaterializedView:
 			args := jobW.JobArgs.(*model.CreateMaterializedViewArgs)
 			count += idCountForTable(args.TableInfo)
-		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
+		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable, model.ActionCreateMaterializedViewShadow:
 			args := jobW.JobArgs.(*model.CreateTableArgs)
 			count += idCountForTable(args.TableInfo)
 		case model.ActionCreateTables:
@@ -539,7 +539,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				alloc.assignIDsForTable(args.TableInfo)
 			}
 			jobW.TableID = args.TableInfo.ID
-		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
+		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable, model.ActionCreateMaterializedViewShadow:
 			args := jobW.JobArgs.(*model.CreateTableArgs)
 			if !jobW.IDAllocated {
 				alloc.assignIDsForTable(args.TableInfo)

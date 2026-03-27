@@ -395,6 +395,33 @@ func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMat
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG is not supported in schema tracker")
 }
 
+// CreateMaterializedViewShadowTable implements the DDL interface.
+func (*SchemaTracker) CreateMaterializedViewShadowTable(
+	sessionctx.Context,
+	int64,
+	pmodel.CIStr,
+	*model.TableInfo,
+) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW SHADOW TABLE is not supported in schema tracker")
+}
+
+// RefreshMaterializedViewCompleteOutOfPlaceCutover implements the DDL interface.
+func (*SchemaTracker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
+	sessionctx.Context,
+	int64,
+	pmodel.CIStr,
+	pmodel.CIStr,
+	int64,
+	int64,
+	uint64,
+	uint64,
+	bool,
+	*string,
+	bool,
+) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW COMPLETE OUT OF PLACE cutover is not supported in schema tracker")
+}
+
 // CreateTableWithInfo implements the DDL interface.
 func (d *SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,

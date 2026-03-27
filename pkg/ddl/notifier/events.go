@@ -170,6 +170,31 @@ func (s *SchemaChangeEvent) GetAlterMaterializedViewLogPurgeInfo() *model.TableI
 	return s.inner.TableInfo
 }
 
+// NewMViewRefreshOutOfPlaceCutoverEvent creates a SchemaChangeEvent whose type is
+// ActionMViewRefreshOutOfPlaceCutover.
+func NewMViewRefreshOutOfPlaceCutoverEvent(
+	tableInfo *model.TableInfo,
+	oldTableInfo *model.TableInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp:           model.ActionMViewRefreshOutOfPlaceCutover,
+			TableInfo:    tableInfo,
+			OldTableInfo: oldTableInfo,
+		},
+	}
+}
+
+// GetMViewRefreshOutOfPlaceCutoverInfo returns the new and old table info of the
+// SchemaChangeEvent whose type is ActionMViewRefreshOutOfPlaceCutover.
+func (s *SchemaChangeEvent) GetMViewRefreshOutOfPlaceCutoverInfo() (
+	newTableInfo *model.TableInfo,
+	oldTableInfo *model.TableInfo,
+) {
+	intest.Assert(s.inner.Tp == model.ActionMViewRefreshOutOfPlaceCutover)
+	return s.inner.TableInfo, s.inner.OldTableInfo
+}
+
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is
 // ActionTruncateTable.
 func NewTruncateTableEvent(

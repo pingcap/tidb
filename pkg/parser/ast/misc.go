@@ -516,6 +516,7 @@ type RefreshMaterializedViewStmt struct {
 	ViewName      *TableName
 	WithAsyncMode bool
 	Type          RefreshMaterializedViewType
+	OutOfPlace    bool
 	ObserveType   RefreshMaterializedViewObserveType
 }
 
@@ -602,6 +603,9 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
+	if n.OutOfPlace {
+		ctx.WriteKeyWord(" OUT OF PLACE")
+	}
 	switch n.ObserveType {
 	case RefreshMaterializedViewObserveDryRun:
 		ctx.WriteKeyWord(" DRY RUN")
