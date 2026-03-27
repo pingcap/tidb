@@ -722,7 +722,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			if selected.Index.Unique {
 				sb.WriteString("unique ")
 			}
-			sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+			fmt.Fprintf(&sb, "index %s of %s is selected since the path", selected.Index.Name.O, tableName)
 			if isRefinedPath {
 				sb.WriteString(" only fetches limited number of rows")
 			} else {
