@@ -9928,9 +9928,9 @@ TableFactor:
 |	"LATERAL" SubSelect TableAsName IdentListWithParenOpt
 	{
 		resultNode := $2.(*ast.SubqueryExpr).Query
-		ts := &ast.TableSource{Source: resultNode, AsName: $3.(ast.CIStr)}
+		ts := &ast.TableSource{Source: resultNode, AsName: $3.(model.CIStr)}
 		ts.Lateral = true
-		ts.ColumnNames = $4.([]ast.CIStr)
+		ts.ColumnNames = $4.([]model.CIStr)
 		$$ = ts
 	}
 |	'(' TableRefs ')'
