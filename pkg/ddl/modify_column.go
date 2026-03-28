@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1399,28 +1398,9 @@ func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
 		return false
 	}
-
-	// Only retry explicit transient errors here.
-	// Do NOT treat unknown errors as retryable, otherwise it may cause retry loops on deterministic
-	// data conversion errors (e.g. VECTOR dimension mismatch) and block the DDL from rolling back.
-	errMsg := err.Error()
-	for _, m := range dbterror.ReorgRetryableErrMsgs {
-		if strings.Contains(errMsg, m) {
-			return true
-		}
-	}
-	// TiKV client/PD region scan may return leaderless regions during rolling restart or network issues.
-	// That error is transient and should be retried by the DDL worker.
-	if strings.Contains(errMsg, "All returned regions have no leaders") {
-		return true
-	}
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	return false
+	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
+	// cause long retry loops and block the job from rolling back.
+	return isRetryableError(err, false)
 }
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {
