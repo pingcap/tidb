@@ -376,6 +376,19 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 		require.Zero(t, metrics.CalculateRUValues(zeroScaleWeights))
 		require.Equal(t, tikvRU+tiflashRU, metrics.TotalRU(zeroScaleWeights, tikvRU, tiflashRU))
 	})
+
+	t.Run("bypass keeps total zero", func(t *testing.T) {
+		bypassed := NewRUV2Metrics()
+		bypassed.SetBypass(true)
+		bypassed.AddResultChunkCells(1000)
+		bypassed.AddPlanCnt(2)
+
+		require.Zero(t, bypassed.CalculateRUValues(weights))
+		require.Zero(t, bypassed.TotalRU(weights, tikvRU, tiflashRU))
+		total, detail := FormatRUV2Summary(bypassed, weights, tikvRU, tiflashRU)
+		require.Empty(t, total)
+		require.Empty(t, detail)
+	})
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {

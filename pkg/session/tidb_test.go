@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -73,23 +74,46 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 	se, err := createSession(store)
 	require.NoError(t, err)
 
-	_, err = se.ParseWithParams(context.Background(), "select 1")
-	require.NoError(t, err)
-	require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
+	t.Run("standalone parse carries into next statement only once", func(t *testing.T) {
+		_, err = se.ParseWithParams(context.Background(), "select 1")
+		require.NoError(t, err)
+		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
 
-	stmt, err := se.ParseWithParams(context.Background(), "set @a=1")
-	require.NoError(t, err)
-	require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
+		stmt, err := se.ParseWithParams(context.Background(), "set @a=1")
+		require.NoError(t, err)
+		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
 
-	_, err = se.ExecuteStmt(context.Background(), stmt)
-	require.NoError(t, err)
-	require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
-	require.NotNil(t, se.sessionVars.RUV2Metrics)
-	require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
+		_, err = se.ExecuteStmt(context.Background(), stmt)
+		require.NoError(t, err)
+		require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
+		require.NotNil(t, se.sessionVars.RUV2Metrics)
+		require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
 
-	dctx := se.GetDistSQLCtx()
-	require.Equal(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
-	require.NotNil(t, dctx.RUV2RPCInterceptor)
+		dctx := se.GetDistSQLCtx()
+		require.Equal(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
+		require.NotNil(t, dctx.RUV2RPCInterceptor)
+	})
+
+	t.Run("internal others bypass skips parser ru accounting", func(t *testing.T) {
+		stmt, err := se.ParseWithParams(context.Background(), "set @b=1")
+		require.NoError(t, err)
+		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
+
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		_, err = se.ExecuteStmt(ctx, stmt)
+		require.NoError(t, err)
+		require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
+		require.True(t, se.sessionVars.StmtCtx.BypassRU)
+		require.NotNil(t, se.sessionVars.RUV2Metrics)
+		require.True(t, se.sessionVars.RUV2Metrics.Bypass())
+		require.Zero(t, se.sessionVars.RUV2Metrics.SessionParserTotal())
+	})
+
+	t.Run("statement bypass decision follows internal analyze semantics", func(t *testing.T) {
+		statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		require.Equal(t, kerneltype.IsNextGen(), shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
+		require.False(t, shouldBypass(statsCtx, &ast.SelectStmt{}, se.sessionVars))
+	})
 }
 
 func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {

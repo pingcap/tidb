@@ -2441,6 +2441,11 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, ruv2Metrics)
 	}
 	sessVars.RUV2Metrics = ruv2Metrics
+	bypass := shouldBypass(ctx, stmtNode, sessVars)
+	sessVars.StmtCtx.BypassRU = bypass
+	if ruv2Metrics != nil {
+		ruv2Metrics.SetBypass(bypass)
+	}
 	if pending := sessVars.RUV2PendingSessionParserTotal.Swap(0); pending > 0 && ruv2Metrics != nil {
 		ruv2Metrics.AddSessionParserTotal(pending)
 	}
@@ -2726,6 +2731,36 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 	}
 	return recordSet, nil
+}
+
+func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	switch kv.GetInternalSourceType(ctx) {
+	case kv.InternalTxnOthers:
+		return true
+	case kv.InternalTxnStats:
+		return kerneltype.IsNextGen() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
+	default:
+		return false
+	}
+}
+
+func isAnalyzeStatementForRUV2(stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if stmtNode == nil || sessVars == nil {
+		return false
+	}
+	switch stmt := stmtNode.(type) {
+	case *ast.AnalyzeTableStmt:
+		return true
+	case *ast.ExecuteStmt:
+		prepareStmt, err := plannercore.GetPreparedStmt(stmt, sessVars)
+		if err != nil {
+			return false
+		}
+		_, ok := prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
+		return ok
+	default:
+		return false
+	}
 }
 
 func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
