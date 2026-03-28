@@ -16,7 +16,7 @@
     * [Plan Cache Compatibility](#plan-cache-compatibility)
     * [Status Variable](#status-variable)
     * [Protobuf Changes](#protobuf-changes)
-    * [TiDB Coprocessor Dispatch with Concurrency-Aware Splitting](#tidb-coprocessor-dispatch-with-concurrency-aware-splitting)
+    * [TiDB Coprocessor Dispatch](#tidb-coprocessor-dispatch)
     * [TiKV Coprocessor Enforcement](#tikv-coprocessor-enforcement)
     * [Error Handling](#error-handling)
     * [Compatibility](#compatibility)
@@ -61,7 +61,7 @@ TiDB also provides `PROCESSED_KEYS` thresholds via the [resource control runaway
 
 ### Architecture Overview
 
-The feature spans three layers: the TiDB SQL layer (variable management, hint parsing, query orchestration), the TiDB coprocessor client (concurrency-aware limit splitting), and the TiKV coprocessor (storage-level enforcement).
+The feature spans three layers: the TiDB SQL layer (variable management, hint parsing, query orchestration), the TiDB coprocessor client (per-task limit propagation and global accumulation), and the TiKV coprocessor (storage-level enforcement).
 
 ```
 SQL: SELECT /*+ SET_VAR(tidb_max_keys_read=100) */ * FROM t
@@ -76,7 +76,7 @@ TiDB Layer:
   copIterator: tracks cumulative keysRead (atomic counter)
       ↓
   copIteratorTaskSender: per task, sets
-    task.maxKeysRead = remaining / concurrency  (proactive split)
+    task.maxKeysRead = max_keys_read - keysRead  (remaining keys, full budget per task)
       ↓
   handleTaskOnce(): sets copReq.MaxKeysRead = task.maxKeysRead
 
@@ -203,25 +203,19 @@ message Request {
 
 **No new response fields are needed.** TiDB tracks keys examined using the existing `ScanDetail.ProcessedKeys` returned in every coprocessor response. This field is already populated by TiKV and counts all keys processed by the storage engine, including both index keys and table row keys.
 
-### TiDB Coprocessor Dispatch with Concurrency-Aware Splitting
+### TiDB Coprocessor Dispatch
 
-#### Problem
+Each coprocessor task is sent the **remaining key budget** (`max_keys_read - keysRead`) as its per-task limit. This is a full, un-split budget — concurrent tasks each receive the same remaining amount rather than having it divided by concurrency.
 
-`tidb_distsql_scan_concurrency` controls how many coprocessor tasks execute in parallel. Without splitting, each concurrent task receives the full remaining limit. If `limit=100` and `concurrency=15`, all 15 tasks could each examine up to 100 keys = **1,500 total keys examined** — a 15x overshoot.
+#### Rationale
 
-#### Solution
+This feature targets OLTP workloads. OLTP queries are typically point lookups or narrow range scans that hit one or very few TiKV nodes. Splitting the limit evenly across concurrent tasks would be problematic because:
 
-The `copIterator` proactively divides the remaining limit by the configured concurrency at task dispatch time. This follows the pattern already used for `PagingSize` where per-task values are computed during task construction.
+1. **Data distribution is non-uniform.** If most data lives on one node, splitting by concurrency would under-limit that node and waste budget on idle ones.
+2. **The goal is per-node protection.** The limit acts as a safety net for individual TiKV nodes — preventing any single node from being overwhelmed. Treating it as a per-node budget aligns with that intent.
+3. **Simpler and more predictable.** Applications can reason about the limit as "keys examined on any single TiKV node before the query is aborted."
 
-#### Overshoot analysis
-
-The overshoot is bounded: at most `concurrency` tasks each scan `remaining/concurrency` keys, so the total overshoot is at most `remaining` extra keys beyond the limit. In practice it is much less because:
-
-1. TiDB cancels remaining tasks promptly via `finishCh`.
-2. TiKV enforces the per-task limit and returns partial results.
-3. Not all tasks start simultaneously — tasks are dispatched through rate-limited channels.
-
-This is consistent with MariaDB's behavior where enforcement is approximate and the server "terminates at the earliest opportunity" when the limit is exceeded.
+TiDB still maintains a global cumulative check in `copIterator.Next()` using `ScanDetail.ProcessedKeys` across all responses. This secondary check ensures the limit is also enforced globally when a query does span multiple nodes, and provides correctness for older TiKV versions that ignore the proto field.
 
 #### Propagation Path
 
@@ -230,7 +224,7 @@ SessionVars.MaxKeysRead
     → DistSQLContext.MaxKeysRead      (pkg/distsql/context/context.go)
     → kv.Request.MaxKeysRead          (pkg/distsql/request_builder.go:SetFromSessionVars)
     → copIterator.maxKeysRead         (pkg/store/copr/coprocessor.go)
-    → copTask.maxKeysRead             (per-task split)
+    → copTask.maxKeysRead             (remaining = max_keys_read - keysRead, per task)
     → coprocessor.Request.MaxKeysRead (per-task proto field)
 ```
 
@@ -293,9 +287,9 @@ The error is raised **at the TiDB layer** (in `copIterator.Next()`) when the cum
 
 **Unit tests in `pkg/store/copr/`:**
 
-- Test per-task limit splitting logic with various concurrency values (1, 5, 15).
+- Test that each dispatched task receives `remaining = max_keys_read - keysRead` as its per-task limit.
 - Test cumulative tracking and cancellation in `copIterator.Next()`.
-- Test that dispatching stops when remaining limit is exhausted.
+- Test that tasks dispatched after the global limit is reached receive limit `0` (i.e., are not sent).
 
 **TiKV unit tests:**
 
@@ -319,7 +313,7 @@ The error is raised **at the TiDB layer** (in `copIterator.Next()`) when the cum
 | 9 | DML not affected: `INSERT ... SELECT`, `UPDATE`, `DELETE` | No limit applied |
 | 10 | Global scope: `SET GLOBAL tidb_max_keys_read = 100` | Applies to new sessions |
 | 11 | Under limit: table with 10 rows, `SET tidb_max_keys_read = 100`, `SELECT *` | Full result, no error |
-| 12 | Exact limit: table with 10 rows, `SET tidb_max_keys_read = 10` | Borderline — may or may not error depending on overshoot |
+| 12 | Exact limit: table with 10 rows, `SET tidb_max_keys_read = 10` | Error 8270 — cumulative reaches exactly the limit |
 | 13 | Plan cache hit: same SET_VAR hint, second execution | `@@last_plan_from_cache = 1`, limit still enforced |
 | 14 | Plan cache with session variable (no hint) | Cached plan reused; session-level `MaxKeysRead` applies at execution time |
 | 15 | Index lookup: table with 10 rows, index on col, `SET tidb_max_keys_read = 15`, `SELECT * FROM t WHERE col = x` (full index scan) | Error 8270 — each row contributes 2 keys (index + table), so 10 rows = ~20 keys |
@@ -328,8 +322,9 @@ The error is raised **at the TiDB layer** (in `copIterator.Next()`) when the cum
 **RealTiKV tests in `tests/realtikvtest/`:**
 
 - Table with 10,000+ rows split across multiple regions.
-- Verify limit enforced correctly across regions.
-- Verify with various `tidb_distsql_scan_concurrency` values (1, 5, 15, 30).
+- Verify limit enforced correctly when query hits a single TiKV node (typical OLTP case).
+- Verify limit enforced correctly when query spans multiple regions across multiple nodes (global cumulative check fires).
+- Verify that each concurrent task receives the remaining key budget, not a fractional split.
 - Verify that TiKV returns partial results (not full scan) when limit is set.
 
 ### Compatibility Tests
@@ -364,7 +359,7 @@ The error is raised **at the TiDB layer** (in `copIterator.Next()`) when the cum
 
 - **Key counting semantics**: `ScanDetail.ProcessedKeys` counts storage engine keys processed — this is the intended metric, not a proxy for logical rows. Index lookups contribute two keys per logical row (one index key, one table row key), so applications using index-based access patterns should size limits accordingly. Queries that perform covering index scans (no table row lookup) consume only one key per row. MVCC version traversal may also contribute additional key reads when multiple row versions exist.
 
-- **Concurrency overshoot**: With the proactive split, the total rows examined may slightly exceed the limit (bounded by at most `remaining` extra rows where `remaining` is the gap between the limit and already-scanned rows at dispatch time). This is acceptable — the feature provides a safety bound, not a precise cutoff. This is consistent with MariaDB's documentation which states that enforcement is approximate and "the server counts the number of read rows during query execution" and terminates "at the earliest opportunity."
+- **Multi-node overshoot**: Because each concurrent task receives the full remaining budget, a query spanning multiple TiKV nodes may examine up to `remaining * concurrentNodes` keys before the TiDB-side global check fires. This is the intended behavior for an OLTP feature — queries hitting a single node are bounded precisely, and the global cumulative check at TiDB ensures the limit is still enforced across nodes. Applications with OLAP-style queries spanning many nodes should be aware that the effective global key scan may exceed the configured limit.
 
 ## Investigation & Alternatives
 
@@ -493,7 +488,7 @@ Note: TiDB-side enforcement is still maintained as a **secondary check** for cor
 - **Pro**: Semantically cleaner — it is a query execution parameter.
 - **Con**: `DAGRequest` is serialized once into `worker.req.Data` and shared across all tasks. Cannot have per-task limits without re-serialization.
 
-**Rejected** because per-task limits are needed for concurrency-aware splitting. The `coprocessor.Request` is built per-task in `handleTaskOnce()`, making it the natural place for per-task configuration.
+**Rejected** because the limit must be set per-task (each task carries the remaining budget at dispatch time). The `coprocessor.Request` is built per-task in `handleTaskOnce()`, making it the natural place for per-task configuration.
 
 ## Unresolved Questions
 
