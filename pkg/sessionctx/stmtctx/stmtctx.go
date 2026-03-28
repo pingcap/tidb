@@ -445,6 +445,8 @@ type StatementContext struct {
 		Timeout time.Duration
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.StatsLoadItem
+		// FallbackItems stores the full-load stats items that were still unavailable when sync-load fell back.
+		FallbackItems []model.TableItemID
 		// ResultCh to receive stats loading results
 		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency

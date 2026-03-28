@@ -291,6 +291,11 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		return nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
+	if shouldInvalidatePlanCacheForFreshStats(sctx, pcv) {
+		hit = false
+		sctx.GetSessionVars().PlanCacheValue = nil
+		return nil, nil, nil, false
+	}
 	sctx.GetSessionVars().PlanCacheValue = pcv
 	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
 }

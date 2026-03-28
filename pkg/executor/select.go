@@ -988,6 +988,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.StatsLoad.Timeout = 0
 	sc.StatsLoad.NeededItems = nil
+	sc.StatsLoad.FallbackItems = nil
 	sc.StatsLoad.ResultCh = nil
 	sc.MatchSQLBindingCacheKey = nil
 	sc.MatchSQLBindingCache = nil

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -402,6 +403,93 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 			t.Error("unexpected plan:", pp)
 		}
 	})
+}
+
+func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadQueueSize = 1
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originalPseudoTimeout := tk.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_stats_load_pseudo_timeout = %v", originalPseudoTimeout))
+	}()
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+
+	tk.MustExec("set global tidb_stats_load_pseudo_timeout = 1")
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("set @@session.tidb_plan_cache_invalidation_on_fresh_stats = 1")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("analyze table t all columns")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colBID := tblInfo.Columns[1].ID
+
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats := statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsAllEvicted())
+
+	tk.MustExec("prepare st from 'select * from t where b > ?'")
+	tk.MustExec("set @p = 2")
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	require.Eventually(t, func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableID == tblInfo.ID && item.ID == colBID && !item.IsIndex && item.FullLoad && item.IsSyncLoadFailed {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond)
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats = statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsFullLoad())
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	evictedStatsTbl := statsTbl.CopyAs(statistics.ColumnMapWritable)
+	evictedColBStats := *colBStats
+	evictedColBStats.DropUnnecessaryData()
+	evictedStatsTbl.SetCol(colBID, &evictedColBStats)
+	dom.StatsHandle().UpdateStatsCache(types.CacheUpdate{
+		Updated: []*statistics.Table{evictedStatsTbl},
+	})
+	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats = statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsAllEvicted())
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestPlanStatsStatusRecord(t *testing.T) {
