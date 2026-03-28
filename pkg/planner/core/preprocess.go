@@ -973,6 +973,18 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
+		case ast.ConstraintFulltext, ast.ConstraintColumnar:
+			if constraint.Tp == ast.ConstraintFulltext || (constraint.Option != nil && constraint.Option.Tp == ast.IndexTypeFulltext) {
+				err := checkIndexInfo(constraint.Name, constraint.Keys)
+				if err != nil {
+					p.err = err
+					return
+				}
+				if constraint.IsEmptyIndex {
+					p.err = dbterror.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
+					return
+				}
+			}
 		}
 	}
 	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
