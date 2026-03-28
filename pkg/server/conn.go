@@ -2526,15 +2526,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 	}
 	defer func() {
 		cells := int64(writtenRows) * int64(len(rs.Columns()))
-		if cells > 0 {
-			ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-			if ruv2Metrics == nil {
-				ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
-			}
-			if ruv2Metrics != nil {
-				ruv2Metrics.AddResultChunkCells(cells)
-			}
-		}
 		resultset.ReportCursorRUV2Delta(rs, cells)
 	}()
 	if stmtDetail != nil {
