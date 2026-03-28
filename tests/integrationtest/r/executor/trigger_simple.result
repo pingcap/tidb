@@ -93,6 +93,28 @@ drop table t_upd_ts;
 use executor__trigger_simple;
 drop database trig_db;
 set @@tidb_enable_noop_functions='OFF';
+create table t_label (id int primary key, note varchar(20));
+insert into t_label values (1, 'same');
+create trigger trg_label before update on t_label for each row
+labeltri: begin
+if new.note = old.note then
+leave labeltri;
+end if;
+set new.note = concat(new.note, '_changed');
+end labeltri$$
+show create trigger trg_label;
+Trigger	sql_mode	SQL Original Statement	character_set_client	collation_connection	Database Collation	Created
+trg_label	ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES	CREATE DEFINER = `root`@`127.0.0.1` TRIGGER `executor__trigger_simple`.`trg_label` BEFORE UPDATE ON `executor__trigger_simple`.`t_label` FOR EACH ROW `labeltri`: BEGIN IF `new`.`note`=`old`.`note` THEN LEAVE `labeltri`;END IF;SET `new.note`=CONCAT(`new`.`note`, _UTF8MB4'_changed'); END `labeltri`	utf8mb4	utf8mb4_general_ci	utf8mb4_bin	<created>
+update t_label set note = 'same' where id = 1;
+select note from t_label where id = 1;
+note
+same
+update t_label set note = 'new' where id = 1;
+select note from t_label where id = 1;
+note
+new_changed
+drop trigger trg_label;
+drop table t_label;
 create table t1 (i int);
 insert into t1 values (1),(2),(3),(4);
 create trigger trg after update on t1 for each row

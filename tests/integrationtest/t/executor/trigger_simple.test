@@ -106,6 +106,27 @@ use executor__trigger_simple;
 drop database trig_db;
 set @@tidb_enable_noop_functions='OFF';
 
+# Regression: labeled LEAVE in trigger body must be stored as an identifier.
+create table t_label (id int primary key, note varchar(20));
+insert into t_label values (1, 'same');
+delimiter $$
+create trigger trg_label before update on t_label for each row
+labeltri: begin
+  if new.note = old.note then
+    leave labeltri;
+  end if;
+  set new.note = concat(new.note, '_changed');
+end labeltri$$
+delimiter ;
+--replace_column 7 <created>
+show create trigger trg_label;
+update t_label set note = 'same' where id = 1;
+select note from t_label where id = 1;
+update t_label set note = 'new' where id = 1;
+select note from t_label where id = 1;
+drop trigger trg_label;
+drop table t_label;
+
 # After update trigger
 create table t1 (i int);
 insert into t1 values (1),(2),(3),(4);

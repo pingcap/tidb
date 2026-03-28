@@ -17,10 +17,12 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
@@ -193,6 +195,41 @@ func TestProcedureVisitor(t *testing.T) {
 			stmt.Accept(visitor{})
 			stmt.Accept(visitor1{})
 		}
+	}
+}
+
+func TestProcedureJumpRestoreUsesIdentifierLabel(t *testing.T) {
+	testCases := []struct {
+		name     string
+		isLeave  bool
+		expected string
+	}{
+		{
+			name:     "leave",
+			isLeave:  true,
+			expected: "LEAVE `labeltri`",
+		},
+		{
+			name:     "iterate",
+			isLeave:  false,
+			expected: "ITERATE `labeltri`",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			jump := &ast.ProcedureJump{
+				Name:    "labeltri",
+				IsLeave: testCase.isLeave,
+			}
+			var sb strings.Builder
+			err := jump.Restore(format.NewRestoreCtx(
+				format.RestoreStringSingleQuotes|format.RestoreKeyWordUppercase|format.RestoreNameBackQuotes,
+				&sb,
+			))
+			require.NoError(t, err)
+			require.Equal(t, testCase.expected, sb.String())
+		})
 	}
 }
 
