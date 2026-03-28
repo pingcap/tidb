@@ -52,7 +52,6 @@ go_library(
         "rule_decorrelate.go",
         "rule_derive_topn_from_window.go",
         "rule_eliminate_empty_selection.go",
-        "rule_eliminate_projection.go",
         "rule_eliminate_unionall_dual_item.go",
         "rule_generate_column_substitute.go",
         "rule_inject_extra_projection.go",
