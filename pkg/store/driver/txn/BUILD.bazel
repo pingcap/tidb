@@ -18,7 +18,6 @@ go_library(
         "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/metrics",
         "//pkg/parser/mysql",
         "//pkg/store/driver/error",
         "//pkg/store/driver/options",
