@@ -1268,6 +1268,15 @@ func buildFullTextIndexInfo(
 	if len(indexPartSpecifications) == 0 {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index must specify at least one column")
 	}
+
+	parserType := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parserType = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+	}
+	if parserType == model.FullTextParserTypeInvalid {
+		return nil, dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOption.ParserName.O)
+	}
+
 	indexColumns := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	seenColumns := make(map[string]struct{}, len(indexPartSpecifications))
 	for _, idxPart := range indexPartSpecifications {
@@ -1298,21 +1307,19 @@ func buildFullTextIndexInfo(
 			if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
 				continue
 			}
-			return nil, dbterror.ErrDupKeyName.GenWithStack(
-				fmt.Sprintf("fulltext index '%s' already exist on column %s",
-					idx.Name, colInfo.Name))
+			existingParser := idx.FullTextInfo.ParserType
+			if existingParser == "" {
+				existingParser = model.FullTextParserTypeStandardV1
+			}
+			if existingParser != parserType {
+				return nil, dbterror.ErrDupKeyName.GenWithStack(
+					fmt.Sprintf("fulltext index '%s' already exist on column %s",
+						idx.Name, colInfo.Name))
+			}
 		}
 		indexColumns = append(indexColumns, &model.IndexColumn{
 			Name: colInfo.Name, Offset: colInfo.Offset, Length: types.UnspecifiedLength,
 		})
-	}
-
-	parserType := model.FullTextParserTypeStandardV1
-	if indexOption != nil && indexOption.ParserName.L != "" {
-		parserType = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
-	}
-	if parserType == model.FullTextParserTypeInvalid {
-		return nil, dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOption.ParserName.O)
 	}
 	if indexOption != nil && indexOption.Visibility == ast.IndexVisibilityInvisible {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support INVISIBLE")
