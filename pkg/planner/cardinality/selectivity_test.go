@@ -2067,7 +2067,6 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	testKit.MustExec(`analyze table t`)
 	h := dom.StatsHandle()
 	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	h.Clear()
 	require.NoError(t, h.InitStatsLite(context.Background()))
 
