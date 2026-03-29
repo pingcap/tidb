@@ -174,6 +174,61 @@ func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
 	require.Contains(t, sqlWithNull, ", NULL)")
 }
 
+func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
+	const (
+		oldMViewID  int64 = 101
+		baseTableID int64 = 102
+		shadowID    int64 = 103
+	)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		{
+			ID:    oldMViewID,
+			Name:  pmodel.NewCIStr("mv_old"),
+			State: model.StatePublic,
+			MaterializedView: &model.MaterializedViewInfo{
+				BaseTableIDs: []int64{baseTableID},
+			},
+		},
+		{
+			ID:    baseTableID,
+			Name:  pmodel.NewCIStr("base_tbl"),
+			State: model.StatePublic,
+		},
+		{
+			ID:    shadowID,
+			Name:  pmodel.NewCIStr("mv_shadow"),
+			State: model.StatePublic,
+		},
+	})
+
+	involving, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(),
+		is,
+		pmodel.NewCIStr("test"),
+		oldMViewID,
+		shadowID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{
+			Database: "test",
+			Table:    "mv_old",
+			Mode:     model.ExclusiveInvolving,
+		},
+		{
+			Database: "test",
+			Table:    "base_tbl",
+			Mode:     model.ExclusiveInvolving,
+		},
+		{
+			Database: "test",
+			Table:    "mv_shadow",
+			Mode:     model.ExclusiveInvolving,
+		},
+	}, involving)
+}
+
 func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")

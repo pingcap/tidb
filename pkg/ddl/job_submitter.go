@@ -790,6 +790,13 @@ func job2TableIDs(jobW *JobWrapper) string {
 			}
 		}
 		return strconv.FormatInt(jobW.TableID, 10)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+		intest.Assert(args != nil)
+		if args != nil && args.ShadowTableID > 0 {
+			return makeStringForIDs([]int64{jobW.TableID, args.ShadowTableID})
+		}
+		return strconv.FormatInt(jobW.TableID, 10)
 	default:
 		return strconv.FormatInt(jobW.TableID, 10)
 	}
