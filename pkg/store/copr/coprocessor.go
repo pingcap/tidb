@@ -355,6 +355,56 @@ func versionedKeyRangesToPB(ranges *KeyRanges, handleVersionMap map[string]uint6
 	return pbPtrs, nil
 }
 
+// buildVersionedPointLocations routes versioned point lookups by StartKey only.
+//
+// TiKV executes versioned point ranges as point gets keyed by the range start,
+// so the original [start, PrefixNext(start)) range must stay intact even if the
+// region boundary falls before its end key. To achieve that, we locate each
+// range using a minimal physical routing range [start, start.Next()) that is
+// guaranteed to stay in the same region as start, and then map the resulting
+// location groups back to the original ranges.
+func buildVersionedPointLocations(bo *Backoffer, cache *RegionCache, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+	if ranges == nil || ranges.Len() == 0 {
+		return nil, nil
+	}
+
+	routingRanges := make([]kv.KeyRange, 0, ranges.Len())
+	for i := range ranges.Len() {
+		ran := ranges.RefAt(i)
+		routingRanges = append(routingRanges, kv.KeyRange{
+			StartKey: ran.StartKey,
+			EndKey:   ran.StartKey.Next(),
+		})
+	}
+
+	locs, err := cache.SplitKeyRangesByLocations(bo, NewKeyRanges(routingRanges), UnspecifiedLimit, false, false)
+	if err != nil {
+		return nil, err
+	}
+
+	remapped := make([]*LocationKeyRanges, 0, len(locs))
+	offset := 0
+	for _, loc := range locs {
+		if loc == nil || loc.Ranges == nil {
+			remapped = append(remapped, loc)
+			continue
+		}
+		count := loc.Ranges.Len()
+		if offset+count > ranges.Len() {
+			return nil, errors.Errorf("versioned point routing produced invalid range mapping: offset=%d count=%d total=%d", offset, count, ranges.Len())
+		}
+		remapped = append(remapped, &LocationKeyRanges{
+			Location: loc.Location,
+			Ranges:   ranges.Slice(offset, offset+count),
+		})
+		offset += count
+	}
+	if offset != ranges.Len() {
+		return nil, errors.Errorf("versioned point routing lost ranges: mapped=%d total=%d", offset, ranges.Len())
+	}
+	return remapped, nil
+}
+
 func (r *copTask) ToPBBatchTasks() ([]*coprocessor.StoreBatchTask, error) {
 	if len(r.batchTaskList) == 0 {
 		return nil, nil
@@ -588,7 +638,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
 	var locs []*LocationKeyRanges
 	var err error
-	if opt.skipBuckets {
+	if opt.handleVersionMap != nil {
+		locs, err = buildVersionedPointLocations(bo, cache, ranges)
+	} else if opt.skipBuckets {
 		// Skip bucket splitting - only split by region.
 		// Used when retrying after "Request range exceeds bound" error,
 		// which may be caused by stale bucket metadata.
@@ -2151,6 +2203,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 					respChan:                    false,
 					eventCb:                     task.eventCb,
 					ignoreTiKVClientReadTimeout: true,
+					handleVersionMap:            task.handleVersionMap,
 					skipBuckets:                 true,
 					exceedsBoundRetry:           task.exceedsBoundRetry + 1,
 				})
@@ -2184,6 +2237,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				respChan:                    false,
 				eventCb:                     task.eventCb,
 				ignoreTiKVClientReadTimeout: true,
+				handleVersionMap:            task.handleVersionMap,
 				skipBuckets:                 true,
 				exceedsBoundRetry:           task.exceedsBoundRetry + 1,
 			})
