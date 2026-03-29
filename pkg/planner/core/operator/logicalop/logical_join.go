@@ -68,11 +68,6 @@ type LogicalJoin struct {
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
 
-	// OrderProperties stores the ordering columns propagated from a TopN above
-	// this join subtree. They are used by the order-aware logical reorder rule
-	// to pick an ordered leaf before CD-C join reorder runs.
-	OrderProperties [][]*expression.Column
-
 	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
 	// doesn't match any inner table's row.
 	// That it's nil just means the default values is a slice of NULL.
@@ -496,11 +491,6 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
-		if len(topN.ByItems) > 0 {
-			if orderingCols := getPossiblePropertyFromByItems(topN.ByItems); len(orderingCols) > 0 {
-				p.OrderProperties = [][]*expression.Column{orderingCols}
-			}
-		}
 	}
 	topnEliminated := false
 	switch p.JoinType {

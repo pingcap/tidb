@@ -26,35 +26,44 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
+// OrderedLeadingChoice records the vertex that carries the ordering requirement
+// within the current join group and, when possible, the single-table identity
+// that can be bridged into an internal LEADING hint on the group's anchor join.
+type OrderedLeadingChoice struct {
+	CarrierVertex base.LogicalPlan
+	LeadingTable  *hint.HintedTable
+	Vertices      []base.LogicalPlan
+}
+
 // AnnotateOrderedLeading tries to attach an internal LEADING preference to the
 // top join of the current join group. The preference points to the leaf whose
-// index can preserve the requested ordering after accounting for single-table
+// index can preserve one ordering vector after accounting for single-table
 // equality filters.
-func AnnotateOrderedLeading(root base.LogicalPlan, orderings [][]*expression.Column, parentFilters []expression.Expression) bool {
-	if root == nil || len(orderings) == 0 {
-		return false
+func AnnotateOrderedLeading(root base.LogicalPlan, orderingCols []*expression.Column, parentFilters []expression.Expression) (*OrderedLeadingChoice, bool) {
+	if root == nil || len(orderingCols) == 0 {
+		return nil, false
 	}
 
 	group := extractJoinGroup(root)
-	if len(group.vertexes) <= 1 || len(group.leadingHints) > 0 {
-		return false
+	if len(group.vertexes) <= 1 {
+		return nil, false
+	}
+
+	choice := findOrderedLeadingChoice(group, orderingCols, parentFilters)
+	if choice == nil {
+		return nil, false
 	}
 
 	anchor := findLeadingHintAnchor(group.root)
-	if anchor == nil || anchor.PreferJoinOrder || anchor.PreferJoinType > 0 || anchor.HintInfo != nil {
-		return false
-	}
-
-	leadingTable := findOrderedLeadingTable(group, orderings, parentFilters)
-	if leadingTable == nil {
-		return false
+	if len(group.leadingHints) > 0 || anchor == nil || anchor.PreferJoinOrder || anchor.PreferJoinType > 0 || anchor.HintInfo != nil || choice.LeadingTable == nil {
+		return nil, false
 	}
 
 	// once order is aware-ed, setting the leading hint on the anchor join and mark it as prefer join order.
 	// This is an internal hint that won't be exposed to users, we just take advantage of the existing leading hint preferring.
 	anchor.PreferJoinOrder = true
-	anchor.HintInfo = buildSingleTableLeadingHint(leadingTable)
-	return true
+	anchor.HintInfo = buildSingleTableLeadingHint(choice.LeadingTable)
+	return choice, true
 }
 
 func findLeadingHintAnchor(root base.LogicalPlan) *logicalop.LogicalJoin {
@@ -98,35 +107,29 @@ func buildSingleTableLeadingHint(table *hint.HintedTable) *hint.PlanHints {
 	}
 }
 
-// findOrderedLeadingTable picks one leaf table to seed an internal LEADING hint.
-// Each entry in orderings is treated as one complete ordering requirement rather
-// than a set of independent columns. A vertex qualifies only when it contains
-// all columns from one ordering vector and one of its indexes can preserve that
-// full ordering after accounting for local equality predicates. The first
-// vertex that can also be represented as a single hinted table is returned,
-// because the current rule only needs one leading seed, not every ordered
-// candidate in the group.
-func findOrderedLeadingTable(group *joinGroup, orderings [][]*expression.Column, parentFilters []expression.Expression) *hint.HintedTable {
+// findOrderedLeadingChoice picks one vertex that carries the ordering
+// requirement inside the current join group. If that vertex can also be
+// represented as a single hinted table, we additionally return the bridged
+// LEADING target for the current anchor join.
+func findOrderedLeadingChoice(group *joinGroup, orderingCols []*expression.Column, parentFilters []expression.Expression) *OrderedLeadingChoice {
 	groupSelectionConds := collectSelectionConds(group)
-	for _, orderingCols := range orderings {
-		orderingColIDs, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
-		if len(orderingColIDs) == 0 || len(orderingColIDs) != len(orderingCols) {
+	orderingColIDs, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
+	if len(orderingColIDs) == 0 || len(orderingColIDs) != len(orderingCols) {
+		return nil
+	}
+	for _, vertex := range group.vertexes {
+		if !schemaContainsAllOrderingColumns(vertex, orderingColUniqueIDs) {
 			continue
 		}
-		for _, vertex := range group.vertexes {
-			if !schemaContainsAllOrderingColumns(vertex, orderingColUniqueIDs) {
-				continue
-			}
-			if !tableHasIndexMatchingOrdering(vertex, orderingColIDs, groupSelectionConds, parentFilters) {
-				continue
-			}
-			// once we found a vertex that can satisfy the ordering requirement, we try to extract a single-table hint from it.
-			// This is because the current optimization only needs one leading seed, and a single-table hint is more likely to
-			// be useful and applicable in the final plan.
-			if tableAlias := util.ExtractTableAlias(vertex, vertex.QueryBlockOffset()); tableAlias != nil {
-				return tableAlias
-			}
+		if !tableHasIndexMatchingOrdering(vertex, orderingColIDs, groupSelectionConds, parentFilters) {
+			continue
 		}
+		choice := &OrderedLeadingChoice{CarrierVertex: vertex}
+		// The candidate may still be rejected by the caller if the current group
+		// cannot bridge it into a single-table internal LEADING hint.
+		choice.LeadingTable = util.ExtractTableAlias(vertex, vertex.QueryBlockOffset())
+		choice.Vertices = group.vertexes
+		return choice
 	}
 	return nil
 }
@@ -184,6 +187,12 @@ func tableHasIndexMatchingOrdering(
 		return false
 	}
 
+	// parentFilters carries deterministic single-table predicates collected from
+	// ancestors outside the current join group. They matter because they can fix
+	// leading index columns even when the ORDER BY itself only mentions a suffix.
+	// Example:
+	//   where t.category = 'hot' order by t.id
+	// can still use index(category, id) to preserve the order of t.id.
 	equalityColIDs := collectEqualityPredicateColumnIDs(plan, groupSelectionConds, parentFilters)
 	for _, idx := range ds.TableInfo.Indices {
 		if idx.State != model.StatePublic || idx.Invisible {
@@ -237,6 +246,10 @@ func collectEqualityPredicateColumnIDs(
 	if schema == nil {
 		return result
 	}
+	// The join-group Selection conditions and ancestor filters are both optional
+	// sources of single-table equalities. We only keep predicates whose columns
+	// all belong to the current vertex, so passing ancestor filters to child
+	// groups is safe even when those filters mention other tables.
 	addEqualityColumnsFromLocalConds(result, schema, groupSelectionConds)
 	addEqualityColumnsFromLocalConds(result, schema, parentFilters)
 	return result
@@ -294,6 +307,10 @@ func extractEqualityColumns(expr expression.Expression, result map[int64]struct{
 	}
 
 	if sf.FuncName.L == ast.EQ && len(sf.GetArgs()) == 2 {
+		// We only treat const equalities as index-prefix eliminators. For
+		// example, index(category, id) can satisfy "where category = 'hot'
+		// order by id", but we intentionally do not infer order equivalence from
+		// column-to-column predicates like "a = b" here.
 		col, ok := sf.GetArgs()[0].(*expression.Column)
 		if ok && isDeterministicConstExpr(sf.GetArgs()[1]) && col.ID > 0 {
 			result[col.ID] = struct{}{}
