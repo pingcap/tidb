@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -179,6 +181,38 @@ func TestSlowQueryMisc(t *testing.T) {
 	tk.MustExec("commit")
 	require.Len(t, tk.MustQuery("SELECT query, txn_start_ts  FROM `information_schema`.`slow_query` "+
 		"where (query = 'select a from test.t_stale_read;' or query like 'select a from test.t_stale_read as of timestamp %') and Txn_start_ts > 0").Rows(), 3)
+}
+
+func TestSlowQueryInternalSelectUsesStmtContextInternalFlag(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer tk.MustExec("set tidb_slow_log_threshold=300;")
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rs, err := tk.Session().ExecuteInternal(ctx, "select variable_name from mysql.tidb limit 1")
+	require.NoError(t, err)
+	_, err = sqlexec.DrainRecordSet(ctx, rs, 1)
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
+
+	tk.MustQuery("select is_internal from information_schema.slow_query where query = 'select variable_name from mysql.tidb limit 1;' order by time desc limit 1").
+		Check(testkit.Rows("1"))
 }
 
 func TestLogSlowLogIndex(t *testing.T) {

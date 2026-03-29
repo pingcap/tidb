@@ -272,6 +272,7 @@ type SlowQueryLogItems struct {
 	TxnTS             uint64
 	KeyspaceName      string
 	KeyspaceID        uint32
+	IsInternal        bool
 	SQL               string
 	Digest            string
 	TimeTotal         time.Duration
@@ -436,7 +437,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
 	}
 
-	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
+	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(logItems.IsInternal))
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
@@ -800,8 +801,11 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	},
 	strings.ToLower(SlowLogIsInternalStr): {
 		Parse: parseBool,
-		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
-			return MatchEqual(threshold, seVars.InRestrictedSQL)
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.IsInternal = seVars.StmtCtx.InRestrictedSQL
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, items.IsInternal)
 		},
 	},
 	strings.ToLower(SlowLogDigestStr): {
