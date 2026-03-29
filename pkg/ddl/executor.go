@@ -3961,6 +3961,134 @@ func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int
 	return errors.Trace(err)
 }
 
+type tiflashReplicaStatusUpdate struct {
+	jobW *JobWrapper
+}
+
+func (e *executor) buildTiFlashReplicaStatusUpdate(ctx sessionctx.Context, physicalID int64, available bool) (*tiflashReplicaStatusUpdate, error) {
+	is := e.infoCache.GetLatest()
+	tb, ok := is.TableByID(e.ctx, physicalID)
+	if !ok {
+		tb, _, _ = is.FindTableByPartitionID(physicalID)
+		if tb == nil {
+			return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
+		}
+	}
+	tbInfo := tb.Meta()
+	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
+		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
+		return nil, nil
+	}
+
+	db, ok := infoschema.SchemaByTable(is, tbInfo)
+	if !ok {
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       db.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     db.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionUpdateTiFlashReplicaStatus,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+
+	args := &model.UpdateTiFlashReplicaStatusArgs{
+		Available:  available,
+		PhysicalID: physicalID,
+	}
+
+	return &tiflashReplicaStatusUpdate{jobW: NewJobWrapperWithArgs(job, args, false)}, nil
+}
+
+func (e *executor) UpdateTableReplicaInfoBatch(ctx sessionctx.Context, updates []*tiflashReplicaStatusUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	for _, update := range updates {
+		job := update.jobW.Job
+		job.TraceInfo = &tracing.TraceInfo{
+			ConnectionID: ctx.GetSessionVars().ConnectionID,
+			SessionAlias: ctx.GetSessionVars().SessionAlias,
+			TraceID:      traceevent.TraceIDFromContext(ctx.GetTraceCtx()),
+		}
+		setDDLJobQuery(ctx, job)
+		e.deliverJobTask(update.jobW)
+	}
+
+	jobIDs := make([]int64, 0, len(updates))
+	for _, update := range updates {
+		result := <-update.jobW.ResultCh[0]
+		jobIDs = append(jobIDs, result.jobID)
+		if result.jobID > 0 {
+			defer e.delJobDoneCh(result.jobID)
+		}
+		if result.err != nil {
+			return errors.Trace(result.err)
+		}
+	}
+
+	for _, jobID := range jobIDs {
+		if _, err := e.waitJobDone(ctx, model.ActionUpdateTiFlashReplicaStatus, jobID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (e *executor) waitJobDone(ctx sessionctx.Context, ddlAction model.ActionType, jobID int64) (*model.Job, error) {
+	initInterval, _ := getJobCheckInterval(ddlAction, 0)
+	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
+	defer ticker.Stop()
+
+	i := 0
+	notifyCh, _ := e.getJobDoneCh(jobID)
+	for {
+		select {
+		case _, ok := <-notifyCh:
+			if !ok {
+				notifyCh = nil
+			}
+		case <-ticker.C:
+			i++
+			ticker = updateTickerInterval(ticker, 10*e.lease, ddlAction, i)
+		case <-e.ctx.Done():
+			return nil, e.ctx.Err()
+		}
+
+		se, err := e.sessPool.Get()
+		if err != nil {
+			logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
+			continue
+		}
+		historyJob, err := GetHistoryJobByID(se, jobID)
+		e.sessPool.Put(se)
+		if err != nil {
+			logutil.DDLLogger().Error("get history DDL job failed, check again", zap.Error(err))
+			continue
+		}
+		if historyJob == nil {
+			logutil.DDLLogger().Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
+			continue
+		}
+
+		e.checkHistoryJobInTest(ctx, historyJob)
+		if historyJob.IsSynced() {
+			return historyJob, nil
+		}
+		if historyJob.Error != nil {
+			return historyJob, errors.Trace(historyJob.Error)
+		}
+		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
+	}
+}
+
 // checkAlterTableCharset uses to check is it possible to change the charset of table.
 // This function returns 2 variable:
 // doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.

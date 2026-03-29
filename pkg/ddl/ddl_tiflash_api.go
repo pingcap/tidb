@@ -405,6 +405,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	if pollTiFlashContext.UpdatingProgressTables.Len() == 0 {
 		needPushPending = true
 	}
+	pendingReplicaUpdates := make([]*tiflashReplicaStatusUpdate, 0)
 
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
@@ -466,14 +467,18 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			failpoint.Inject("skipUpdateTableReplicaInfoInLoop", func() {
 				failpoint.Continue()
 			})
-			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
-			if err := d.executor.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
+			update, err := d.executor.buildTiFlashReplicaStatusUpdate(ctx, tb.ID, avail)
+			if err != nil {
 				if infoschema.ErrTableNotExists.Equal(err) && tb.IsPartition {
 					// May be due to blocking add partition
 					logutil.DDLLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tb.ID), zap.Bool("isPartition", tb.IsPartition))
 				} else {
 					logutil.DDLLogger().Error("updating TiFlash replica status err", zap.Error(err), zap.Int64("tableID", tb.ID), zap.Bool("isPartition", tb.IsPartition))
 				}
+				continue
+			}
+			if update != nil {
+				pendingReplicaUpdates = append(pendingReplicaUpdates, update)
 			}
 		} else {
 			if needPushPending {
@@ -482,7 +487,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 		}
 	}
 
-	return nil
+	return d.executor.UpdateTableReplicaInfoBatch(ctx, pendingReplicaUpdates)
 }
 
 type pending struct {

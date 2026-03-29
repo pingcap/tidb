@@ -494,6 +494,26 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
 
+func WaitTablesAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, tables []string, timeout time.Duration) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, tableName := range tables {
+			tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tableName))
+			if err != nil {
+				return false
+			}
+			replica := tb.Meta().TiFlashReplica
+			if replica == nil || !replica.Available {
+				return false
+			}
+		}
+		return true
+	}, timeout, ddl.PollTiFlashInterval/2)
+	for _, tableName := range tables {
+		CheckTableAvailableWithTableName(dom, t, count, labels, db, tableName)
+	}
+}
+
 func CheckTableAvailable(dom *domain.Domain, t *testing.T, count uint64, labels []string) {
 	CheckTableAvailableWithTableName(dom, t, count, labels, "test", "ddltiflash")
 }
@@ -534,21 +554,55 @@ func TestTiFlashTruncateTable(t *testing.T) {
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
 func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
-
-	tk.MustExec("use test")
-	for i := range 100 {
-		tk.MustExec(fmt.Sprintf("drop table if exists ddltiflash%v", i))
-		tk.MustExec(fmt.Sprintf("create table ddltiflash%v(z int)", i))
-		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
+	testCases := []struct {
+		name       string
+		tableCount int
+		prefix     string
+		timeout    time.Duration
+		setup      func(t *testing.T)
+	}{
+		{
+			name:       "native",
+			tableCount: 100,
+			prefix:     "ddltiflash",
+			timeout:    30 * time.Second,
+		},
+		{
+			name:       "slow status update",
+			tableCount: 50,
+			prefix:     "ddltiflashslow",
+			timeout:    10 * time.Second,
+			setup: func(t *testing.T) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+					if job.Type == model.ActionUpdateTiFlashReplicaStatus {
+						time.Sleep(250 * time.Millisecond)
+					}
+				})
+			},
+		},
 	}
 
-	time.Sleep(ddl.PollTiFlashInterval * 10)
-	// Should get schema right now
-	for i := range 100 {
-		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, teardown := createTiFlashContext(t)
+			defer teardown()
+			tk := testkit.NewTestKit(t, s.store)
+
+			if tc.setup != nil {
+				tc.setup(t)
+			}
+
+			tableNames := make([]string, tc.tableCount)
+			tk.MustExec("use test")
+			for i := range tc.tableCount {
+				tableNames[i] = fmt.Sprintf("%s%v", tc.prefix, i)
+				tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
+				tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
+				tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
+			}
+
+			WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames, tc.timeout)
+		})
 	}
 }
 
