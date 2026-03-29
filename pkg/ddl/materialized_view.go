@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -671,16 +672,28 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	nextTime *string,
 	shouldUpdateNextTime bool,
 ) error {
+	involvingSchemas, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(),
+		e.infoCache.GetLatest(),
+		schemaName,
+		oldMViewID,
+		shadowTableID,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
-		SchemaID:       schemaID,
-		TableID:        oldMViewID,
-		SchemaName:     schemaName.L,
-		TableName:      viewName.L,
-		Type:           model.ActionMViewRefreshOutOfPlaceCutover,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            schemaID,
+		TableID:             oldMViewID,
+		SchemaName:          schemaName.L,
+		TableName:           viewName.L,
+		Type:                model.ActionMViewRefreshOutOfPlaceCutover,
+		BinlogInfo:          &model.HistoryInfo{},
+		InvolvingSchemaInfo: involvingSchemas,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		OldMViewID:                     oldMViewID,
@@ -692,6 +705,64 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		ShouldUpdateNextTime:           shouldUpdateNextTime,
 	}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	oldMViewID int64,
+	shadowTableID int64,
+) ([]model.InvolvingSchemaInfo, error) {
+	oldMView, ok := is.TableByID(ctx, oldMViewID)
+	if !ok {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: old materialized view not found",
+		)
+	}
+	oldMViewMeta := oldMView.Meta()
+	if oldMViewMeta.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: old materialized view metadata missing",
+		)
+	}
+	if len(oldMViewMeta.MaterializedView.BaseTableIDs) != 1 {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1",
+		)
+	}
+
+	baseTable, ok := is.TableByID(ctx, oldMViewMeta.MaterializedView.BaseTableIDs[0])
+	if !ok {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: base table not found",
+		)
+	}
+
+	shadowTable, ok := is.TableByID(ctx, shadowTableID)
+	if !ok {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: shadow table not found",
+		)
+	}
+
+	return []model.InvolvingSchemaInfo{
+		{
+			Database: schemaName.L,
+			Table:    oldMViewMeta.Name.L,
+			Mode:     model.ExclusiveInvolving,
+		},
+		{
+			Database: schemaName.L,
+			Table:    baseTable.Meta().Name.L,
+			Mode:     model.ExclusiveInvolving,
+		},
+		{
+			Database: schemaName.L,
+			Table:    shadowTable.Meta().Name.L,
+			Mode:     model.ExclusiveInvolving,
+		},
+	}, nil
 }
 
 func (e *executor) updateMaterializedViewRefreshInfoNextTime(
