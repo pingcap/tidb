@@ -187,6 +187,7 @@ func TestSlowQueryInternalSelectUsesStmtContextInternalFlag(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
+	// Step 1: redirect slow log to a temporary file so the test can read back the emitted entry.
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
@@ -204,6 +205,8 @@ func TestSlowQueryInternalSelectUsesStmtContextInternalFlag(t *testing.T) {
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	defer tk.MustExec("set tidb_slow_log_threshold=300;")
 
+	// Step 2: execute an internal SELECT through ExecuteInternal. The session-level flag will be restored
+	// after execution, so the slow log must rely on the statement context snapshot taken during execution.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	rs, err := tk.Session().ExecuteInternal(ctx, "select variable_name from mysql.tidb limit 1")
 	require.NoError(t, err)
@@ -211,6 +214,7 @@ func TestSlowQueryInternalSelectUsesStmtContextInternalFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 
+	// Step 3: verify the slow log still marks the statement as internal.
 	tk.MustQuery("select is_internal from information_schema.slow_query where query = 'select variable_name from mysql.tidb limit 1;' order by time desc limit 1").
 		Check(testkit.Rows("1"))
 }
