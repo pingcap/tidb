@@ -158,6 +158,7 @@ func TestSlowLogFormat(t *testing.T) {
 	// the output of the logged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
+	seVar.StmtCtx.InRestrictedSQL = true
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
@@ -304,6 +305,7 @@ func TestSlowLogFormat(t *testing.T) {
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
 		KeyspaceID:        1,
+		IsInternal:        true,
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
