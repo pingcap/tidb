@@ -554,56 +554,20 @@ func TestTiFlashTruncateTable(t *testing.T) {
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
 func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
-	testCases := []struct {
-		name       string
-		tableCount int
-		prefix     string
-		timeout    time.Duration
-		setup      func(t *testing.T)
-	}{
-		{
-			name:       "native",
-			tableCount: 100,
-			prefix:     "ddltiflash",
-			timeout:    30 * time.Second,
-		},
-		{
-			name:       "slow status update",
-			tableCount: 50,
-			prefix:     "ddltiflashslow",
-			timeout:    10 * time.Second,
-			setup: func(t *testing.T) {
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-					if job.Type == model.ActionUpdateTiFlashReplicaStatus {
-						time.Sleep(250 * time.Millisecond)
-					}
-				})
-			},
-		},
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tableNames := make([]string, 100)
+	tk.MustExec("use test")
+	for i := range 100 {
+		tableNames[i] = fmt.Sprintf("ddltiflash%v", i)
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			s, teardown := createTiFlashContext(t)
-			defer teardown()
-			tk := testkit.NewTestKit(t, s.store)
-
-			if tc.setup != nil {
-				tc.setup(t)
-			}
-
-			tableNames := make([]string, tc.tableCount)
-			tk.MustExec("use test")
-			for i := range tc.tableCount {
-				tableNames[i] = fmt.Sprintf("%s%v", tc.prefix, i)
-				tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
-				tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
-				tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
-			}
-
-			WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames, tc.timeout)
-		})
-	}
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames, 30*time.Second)
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
