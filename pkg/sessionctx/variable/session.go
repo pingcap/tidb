@@ -1864,6 +1864,10 @@ type SessionVars struct {
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
 
+	// FixedDistSQLConcurrency indicates the DistSQL scan concurrency was explicitly
+	// set for internal operations and should not be reduced by request builder optimizations.
+	FixedDistSQLConcurrency bool
+
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
 		WaitAverse    MemArbitratorWaitAverseMode

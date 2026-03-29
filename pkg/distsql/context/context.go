@@ -66,6 +66,9 @@ type DistSQLContext struct {
 	TiFlashHashJoinVersion               string
 
 	DistSQLConcurrency            int
+	// FixedDistSQLConcurrency indicates the concurrency was explicitly set
+	// and should not be overridden by scan optimizations.
+	FixedDistSQLConcurrency bool
 	ReplicaReadType               kv.ReplicaReadType
 	WeakConsistency               bool
 	RCCheckTS                     bool

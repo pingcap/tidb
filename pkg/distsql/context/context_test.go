@@ -77,6 +77,7 @@ func TestContextDetach(t *testing.T) {
 		TiFlashHashJoinVersion:               joinversion.HashJoinVersionLegacy,
 
 		DistSQLConcurrency:            1,
+		FixedDistSQLConcurrency:       true,
 		ReplicaReadType:               kv.ReplicaReadFollower,
 		WeakConsistency:               true,
 		RCCheckTS:                     true,

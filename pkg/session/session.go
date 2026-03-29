@@ -3365,6 +3365,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
+			FixedDistSQLConcurrency:       vars.FixedDistSQLConcurrency,
 			ReplicaReadType:               vars.GetReplicaRead(),
 			WeakConsistency:               sc.WeakConsistency,
 			RCCheckTS:                     sc.RCCheckTS,
