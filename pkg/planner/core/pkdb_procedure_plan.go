@@ -541,6 +541,9 @@ func getCallStmt4StoredFuncExpr(
 	sctx sessionctx.Context,
 	node *ast.CallStmt,
 ) (any, error) {
+	originPlannerSelectBlockAsName := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
+	defer sctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+
 	b := NewPlanBuilder()
 	b, _ = b.Init(sctx.GetPlanCtx(), sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema(), hint.NewQBHintHandler(nil))
 	if pc := sctx.GetSessionVars().GetProcedureContext(); pc != nil {

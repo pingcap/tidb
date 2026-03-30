@@ -69,6 +69,47 @@ func TestStoredFunctionUsesStoredSQLMode(t *testing.T) {
 	tk.MustQuery("select sf_sql_mode('world')").Check(testkit.Rows("hello, world!"))
 }
 
+func TestStoredFunctionDerivedTablePredicateDoesNotPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop function if exists instr_n")
+	tk.MustExec("drop table if exists test1")
+	tk.MustExec(`create function instr_n(str varchar(1000), sub varchar(255), start_pos int, occurrence int)
+returns int
+deterministic
+begin
+	declare pos int default 0;
+	declare i int default 1;
+	declare search_start int default start_pos;
+	if occurrence <= 0 then
+		return 0;
+	end if;
+	while i <= occurrence do
+		set pos = locate(sub, str, search_start);
+		if pos = 0 then
+			return 0;
+		end if;
+		set search_start = pos + length(sub);
+		set i = i + 1;
+	end while;
+	return pos;
+end`)
+	tk.MustExec("create table test1(name varchar(32))")
+
+	direct := "select name from test1 where instr_n(name, 'FX', 1, 1) > 0 order by name"
+	derived := "select name from (select name from test1 where instr_n(name, 'FX', 1, 1) > 0) t order by name"
+
+	tk.MustQuery(direct).Check(testkit.Rows())
+	tk.MustQuery(derived).Check(testkit.Rows())
+
+	tk.MustExec("insert into test1 values ('AFX')")
+	tk.MustQuery(direct).Check(testkit.Rows("AFX"))
+	tk.MustQuery(derived).Check(testkit.Rows("AFX"))
+}
+
 func TestStoredFunctionZeroWidthDecimalZerofillUsesDefaultPrecision(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
