@@ -1828,6 +1828,7 @@ func TestPreparedPlanCacheHintOnlyWithoutUsePlanCacheHint(t *testing.T) {
 	tableName := "t_prepare_hint_only_without_use_hint"
 	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
 	tk.MustExec(fmt.Sprintf("create table %s (a int)", tableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1)", tableName))
 
 	tk.MustExec(fmt.Sprintf("prepare st from 'select 1 from %s where a = ?'", tableName))
 	tk.MustExec("set @a=1")
@@ -1836,11 +1837,16 @@ func TestPreparedPlanCacheHintOnlyWithoutUsePlanCacheHint(t *testing.T) {
 	tk.MustExec("execute st using @a")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
-	tk.MustExec(fmt.Sprintf("create global binding using select /*+ use_plan_cache() */ 1 from %s where a=1", tableName))
+	tk.MustExec(fmt.Sprintf(
+		"create global binding for select 1 from %s where a = ? using select /*+ use_plan_cache() */ 1 from %s where a = ?",
+		tableName, tableName,
+	))
 	tk.MustExec("execute st using @a")
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 0"))
 	tk.MustExec("execute st using @a")
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 1"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 1"))
 }
 
 func TestPreparedPlanCacheHintOnlyWithBinding(t *testing.T) {
