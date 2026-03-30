@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -211,6 +212,37 @@ func TestCreateTableAsSelect(t *testing.T) {
 	// 	"  `name` varchar(50) DEFAULT 'unknown',\n" +
 	// 	"  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
 	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestCreateTableAsSelectNoWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableCreateTableAsSelect = true
+	})
+
+	originValue := parsertypes.TiDBStrictIntegerDisplayWidth
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = originValue
+	}()
+
+	tk.MustExec("create table t1 (id int, b int)")
+	tk.MustExec("create table t2 as select * from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id` int DEFAULT NULL,\n" +
+		"  `b` int DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create table t3 as select count(*) as c from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `c` bigint NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestCreateTableAsSelectPrivilege(t *testing.T) {

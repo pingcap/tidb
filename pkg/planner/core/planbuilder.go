@@ -5966,11 +5966,14 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 // convertRetType adjusts inferred SELECT output types for CTAS column definitions.
 func convertRetType(fieldType *types.FieldType) *types.FieldType {
 	tp := fieldType.Clone()
-	if fieldType.GetType() == mysql.TypeVarString {
+	switch tp.GetType() {
+	case mysql.TypeVarString:
 		tp.SetType(mysql.TypeVarchar)
 		if ctasNeedsTextFallback(tp) {
 			ctasConvertToTextOrBlobFamily(tp)
 		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		tp.SetFlen(types.UnspecifiedLength)
 	}
 	return tp
 }
