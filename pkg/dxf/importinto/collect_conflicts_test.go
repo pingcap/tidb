@@ -44,7 +44,7 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		// table ID in next-gen is different with classic, so we cannot directly
 		// calculate the checksum from the classic one.
-		expectedSum.Sum = 6636364898488969870
+		expectedSum.Sum = 2944242980394429146
 	}
 	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)

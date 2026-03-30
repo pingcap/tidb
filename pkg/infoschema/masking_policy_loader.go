@@ -41,6 +41,9 @@ func LoadMaskingPolicies(
 	if policyTblInfo == nil {
 		return nil, nil
 	}
+	if factory == nil {
+		return nil, nil
+	}
 
 	resource, err := factory()
 	if err != nil {
