@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/skip"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,18 +125,7 @@ func TestPBMemoryLeak(t *testing.T) {
 	// read data
 	runtime.GC()
 	allocatedBegin, inUseBegin := readMem()
-	records, err := tk.Session().Execute(context.Background(), "select * from t")
-	require.NoError(t, err)
-	record := records[0]
-	rowCnt := 0
-	chk := record.NewChunk(nil)
-	for {
-		require.NoError(t, record.Next(context.Background(), chk))
-		rowCnt += chk.NumRows()
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
+	rowCnt := readAllRowsAndClose(t, tk, "select * from t")
 	require.Equal(t, int(numRows), rowCnt)
 
 	// check memory before close
@@ -148,6 +138,58 @@ func TestPBMemoryLeak(t *testing.T) {
 	allocatedFinal, inUseFinal := readMem()
 	require.Less(t, allocatedFinal-allocatedAfter, delta)
 	require.Less(t, memDiff(inUseFinal, inUseAfter), delta)
+}
+
+func TestPBMemoryLeakPreciseRepro(t *testing.T) {
+	debug.SetGCPercent(1000)
+	defer debug.SetGCPercent(100)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_mem")
+	tk.MustExec("use test_mem")
+
+	const totalSize = 64 << 20
+	const blockSize = 8 << 10
+	delta := totalSize / 5
+	tk.MustExec(fmt.Sprintf("create table t (c varchar(%d))", blockSize))
+	row := fmt.Sprintf("insert into t values (space(%d))", blockSize)
+	for range totalSize / blockSize {
+		tk.MustExec(row)
+	}
+
+	runtime.GC()
+	_, inUseBegin := readMem()
+	rowCnt := readAllRowsAndClose(t, tk, "select * from t")
+	require.Equal(t, totalSize/blockSize, rowCnt)
+
+	runtime.GC()
+	_, inUseAfter := readMem()
+	require.Less(t, memDiff(inUseAfter, inUseBegin), uint64(delta))
+}
+
+func readAllRowsAndClose(t *testing.T, tk *testkit.TestKit, sql string) int {
+	t.Helper()
+
+	records, err := tk.Session().Execute(context.Background(), sql)
+	require.NoError(t, err)
+	record := records[0]
+	defer func() { require.NoError(t, record.Close()) }()
+
+	return readAllRows(t, record)
+}
+
+func readAllRows(t *testing.T, record sqlexec.RecordSet) int {
+	t.Helper()
+
+	rowCnt := 0
+	chk := record.NewChunk(nil)
+	for {
+		require.NoError(t, record.Next(context.Background(), chk))
+		rowCnt += chk.NumRows()
+		if chk.NumRows() == 0 {
+			return rowCnt
+		}
+	}
 }
 
 // nolint:unused
