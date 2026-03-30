@@ -13,10 +13,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
+        "//pkg/metrics",
         "@com_github_influxdata_tdigest//:tdigest",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -39,6 +41,7 @@ go_test(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_goleak//:goleak",
     ],
 )

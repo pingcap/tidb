@@ -41,7 +41,7 @@ runs:
         echo "Repository Bazel flags may still enable read-only remote cache during the actual build command."
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go-version }}
         cache: false

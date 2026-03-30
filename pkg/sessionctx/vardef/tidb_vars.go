@@ -334,6 +334,11 @@ const (
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
+	// TiDBOptEnableAlternativeLogicalPlans controls whether the optimizer may build
+	// an extra non-decorrelate logical alternative when decorrelation does not
+	// produce an equivalent same-order index join candidate.
+	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
+
 	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
 	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
 	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
@@ -951,6 +956,10 @@ const (
 	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
+	// TiDBPlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when
+	// a SQL binding is matched. Since a binding pins the plan via hints, stats changes cannot alter
+	// the chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	TiDBPlanCacheSkipStatsOnBinding = "tidb_plan_cache_skip_stats_on_binding"
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
@@ -1456,6 +1465,7 @@ const (
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableAlternativeLogicalPlans     = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
@@ -1727,6 +1737,7 @@ const (
 	DefTiDBOptOrderingIdxSelRatio                     = 0.01
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBPlanCacheSkipStatsOnBinding                = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
 	DefAuthenticationLDAPSASLServerPort               = 389

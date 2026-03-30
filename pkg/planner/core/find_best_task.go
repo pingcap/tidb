@@ -2364,7 +2364,9 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.PhysicalTableScan) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		if ds.Table.Type().IsClusterTable() {
+		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
+			handleCols = ds.UnMutableHandleCols
+		} else if ds.Table.Type().IsClusterTable() {
 			// For cluster tables without handles, use the first column from the schema.
 			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
 			if len(ds.Columns) > 0 && len(ds.Schema().Columns) > 0 {
@@ -2372,8 +2374,9 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 				ts.Columns = []*model.ColumnInfo{ds.Columns[0]}
 			}
 			return
+		} else {
+			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 		}
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)

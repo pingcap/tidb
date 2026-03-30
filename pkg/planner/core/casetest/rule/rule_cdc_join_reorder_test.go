@@ -15,6 +15,7 @@
 package rule
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -158,33 +159,52 @@ func TestJoinReorderPushSelection(tt *testing.T) {
 	})
 }
 
-func TestOrderAwareCDCJoinReorder(tt *testing.T) {
+// TestDPJoinReorder verifies the DP join reorder algorithm produces correct results.
+// It enables the advanced join reorder framework and sets the threshold high enough
+// so that all test groups (≤5 tables) are handled by DP rather than greedy.
+// Results are cross-validated against the greedy baseline to ensure correctness.
+func TestDPJoinReorder(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		prepareOrderAwareJoinReorderTables(tk)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
+		tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t2 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t3 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t4 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t5 (a INT, b INT)")
 
+		tk.MustExec("INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30)")
+		tk.MustExec("INSERT INTO t2 VALUES (1, 100), (2, 200), (4, 400)")
+		tk.MustExec("INSERT INTO t3 VALUES (1, 1000), (3, 3000), (5, 5000)")
+		tk.MustExec("INSERT INTO t4 VALUES (1, 10000), (4, 40000), (6, 60000)")
+		tk.MustExec("INSERT INTO t5 VALUES (2, 20000), (5, 50000), (7, 70000)")
+
+		tk.MustExec("analyze table t1 all columns")
+		tk.MustExec("analyze table t2 all columns")
+		tk.MustExec("analyze table t3 all columns")
+		tk.MustExec("analyze table t4 all columns")
+		tk.MustExec("analyze table t5 all columns")
 		var input []string
 		var output []struct {
 			SQL    string
 			Plan   []string
 			Result []string
 		}
-		suite := GetOrderAwareJoinReorderSuiteData()
-		suite.LoadTestCasesByName("TestOrderAwareCDCJoinReorder", t, &input, &output, cascades, caller)
+		suite := GetCDCJoinReorderSuiteData()
+		suite.LoadTestCasesByName("TestDPJoinReorder", t, &input, &output, cascades, caller)
 
-		expectedResults := make([][]string, len(input))
+		// Phase 1: collect greedy baseline results (threshold=0, DP is not used).
+		tk.MustExec("set @@tidb_opt_enable_advanced_join_reorder = 1")
+		tk.MustExec("set @@tidb_opt_join_reorder_threshold = 0")
+		greedyResults := make([][]string, len(input))
 		for i, sql := range input {
-			expectedResults[i] = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			greedyResults[i] = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		}
 
+		// Phase 2: enable DP (threshold=10 covers all test groups with ≤5 tables).
+		tk.MustExec("set @@tidb_opt_join_reorder_threshold = 10")
 		for i, sql := range input {
 			testdata.OnRecord(func() {
-				if i >= len(output) {
-					output = append(output, struct {
-						SQL    string
-						Plan   []string
-						Result []string
-					}{})
-				}
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
@@ -196,8 +216,14 @@ func TestOrderAwareCDCJoinReorder(tt *testing.T) {
 				"leading hint is inapplicable")
 
 			cdcResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
-			require.Equalf(t, expectedResults[i], cdcResult,
+			require.Equalf(t, greedyResults[i], cdcResult,
 				"CD-C result differs from old algorithm for case[%d]: %s", i, sql)
+			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
+
+			dpResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			require.Equalf(t, greedyResults[i], dpResult,
+				"DP result differs from greedy baseline for case[%d]: %s", i, sql)
+
 		}
 	})
 }
@@ -232,5 +258,30 @@ func TestOrderAwareJoinReorderPushSelection(tt *testing.T) {
 			require.NotContains(t, strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows()), "\n"),
 				"leading hint is inapplicable")
 		}
+	})
+}
+
+// TestDPJoinReorderLeadingHint verifies that a leading hint produces a warning
+// when the DP algorithm is active, since DP does not support leading hints.
+func TestDPJoinReorderLeadingHint(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, t3")
+		tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t2 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t3 (a INT, b INT)")
+		tk.MustExec("set @@tidb_opt_enable_advanced_join_reorder = 1")
+		tk.MustExec("set @@tidb_opt_join_reorder_threshold = 10")
+
+		tk.MustQuery("SELECT /*+ LEADING(t2, t3) */ * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a")
+		warnings := tk.MustQuery("show warnings").Rows()
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(fmt.Sprintf("%v", w), "leading hint is inapplicable for the DP join reorder algorithm") {
+				found = true
+				break
+			}
+		}
+		require.Truef(t, found, "expected warning about leading hint being inapplicable for DP, got: %v", warnings)
 	})
 }

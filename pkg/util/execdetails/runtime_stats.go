@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -977,29 +978,22 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 	buf.WriteString("}")
 }
 
-// displayRUVersion controls which RU accounting version produces EXPLAIN output.
-// Currently hardcoded to "v2"; will be switched dynamically based on a runtime
-// toggle once RU v1 / v2 coexistence is fully rolled out.
-var displayRUVersion = "v2"
-
 // RURuntimeStats wraps RU details and statement-level RU v2 metrics for EXPLAIN output.
+// RUVersion controls which RU accounting version produces output:
+//   - 1 (v1): shows RRU + WRU
+//   - 2 (v2): shows total RU from v2 metrics
+//   - 0 / unknown: defaults to v1
 type RURuntimeStats struct {
 	*util.RUDetails
-	Metrics *RUV2Metrics
-	Weights RUV2Weights
+	Metrics   *RUV2Metrics
+	Weights   RUV2Weights
+	RUVersion rmclient.RUVersion
 }
 
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
-	switch displayRUVersion {
-	case "v1":
-		if e.RUDetails != nil {
-			buf := bytes.NewBuffer(make([]byte, 0, 8))
-			buf.WriteString("RU:")
-			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
-			return buf.String()
-		}
-	case "v2":
+	switch e.RUVersion {
+	case rmclient.RUVersionV2:
 		var tiKVRU, tiFlashRU float64
 		if e.RUDetails != nil {
 			tiKVRU = e.RUDetails.TiKVRUV2()
@@ -1013,6 +1007,13 @@ func (e *RURuntimeStats) String() string {
 		buf.WriteString("RU:")
 		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
 		return buf.String()
+	default: // v1 or unknown
+		if e.RUDetails != nil {
+			buf := bytes.NewBuffer(make([]byte, 0, 8))
+			buf.WriteString("RU:")
+			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+			return buf.String()
+		}
 	}
 	return ""
 }
@@ -1030,6 +1031,7 @@ func (e *RURuntimeStats) Clone() RuntimeStats {
 		RUDetails: ruDetails,
 		Metrics:   e.Metrics.Clone(),
 		Weights:   e.Weights,
+		RUVersion: e.RUVersion,
 	}
 }
 
@@ -1048,6 +1050,9 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 		}
 		if e.Weights == (RUV2Weights{}) {
 			e.Weights = tmp.Weights
+		}
+		if e.RUVersion == 0 {
+			e.RUVersion = tmp.RUVersion
 		}
 	}
 }

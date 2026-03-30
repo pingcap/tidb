@@ -245,6 +245,10 @@ func TestSlowQuery(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	_, err = f.WriteString(`
+# Time: 2019-01-01T00:00:00+08:00
+# Request_unit_v2: 123.45
+# Request_unit_v2_detail: total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45
+select /* issue:67199 */ 1;
 # Time: 2020-10-13T20:08:13.970563+08:00
 # Plan_digest: 0368dd12858f813df842c17bcb37ca0e8858b554479bebcd78da1f8c14ad12d0
 select * from t;
@@ -318,6 +322,9 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 
 	// issues 58194
 	tk.MustQuery("select max(Mem_arbitration) from `information_schema`.`slow_query`").Check(testkit.Rows("215"))
+	tk.MustQuery("select Request_unit_v2, Request_unit_v2 + 1, Request_unit_v2_detail from `information_schema`.`slow_query` " +
+		"where query = 'select /* issue:67199 */ 1;'").
+		Check(testkit.Rows("123.45 124.45 total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45"))
 }
 
 func TestIssue37066(t *testing.T) {

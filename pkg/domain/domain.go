@@ -1709,6 +1709,15 @@ func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroup
 	do.resourceGroupsController.Store(controller)
 }
 
+// GetRUVersion returns the current RU calculation version for this keyspace.
+// Returns DefaultRUVersion (v1) if the resource groups controller is not available.
+func (do *Domain) GetRUVersion() rmclient.RUVersion {
+	if rgCtl := do.ResourceGroupsController(); rgCtl != nil {
+		return rgCtl.GetRUVersion()
+	}
+	return rmclient.DefaultRUVersion
+}
+
 // SetupHistoricalStatsWorker setups worker
 func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
 	do.historicalStatsWorker = &HistoricalStatsWorker{

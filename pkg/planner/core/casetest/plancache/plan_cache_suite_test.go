@@ -2010,3 +2010,60 @@ func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
 }
+
+// TestPlanCacheSkipStatsOnBinding verifies that tidb_plan_cache_skip_stats_on_binding
+// suppresses stats-version-based plan cache invalidation when a SQL binding is active.
+//
+// With the variable ON, ANALYZE does not invalidate the cache entry for a bound query
+// because the binding pins the plan and stats changes cannot alter the chosen plan.
+// Without a binding, or with the variable OFF, ANALYZE continues to invalidate as usual.
+func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key idx_b(b))`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+
+	// Enable stats-version-based invalidation so that ANALYZE normally busts the cache.
+	tk.MustExec(`set @@tidb_plan_cache_invalidation_on_fresh_stats = ON`)
+	tk.MustExec(`set @@tidb_plan_cache_skip_stats_on_binding = ON`)
+
+	// -- Part 1: No binding. ANALYZE must bust the cache. --
+	tk.MustExec(`prepare st from 'select * from t where b=?'`)
+	tk.MustExec(`set @v=1`)
+	tk.MustExec(`execute st using @v`)
+	tk.MustExec(`execute st using @v`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // cached
+
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st using @v`)
+	// Stats version changed, no binding → cache miss.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// -- Part 2: With binding + skip=ON. ANALYZE must NOT bust the cache. --
+	tk.MustExec(`create binding using select /*+ use_index(t, idx_b) */ * from t where b=1`)
+	tk.MustExec(`execute st using @v`) // first exec under binding → new key, cache miss
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`execute st using @v`) // second exec → cache hit
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st using @v`)
+	// Binding active + skip=ON → stats version excluded from key → cache hit.
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	// -- Part 3: skip=OFF restores the old behaviour: ANALYZE busts the cache even with a binding. --
+	tk.MustExec(`set @@tidb_plan_cache_skip_stats_on_binding = OFF`)
+	// Key now includes stats version; previous entry (without stats ver) is a different key → miss.
+	tk.MustExec(`execute st using @v`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`execute st using @v`) // warm the cache under the new key
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st using @v`)
+	// skip=OFF → stats version back in key → ANALYZE causes cache miss.
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`drop binding for select * from t where b=1`)
+}

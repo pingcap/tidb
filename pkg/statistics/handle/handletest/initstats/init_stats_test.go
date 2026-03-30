@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -31,6 +32,24 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/stretchr/testify/require"
 )
+
+func withStatsLease(t *testing.T, lease time.Duration, body func()) {
+	t.Helper()
+	originalLease := vardef.GetStatsLease()
+	vardef.SetStatsLease(lease)
+	defer vardef.SetStatsLease(originalLease)
+	body()
+}
+
+func withIsFullCacheFunc(t *testing.T, isFullCache func(types.StatsCache, uint64) bool, body func()) {
+	t.Helper()
+	originalIsFullCacheFunc := handle.IsFullCacheFunc
+	handle.IsFullCacheFunc = isFullCache
+	defer func() {
+		handle.IsFullCacheFunc = originalIsFullCacheFunc
+	}()
+	body()
+}
 
 func maxPhysicalTableID(h *handle.Handle, is infoschema.InfoSchema) int64 {
 	var maxID int64
@@ -73,38 +92,39 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 
 	dom.Close()
 
-	vardef.SetStatsLease(-1)
-	dom, err = session.BootstrapSession(store)
-	require.NoError(t, err)
-	h := dom.StatsHandle()
-	_, ok := h.Get(tbl1.Meta().ID)
-	require.False(t, ok)
-	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID))
-	_, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.False(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
+	withStatsLease(t, -1, func() {
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+		h := dom.StatsHandle()
+		_, ok := h.Get(tbl1.Meta().ID)
+		require.False(t, ok)
+		require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID))
+		_, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.False(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
 
-	// Make sure it can be loaded multiple times.
-	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID, tbl2.Meta().ID))
-	_, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
+		// Make sure it can be loaded multiple times.
+		require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID, tbl2.Meta().ID))
+		_, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
 
-	require.NoError(t, h.InitStatsLite(context.Background()))
-	_, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.True(t, ok)
+		require.NoError(t, h.InitStatsLite(context.Background()))
+		_, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.True(t, ok)
 
-	dom.Close()
+		dom.Close()
+	})
 }
 
 func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
@@ -129,45 +149,46 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 
 	dom.Close()
 
-	vardef.SetStatsLease(-1)
-	dom, err = session.BootstrapSession(store)
-	require.NoError(t, err)
-	is = dom.InfoSchema()
-	h := dom.StatsHandle()
-	_, ok := h.Get(tbl1.Meta().ID)
-	require.False(t, ok)
-	require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID))
-	stats1, ok := h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.False(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
+	withStatsLease(t, -1, func() {
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+		is = dom.InfoSchema()
+		h := dom.StatsHandle()
+		_, ok := h.Get(tbl1.Meta().ID)
+		require.False(t, ok)
+		require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID))
+		stats1, ok := h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.False(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
 
-	// Make sure it can be loaded multiple times.
-	require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID, tbl2.Meta().ID))
-	stats1, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok := h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
+		// Make sure it can be loaded multiple times.
+		require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID, tbl2.Meta().ID))
+		stats1, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		stats2, ok := h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats2.GetIdx(1).IsFullLoad())
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
 
-	require.NoError(t, h.InitStats(context.Background(), is))
-	stats1, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok = h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
-	stats3, ok := h.Get(tbl3.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats3.GetIdx(1).IsFullLoad())
+		require.NoError(t, h.InitStats(context.Background(), is))
+		stats1, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		stats2, ok = h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats2.GetIdx(1).IsFullLoad())
+		stats3, ok := h.Get(tbl3.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats3.GetIdx(1).IsFullLoad())
 
-	dom.Close()
+		dom.Close()
+	})
 }
 
 func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
@@ -176,10 +197,11 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
 	})
-	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
+	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
 		return true
-	}
-	testConcurrentlyInitStats(t)
+	}, func() {
+		testConcurrentlyInitStats(t)
+	})
 }
 
 func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
@@ -188,10 +210,11 @@ func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
 	})
-	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
+	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
 		return false
-	}
-	testConcurrentlyInitStats(t)
+	}, func() {
+		testConcurrentlyInitStats(t)
+	})
 }
 
 func testConcurrentlyInitStats(t *testing.T) {
@@ -287,11 +310,11 @@ func testDropTableBeforeInitStats(t *testing.T) {
 }
 
 func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
-	config.GetGlobalConfig().Performance.SkipInitStats = true
-	defer func() {
-		config.GetGlobalConfig().Performance.SkipInitStats = false
-	}()
-
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.SkipInitStats = true
+	})
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer store.Close()
 	se := session.CreateSessionAndSetID(t, store)
@@ -301,17 +324,20 @@ func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
 	session.MustExec(t, se, "analyze table t all columns;")
 	dom.Close()
 
-	vardef.SetStatsLease(3)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	h := dom.StatsHandle()
-	<-h.InitStatsDone
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	_, ok := h.StatsCache.Get(tbl.Meta().ID)
-	require.False(t, ok)
-	dom.Close()
+	// Keep the periodic stats updater enabled, but give the assertion time to
+	// observe the skipped init path before the first background refresh.
+	withStatsLease(t, 3*time.Second, func() {
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+		h := dom.StatsHandle()
+		<-h.InitStatsDone
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		_, ok := h.StatsCache.Get(tbl.Meta().ID)
+		require.False(t, ok)
+		dom.Close()
+	})
 }
 
 func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
@@ -336,23 +362,24 @@ func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
 
 	dom.Close()
 
-	vardef.SetStatsLease(-1)
-	dom, err = session.BootstrapSession(store)
-	require.NoError(t, err)
-	is = dom.InfoSchema()
-	h := dom.StatsHandle()
-	_, ok := h.Get(tbl1.Meta().ID)
-	require.False(t, ok)
-	require.NoError(t, h.InitStats(context.Background(), is))
-	stats1, ok := h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok := h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
-	stats3, ok := h.Get(tbl3.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats3.GetIdx(1).IsFullLoad())
+	withStatsLease(t, -1, func() {
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+		is = dom.InfoSchema()
+		h := dom.StatsHandle()
+		_, ok := h.Get(tbl1.Meta().ID)
+		require.False(t, ok)
+		require.NoError(t, h.InitStats(context.Background(), is))
+		stats1, ok := h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		stats2, ok := h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats2.GetIdx(1).IsFullLoad())
+		stats3, ok := h.Get(tbl3.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats3.GetIdx(1).IsFullLoad())
 
-	dom.Close()
+		dom.Close()
+	})
 }
