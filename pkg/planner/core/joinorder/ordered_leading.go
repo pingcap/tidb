@@ -35,29 +35,37 @@ type OrderedLeadingChoice struct {
 	Vertices      []base.LogicalPlan
 }
 
-// AnnotateOrderedLeading tries to attach an internal LEADING preference to the
-// top join of the current join group. The preference points to the leaf whose
-// index can preserve one ordering vector after accounting for single-table
-// equality filters.
-func AnnotateOrderedLeading(root base.LogicalPlan, orderingCols []*expression.Column, parentFilters []expression.Expression) (*OrderedLeadingChoice, bool) {
+// FindOrderedLeadingChoice returns the vertex that should keep carrying the
+// current ordering requirement inside this join group. The actual question of
+// whether that vertex's subtree can really preserve the order is handled by the
+// recursive caller.
+func FindOrderedLeadingChoice(root base.LogicalPlan, orderingCols []*expression.Column) *OrderedLeadingChoice {
 	if root == nil || len(orderingCols) == 0 {
-		return nil, false
+		return nil
 	}
 
 	group := extractJoinGroup(root)
 	if len(group.vertexes) <= 1 {
-		return nil, false
+		return nil
 	}
 
-	choice := findOrderedLeadingChoice(group, orderingCols, parentFilters)
-	if choice == nil {
-		return nil, false
+	return findOrderedLeadingChoice(group, orderingCols)
+}
+
+// TryAnnotateOrderedLeading attaches an internal LEADING preference to the top
+// join of the current join group once the chosen carrier vertex has already
+// proven, through recursive exploration, that its subtree can satisfy the
+// ordering requirement.
+func TryAnnotateOrderedLeading(root base.LogicalPlan, choice *OrderedLeadingChoice) bool {
+	if root == nil || choice == nil {
+		return false
 	}
 
+	group := extractJoinGroup(root)
 	anchor := findLeadingHintAnchor(group.root)
 	if len(group.leadingHints) > 0 || anchor == nil || anchor.PreferJoinOrder || anchor.InternalPreferJoinOrder ||
 		anchor.PreferJoinType > 0 || anchor.HintInfo != nil || anchor.InternalHintInfo != nil || choice.LeadingTable == nil {
-		return nil, false
+		return false
 	}
 
 	// Record the ordered-leading choice separately from user hints so downstream
@@ -65,7 +73,7 @@ func AnnotateOrderedLeading(root base.LogicalPlan, orderingCols []*expression.Co
 	// synthesized preference.
 	anchor.InternalPreferJoinOrder = true
 	anchor.InternalHintInfo = buildSingleTableLeadingHint(choice.LeadingTable)
-	return choice, true
+	return true
 }
 
 // findLeadingHintAnchor returns the top join that should receive the internal
@@ -114,25 +122,22 @@ func buildSingleTableLeadingHint(table *hint.HintedTable) *hint.PlanHints {
 	}
 }
 
-// findOrderedLeadingChoice picks one vertex that carries the ordering
-// requirement inside the current join group. Each ordering vector must be
-// satisfied as a whole instead of column-by-column. For example, if the join
-// group is {t1, t2, t3} and the required order is (t2.a, t2.b), we only pick a
-// vertex whose schema contains both columns and whose access path can preserve
-// the full (a, b) order. If that vertex can also be represented as a single
-// hinted table, we additionally return the bridged LEADING target for the
-// current anchor join.
-func findOrderedLeadingChoice(group *joinGroup, orderingCols []*expression.Column, parentFilters []expression.Expression) *OrderedLeadingChoice {
-	groupSelectionConds := collectSelectionConds(group)
-	orderingColIDs, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
-	if len(orderingColIDs) == 0 || len(orderingColIDs) != len(orderingCols) {
+// findOrderedLeadingChoice picks one vertex that should keep carrying the
+// ordering requirement inside the current join group. Each ordering vector must
+// still belong to one vertex as a whole instead of column-by-column. For
+// example, if the join group is {t1, t2, t3} and the required order is
+// (t2.a, t2.b), we only pick a vertex whose schema contains both columns. The
+// recursive caller will then keep exploring that vertex's subtree to prove
+// whether the order can really be preserved. If the chosen vertex can also be
+// represented as a single hinted table, we additionally return the bridged
+// LEADING target for the current anchor join.
+func findOrderedLeadingChoice(group *joinGroup, orderingCols []*expression.Column) *OrderedLeadingChoice {
+	_, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
+	if len(orderingColUniqueIDs) == 0 || len(orderingColUniqueIDs) != len(orderingCols) {
 		return nil
 	}
 	for _, vertex := range group.vertexes {
 		if !schemaContainsAllOrderingColumns(vertex, orderingColUniqueIDs) {
-			continue
-		}
-		if !tableHasIndexMatchingOrdering(vertex, orderingColIDs, groupSelectionConds, parentFilters) {
 			continue
 		}
 		choice := &OrderedLeadingChoice{CarrierVertex: vertex}
@@ -143,17 +148,6 @@ func findOrderedLeadingChoice(group *joinGroup, orderingCols []*expression.Colum
 		return choice
 	}
 	return nil
-}
-
-func collectSelectionConds(group *joinGroup) []expression.Expression {
-	if len(group.selConds) == 0 {
-		return nil
-	}
-	conds := make([]expression.Expression, 0, len(group.selConds))
-	for _, exprs := range group.selConds {
-		conds = append(conds, exprs...)
-	}
-	return conds
 }
 
 // normalizeOrderingColumns validates the ordering columns and extracts their IDs and UniqueIDs.
@@ -185,6 +179,24 @@ func schemaContainsAllOrderingColumns(plan base.LogicalPlan, orderingColUniqueID
 		}
 	}
 	return matched == len(orderingColUniqueIDs)
+}
+
+// PlanSatisfiesOrdering proves that one non-join subtree can provide the
+// requested ordering locally. This is used after the order-aware rule has
+// already chosen one carrier vertex and recursively descended into it.
+func PlanSatisfiesOrdering(
+	plan base.LogicalPlan,
+	orderingCols []*expression.Column,
+	parentFilters []expression.Expression,
+) bool {
+	orderingColIDs, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
+	if len(orderingColIDs) == 0 || len(orderingColIDs) != len(orderingCols) {
+		return false
+	}
+	if !schemaContainsAllOrderingColumns(plan, orderingColUniqueIDs) {
+		return false
+	}
+	return tableHasIndexMatchingOrdering(plan, orderingColIDs, nil, parentFilters)
 }
 
 func tableHasIndexMatchingOrdering(

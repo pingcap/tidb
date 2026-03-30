@@ -32,7 +32,7 @@ type OrderAwareJoinReorder struct{}
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (r *OrderAwareJoinReorder) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	changed, err := r.optimizeRecursive(p, nil, nil)
+	changed, _, err := r.optimizeRecursive(p, nil, nil)
 	return p, changed, err
 }
 
@@ -40,12 +40,12 @@ func (r *OrderAwareJoinReorder) optimizeRecursive(
 	p base.LogicalPlan,
 	orderCols []*expression.Column,
 	midFilters []expression.Expression,
-) (bool, error) {
+) (bool, bool, error) {
 	if p == nil {
-		return false, nil
+		return false, false, nil
 	}
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
-		return false, nil
+		return false, false, nil
 	}
 	if len(orderCols) == 0 {
 		// only selection filter under order requirement can be used.
@@ -56,68 +56,99 @@ func (r *OrderAwareJoinReorder) optimizeRecursive(
 	switch node := p.(type) {
 	// for TopN and Sort, we extract the ordering columns and pass down to children so they can annotate join groups with leading preferences!
 	case *logicalop.LogicalTopN:
-		childChanged, err := r.optimizeChildren(node.Children(), extractOrderingColumns(node.ByItems), nil, 0)
-		return changed || childChanged, err
+		extractedOrder := extractOrderingColumns(node.ByItems)
+		childChanged, childOrdered, err := r.optimizeChildren(node.Children(), extractedOrder, nil, 0)
+		if err != nil {
+			return false, false, err
+		}
+		if len(orderCols) > 0 {
+			return changed || childChanged, sameOrderingColumns(orderCols, extractedOrder), nil
+		}
+		return changed || childChanged, childOrdered, nil
 	case *logicalop.LogicalSort:
-		childChanged, err := r.optimizeChildren(node.Children(), extractOrderingColumns(node.ByItems), nil, 0)
-		return changed || childChanged, err
+		extractedOrder := extractOrderingColumns(node.ByItems)
+		childChanged, childOrdered, err := r.optimizeChildren(node.Children(), extractedOrder, nil, 0)
+		if err != nil {
+			return false, false, err
+		}
+		if len(orderCols) > 0 {
+			return changed || childChanged, sameOrderingColumns(orderCols, extractedOrder), nil
+		}
+		return changed || childChanged, childOrdered, nil
 	case *logicalop.LogicalProjection:
-		childChanged, err := r.optimizeChildren(node.Children(), rewriteOrderingForProjection(node, orderCols), midFilters, 0)
-		return changed || childChanged, err
+		rewrittenOrder := rewriteOrderingForProjection(node, orderCols)
+		childChanged, childOrdered, err := r.optimizeChildren(node.Children(), rewrittenOrder, midFilters, 0)
+		if err != nil {
+			return false, false, err
+		}
+		if len(orderCols) > 0 {
+			return changed || childChanged, len(rewrittenOrder) > 0 && childOrdered, nil
+		}
+		return changed || childChanged, childOrdered, nil
 	case *logicalop.LogicalLimit:
-		childChanged, err := r.optimizeChildren(node.Children(), orderCols, midFilters, 0)
-		return changed || childChanged, err
+		childChanged, childOrdered, err := r.optimizeChildren(node.Children(), orderCols, midFilters, 0)
+		return changed || childChanged, childOrdered, err
 	case *logicalop.LogicalSelection:
 		canPushThroughSelection := node.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
 			!slices.ContainsFunc(node.Conditions, expression.IsMutableEffectsExpr)
 		if canPushThroughSelection {
-			var annotated bool
-			var localChoice *joinorder.OrderedLeadingChoice
-			if len(orderCols) > 0 && shouldUseCDCBasedJoinReorder(node) {
-				localChoice, annotated = joinorder.AnnotateOrderedLeading(node, orderCols, midFilters)
-				if annotated {
-					changed = true
-				}
-			}
-			var err error
-			var childChanged bool
 			var accumulatedFilters []expression.Expression
 			if len(orderCols) > 0 {
 				// These filters may help child groups preserve the same ordering
 				// by fixing leading index columns above the current anchor join.
 				accumulatedFilters = append(slices.Clone(midFilters), node.Conditions...)
 			}
-			if localChoice != nil && len(localChoice.Vertices) > 0 {
-				// order leading is applicable in detected join group, go down through vertex.
-				childChanged, err = r.optimizeChildren(localChoice.Vertices, orderCols, accumulatedFilters, localChoice.CarrierVertex.ID())
-			} else {
-				// order leading is not applicable in detected join group, still go down through children.
-				childChanged, err = r.optimizeChildren(node.Children(), nil, nil, 0)
+			var localChoice *joinorder.OrderedLeadingChoice
+			if len(orderCols) > 0 && shouldUseCDCBasedJoinReorder(node) {
+				localChoice = joinorder.FindOrderedLeadingChoice(node, orderCols)
 			}
-			return changed || childChanged, err
+			if localChoice != nil && len(localChoice.Vertices) > 0 {
+				// This subtree owns the required ordering columns, so recurse into it
+				// first and only annotate the current anchor after the chosen child
+				// proves it can still satisfy the order requirement.
+				childChanged, childOrdered, err := r.optimizeChildren(localChoice.Vertices, orderCols, accumulatedFilters, localChoice.CarrierVertex.ID())
+				if err != nil {
+					return false, false, err
+				}
+				if childOrdered && joinorder.TryAnnotateOrderedLeading(node, localChoice) {
+					changed = true
+					return changed || childChanged, true, nil
+				}
+				return changed || childChanged, false, nil
+			}
+			childChanged, childOrdered, err := r.optimizeChildren(node.Children(), orderCols, accumulatedFilters, 0)
+			return changed || childChanged, childOrdered, err
 		}
-		childChanged, err := r.optimizeChildren(node.Children(), nil, nil, 0)
-		return changed || childChanged, err
+		childChanged, _, err := r.optimizeChildren(node.Children(), nil, nil, 0)
+		return changed || childChanged, false, err
 	case *logicalop.LogicalJoin:
-		var annotated bool
 		var localChoice *joinorder.OrderedLeadingChoice
 		if len(orderCols) > 0 && shouldUseCDCBasedJoinReorder(node) {
-			localChoice, annotated = joinorder.AnnotateOrderedLeading(node, orderCols, midFilters)
-			if annotated {
-				changed = true
-			}
+			localChoice = joinorder.FindOrderedLeadingChoice(node, orderCols)
 		}
 		if localChoice != nil && len(localChoice.Vertices) > 0 {
-			// order leading is applicable in detected join group, go down through vertex.
-			childChanged, err := r.optimizeChildren(localChoice.Vertices, orderCols, midFilters, localChoice.CarrierVertex.ID())
-			return changed || childChanged, err
+			childChanged, childOrdered, err := r.optimizeChildren(localChoice.Vertices, orderCols, midFilters, localChoice.CarrierVertex.ID())
+			if err != nil {
+				return false, false, err
+			}
+			if childOrdered && joinorder.TryAnnotateOrderedLeading(node, localChoice) {
+				changed = true
+				return changed || childChanged, true, nil
+			}
+			return changed || childChanged, false, nil
 		}
-		// order leading is not applicable in detected join group, still go down through children.
-		childChanged, err := r.optimizeChildren(node.Children(), nil, nil, 0)
-		return changed || childChanged, err
+		// The order requirement does not belong to any vertex of this join group,
+		// so there is no subtree worth propagating into from this point.
+		childChanged, _, err := r.optimizeChildren(node.Children(), nil, nil, 0)
+		return changed || childChanged, false, err
+	case *logicalop.DataSource:
+		if len(orderCols) == 0 {
+			return false, false, nil
+		}
+		return false, joinorder.PlanSatisfiesOrdering(node, orderCols, midFilters), nil
 	default:
-		childChanged, err := r.optimizeChildren(p.Children(), nil, nil, 0)
-		return changed || childChanged, err
+		childChanged, _, err := r.optimizeChildren(p.Children(), nil, nil, 0)
+		return changed || childChanged, false, err
 	}
 }
 
@@ -126,8 +157,9 @@ func (r *OrderAwareJoinReorder) optimizeChildren(
 	orderCols []*expression.Column,
 	parentFilters []expression.Expression,
 	vertexIDShouldFollowOrder int,
-) (bool, error) {
+) (bool, bool, error) {
 	changed := false
+	ordered := false
 	for _, child := range children {
 		nextOrderCols := orderCols
 		nextParentFilters := parentFilters
@@ -136,20 +168,21 @@ func (r *OrderAwareJoinReorder) optimizeChildren(
 			// first anchor join, so every child keeps the current requirement.
 			// Once a join group chooses one carrier vertex, only that vertex
 			// continues to inherit the ordering and accumulated filters.
-			childChanged, err := r.optimizeRecursive(child, nextOrderCols, nextParentFilters)
+			childChanged, childOrdered, err := r.optimizeRecursive(child, nextOrderCols, nextParentFilters)
 			if err != nil {
-				return false, err
+				return false, false, err
 			}
 			changed = changed || childChanged
+			ordered = ordered || childOrdered
 			continue
 		}
-		childChanged, err := r.optimizeRecursive(child, nil, nil)
+		childChanged, _, err := r.optimizeRecursive(child, nil, nil)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		changed = changed || childChanged
 	}
-	return changed, nil
+	return changed, ordered, nil
 }
 
 func shouldUseCDCBasedJoinReorder(p base.LogicalPlan) bool {
@@ -176,6 +209,18 @@ func extractOrderingColumns(items []*plannerutil.ByItems) []*expression.Column {
 		cols = append(cols, col)
 	}
 	return cols
+}
+
+func sameOrderingColumns(left, right []*expression.Column) bool {
+	if len(left) == 0 || len(right) == 0 || len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] == nil || right[i] == nil || left[i].UniqueID != right[i].UniqueID {
+			return false
+		}
+	}
+	return true
 }
 
 func rewriteOrderingForProjection(
