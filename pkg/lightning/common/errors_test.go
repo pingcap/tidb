@@ -86,6 +86,12 @@ func TestNormalizeError(t *testing.T) {
 	require.Error(t, normalizedErr)
 	require.True(t, berrors.Is(normalizedErr, ErrCastValue))
 	require.EqualError(t, normalizedErr, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: \"BAD\". Reason: out of range.")
+
+	err = errors.Annotatef(err, "in file at offset %d", 0)
+	normalizedErr = NormalizeError(err)
+	require.Error(t, normalizedErr)
+	require.True(t, berrors.Is(normalizedErr, ErrCastValue))
+	require.EqualError(t, normalizedErr, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: \"BAD\". Reason: out of range. in file at offset 0")
 }
 
 func TestNormalizeOrWrapErr(t *testing.T) {

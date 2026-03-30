@@ -175,7 +175,22 @@ func NormalizeError(err error) error {
 		// A workaround for https://github.com/pingcap/tidb/issues/32133.
 		// Ensure that error code description is always placed at the beginning of the error string.
 		if errMsg != nErrMsg && strings.HasSuffix(errMsg, ": "+nErrMsg) {
-			errMsg = errMsg[:len(errMsg)-len(nErrMsg)-2]
+			contextMsg := errMsg[:len(errMsg)-len(nErrMsg)-2]
+			if strings.HasPrefix(string(normalizedErr.ID()), "Import:") {
+				// Import errors like ErrCastValue already carry the actionable detail in
+				// their normalized message body. Preserve that detail and append the outer
+				// file/row context instead of collapsing the output to context only.
+				errMsg = normalizedErr.GetMsg()
+				if len(contextMsg) > 0 {
+					if strings.HasSuffix(errMsg, ".") {
+						errMsg += " " + contextMsg
+					} else {
+						errMsg += ": " + contextMsg
+					}
+				}
+			} else {
+				errMsg = contextMsg
+			}
 			causeErr := normalizedErr.Unwrap()
 			normalizedErr = errors.Normalize(errMsg, errors.RFCCodeText(string(normalizedErr.RFCCode())))
 			if causeErr != nil {
