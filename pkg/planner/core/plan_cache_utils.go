@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -590,7 +591,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
-	sum += size.SizeOfSlice + int64(cap(v.SyncLoadFallbackItems))*(size.SizeOfInt64*2+size.SizeOfBool*2)
+	sum += size.SizeOfSlice + int64(cap(v.SyncLoadFallbackItems))*int64(unsafe.Sizeof(model.TableItemID{}))
 	if v.ParamTypes != nil {
 		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.ParamTypes {
