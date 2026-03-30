@@ -42,6 +42,38 @@ func prepareOrderAwareJoinReorderTables(tk *testkit.TestKit) {
 	tk.MustExec("analyze table t9 all columns")
 }
 
+func prepareOrderAwareAlternativeRoundTables(tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists oa_order_t1, oa_order_t2, oa_order_t3, oa_order_t4")
+	tk.MustExec("create table oa_order_t1(id int not null primary key, category varchar(20), created_at int, key idx_category_created(category, created_at, id))")
+	tk.MustExec("create table oa_order_t2(id int not null primary key, t1_id int not null, key idx_t1_id(t1_id))")
+	tk.MustExec("create table oa_order_t3(id int not null primary key, t2_id int not null, key idx_t2_id(t2_id))")
+	tk.MustExec("create table oa_order_t4(id int not null primary key, t3_id int not null, payload int, key idx_payload_t3(payload, t3_id))")
+
+	oaOrderT1Rows := make([]string, 0, 5000)
+	oaOrderT2Rows := make([]string, 0, 5000)
+	oaOrderT3Rows := make([]string, 0, 5000)
+	oaOrderT4Rows := make([]string, 0, 5000)
+	for i := 1; i <= 5000; i++ {
+		oaOrderT1Rows = append(oaOrderT1Rows, fmt.Sprintf("(%d,'hot',%d)", i, i))
+		oaOrderT2Rows = append(oaOrderT2Rows, fmt.Sprintf("(%d,%d)", i, i))
+		oaOrderT3Rows = append(oaOrderT3Rows, fmt.Sprintf("(%d,%d)", i, i))
+		payload := 0
+		if i%10 == 0 {
+			payload = 1
+		}
+		oaOrderT4Rows = append(oaOrderT4Rows, fmt.Sprintf("(%d,%d,%d)", i, i, payload))
+	}
+	tk.MustExec("insert into oa_order_t1 values " + strings.Join(oaOrderT1Rows, ","))
+	tk.MustExec("insert into oa_order_t2 values " + strings.Join(oaOrderT2Rows, ","))
+	tk.MustExec("insert into oa_order_t3 values " + strings.Join(oaOrderT3Rows, ","))
+	tk.MustExec("insert into oa_order_t4 values " + strings.Join(oaOrderT4Rows, ","))
+	tk.MustExec("analyze table oa_order_t1 all columns")
+	tk.MustExec("analyze table oa_order_t2 all columns")
+	tk.MustExec("analyze table oa_order_t3 all columns")
+	tk.MustExec("analyze table oa_order_t4 all columns")
+}
+
 func TestCDCJoinReorder(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
@@ -262,6 +294,71 @@ func TestOrderAwareJoinReorderPushSelection(tt *testing.T) {
 	})
 }
 
+func TestOrderAwareJoinReorderAlternativeRound(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		prepareOrderAwareAlternativeRoundTables(tk)
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		suite := GetOrderAwareJoinReorderSuiteData()
+		suite.LoadTestCasesByName("TestOrderAwareJoinReorderAlternativeRound", t, &input, &output, cascades, caller)
+
+		plans := make([][]string, 0, 3)
+		for i, sql := range input {
+			normalized := strings.ToLower(strings.TrimSpace(sql))
+			if strings.HasPrefix(normalized, "set ") {
+				testdata.OnRecord(func() {
+					output[i].SQL = sql
+					output[i].Plan = nil
+				})
+				require.Equalf(t, sql, output[i].SQL, "input/output SQL mismatch at case[%d]", i)
+				tk.MustExec(sql)
+				continue
+			}
+
+			plan := tk.MustQuery(sql)
+			rows := testdata.ConvertRowsToStrings(plan.Rows())
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = rows
+			})
+
+			require.Equalf(t, sql, output[i].SQL,
+				"input/output SQL mismatch at case[%d]", i)
+			plan.Check(testkit.Rows(output[i].Plan...))
+			require.NotContains(t, strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows()), "\n"),
+				"leading hint is inapplicable")
+			plans = append(plans, rows)
+		}
+		require.Equalf(t, len(input), len(output),
+			"unexpected output case count, input=%d, output=%d", len(input), len(output))
+		require.Len(t, plans, 3, "expected on/off/leading explain plans")
+
+		onPlan := plans[0]
+		offPlan := plans[1]
+		leadingPlan := plans[2]
+		onPlanText := strings.Join(onPlan, "\n")
+		offPlanText := strings.Join(offPlan, "\n")
+		leadingPlanText := strings.Join(leadingPlan, "\n")
+
+		require.NotEqualf(t, offPlan, onPlan,
+			"expected order-aware alternative round to change the chosen plan\noff:\n%s\non:\n%s",
+			offPlanText, onPlanText)
+		require.Equalf(t, leadingPlan, onPlan,
+			"expected order-aware alternative round to match explicit leading plan\noff:\n%s\non:\n%s\nleading:\n%s",
+			offPlanText, onPlanText, leadingPlanText)
+		require.Contains(t, offPlanText, "TopN")
+		require.Contains(t, offPlanText, "IndexHashJoin")
+		require.Contains(t, onPlanText, "Limit")
+		require.NotContains(t, onPlanText, "TopN")
+		require.Contains(t, onPlanText, "IndexJoin")
+		require.Contains(t, onPlanText, "idx_category_created")
+	})
+}
+
 // TestDPJoinReorderLeadingHint verifies that a leading hint produces a warning
 // when the DP algorithm is active, since DP does not support leading hints.
 func TestDPJoinReorderLeadingHint(tt *testing.T) {
@@ -273,6 +370,7 @@ func TestDPJoinReorderLeadingHint(tt *testing.T) {
 		tk.MustExec("CREATE TABLE t3 (a INT, b INT)")
 		tk.MustExec("set @@tidb_opt_enable_advanced_join_reorder = 1")
 		tk.MustExec("set @@tidb_opt_join_reorder_threshold = 10")
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 0")
 
 		tk.MustQuery("SELECT /*+ LEADING(t2, t3) */ * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a")
 		warnings := tk.MustQuery("show warnings").Rows()
