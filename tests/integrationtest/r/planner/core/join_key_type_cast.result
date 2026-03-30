@@ -101,6 +101,58 @@ select * from t_null_int left join t_null_str on t_null_int.id = t_null_str.id o
 id	v	id	v
 NULL	20	NULL	NULL
 1	10	1	10
+explain format = 'brief' select * from t_varchar join t_int on t_varchar.id = t_int.id;
+id	estRows	task	access object	operator info
+Projection	5.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v
+└─HashJoin	5.00	root		inner join, equal:[eq(Column#5, Column#12)]
+  ├─Projection(Build)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#5
+  │ └─TableReader	5.00	root		data:TableFullScan
+  │   └─TableFullScan	5.00	cop[tikv]	table:t_int	keep order:false
+  └─Projection(Probe)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
+    └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
+      └─TableReader	7.00	root		data:TableFullScan
+        └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+select * from t_varchar join t_int on t_varchar.id = t_int.id order by t_int.id;
+id	v	id	v
+abc	99	0	0
+0	0	0	0
+1	10	1	10
+2	20	2	20
+100	100	100	100
+drop table if exists t_outer_str, t_outer_int;
+create table t_outer_str (id varchar(20), v int);
+create table t_outer_int (id int primary key, v int);
+insert into t_outer_str values ('1', 10), ('1.5', 15), ('abc', 99), (NULL, 0);
+insert into t_outer_int values (1, 10), (2, 20);
+select * from t_outer_str left join t_outer_int on t_outer_str.id = t_outer_int.id order by t_outer_str.id, t_outer_str.v;
+id	v	id	v
+NULL	0	NULL	NULL
+1	10	1	10
+1.5	15	NULL	NULL
+abc	99	NULL	NULL
+select * from t_outer_int left join t_outer_str on t_outer_int.id = t_outer_str.id order by t_outer_int.id;
+id	v	id	v
+1	10	1	10
+2	20	NULL	NULL
+select * from t_outer_int right join t_outer_str on t_outer_int.id = t_outer_str.id order by t_outer_str.id, t_outer_str.v;
+id	v	id	v
+NULL	NULL	NULL	0
+1	10	1	10
+NULL	NULL	1.5	15
+NULL	NULL	abc	99
+select * from t_outer_str right join t_outer_int on t_outer_str.id = t_outer_int.id order by t_outer_int.id;
+id	v	id	v
+1	10	1	10
+NULL	NULL	2	20
+drop table if exists t_nseq_int, t_nseq_str;
+create table t_nseq_int (id int, v int);
+create table t_nseq_str (id varchar(20), v int);
+insert into t_nseq_int values (1, 10), (NULL, 20);
+insert into t_nseq_str values ('1', 10), (NULL, 20);
+select * from t_nseq_int join t_nseq_str on t_nseq_int.id <=> t_nseq_str.id order by t_nseq_int.v;
+id	v	id	v
+1	10	1	10
+NULL	20	NULL	20
 drop table if exists t_overflow_int, t_overflow_str;
 create table t_overflow_int (id bigint primary key, v int);
 create table t_overflow_str (id varchar(30), v int);

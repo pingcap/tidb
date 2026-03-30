@@ -112,8 +112,25 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 	guards := map[int]*guardEntry{}
 
 	// Process each EqualCondition.
+	// Determine which child index is the preserved (outer) side, if any.
+	// LEFT JOIN preserves left (child 0); RIGHT JOIN preserves right (child 1).
+	preservedChildIdx := -1 // -1 means no preserved side (inner join)
+	switch join.JoinType {
+	case base.LeftOuterJoin:
+		preservedChildIdx = 0
+	case base.RightOuterJoin:
+		preservedChildIdx = 1
+	}
+
 	for eqIdx := 0; eqIdx < len(join.EqualConditions); eqIdx++ {
 		eq := join.EqualConditions[eqIdx]
+
+		// Skip null-safe equality (<=>): the guard uses = which filters
+		// NULLs, breaking NULL<=>NULL semantics.
+		if eq.FuncName.L == ast.NullEQ {
+			continue
+		}
+
 		args := eq.GetArgs()
 		if len(args) != 2 {
 			continue
@@ -141,6 +158,17 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 			continue
 		}
 
+		// Skip if the VARCHAR side is the preserved (outer) side of an
+		// outer join. Pushing a guard filter there would incorrectly
+		// remove rows that should be preserved with NULL-padded columns.
+		strChildIdx := 1
+		if strInfo.proj == leftProj {
+			strChildIdx = 0
+		}
+		if strChildIdx == preservedChildIdx {
+			continue
+		}
+
 		// INT side: add a pass-through of the bare int column, keeping
 		// origCol.UniqueID. This preserves the identity so that the index
 		// join builder can match it to the table's PK/index and the
@@ -165,10 +193,6 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 		strInfo.proj.Schema().Append(newStrCol)
 
 		// Accumulate guard condition for the VARCHAR-side Projection.
-		strChildIdx := 1
-		if strInfo.proj == leftProj {
-			strChildIdx = 0
-		}
 		if guards[strChildIdx] == nil {
 			guards[strChildIdx] = &guardEntry{proj: strInfo.proj}
 		}
@@ -207,12 +231,11 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 	}
 
 	// Insert guard Selections below the affected Projections.
-	for childIdx, g := range guards {
+	for _, g := range guards {
 		projChild := g.proj.Children()[0]
 		sel := logicalop.LogicalSelection{Conditions: g.conds}.Init(ctx, join.QueryBlockOffset())
 		sel.SetChildren(projChild)
 		g.proj.SetChildren(sel)
-		_ = childIdx
 	}
 
 	// Note: we do NOT call MergeSchema() here. The new columns are only used

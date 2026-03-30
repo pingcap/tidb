@@ -73,6 +73,47 @@ insert into t_null_str values ('1', 10), (NULL, 20), ('2', 30);
 select * from t_null_int join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
 select * from t_null_int left join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
 
+# TestJoinKeyTypeCastVarcharOnLeft
+# When the VARCHAR column is on the left side of the join, the guard and
+# projection must be placed on the left child (not the right).
+explain format = 'brief' select * from t_varchar join t_int on t_varchar.id = t_int.id;
+select * from t_varchar join t_int on t_varchar.id = t_int.id order by t_int.id;
+
+# TestJoinKeyTypeCastPreservedSideOuterJoin
+# When the VARCHAR side is the preserved (outer) side of a LEFT/RIGHT JOIN,
+# the guard must NOT be pushed there — it would incorrectly remove rows
+# that should appear with NULL-padded columns.
+drop table if exists t_outer_str, t_outer_int;
+create table t_outer_str (id varchar(20), v int);
+create table t_outer_int (id int primary key, v int);
+insert into t_outer_str values ('1', 10), ('1.5', 15), ('abc', 99), (NULL, 0);
+insert into t_outer_int values (1, 10), (2, 20);
+
+# VARCHAR is the preserved (left) side: '1.5', 'abc', and NULL must
+# still appear with NULLs for the int columns.
+select * from t_outer_str left join t_outer_int on t_outer_str.id = t_outer_int.id order by t_outer_str.id, t_outer_str.v;
+
+# INT is the preserved (left) side: guard on the inner VARCHAR side is fine.
+select * from t_outer_int left join t_outer_str on t_outer_int.id = t_outer_str.id order by t_outer_int.id;
+
+# RIGHT JOIN with VARCHAR as the preserved (right) side: must not push guard.
+select * from t_outer_int right join t_outer_str on t_outer_int.id = t_outer_str.id order by t_outer_str.id, t_outer_str.v;
+
+# RIGHT JOIN with INT as the preserved (right) side: guard on VARCHAR (left) is fine.
+select * from t_outer_str right join t_outer_int on t_outer_str.id = t_outer_int.id order by t_outer_int.id;
+
+# TestJoinKeyTypeCastNullSafeEQ
+# Null-safe equality (<=>) must not be rewritten because the guard
+# uses = which filters NULLs, breaking NULL<=>NULL semantics.
+drop table if exists t_nseq_int, t_nseq_str;
+create table t_nseq_int (id int, v int);
+create table t_nseq_str (id varchar(20), v int);
+insert into t_nseq_int values (1, 10), (NULL, 20);
+insert into t_nseq_str values ('1', 10), (NULL, 20);
+
+# With <=>, NULL should match NULL.
+select * from t_nseq_int join t_nseq_str on t_nseq_int.id <=> t_nseq_str.id order by t_nseq_int.v;
+
 # TestJoinKeyTypeCastOverflow
 # VARCHAR values larger than INT64_MAX must not produce incorrect matches.
 drop table if exists t_overflow_int, t_overflow_str;
