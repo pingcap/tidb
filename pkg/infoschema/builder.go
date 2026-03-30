@@ -654,18 +654,18 @@ func refreshMaskingPoliciesForTableIDs(b *Builder, tableIDs ...int64) error {
 		tableLookupIS = &b.infoschemaV2
 	}
 
-	existingNames := make([]string, 0)
+	existingPolicyIDs := make(map[int64]struct{})
 	for tableID := range targetIDs {
 		colMap, ok := targetIS.maskingPolicyTableColumnMap[tableID]
 		if !ok {
 			continue
 		}
 		for _, policy := range colMap {
-			existingNames = append(existingNames, policy.Name.L)
+			existingPolicyIDs[policy.ID] = struct{}{}
 		}
 	}
-	for _, name := range existingNames {
-		targetIS.deleteMaskingPolicy(name)
+	for policyID := range existingPolicyIDs {
+		targetIS.deleteMaskingPolicyByID(policyID)
 	}
 
 	policySystemTable, err := tableLookupIS.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
@@ -1061,6 +1061,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.maskingPolicyMap = oldIS.CloneMaskingPoliciesByName()
+	b.infoSchema.maskingPolicyDBAndNameMap = oldIS.CloneMaskingPoliciesByDBAndName()
 	b.infoSchema.maskingPolicyTableColumnMap = oldIS.CloneMaskingPoliciesByTableColumn()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)

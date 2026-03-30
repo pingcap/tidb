@@ -128,12 +128,12 @@ func TestMaskingPolicyAtResultWithPartialMasking(t *testing.T) {
 	tk.MustExec("drop table if exists t_partial")
 	tk.MustExec("create table t_partial(id int, email varchar(100))")
 	tk.MustExec("insert into t_partial values (1, 'alice@example.com'), (2, 'bob@example.com'), (3, 'charlie@example.com')")
-	tk.MustExec("create masking policy p_partial on t_partial(email) as mask_partial(email, 1, 0, '*') enable")
+	tk.MustExec("create masking policy p_partial on t_partial(email) as mask_partial(email, '*', 1, 100) enable")
 
 	// ORDER BY should sort by original email, not masked
 	result := tk.MustQuery("select id, email from t_partial order by email")
 	// alice@example.com < bob@example.com < charlie@example.com
-	result.Check(testkit.Rows("1 a**************", "2 b***********", "3 c*************"))
+	result.Check(testkit.Rows("1 a****************", "2 b**************", "3 c******************"))
 }
 
 // TestMaskingPolicyAtResultWithConcat tests AT RESULT semantics with concat expressions

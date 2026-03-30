@@ -261,7 +261,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		maskedChunk := chunk.NewChunkWithCapacity(fieldTypes, req.NumRows())
 
 		// Process each row and apply masking
-		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+		for rowIdx := range req.NumRows() {
 			row := req.GetRow(rowIdx)
 			for colIdx, expr := range e.MaskingExprs {
 				if expr != nil {

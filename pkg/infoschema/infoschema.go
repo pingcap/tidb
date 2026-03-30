@@ -91,9 +91,11 @@ type infoSchemaMisc struct {
 	resourceGroupMutex sync.RWMutex
 	resourceGroupMap   map[string]*model.ResourceGroupInfo
 
-	// maskingPolicyMap stores all masking policies.
+	// maskingPolicyMap stores masking policies by policy name.
+	// It is kept for backward compatibility for lookups that only provide policy name.
 	maskingPolicyMutex          sync.RWMutex
 	maskingPolicyMap            map[string]*model.MaskingPolicyInfo
+	maskingPolicyDBAndNameMap   map[string]*model.MaskingPolicyInfo
 	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
 
 	// temporaryTables stores the temporary table ids
@@ -210,6 +212,7 @@ func newInfoSchema(r autoid.Requirement) *infoSchema {
 			policyMap:                   map[string]*model.PolicyInfo{},
 			resourceGroupMap:            map[string]*model.ResourceGroupInfo{},
 			maskingPolicyMap:            map[string]*model.MaskingPolicyInfo{},
+			maskingPolicyDBAndNameMap:   map[string]*model.MaskingPolicyInfo{},
 			maskingPolicyTableColumnMap: map[int64]map[int64]*model.MaskingPolicyInfo{},
 			ruleBundleMap:               map[int64]*placement.Bundle{},
 		},
@@ -291,7 +294,7 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 }
 
 func (is *infoSchema) MaskingPolicyByID(id int64) (val *model.MaskingPolicyInfo, ok bool) {
-	for _, v := range is.maskingPolicyMap {
+	for _, v := range is.maskingPolicyDBAndNameMap {
 		if v.ID == id {
 			return v, true
 		}
@@ -576,7 +579,7 @@ func (is *infoSchemaMisc) MaskingPolicyByDBAndName(dbName, policyName string) (*
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 	key := dbName + "." + policyName
-	t, r := is.maskingPolicyMap[key]
+	t, r := is.maskingPolicyDBAndNameMap[key]
 	return t, r
 }
 
@@ -625,8 +628,8 @@ func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupI
 func (is *infoSchemaMisc) AllMaskingPolicies() []*model.MaskingPolicyInfo {
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
-	policies := make([]*model.MaskingPolicyInfo, 0, len(is.maskingPolicyMap))
-	for _, policy := range is.maskingPolicyMap {
+	policies := make([]*model.MaskingPolicyInfo, 0, len(is.maskingPolicyDBAndNameMap))
+	for _, policy := range is.maskingPolicyDBAndNameMap {
 		policies = append(policies, policy)
 	}
 	return policies
@@ -636,6 +639,12 @@ func (is *infoSchemaMisc) CloneMaskingPoliciesByName() map[string]*model.Masking
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 	return maps.Clone(is.maskingPolicyMap)
+}
+
+func (is *infoSchemaMisc) CloneMaskingPoliciesByDBAndName() map[string]*model.MaskingPolicyInfo {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	return maps.Clone(is.maskingPolicyDBAndNameMap)
 }
 
 func (is *infoSchemaMisc) CloneMaskingPoliciesByTableColumn() map[int64]map[int64]*model.MaskingPolicyInfo {
@@ -687,22 +696,21 @@ func (is *infoSchemaMisc) setResourceGroup(resourceGroup *model.ResourceGroupInf
 func (is *infoSchemaMisc) setMaskingPolicy(policy *model.MaskingPolicyInfo) {
 	is.maskingPolicyMutex.Lock()
 	defer is.maskingPolicyMutex.Unlock()
-	// Store by name (for backward compatibility)
-	if old := is.maskingPolicyMap[policy.Name.L]; old != nil {
-		if old.TableID != policy.TableID || old.ColumnID != policy.ColumnID {
-			if colMap, ok := is.maskingPolicyTableColumnMap[old.TableID]; ok {
-				delete(colMap, old.ColumnID)
-				if len(colMap) == 0 {
-					delete(is.maskingPolicyTableColumnMap, old.TableID)
-				}
+
+	dbNameKey := policy.DBName.L + "." + policy.Name.L
+	if old := is.maskingPolicyDBAndNameMap[dbNameKey]; old != nil &&
+		(old.TableID != policy.TableID || old.ColumnID != policy.ColumnID) {
+		if colMap, ok := is.maskingPolicyTableColumnMap[old.TableID]; ok {
+			delete(colMap, old.ColumnID)
+			if len(colMap) == 0 {
+				delete(is.maskingPolicyTableColumnMap, old.TableID)
 			}
 		}
 	}
-	is.maskingPolicyMap[policy.Name.L] = policy
 
-	// Also store by db+name for database-scoped uniqueness
-	dbNameKey := policy.DBName.L + "." + policy.Name.L
-	is.maskingPolicyMap[dbNameKey] = policy
+	// Store by name for backward compatibility and by db+name for database-scoped uniqueness.
+	is.maskingPolicyMap[policy.Name.L] = policy
+	is.maskingPolicyDBAndNameMap[dbNameKey] = policy
 
 	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
 	if !ok {
@@ -731,7 +739,35 @@ func (is *infoSchemaMisc) deleteMaskingPolicy(name string) {
 	if !ok {
 		return
 	}
-	delete(is.maskingPolicyMap, name)
+	is.deleteMaskingPolicyLocked(policy)
+}
+
+func (is *infoSchemaMisc) deleteMaskingPolicyByID(policyID int64) {
+	is.maskingPolicyMutex.Lock()
+	defer is.maskingPolicyMutex.Unlock()
+	for _, policy := range is.maskingPolicyDBAndNameMap {
+		if policy.ID == policyID {
+			is.deleteMaskingPolicyLocked(policy)
+			return
+		}
+	}
+}
+
+func (is *infoSchemaMisc) deleteMaskingPolicyLocked(policy *model.MaskingPolicyInfo) {
+	dbNameKey := policy.DBName.L + "." + policy.Name.L
+	delete(is.maskingPolicyDBAndNameMap, dbNameKey)
+
+	if byName, ok := is.maskingPolicyMap[policy.Name.L]; ok && byName.ID == policy.ID {
+		delete(is.maskingPolicyMap, policy.Name.L)
+		// Keep backward-compatible by-name lookup available when another policy has the same name in a different database.
+		for _, candidate := range is.maskingPolicyDBAndNameMap {
+			if candidate.Name.L == policy.Name.L {
+				is.maskingPolicyMap[policy.Name.L] = candidate
+				break
+			}
+		}
+	}
+
 	if colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]; ok {
 		delete(colMap, policy.ColumnID)
 		if len(colMap) == 0 {

@@ -16,92 +16,92 @@ INSERT INTO issue5_test_masking VALUES
 --enable_query_log
 
 # Test MASK_PARTIAL with actual signature: MASK_PARTIAL(col, pad, start, length)
--- Verify signature: col (string), pad (single char), start (int), length (int)
+# Verify signature: col (string), pad (single char), start (int), length (int)
 
 # Test case 1: Mask middle portion
 SELECT id, MASK_PARTIAL(str_col, '*', 9, 11) AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: 'sensitive************12345'
+# Expected: 'sensitive************12345'
 
 # Test case 2: Mask from beginning
 SELECT id, MASK_PARTIAL(str_col, 'X', 0, 8) AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: 'XXXXXXXX_data_12345'
+# Expected: 'XXXXXXXX_data_12345'
 
 # Test case 3: Mask to end
 SELECT id, MASK_PARTIAL(str_col, '#', 5, 20) AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: 'sensi#####################'
+# Expected: 'sensi#####################'
 
 # Test case 4: UTF-8 characters
-SELECT id, MASK_PARTIAL('中文测试数据', '*', 2, 2) AS masked;
--- Expected: '中文**数据'
+SELECT MASK_PARTIAL('中文测试数据', '*', 2, 2) AS masked;
+# Expected: '中文**数据'
 
 # Test MASK_FULL with actual signature: MASK_FULL(col, mask_char)
--- Verify signature: col (string/datetime), mask_char (single char)
+# Verify signature: col (string/datetime), mask_char (single char)
 
 # Test case 1: Mask string completely
 SELECT id, MASK_FULL(str_col, '*') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: '********************'
+# Expected: '********************'
 
 # Test case 2: Mask string with different character
 SELECT id, MASK_FULL(str_col, 'X') AS masked
 FROM issue5_test_masking
 WHERE id = 2;
--- Expected: 'XXXXXXXXXXXXXXXXXXXXXXXXX'
+# Expected: 'XXXXXXXXXXXXXXXXXXXXXXXXX'
 
 # Test case 3: Mask date column
 SELECT id, MASK_FULL(date_col, '*') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: '1970-01-01'
+# Expected: '1970-01-01'
 
 # Test case 4: Mask datetime column
 SELECT id, MASK_FULL(datetime_col, '*') AS masked
 FROM issue5_test_masking
 WHERE id = 2;
--- Expected: '1970-01-01 00:00:00'
+# Expected: '1970-01-01 00:00:00'
 
 # Test MASK_DATE with actual signature: MASK_DATE(col, date_literal)
--- Verify signature: col (date/datetime), date_literal (YYYY-MM-DD format)
+# Verify signature: col (date/datetime), date_literal (YYYY-MM-DD format)
 
 # Test case 1: Replace date with literal
 SELECT id, MASK_DATE(date_col, '2000-01-01') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: '2000-01-01'
+# Expected: '2000-01-01'
 
 # Test case 2: Replace datetime with literal (preserves type)
 SELECT id, MASK_DATE(datetime_col, '1980-12-31') AS masked
 FROM issue5_test_masking
 WHERE id = 2;
--- Expected: '1980-12-31 00:00:00'
+# Expected: '1980-12-31 00:00:00'
 
 # Test case 3: Use standard masking date
 SELECT id, MASK_DATE(date_col, '1970-01-01') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: '1970-01-01'
+# Expected: '1970-01-01'
 
 # Test MASK_NULL with actual signature: MASK_NULL(col)
--- Verify signature: col (any type)
+# Verify signature: col (any type)
 
 # Test case 1: Mask string to NULL
 SELECT id, MASK_NULL(str_col) IS NULL AS is_null
 FROM issue5_test_masking
 WHERE id = 1;
--- Expected: 1 (true)
+# Expected: 1 (true)
 
 # Test case 2: Mask date to NULL
 SELECT id, MASK_NULL(date_col) IS NULL AS is_null
 FROM issue5_test_masking
 WHERE id = 2;
--- Expected: 1 (true)
+# Expected: 1 (true)
 
 # Cleanup
 DROP TABLE IF EXISTS issue5_test_masking;

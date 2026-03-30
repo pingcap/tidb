@@ -2083,14 +2083,59 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 		return p, nil
 	}
 
-	// Build masking expressions
-	maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
-	if err != nil {
-		return nil, err
+	maskedFinalExprs := make([]expression.Expression, 0, oldLen)
+	finalChild := p
+	if proj, ok := p.(*logicalop.LogicalProjection); ok && len(proj.Children()) == 1 && len(proj.Exprs) >= oldLen {
+		hasComputedExpr := false
+		for i := range oldLen {
+			if _, ok := proj.Exprs[i].(*expression.Column); !ok {
+				hasComputedExpr = true
+				break
+			}
+		}
+		if !hasComputedExpr {
+			goto fallbackMasking
+		}
+		child := proj.Children()[0]
+		maskSourcePlan := child
+		for maskSourcePlan != nil {
+			names := maskSourcePlan.OutputNames()
+			if len(names) > 0 && len(names) == len(maskSourcePlan.Schema().Columns) {
+				break
+			}
+			if len(maskSourcePlan.Children()) != 1 {
+				break
+			}
+			maskSourcePlan = maskSourcePlan.Children()[0]
+		}
+		childMaskExprs, err := b.buildMaskingReplaceExprs(ctx, maskSourcePlan)
+		if err != nil {
+			return nil, err
+		}
+		if childMaskExprs != nil {
+			for i := range oldLen {
+				expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), proj.Exprs[i], maskSourcePlan.Schema(), childMaskExprs)
+				maskedFinalExprs = append(maskedFinalExprs, expr)
+			}
+			finalChild = child
+		}
 	}
-	if maskExprs == nil {
-		// No masking needed, return original plan
-		return p, nil
+
+fallbackMasking:
+	if len(maskedFinalExprs) == 0 {
+		maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if maskExprs == nil {
+			// No masking needed, return original plan
+			return p, nil
+		}
+		for i := range oldLen {
+			col := p.Schema().Columns[i]
+			expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), col, p.Schema(), maskExprs)
+			maskedFinalExprs = append(maskedFinalExprs, expr)
+		}
 	}
 
 	// Build a projection that applies masking to the first oldLen columns (non-auxiliary)
@@ -2098,11 +2143,8 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
 	newNames := make([]*types.FieldName, 0, oldLen)
 
-	for i := 0; i < oldLen; i++ {
-		col := p.Schema().Columns[i]
-		// Apply masking substitution to the column
-		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), col, p.Schema(), maskExprs)
-
+	for i := range oldLen {
+		expr := maskedFinalExprs[i]
 		proj.Exprs = append(proj.Exprs, expr)
 
 		// Create a new column for the masked result
@@ -2111,16 +2153,16 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
 		}
 		// Preserve the original column ID for masking policy lookup
-		newCol.ID = col.ID
-		newCol.SetCoercibility(col.Coercibility())
-		newCol.SetRepertoire(col.Repertoire())
+		newCol.ID = p.Schema().Columns[i].ID
+		newCol.SetCoercibility(p.Schema().Columns[i].Coercibility())
+		newCol.SetRepertoire(p.Schema().Columns[i].Repertoire())
 		schema.Append(newCol)
 		newNames = append(newNames, p.OutputNames()[i])
 	}
 
 	proj.SetSchema(schema)
 	proj.SetOutputNames(newNames)
-	proj.SetChildren(p)
+	proj.SetChildren(finalChild)
 	return proj, nil
 }
 
@@ -2343,9 +2385,12 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	// Apply masking at the final result stage (AT RESULT semantics).
 	// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
-	setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
-	if err != nil {
-		return nil, err
+	// For nested set-op operands, masking is deferred to the outermost set-op result.
+	if b.buildingSetOprOperand == 0 {
+		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
@@ -2404,10 +2449,14 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (b
 	switch x := selects[0].(type) {
 	case *ast.SelectStmt:
 		afterSetOperator = x.AfterSetOperator
+		b.buildingSetOprOperand++
 		leftPlan, err = b.buildSelect(ctx, x)
+		b.buildingSetOprOperand--
 	case *ast.SetOprSelectList:
 		afterSetOperator = x.AfterSetOperator
+		b.buildingSetOprOperand++
 		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy})
+		b.buildingSetOprOperand--
 	}
 	if err != nil {
 		return nil, nil, err
@@ -2425,13 +2474,17 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (b
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
+			b.buildingSetOprOperand++
 			rightPlan, err = b.buildSelect(ctx, x)
+			b.buildingSetOprOperand--
 		case *ast.SetOprSelectList:
 			if *x.AfterSetOperator == ast.IntersectAll {
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
+			b.buildingSetOprOperand++
 			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy})
+			b.buildingSetOprOperand--
 		}
 		if err != nil {
 			return nil, nil, err
@@ -4768,10 +4821,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 
 	// Apply masking at the final result stage (AT RESULT semantics).
-	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
-	p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
-	if err != nil {
-		return nil, err
+	// This ensures HAVING, ORDER BY, set operators, etc. all use original values.
+	// For set-operator operands, masking is deferred to the outer set-op final stage.
+	if b.buildingSetOprOperand == 0 {
+		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sel.Fields.Fields = originalFields

@@ -1,0 +1,64 @@
+SELECT id, MASK_PARTIAL(str_col, '*', 9, 11) AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	sensitive***********
+SELECT id, MASK_PARTIAL(str_col, 'X', 0, 8) AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	XXXXXXXXe_data_12345
+SELECT id, MASK_PARTIAL(str_col, '#', 5, 20) AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	sensi###############
+SELECT MASK_PARTIAL('中文测试数据', '*', 2, 2) AS masked;
+masked
+中文**数据
+SELECT id, MASK_FULL(str_col, '*') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	********************
+SELECT id, MASK_FULL(str_col, 'X') AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+id	masked
+2	XXXXXXXXXXXXXXXXXXXX
+SELECT id, MASK_FULL(date_col, '*') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	1970-01-01
+SELECT id, MASK_FULL(datetime_col, '*') AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+id	masked
+2	1970-01-01 00:00:00
+SELECT id, MASK_DATE(date_col, '2000-01-01') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	2000-01-01
+SELECT id, MASK_DATE(datetime_col, '1980-12-31') AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+id	masked
+2	1980-12-31 00:00:00
+SELECT id, MASK_DATE(date_col, '1970-01-01') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	1970-01-01
+SELECT id, MASK_NULL(str_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 1;
+id	is_null
+1	1
+SELECT id, MASK_NULL(date_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 2;
+id	is_null
+2	1
+DROP TABLE IF EXISTS issue5_test_masking;

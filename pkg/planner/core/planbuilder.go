@@ -286,6 +286,10 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+	// buildingSetOprOperand tracks whether we're building a SELECT/SET node that is
+	// an operand of a larger set operator. In that phase we must keep original values;
+	// masking is applied only once at the final set-op result.
+	buildingSetOprOperand int
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil

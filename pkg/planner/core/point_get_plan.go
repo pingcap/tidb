@@ -85,6 +85,11 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		// or Fix52592 is turn on to disable fast path for select, update and delete
 		return nil
 	}
+	if is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema); ok && len(is.AllMaskingPolicies()) > 0 {
+		// Fast path plans bypass parts of the logical rewrite pipeline. Disable them when masking is enabled
+		// to guarantee masking is applied consistently for all query forms.
+		return nil
+	}
 
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
@@ -775,7 +780,7 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 
-// Build masking expressions for columns with masking policies
+	// Build masking expressions for columns with masking policies
 	is := ctx.GetInfoSchema()
 	if is != nil {
 		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
@@ -881,7 +886,6 @@ func buildMaskingExprsForPointGet(
 	}
 	return replaceExprs, nil
 }
-
 
 func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)

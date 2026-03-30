@@ -576,8 +576,8 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 func (w *worker) updateMaskingPolicyNamesAfterRename(
 	ctx context.Context,
 	tableID int64,
-	oldDBName, newDBName ast.CIStr,
-	oldTableName, newTableName ast.CIStr,
+	_, newDBName ast.CIStr,
+	_, newTableName ast.CIStr,
 ) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
 	if err != nil {

@@ -93,7 +93,7 @@ func applyDropMaskingPolicy(b *Builder, policyID int64) []int64 {
 	if !ok {
 		return nil
 	}
-	b.infoSchema.deleteMaskingPolicy(policy.Name.L)
+	b.infoSchema.deleteMaskingPolicyByID(policy.ID)
 	return []int64{}
 }
 

@@ -89,7 +89,7 @@ func TestMaskingPolicyBatchPointGet(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_batch_pointget")
-	tk.MustExec("create table t_batch_pointget(id int primary key, c varchar(10))")
+	tk.MustExec("create table t_batch_pointget(id int primary key, c varchar(20))")
 	tk.MustExec("insert into t_batch_pointget values (1, 'secret'), (2, 'hidden'), (3, 'confidential')")
 	tk.MustExec("create masking policy p_batch on t_batch_pointget(c) as mask_full(c, '*') enable")
 
@@ -97,7 +97,7 @@ func TestMaskingPolicyBatchPointGet(t *testing.T) {
 	tk.MustQuery("select c from t_batch_pointget where id in (1, 2)").Check(testkit.Rows("******", "******"))
 
 	// Test BatchPointGet with multiple values
-	tk.MustQuery("select c from t_batch_pointget where id in (1, 2, 3)").Check(testkit.Rows("******", "******", "******"))
+	tk.MustQuery("select c from t_batch_pointget where id in (1, 2, 3)").Check(testkit.Rows("******", "******", "************"))
 
 	// Test BatchPointGet with multiple columns
 	tk.MustQuery("select id, c from t_batch_pointget where id in (1, 2)").Check(testkit.Rows("1 ******", "2 ******"))
@@ -117,3 +117,23 @@ func TestMaskingPolicyBatchPointGet(t *testing.T) {
 	tk.MustQuery("select c from t_batch_pointget where id in (1)").Check(testkit.Rows("******"))
 }
 
+func TestMaskingPolicyProjectionWithCurrentUserAndPointPredicate(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tkRoot := testkit.NewTestKit(t, store)
+	require.NoError(t, tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tkRoot.MustExec("use test")
+	tkRoot.MustExec("drop table if exists t_point_expr")
+	tkRoot.MustExec("create table t_point_expr(id int primary key, c varchar(20))")
+	tkRoot.MustExec("insert into t_point_expr values (1, 'alpha')")
+	tkRoot.MustExec(`create masking policy p_point_expr on t_point_expr(c) as
+		case when current_user() = 'root@%' then c else mask_partial(c, '*', 1, 2) end enable`)
+	tkRoot.MustExec("drop user if exists u_point_expr")
+	tkRoot.MustExec("create user u_point_expr")
+	tkRoot.MustExec("grant select on test.t_point_expr to u_point_expr")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u_point_expr", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("use test")
+	tkUser.MustHavePlan("select concat(c, '!') from t_point_expr where id = 1", "Point_Get")
+	tkUser.MustQuery("select concat(c, '!') from t_point_expr where id = 1").Check(testkit.Rows("a**ha!"))
+}

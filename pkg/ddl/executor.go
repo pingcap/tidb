@@ -6463,8 +6463,8 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	return e.createMaskingPolicyWithInfo(ctx, policyInfo, OnExistError)
 }
 
-func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
-	if policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName); ok {
+func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, dbName, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
+	if policy, ok := e.infoCache.GetLatest().MaskingPolicyByDBAndName(dbName.L, policyName.L); ok {
 		return policy, nil
 	}
 	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
@@ -6472,9 +6472,10 @@ func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, policyNa
 		nil,
 		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy
-WHERE LOWER(policy_name) = %?
+WHERE LOWER(db_name) = %? AND LOWER(policy_name) = %?
 ORDER BY policy_id
 LIMIT 1`,
+		dbName.L,
 		policyName.L,
 	)
 	if err != nil {
@@ -6491,12 +6492,12 @@ LIMIT 1`,
 }
 
 func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, schema.Name, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6546,12 +6547,12 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, schema.Name, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6593,12 +6594,12 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 }
 
 func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, schema.Name, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
