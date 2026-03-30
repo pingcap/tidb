@@ -92,6 +92,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
 	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
+	usePlanCacheHint := hasUsePlanCacheHint(paramStmt)
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
 
@@ -222,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		UsePlanCacheHint:    usePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -236,6 +238,15 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, paramCount, nil
+}
+
+func hasUsePlanCacheHint(stmt ast.StmtNode) bool {
+	for _, h := range hint.ExtractTableHintsFromStmtNode(stmt, nil) {
+		if h.HintName.L == hint.HintUsePlanCache {
+			return true
+		}
+	}
+	return false
 }
 
 // tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
@@ -736,6 +747,7 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	UsePlanCacheHint  bool   // Whether this stmt contains the USE_PLAN_CACHE() hint.
 
 	limits      []*ast.Limit
 	hasSubquery bool

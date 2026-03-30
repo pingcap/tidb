@@ -1587,6 +1587,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCachePolicy, Value: vardef.DefTiDBPlanCachePolicy, Type: vardef.TypeEnum, PossibleValues: []string{vardef.PlanCachePolicyAll, vardef.PlanCachePolicyHintOnly}, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCachePolicy = val
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSessionPlanCacheSize, Aliases: []string{vardef.TiDBPrepPlanCacheSize}, Value: strconv.FormatUint(uint64(vardef.DefTiDBSessionPlanCacheSize), 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
