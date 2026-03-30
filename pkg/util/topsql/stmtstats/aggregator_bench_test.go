@@ -57,6 +57,7 @@ func benchmarkDrainAndPushRUSingleStats(b *testing.B, numUsers, numSQLsPerUser i
 	defer state.DisableTopRU()
 
 	a := newAggregator()
+	a.lastRUVersion = a.currentRUVersion()
 	stats := &StatementStats{
 		data:             StatementStatsMap{},
 		finished:         atomic.NewBool(false),
@@ -103,6 +104,7 @@ func BenchmarkDrainAndPushRU160KKeys(b *testing.B) {
 		}
 	}
 	a := newAggregator()
+	a.lastRUVersion = a.currentRUVersion()
 	for _, s := range statsList {
 		a.register(s)
 	}
@@ -132,6 +134,7 @@ func BenchmarkDrainAndPushRU160KKeysPreloaded(b *testing.B) {
 		}
 	}
 	a := newAggregator()
+	a.lastRUVersion = a.currentRUVersion()
 	for _, s := range statsList {
 		a.register(s)
 	}

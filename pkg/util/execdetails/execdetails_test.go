@@ -365,10 +365,10 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	tikvRU := float64(157258)
 	tiflashRU := float64(24680)
 	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
-	require.InEpsilon(t, 114198.0, tidbRU, 0.01)
+	require.InEpsilon(t, 26.8604602238, tidbRU, 0.01)
 	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
 	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
-	require.InEpsilon(t, 296136.0, totalRU, 0.01)
+	require.InEpsilon(t, 181964.8604602238, totalRU, 0.01)
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -399,8 +399,11 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	metrics.AddResultChunkCells(1000)
 	metrics.AddResourceManagerWriteCnt(20)
 	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 10)
-	formatted := FormatRUV2Metrics(metrics, weights, 10987, 246)
+	total, formatted := FormatRUV2Summary(metrics, weights, 10987, 246)
 
+	require.Equal(t, "11235.06", total)
+	require.Equal(t, total, FormatRUV2Total(metrics, weights, 10987, 246))
+	require.Equal(t, formatted, FormatRUV2Metrics(metrics, weights, 10987, 246))
 	require.Contains(t, formatted, "tidb_ru:")
 	require.Contains(t, formatted, "tikv_ru:")
 	require.Contains(t, formatted, "tiflash_ru:")
@@ -409,8 +412,8 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 
 	parts := strings.Split(formatted, ", ")
 	require.Len(t, parts, 7)
-	require.Equal(t, "total_ru:19983.42", parts[0])
-	require.Equal(t, "tidb_ru:8750.42", parts[1])
+	require.Equal(t, "total_ru:11235.06", parts[0])
+	require.Equal(t, "tidb_ru:2.06", parts[1])
 	require.Equal(t, "tikv_ru:10987.00", parts[2])
 	require.Equal(t, "tiflash_ru:246.00", parts[3])
 }

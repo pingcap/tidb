@@ -481,6 +481,8 @@ const (
 	version254 = 254
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
+	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
+	version256 = 256
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -494,7 +496,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version255
+var currentBootstrapVersion int64 = version256
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -674,6 +676,7 @@ var (
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
+		{version: version256, fn: upgradeToVer256},
 	}
 )
 
@@ -2074,4 +2077,8 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
+}
+
+func upgradeToVer256(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
 }

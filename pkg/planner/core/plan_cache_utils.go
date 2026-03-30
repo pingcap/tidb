@@ -382,8 +382,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
 	}
-	if vars.GetSessionVars().PlanCacheInvalidationOnFreshStats {
-		// statsVerHash
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
+		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
 		hashLen += 8
 	}
 	// dirty tables
@@ -456,8 +457,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, '|')
 	}
 
-	// stats version can affect cached plan. Sync-load timeout fallback is checked separately on cache hit.
-	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+	// stats version can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
+	// is enabled. Sync-load timeout fallback is checked separately on cache hit.
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
 			statsVerHash += getStatsVersionHashFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
@@ -699,7 +701,11 @@ func cloneSyncLoadFallbackItemsForPlanCache(enabled bool, items []model.TableIte
 }
 
 func shouldInvalidatePlanCacheForFreshStats(sctx sessionctx.Context, pcv *PlanCacheValue) bool {
-	if pcv == nil || !sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats || len(pcv.SyncLoadFallbackItems) == 0 {
+	vars := sctx.GetSessionVars()
+	if pcv == nil || !vars.PlanCacheInvalidationOnFreshStats || len(pcv.SyncLoadFallbackItems) == 0 {
+		return false
+	}
+	if pcv.Binding != "" && vars.PlanCacheSkipStatsOnBinding {
 		return false
 	}
 	dom := domain.GetDomain(sctx)

@@ -91,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
@@ -146,7 +147,6 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1156,7 +1156,9 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
+	originalStmtCtx := s.sessionVars.StmtCtx
 	defer func() {
+		s.sessionVars.StmtCtx = originalStmtCtx
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		if s.sessionVars.InRestrictedSQL {
@@ -1220,6 +1222,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
 			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, st.GetStmtNode()); err == nil {
+				failpoint.Inject("txnRetryPreExecError", func(val failpoint.Value) {
+					if val.(bool) {
+						err = errors.New("mock txn retry pre-exec error")
+					}
+				})
+			}
+			if err == nil {
+				// Only surface the optimistic retry count after replay actually reaches statement execution.
+				s.sessionVars.StmtCtx.ExecRetryCount = uint64(retryCnt + 1)
+				originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 				_, err = st.Exec(ctx)
 			}
 			s.txn.onStmtEnd()
@@ -1951,7 +1963,6 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
-		metrics.RUV2SessionParserTotal.Inc()
 		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
@@ -1999,7 +2010,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
-		metrics.RUV2SessionParserTotal.Inc()
 		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
@@ -2583,8 +2593,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
 				sql = parser.Normalize(sql, s.sessionVars.EnableRedactLog)
-				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
-					zap.String("SQL", sql))
+				if sql == `select $$` {
+					logutil.Logger(ctx).Debug("compile SQL failed, expected for this query", zap.Error(err),
+						zap.String("SQL", sql))
+				} else {
+					logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+						zap.String("SQL", sql))
+				}
 			}
 		}
 		return nil, err
@@ -3261,9 +3276,11 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		// cross ks session does not have domain.
 		dom := s.GetDomain().(*domain.Domain)
-		var rgCtl *rmclient.ResourceGroupsController
+		var ruConsumptionReporter resourcegroup.ConsumptionReporter
 		if dom != nil {
-			rgCtl = dom.ResourceGroupsController()
+			if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+				ruConsumptionReporter = rgCtl
+			}
 		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
@@ -3311,7 +3328,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ResourceGroupName:             sc.ResourceGroupName,
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
-			RUConsumptionReporter:         rgCtl,
+			RUConsumptionReporter:         ruConsumptionReporter,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 
@@ -4987,7 +5004,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			}
 		}
 	}
-	metrics.RUV2TxnCnt.Inc()
 	if s.sessionVars.RUV2Metrics != nil {
 		s.sessionVars.RUV2Metrics.AddTxnCnt(1)
 	}

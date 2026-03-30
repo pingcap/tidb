@@ -14,6 +14,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/core/rule",
         "//pkg/planner/indexadvisor",
         "//pkg/planner/planctx",
         "//pkg/planner/property",

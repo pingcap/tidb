@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -152,7 +151,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, false, err
 	}
-	metrics.RUV2PlanDeriveStatsPaths.Add(float64(len(ds.PossibleAccessPaths)))
 	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
 		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
 	}
@@ -703,8 +701,10 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
 		keep := (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && selected.StoreType != kv.TiFlash
-		if keep {
-			// also keep tiflash path as well.
+		if keep && tiflashPath != nil {
+			// TiFlash replicas may exist while the current session has filtered TiFlash out of
+			// the available access paths, for example via tidb_isolation_read_engines.
+			// Only keep the TiFlash path when it was actually built.
 			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, tiflashPath)
 			return nil
 		}

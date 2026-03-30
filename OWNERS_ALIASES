@@ -7,17 +7,15 @@ aliases:
     - time-and-fate
     - terry1purcell
     - henrybw
-    - wddevries
-    - fixdb
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-tidb-lightning:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-parser:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-dep:
     - bb7133
     - cfzjywxk
@@ -56,11 +54,13 @@ aliases:
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - fzzf678
   sig-approvers-ddl:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
+    - fzzf678
   sig-approvers-disttask:
     - Benjamin2037
     - D3Hunter
@@ -75,15 +75,18 @@ aliases:
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
+    - fzzf678
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
+    - fzzf678
   sig-approvers-owner:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
+    - fzzf678
   sig-approvers-parser:
     - bb7133
     - Benjamin2037
@@ -99,6 +102,7 @@ aliases:
     - cfzjywxk
     - gmhdbjd
     - wjhuang2016
+    - fzzf678
   sig-approvers-lock:
     - Benjamin2037
     - wjhuang2016
@@ -109,15 +113,12 @@ aliases:
     - AilinKid
     - 0xPoe
     - elsa0520
-    - fixdb
     - hawkingrei
     - qw4990
     - time-and-fate
     - winoros
     - terry1purcell
-    - ghazalfamilyusa
     - henrybw
-    - wddevries
     - King-Dylan
     - guo-shaoge
   sig-approvers-metrics:
@@ -143,7 +144,6 @@ aliases:
     - fengou1
     - fzzf678
     - gengliqi
-    - ghazalfamilyusa
     - henrybw
     - iamxy
     - js00070
@@ -158,7 +158,6 @@ aliases:
     - spongedu
     - tangwz
     - tsthght
-    - wddevries
     - xzhangxian1008
     - yibin87
     - zhangjinpeng1987
@@ -217,7 +216,6 @@ aliases:
     - ekexium
     - elsa0520
     - eurekaka
-    - fixdb
     - francis0407
     - fzhedu
     - glorv

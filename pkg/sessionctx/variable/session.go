@@ -1209,6 +1209,11 @@ type SessionVars struct {
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
 
+	// EnableAlternativeLogicalPlans enables building an extra non-decorrelate
+	// logical alternative when decorrelation does not produce an equivalent
+	// same-order index join candidate.
+	EnableAlternativeLogicalPlans bool
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
@@ -1625,6 +1630,11 @@ type SessionVars struct {
 	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	PlanCacheInvalidationOnFreshStats bool
+
+	// PlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when a SQL
+	// binding is matched. Since a binding pins the plan via hints, stats changes cannot alter the
+	// chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	PlanCacheSkipStatsOnBinding bool
 
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
@@ -2332,6 +2342,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CartesianJoinOrderThreshold:      vardef.DefOptCartesianJoinOrderThreshold,
 		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,

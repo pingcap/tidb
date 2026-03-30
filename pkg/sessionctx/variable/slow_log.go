@@ -144,8 +144,10 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
-	// SlowLogRUV2Metrics is the RU v2 metrics for the statement.
-	SlowLogRUV2Metrics = "RUv2_metrics"
+	// SlowLogRequestUnitV2 is the RU v2 total for the statement.
+	SlowLogRequestUnitV2 = "Request_unit_v2"
+	// SlowLogRequestUnitV2Detail is the RU v2 detailed metrics for the statement.
+	SlowLogRequestUnitV2Detail = "Request_unit_v2_detail"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -565,8 +567,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		tiKVRU = logItems.RUDetails.TiKVRUV2()
 		tiFlashRU = logItems.RUDetails.TiflashRU()
 	}
-	if formatted := execdetails.FormatRUV2Metrics(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU); len(formatted) > 0 {
-		writeSlowLogItem(&buf, SlowLogRUV2Metrics, formatted)
+	total, formatted := execdetails.FormatRUV2Summary(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU)
+	if len(total) > 0 {
+		writeSlowLogItem(&buf, SlowLogRequestUnitV2, total)
+	}
+	if len(formatted) > 0 {
+		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
 	}
 	if len(logItems.SessionConnectAttrs) > 0 {
 		// Encode into a temporary buffer first so that a (practically impossible)

@@ -635,22 +635,23 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	aggFirstRowColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
-	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicates(cond, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
-		}
-		if len(subRet) > 0 {
-			// If we cannot find columns that can be pushed down in the GROUP BY clause,
-			// we will then look for columns that can be pushed down in the aggregate functions.
-			// Currently, only the first row is supported.
-			for _, s := range subRet {
-				subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
-				if len(subCondsToPush1) > 0 {
-					condsToPush = append(condsToPush, subCondsToPush1...)
+		for _, cnfItem := range expression.SplitCNFItems(cond) {
+			subCondsToPush, subRet := la.pushDownDNFPredicates(cnfItem, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
+			if len(subCondsToPush) > 0 {
+				condsToPush = append(condsToPush, subCondsToPush...)
+			}
+			if len(subRet) > 0 {
+				// If we cannot find columns that can be pushed down in the GROUP BY clause,
+				// we will then look for columns that can be pushed down in the aggregate functions.
+				// Currently, only the first row is supported.
+				for _, s := range subRet {
+					subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
+					if len(subCondsToPush1) > 0 {
+						condsToPush = append(condsToPush, subCondsToPush1...)
+					}
+					ret = append(ret, subRet1...)
 				}
-				ret = append(ret, subRet1...)
 			}
 		}
 	}
