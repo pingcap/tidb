@@ -138,6 +138,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 	us.snapshotChunkBuffer = exec.TryNewCacheChunk(us)
+	us.mutableRow = chunk.MutRowFromTypes(exec.RetTypes(us))
 	return nil
 }
 
@@ -157,7 +158,6 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return us.nextForCacheTable(req)
 	}
 
-	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
@@ -167,11 +167,11 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if row == nil {
 			return nil
 		}
-		mutableRow.SetDatums(row...)
+		us.mutableRow.SetDatums(row...)
 
 		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), us.mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -185,15 +185,15 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
-			mutableRow.SetDatum(idx, castDatum)
+			us.mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, us.mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
 		if matched {
-			req.AppendRow(mutableRow.ToRow())
+			req.AppendRow(us.mutableRow.ToRow())
 		}
 	}
 	return nil
@@ -203,7 +203,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // no snapshot rows (getSnapshotRow always returns nil), we skip the merge logic
 // and read directly from addedRowsIter.
 func (us *UnionScanExec) nextForCacheTable(req *chunk.Chunk) error {
-	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
+	needsMutableRow := len(us.virtualColumnIndex) > 0 || len(us.conditionsWithVirCol) > 0
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.addedRowsIter.Next()
 		if err != nil {
@@ -212,11 +212,21 @@ func (us *UnionScanExec) nextForCacheTable(req *chunk.Chunk) error {
 		if row == nil {
 			return nil
 		}
-		mutableRow.SetDatums(row...)
+
+		if !needsMutableRow {
+			// Fast path: no virtual columns and no conditions,
+			// write datums directly to req without the intermediate mutableRow copy.
+			for i := range row {
+				req.AppendDatum(i, &row[i])
+			}
+			continue
+		}
+
+		us.mutableRow.SetDatums(row...)
 
 		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), us.mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -227,16 +237,19 @@ func (us *UnionScanExec) nextForCacheTable(req *chunk.Chunk) error {
 			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
-			mutableRow.SetDatum(idx, castDatum)
+			us.mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
-		if err != nil {
-			return err
+		if len(us.conditionsWithVirCol) > 0 {
+			matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, us.mutableRow.ToRow())
+			if err != nil {
+				return err
+			}
+			if !matched {
+				continue
+			}
 		}
-		if matched {
-			req.AppendRow(mutableRow.ToRow())
-		}
+		req.AppendRow(us.mutableRow.ToRow())
 	}
 	return nil
 }
