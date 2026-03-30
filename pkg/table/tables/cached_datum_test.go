@@ -299,6 +299,43 @@ func TestBuildCachedIndexDatumDataRestoredDecoderDurability(t *testing.T) {
 	require.Equal(t, int64(2), row2[1].GetInt64())
 }
 
+func TestCachedTableBuildDatumCacheUsesOriginDefaults(t *testing.T) {
+	ftPK := types.NewFieldType(mysql.TypeLonglong)
+	ftPK.AddFlag(mysql.PriKeyFlag)
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	ftMissing := types.NewFieldType(mysql.TypeVarchar)
+
+	pkCol := &model.ColumnInfo{ID: 1, Offset: 0, State: model.StatePublic, FieldType: *ftPK}
+	valCol := &model.ColumnInfo{ID: 2, Offset: 1, State: model.StatePublic, FieldType: *ftVal}
+	missingCol := &model.ColumnInfo{ID: 3, Offset: 2, State: model.StatePublic, FieldType: *ftMissing}
+	require.NoError(t, missingCol.SetOriginDefaultValue("filled-by-default"))
+	require.NoError(t, missingCol.SetDefaultValue("filled-by-default"))
+
+	tblInfo := &model.TableInfo{
+		ID:                   testTableID,
+		PKIsHandle:           true,
+		TableCacheStatusType: model.TableCacheStatusEnable,
+		Columns:              []*model.ColumnInfo{pkCol, valCol, missingCol},
+	}
+	tbl := MockTableFromMeta(tblInfo)
+	ct, ok := tbl.(*cachedTable)
+	require.True(t, ok)
+
+	mb := newTestMemBuf()
+	encodeAndSetRow(t, mb, testTableID, kv.IntHandle(1), []int64{2}, []types.Datum{
+		types.NewIntDatum(7),
+	})
+
+	cd := ct.buildDatumCache(mb)
+	require.NotNil(t, cd)
+	require.Equal(t, 1, cd.TotalRows)
+
+	row := cd.Chunks[0].GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+	require.Equal(t, int64(7), row.GetInt64(1))
+	require.Equal(t, "filled-by-default", row.GetString(2))
+}
+
 func TestCachedTablePutCachedResultNoDoubleAccount(t *testing.T) {
 	ct := &cachedTable{}
 	chk := makeTestChunk()

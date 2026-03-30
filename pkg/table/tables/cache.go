@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -328,6 +329,9 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
 	cols := c.Cols()
 	tblMeta := c.Meta()
+	defaultExprCtx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(exprstatic.WithLocation(time.UTC))),
+	)
 
 	colInfo := make([]rowcodec.ColInfo, len(cols))
 	fieldTypes := make([]*types.FieldType, len(cols))
@@ -360,7 +364,11 @@ func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
 	}
 
 	defDatum := func(i int, chk *chunk.Chunk) error {
-		chk.AppendNull(i)
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(defaultExprCtx, cols[i].ColumnInfo)
+		if err != nil {
+			return err
+		}
+		chk.AppendDatum(i, &d)
 		return nil
 	}
 
