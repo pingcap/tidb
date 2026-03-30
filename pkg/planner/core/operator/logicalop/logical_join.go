@@ -1857,10 +1857,39 @@ func (p *LogicalJoin) updateEQCond() {
 					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				eqSf := eqCond.(*expression.ScalarFunction)
+				if _, _, isColOpCol := expression.IsColOpCol(eqSf); !isColOpCol {
+					// Join reorder and several join implementations assume each EqualCondition
+					// is strictly `col = col`. However, NewFunctionInternal may inject implicit
+					// casts (for example tinyint = bit/bool from a view), turning one side into
+					// a scalar expression (e.g. cast(col)) instead of a plain column.
+					//
+					// To preserve optimizer behavior while keeping that invariant true, we
+					// materialize non-column sides via child projections and then rebuild
+					// the equality with the projection output columns.
+					if _, isCol := eqSf.GetArgs()[0].(*expression.Column); !isCol {
+						if lProj == nil {
+							lProj = p.getProj(0)
+						}
+						lKey = lProj.AppendExpr(eqSf.GetArgs()[0])
+					} else {
+						lKey = eqSf.GetArgs()[0]
+					}
+					if _, isCol := eqSf.GetArgs()[1].(*expression.Column); !isCol {
+						if rProj == nil {
+							rProj = p.getProj(1)
+						}
+						rKey = rProj.AppendExpr(eqSf.GetArgs()[1])
+					} else {
+						rKey = eqSf.GetArgs()[1]
+					}
+					eqCond = expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+					eqSf = eqCond.(*expression.ScalarFunction)
+				}
 				if isNA {
-					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
+					p.NAEQConditions = append(p.NAEQConditions, eqSf)
 				} else {
-					p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+					p.EqualConditions = append(p.EqualConditions, eqSf)
 				}
 			}
 		}

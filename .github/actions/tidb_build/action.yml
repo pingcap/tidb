@@ -20,9 +20,25 @@ runs:
         bazelisk-cache: true
         repository-cache: true
         external-cache: false
-        disk-cache: ${{ github.workflow }}}
+        disk-cache: ${{ github.workflow }}
         google-credentials: ${{ inputs.gcp_sa_key }}
         bazelrc: ${{ inputs.bazelrc }}
+
+    - name: Report cache mode
+      shell: bash
+      env:
+        HAS_BAZELRC: ${{ inputs.bazelrc != '' }}
+        HAS_GCP_SA_KEY: ${{ inputs.gcp_sa_key != '' }}
+      run: |
+        if [ "$HAS_BAZELRC" = "true" ] && [ "$HAS_GCP_SA_KEY" = "true" ]; then
+          echo "Loaded bazelrc and GCP credentials from workflow inputs."
+          exit 0
+        fi
+
+        echo "Bazelrc or GCP credentials were not provided to tidb_build."
+        echo "This is expected on fork pull_request workflows because GitHub does not expose repository secrets."
+        echo "setup-bazel will still configure local disk and repository caches."
+        echo "Repository Bazel flags may still enable read-only remote cache during the actual build command."
 
     - name: Set up Go
       uses: actions/setup-go@v4

@@ -1804,17 +1804,17 @@
         "SQL": "select /*+ leading(t3, t2, t1) */ t1.a, t2.b from t1 join t2 on t1.a=t2.a where exists (select /*+ semi_join_rewrite() */ 1 from (select a, count(*) from t3 group by a) g where g.a=t1.a);",
         "Plan": [
           "Projection 99800100.00 root  test.t1.a, test.t2.b",
-          "└─HashJoin 99800100.00 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.a, test.t1.a)]",
+          "└─IndexHashJoin 99800100.00 root  inner join, inner:HashJoin, outer key:test.t1.a, inner key:test.t3.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.a, test.t3.a)",
           "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 79840080.00 root  CARTESIAN inner join",
-          "    ├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(Column#18)->Column#16",
-          "    │ └─IndexReader 7992.00 root  index:HashAgg",
-          "    │   └─HashAgg 7992.00 cop[tikv]  group by:test.t3.a, funcs:count(1)->Column#18",
-          "    │     └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) 9990.00 root  data:Selection",
-          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  └─HashJoin(Probe) 797602399200.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 99800100.00 root  data:Selection",
+          "    │ └─Selection 99800100.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 99900000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashAgg(Probe) 99800100.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(1)->Column#16",
+          "      └─IndexReader 99800100.00 root  index:Selection",
+          "        └─Selection 99800100.00 cop[tikv]  not(isnull(test.t3.a))",
+          "          └─IndexRangeScan 99900000.00 cop[tikv] table:t3, index:a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Warning": [
           "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2, t1) */. Maybe you can use the table alias name"

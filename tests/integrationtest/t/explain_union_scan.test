@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 drop table if exists city;
 
 CREATE TABLE `city` (

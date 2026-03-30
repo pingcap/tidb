@@ -98,6 +98,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_projection_push_down":                   {},
 	"tidb_enable_vectorized_expression":               {},
 	"tidb_opt_join_reorder_threshold":                 {},
+	"tidb_opt_enable_advanced_join_reorder":           {},
 	"tidb_enable_index_merge":                         {},
 	"tidb_enable_extended_stats":                      {},
 	"tidb_isolation_read_engines":                     {},

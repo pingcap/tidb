@@ -18,7 +18,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -86,11 +85,8 @@ func TestEnforceMPP(t *testing.T) {
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 			})
-			require.Eventually(t,
-				func() bool {
-					res := testKit.MustQuery(tt)
-					return res.Equal(testkit.Rows(output[i].Plan...))
-				}, 1*time.Second, 100*time.Millisecond)
+			res := testKit.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())))
 		}
 	})

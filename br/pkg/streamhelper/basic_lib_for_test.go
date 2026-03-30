@@ -356,9 +356,7 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetS
 	}, nil
 }
 
-func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	_ = ctx
-	_ = opts
+func (p *mockPDClient) GetAllStores(_ context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{
 		{
 			Id:      1,

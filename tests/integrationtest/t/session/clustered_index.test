@@ -1,6 +1,5 @@
 set @@tidb_enable_clustered_index = 'on';
 # TestClusteredPrefixColumn
-set tidb_cost_model_version=2;
 drop table if exists t, t1;
 create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb));
 insert into t1 values('PvtYW2', 1, 1);
@@ -50,7 +49,6 @@ create table t (c_int int, c_str varchar(40), primary key(c_str(8)) clustered, u
 insert into t values (1, 'determined varahamihira');
 insert into t values (1, 'pensive mendeleev') on duplicate key update c_int=values(c_int), c_str=values(c_str);
 admin check table t;
-set tidb_cost_model_version=default;
 
 # TestClusteredIndexLookUp
 drop table if exists t;

@@ -256,7 +256,6 @@ CREATE TABLE A (
   PRIMARY KEY (ROW_NO),
   KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
 ) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
-		tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
 		r := tk.MustQuery(`
 explain format='brief' SELECT /* issue:61669 */ *
 FROM A A
