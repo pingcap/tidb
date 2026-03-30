@@ -1820,6 +1820,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewLogClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client.SetCheckRequirements(cfg.CheckRequirements)
 
 	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {

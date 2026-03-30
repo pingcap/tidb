@@ -248,6 +248,85 @@ func TestCheckNewCollationEnable(t *testing.T) {
 		}
 		require.Equal(t, ca.newCollationEnableInCluster == "True", enabled)
 	}
+
+	t.Run("backup meta unknown fields", func(t *testing.T) {
+		baseMeta := &backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+		}
+
+		cases := []struct {
+			name              string
+			backupMeta        *backuppb.BackupMeta
+			checkRequirements bool
+			isErr             bool
+			expectedErr       string
+		}{
+			{
+				name:              "no unknown fields",
+				backupMeta:        baseMeta,
+				checkRequirements: true,
+				isErr:             false,
+			},
+			{
+				name: "newer backup schema version",
+				backupMeta: &backuppb.BackupMeta{
+					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion + 1,
+					ClusterVersion:      "8.5.6",
+					BrVersion:           "v8.5.6",
+				},
+				checkRequirements: true,
+				isErr:             true,
+				expectedErr:       "requires schema version",
+			},
+			{
+				name: "newer backup schema version warning path when requirements disabled",
+				backupMeta: &backuppb.BackupMeta{
+					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion + 1,
+					ClusterVersion:      "8.5.6",
+					BrVersion:           "v8.5.6",
+				},
+				checkRequirements: false,
+				isErr:             false,
+			},
+			{
+				name: "unknown top level fields",
+				backupMeta: &backuppb.BackupMeta{
+					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+					ClusterVersion:      "8.5.6",
+					BrVersion:           "v8.5.6",
+					XXX_unrecognized:    []byte{0x08, 0x01},
+				},
+				checkRequirements: true,
+				isErr:             true,
+				expectedErr:       "unknown protobuf fields",
+			},
+			{
+				name: "warning path when requirements disabled",
+				backupMeta: &backuppb.BackupMeta{
+					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+					ClusterVersion:      "8.5.6",
+					BrVersion:           "v8.5.6",
+					XXX_unrecognized:    []byte{0x08, 0x01},
+				},
+				checkRequirements: false,
+				isErr:             false,
+			},
+		}
+
+		for _, ca := range cases {
+			t.Run(ca.name, func(t *testing.T) {
+				err := task.CheckBackupMetaCompatibility(ca.backupMeta, ca.checkRequirements)
+				if ca.isErr {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), ca.expectedErr)
+					return
+				}
+				require.NoError(t, err)
+			})
+		}
+	})
 }
 
 func TestFilterDDLJobs(t *testing.T) {
@@ -300,6 +379,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV1), mockMeta.Version)
+	require.Equal(t, backuppb.CurrentBackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)
@@ -365,6 +445,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV2), mockMeta.Version)
+	require.Equal(t, backuppb.CurrentBackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)

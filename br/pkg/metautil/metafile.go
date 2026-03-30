@@ -58,6 +58,54 @@ const (
 	MetaV2
 )
 
+// CheckBackupMetaUnknownFields blocks restore when backup metadata contains
+// protobuf fields the current BR binary does not recognize.
+func CheckBackupMetaUnknownFields(
+	backupMeta *backuppb.BackupMeta,
+	checkRequirements bool,
+) error {
+	if backupMeta == nil || len(backupMeta.XXX_unrecognized) == 0 {
+		return nil
+	}
+
+	err := errors.Annotatef(
+		berrors.ErrVersionMismatch,
+		"backupmeta contains unknown protobuf fields. restoring with an older BR may silently ignore newer backup metadata. backup cluster version: %s, backup BR version: %s. use --check-requirements=false to skip this check",
+		backupMeta.GetClusterVersion(),
+		backupMeta.GetBrVersion(),
+	)
+	if checkRequirements {
+		return err
+	}
+	log.Warn(err.Error())
+	return nil
+}
+
+// CheckBackupMetaCompatibility blocks restore when backup metadata requires a
+// newer metadata schema reader or contains protobuf fields the current BR
+// binary does not recognize.
+func CheckBackupMetaCompatibility(
+	backupMeta *backuppb.BackupMeta,
+	checkRequirements bool,
+) error {
+	if backupMeta.GetBackupSchemaVersion() > backuppb.CurrentBackupSchemaVersion {
+		err := errors.Annotatef(
+			berrors.ErrVersionMismatch,
+			"backupmeta requires schema version %d, current BR supports up to %d. restoring with an older BR may silently ignore newer backup metadata semantics. backup cluster version: %s, backup BR version: %s. use --check-requirements=false to skip this check",
+			backupMeta.GetBackupSchemaVersion(),
+			backuppb.CurrentBackupSchemaVersion,
+			backupMeta.GetClusterVersion(),
+			backupMeta.GetBrVersion(),
+		)
+		if checkRequirements {
+			return err
+		}
+		log.Warn(err.Error())
+		return nil
+	}
+	return CheckBackupMetaUnknownFields(backupMeta, checkRequirements)
+}
+
 // Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
 	if len(content) == 0 || cipher == nil {
@@ -705,7 +753,7 @@ func NewMetaWriter(
 		useV2Meta:         useV2Meta,
 		// keep the compatibility for old backupmeta.Ddls
 		// old version: Ddls, _ := json.Marshal(make([]*model.Job, 0))
-		backupMeta:     &backuppb.BackupMeta{Ddls: []byte("[]")},
+		backupMeta:     &backuppb.BackupMeta{Ddls: []byte("[]"), BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion},
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
@@ -814,12 +862,13 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 
 // FlushBackupMeta flush the `backupMeta` to `Storage`
 func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
-	// Set schema version
+	// Set backupmeta layout version.
 	if writer.useV2Meta {
 		writer.backupMeta.Version = MetaV2
 	} else {
 		writer.backupMeta.Version = MetaV1
 	}
+	writer.backupMeta.BackupSchemaVersion = max(writer.backupMeta.BackupSchemaVersion, backuppb.CurrentBackupSchemaVersion)
 
 	// update the total size of backup files (include data files and meta files)
 	writer.backupMeta.BackupSize = writer.MetaFilesSize() + writer.ArchiveSize() + uint64(writer.backupMeta.Size())
