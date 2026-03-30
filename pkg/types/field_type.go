@@ -53,6 +53,7 @@ func NewFieldType(tp byte) *FieldType {
 // InitUnspecifiedFieldType initializes a FieldType for TypeUnspecified
 // without heap allocation. The caller should pass a stack-allocated FieldType.
 func InitUnspecifiedFieldType(tp *FieldType) {
+	*tp = FieldType{}
 	tp.SetType(mysql.TypeUnspecified)
 	tp.SetFlag(0)
 	tp.SetFlen(UnspecifiedLength)
