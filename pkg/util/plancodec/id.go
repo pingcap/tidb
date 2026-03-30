@@ -85,6 +85,8 @@ const (
 	TypeDelete = "Delete"
 	// TypeMVDeltaMerge is the type of MVDeltaMerge.
 	TypeMVDeltaMerge = "MVDeltaMerge"
+	// TypeMVCompleteDeltaApply is the type of complete delta MV apply sink.
+	TypeMVCompleteDeltaApply = "MVCompleteDeltaApply"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
 	// TypeTableReader is the type of TableReader.
@@ -207,6 +209,7 @@ const (
 	typeImportIntoID          int = 59
 	TypeScalarSubQueryID      int = 60
 	typeMVDeltaMergeID        int = 61
+	typeMVCompleteIncApplyID  int = 62
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -274,6 +277,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDeleteID
 	case TypeMVDeltaMerge:
 		return typeMVDeltaMergeID
+	case TypeMVCompleteDeltaApply:
+		return typeMVCompleteIncApplyID
 	case TypeIndexLookUp:
 		return typeIndexLookUpID
 	case TypeTableReader:
@@ -404,6 +409,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeDelete
 	case typeMVDeltaMergeID:
 		return TypeMVDeltaMerge
+	case typeMVCompleteIncApplyID:
+		return TypeMVCompleteDeltaApply
 	case typeIndexLookUpID:
 		return TypeIndexLookUp
 	case typeTableReaderID:

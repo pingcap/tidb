@@ -139,6 +139,12 @@ func (p MVDeltaMerge) Init(ctx base.PlanContext) *MVDeltaMerge {
 	return &p
 }
 
+// Init initializes MVCompleteDeltaApply.
+func (p MVCompleteDeltaApply) Init(ctx base.PlanContext) *MVCompleteDeltaApply {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeMVCompleteDeltaApply, 0)
+	return &p
+}
+
 // Init initializes Insert.
 func (p Insert) Init(ctx base.PlanContext) *Insert {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeInsert, 0)

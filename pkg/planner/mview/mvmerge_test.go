@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/mview"
 	_ "github.com/pingcap/tidb/pkg/session"
@@ -40,6 +41,8 @@ import (
 const (
 	deltaTableAlias = "delta"
 	mvTableAlias    = "mv"
+	diffQAlias      = "__mvd_q"
+	diffMAlias      = "__mvd_m"
 
 	deltaCntStarName = "__mvmerge_delta_cnt_star"
 )
@@ -1058,6 +1061,265 @@ func TestBuildMissingOldNew(t *testing.T) {
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
 }
 
+func TestBuildCompleteDiffSourceLayout(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(11)
+	mvID := int64(12)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	base.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_diff"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "s", 2, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res.DiffSourceSelect)
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	require.Len(t, res.DiffSourceSelect.TableHints, 2)
+	storageHint := res.DiffSourceSelect.TableHints[0]
+	require.Equal(t, hint.HintReadFromStorage, storageHint.HintName.L)
+	require.Equal(t, hint.HintTiFlash, storageHint.HintData.(pmodel.CIStr).L)
+	require.Len(t, storageHint.Tables, 1)
+	require.Equal(t, diffMAlias, storageHint.Tables[0].TableName.L)
+	require.Equal(t, item.DBName.L, storageHint.Tables[0].DBName.L)
+	probeHint := res.DiffSourceSelect.TableHints[1]
+	require.Equal(t, hint.HintHashJoinProbe, probeHint.HintName.L)
+	require.Len(t, probeHint.Tables, 1)
+	require.Equal(t, diffMAlias, probeHint.Tables[0].TableName.L)
+	require.Equal(t, item.DBName.L, probeHint.Tables[0].DBName.L)
+	sctx.GetSessionVars().EnableFullOuterJoin = true
+	plan, _, err := optimizeForTest(sctx, is)(context.Background(), res.DiffSourceSelect)
+	require.NoError(t, err)
+	hashJoin := findHashJoinPlan(plan)
+	require.NotNil(t, hashJoin)
+	require.Equal(t, logicalop.FullOuterJoin, hashJoin.JoinType)
+	require.False(t, hashJoin.RightIsBuildSide())
+	require.Equal(t, mvID, res.MVTableID)
+	require.Equal(t, len(mv.Columns), res.MVColumnCount)
+	require.Equal(t, 0, res.OpColOffset)
+	require.Equal(t, 0, res.MarkerMVOffset)
+	require.Equal(t, 1, res.MHandleCols.NumCols())
+	require.Len(t, res.MRowOffsets, len(mv.Columns))
+	require.Len(t, res.QRowOffsets, len(mv.Columns))
+	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
+	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
+	require.Equal(t, res.MRowOffsets[0], res.MHandleCols.GetCol(0).Index)
+
+	join := res.DiffSourceSelect.From.TableRefs
+	require.NotNil(t, join)
+	require.Equal(t, ast.FullJoin, join.Tp)
+	require.NotNil(t, join.On)
+	joinPredicates := collectAndPredicates(t, join.On.Expr)
+	require.Len(t, joinPredicates, 1)
+	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
+	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
+	require.Equal(t, diffQAlias, leftTable)
+	require.Equal(t, diffMAlias, rightTable)
+	require.Equal(t, leftCol, rightCol)
+	require.Equal(t, "a", rightCol)
+	require.Equal(t, opcode.EQ, joinPredicates[0].Op)
+	require.NotNil(t, res.DiffSourceSelect.Where)
+	payloadCmpOps := collectPayloadComparisonOps(t, res.DiffSourceSelect.Where)
+	require.Equal(t, map[string]opcode.Op{
+		"cnt": opcode.EQ,
+		"s":   opcode.NullEQ,
+	}, payloadCmpOps)
+}
+
+func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(21)
+	mvID := int64(22)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_diff_nullable_gk"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 1, res.MarkerMVOffset)
+	require.Equal(t, 1, res.MHandleCols.NumCols())
+	require.Equal(t, 1, res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, 1+1+2*len(mv.Columns), res.SourceColumnCount)
+	require.NotNil(t, res.DiffSourceSelect.From)
+	require.NotNil(t, res.DiffSourceSelect.From.TableRefs)
+	require.NotNil(t, res.DiffSourceSelect.From.TableRefs.On)
+	joinPredicates := collectAndPredicates(t, res.DiffSourceSelect.From.TableRefs.On.Expr)
+	require.Len(t, joinPredicates, 1)
+	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
+	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
+	require.Equal(t, diffQAlias, leftTable)
+	require.Equal(t, diffMAlias, rightTable)
+	require.Equal(t, leftCol, rightCol)
+	require.Equal(t, "a", rightCol)
+	require.Equal(t, opcode.NullEQ, joinPredicates[0].Op)
+}
+
+func TestBuildCompleteDiffSourceCommonHandleReusesOldRowImage(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(31)
+	mvID := int64(32)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	base.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+	base.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mv := &model.TableInfo{
+		ID:             mvID,
+		Name:           pmodel.NewCIStr("mv_tbl_diff_common_handle"),
+		State:          model.StatePublic,
+		IsCommonHandle: true,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, "cnt", 2, mysql.TypeLonglong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:      1,
+				Name:    pmodel.NewCIStr("PRIMARY"),
+				Primary: true,
+				Unique:  true,
+				State:   model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("b"), Offset: 1},
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, b, count(1) from t group by a, b",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mv.Columns[2].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
+	require.Equal(t, 2, res.MHandleCols.NumCols())
+	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
+	require.Equal(t, res.MRowOffsets[1], res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, res.MRowOffsets[0], res.MHandleCols.GetCol(1).Index)
+}
+
+func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(41)
+	mvID := int64(42)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	base.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_diff_rowid_handle"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 2+2*len(mv.Columns), res.SourceColumnCount)
+	require.Equal(t, 1, res.MHandleCols.NumCols())
+	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
+	require.Equal(t, int64(model.ExtraHandleID), res.MHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, res.MHandleCols.GetCol(0).Index)
+	require.NotContains(t, res.MRowOffsets, res.MHandleCols.GetCol(0).Index)
+}
+
 func findIndexJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalIndexJoin {
 	if plan == nil {
 		return nil
@@ -1075,6 +1337,24 @@ func findIndexJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalIndexJoin {
 			continue
 		}
 		if found := findIndexJoinPlan(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func findHashJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalHashJoin {
+	if plan == nil {
+		return nil
+	}
+	if hashJoin, ok := plan.(*core.PhysicalHashJoin); ok {
+		return hashJoin
+	}
+	for _, child := range plan.Children() {
+		if child == nil {
+			continue
+		}
+		if found := findHashJoinPlan(child); found != nil {
 			return found
 		}
 	}
@@ -1162,4 +1442,37 @@ func columnNameRef(t *testing.T, expr ast.ExprNode) (string, string) {
 	col, ok := expr.(*ast.ColumnNameExpr)
 	require.True(t, ok)
 	return col.Name.Table.O, col.Name.Name.O
+}
+
+func collectPayloadComparisonOps(t *testing.T, expr ast.ExprNode) map[string]opcode.Op {
+	t.Helper()
+
+	ops := make(map[string]opcode.Op)
+	var walk func(ast.ExprNode)
+	walk = func(node ast.ExprNode) {
+		if node == nil {
+			return
+		}
+		switch x := node.(type) {
+		case *ast.BinaryOperationExpr:
+			if x.Op == opcode.NullEQ || x.Op == opcode.EQ {
+				leftTable, leftCol := columnNameRef(t, x.L)
+				rightTable, rightCol := columnNameRef(t, x.R)
+				require.Equal(t, diffQAlias, leftTable)
+				require.Equal(t, diffMAlias, rightTable)
+				require.Equal(t, leftCol, rightCol)
+				ops[rightCol] = x.Op
+			}
+			walk(x.L)
+			walk(x.R)
+		case *ast.UnaryOperationExpr:
+			walk(x.V)
+		case *ast.IsNullExpr:
+			walk(x.Expr)
+		case *ast.ParenthesesExpr:
+			walk(x.Expr)
+		}
+	}
+	walk(expr)
+	return ops
 }

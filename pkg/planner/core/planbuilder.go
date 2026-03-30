@@ -3843,9 +3843,17 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
-	// Currently this internal statement is only used by FAST refresh.
-	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
-		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
+	mode, err := stmt.RefreshStmt.Mode()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	switch mode {
+	case ast.RefreshMaterializedViewModeFast, ast.RefreshMaterializedViewModeCompleteDeltaApply:
+	default:
+		return nil, errors.Errorf(
+			"RefreshMaterializedViewImplementStmt: only FAST or COMPLETE DELTA APPLY is supported, got %s",
+			mode.String(),
+		)
 	}
 
 	viewName := stmt.RefreshStmt.ViewName
@@ -3898,92 +3906,136 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return pp, nil
 	}
 
-	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS}, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if res.MergeSourceSelect == nil {
-		return nil, errors.New("mvmerge: merge source select is nil")
-	}
-	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
-	if err != nil {
-		return nil, err
-	}
-	if sourcePlan.Schema().Len() != res.SourceColumnCount {
-		return nil, errors.Errorf(
-			"unexpected merge-source schema length: got %d, expected %d",
-			sourcePlan.Schema().Len(),
-			res.SourceColumnCount,
-		)
-	}
-	var fullUpdateInnerSource base.PhysicalPlan
-	var fullUpdateInnerColumnCount int
-	var fullUpdateIndexRanges ranger.MutableRanges
-	var fullUpdateKeyOff2IdxOff []int
-	var fullUpdateKeyResultColIdxes []int
-	var fullUpdateOutputMVOffsets []int
-	if res.FullUpdateLookupTemplateSelect != nil {
-		if res.FullUpdateLookupColumnCount <= 0 {
-			return nil, errors.New("mvmerge full-update lookup template: invalid output column count")
+	switch mode {
+	case ast.RefreshMaterializedViewModeFast:
+		res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS}, nil)
+		if err != nil {
+			return nil, err
 		}
-		if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+
+		if res.MergeSourceSelect == nil {
+			return nil, errors.New("mvmerge: merge source select is nil")
+		}
+		sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
+		if err != nil {
+			return nil, err
+		}
+		if sourcePlan.Schema().Len() != res.SourceColumnCount {
 			return nil, errors.Errorf(
-				"mvmerge full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
-				len(res.FullUpdateLookupMVOffsets),
-				res.FullUpdateLookupColumnCount,
+				"unexpected merge-source schema length: got %d, expected %d",
+				sourcePlan.Schema().Len(),
+				res.SourceColumnCount,
 			)
 		}
-		// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
-		// so force-enable the switch during this one-shot optimization and restore it afterward.
-		savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
-		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
-		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
-		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
-		if err != nil {
-			return nil, err
+		var fullUpdateInnerSource base.PhysicalPlan
+		var fullUpdateInnerColumnCount int
+		var fullUpdateIndexRanges ranger.MutableRanges
+		var fullUpdateKeyOff2IdxOff []int
+		var fullUpdateKeyResultColIdxes []int
+		var fullUpdateOutputMVOffsets []int
+		if res.FullUpdateLookupTemplateSelect != nil {
+			if res.FullUpdateLookupColumnCount <= 0 {
+				return nil, errors.New("mvmerge full-update lookup template: invalid output column count")
+			}
+			if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+				return nil, errors.Errorf(
+					"mvmerge full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
+					len(res.FullUpdateLookupMVOffsets),
+					res.FullUpdateLookupColumnCount,
+				)
+			}
+			// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
+			// so force-enable the switch during this one-shot optimization and restore it afterward.
+			savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
+			b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
+			fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
+			b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
+			if err != nil {
+				return nil, err
+			}
+			if fullUpdateLookupPlan.Schema().Len() != res.FullUpdateLookupColumnCount {
+				return nil, errors.Errorf("mvmerge full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
+			}
+			var template *mvFullUpdateLookupTemplate
+			template, err = extractMVFullUpdateLookupTemplate(
+				fullUpdateLookupPlan,
+				res.FullUpdateLookupColumnCount,
+				len(res.GroupKeyMVOffsets),
+				res.FullUpdateLookupMVOffsets,
+				res.GroupKeyMVOffsets,
+			)
+			if err != nil {
+				return nil, err
+			}
+			fullUpdateInnerSource = template.InnerSource
+			fullUpdateInnerColumnCount = template.InnerColumnCount
+			fullUpdateIndexRanges = template.IndexRanges
+			fullUpdateKeyOff2IdxOff = template.KeyOff2IdxOff
+			fullUpdateKeyResultColIdxes = template.KeyResultColIdxes
+			fullUpdateOutputMVOffsets = append([]int(nil), template.OutputMVOffsets...)
 		}
-		if fullUpdateLookupPlan.Schema().Len() != res.FullUpdateLookupColumnCount {
-			return nil, errors.Errorf("mvmerge full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
-		}
-		var template *mvFullUpdateLookupTemplate
-		template, err = extractMVFullUpdateLookupTemplate(
-			fullUpdateLookupPlan,
-			res.FullUpdateLookupColumnCount,
-			len(res.GroupKeyMVOffsets),
-			res.FullUpdateLookupMVOffsets,
-			res.GroupKeyMVOffsets,
-		)
-		if err != nil {
-			return nil, err
-		}
-		fullUpdateInnerSource = template.InnerSource
-		fullUpdateInnerColumnCount = template.InnerColumnCount
-		fullUpdateIndexRanges = template.IndexRanges
-		fullUpdateKeyOff2IdxOff = template.KeyOff2IdxOff
-		fullUpdateKeyResultColIdxes = template.KeyResultColIdxes
-		fullUpdateOutputMVOffsets = append([]int(nil), template.OutputMVOffsets...)
-	}
 
-	plan := MVDeltaMerge{
-		Source:                      sourcePlan,
-		FullUpdateInnerSource:       fullUpdateInnerSource,
-		FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
-		FullUpdateIndexRanges:       fullUpdateIndexRanges,
-		FullUpdateKeyOff2IdxOff:     fullUpdateKeyOff2IdxOff,
-		FullUpdateKeyResultColIdxes: fullUpdateKeyResultColIdxes,
-		FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
-		MVTableID:                   res.MVTableID,
-		BaseTableID:                 res.BaseTableID,
-		MLogTableID:                 res.MLogTableID,
-		MVColumnCount:               res.MVColumnCount,
-		DeltaColumnCount:            res.DeltaColumnCount,
-		MVTablePKCols:               res.MVTablePKCols,
-		GroupKeyMVOffsets:           res.GroupKeyMVOffsets,
-		CountStarMVOffset:           res.CountStarMVOffset,
-		AggInfos:                    res.AggInfos,
-	}.Init(b.ctx)
-	return plan, nil
+		plan := MVDeltaMerge{
+			Source:                      sourcePlan,
+			FullUpdateInnerSource:       fullUpdateInnerSource,
+			FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
+			FullUpdateIndexRanges:       fullUpdateIndexRanges,
+			FullUpdateKeyOff2IdxOff:     fullUpdateKeyOff2IdxOff,
+			FullUpdateKeyResultColIdxes: fullUpdateKeyResultColIdxes,
+			FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
+			MVTableID:                   res.MVTableID,
+			BaseTableID:                 res.BaseTableID,
+			MLogTableID:                 res.MLogTableID,
+			MVColumnCount:               res.MVColumnCount,
+			DeltaColumnCount:            res.DeltaColumnCount,
+			MVTablePKCols:               res.MVTablePKCols,
+			GroupKeyMVOffsets:           res.GroupKeyMVOffsets,
+			CountStarMVOffset:           res.CountStarMVOffset,
+			AggInfos:                    res.AggInfos,
+		}.Init(b.ctx)
+		return plan, nil
+	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
+		diffRes, err := mvmerge.BuildCompleteDiffSource(b.ctx, b.is, mvInfo)
+		if err != nil {
+			return nil, err
+		}
+		if diffRes.DiffSourceSelect == nil {
+			return nil, errors.New("complete diff: diff source select is nil")
+		}
+		sessionVars := b.ctx.GetSessionVars()
+		savedEnableFullOuterJoin := sessionVars.EnableFullOuterJoin
+		savedEnableCascadesPlanner := sessionVars.EnableCascadesPlanner
+		savedHasEnableCascadesPlannerHint := sessionVars.StmtCtx.HasEnableCascadesPlannerHint
+		savedStmtEnableCascadesPlanner := sessionVars.StmtCtx.EnableCascadesPlanner
+		sessionVars.EnableFullOuterJoin = true
+		sessionVars.SetEnableCascadesPlanner(false)
+		sessionVars.StmtCtx.HasEnableCascadesPlannerHint = false
+		sessionVars.StmtCtx.EnableCascadesPlanner = false
+		sourcePlan, err := optimizeSelect(ctx, diffRes.DiffSourceSelect)
+		sessionVars.EnableFullOuterJoin = savedEnableFullOuterJoin
+		sessionVars.SetEnableCascadesPlanner(savedEnableCascadesPlanner)
+		sessionVars.StmtCtx.HasEnableCascadesPlannerHint = savedHasEnableCascadesPlannerHint
+		sessionVars.StmtCtx.EnableCascadesPlanner = savedStmtEnableCascadesPlanner
+		if err != nil {
+			return nil, err
+		}
+		if err := diffRes.ValidateSourceLayout(sourcePlan.Schema().Len()); err != nil {
+			return nil, err
+		}
+		return MVCompleteDeltaApply{
+			Source:            sourcePlan,
+			MVTableID:         mvInfo.ID,
+			MVColumnCount:     diffRes.MVColumnCount,
+			OpColID:           diffRes.OpColOffset,
+			MarkerMVOffset:    diffRes.MarkerMVOffset,
+			GroupKeyMVOffsets: append([]int(nil), diffRes.GroupKeyMVOffsets...),
+			MHandleCols:       diffRes.MHandleCols,
+			MRowInputColIDs:   append([]int(nil), diffRes.MRowOffsets...),
+			QRowInputColIDs:   append([]int(nil), diffRes.QRowOffsets...),
+		}.Init(b.ctx), nil
+	default:
+		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: unsupported mode %s", mode.String())
+	}
 }
 
 type mvFullUpdateLookupTemplate struct {

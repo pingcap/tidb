@@ -2,7 +2,7 @@ use test;
 create table t_mv_txn_66385 (a int not null, b int not null);
 insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
 create materialized view log on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
-create materialized view mv_txn_66385 (a, s, cnt) refresh fast next now() as
+create materialized view mv_txn_66385 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
 select a, sum(b), count(1) from t_mv_txn_66385 group by a;
 refresh materialized view mv_txn_66385 with async mode complete;
 Error 1105 (HY000): refresh materialized view: WITH ASYNC MODE is not supported yet
@@ -35,3 +35,41 @@ set autocommit = 1;
 drop materialized view mv_txn_66385;
 drop materialized view log on t_mv_txn_66385;
 drop table if exists t_mv_txn_66385;
+create table t_mv_inc_67017 (a int not null, b int not null);
+insert into t_mv_inc_67017 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_inc_67017 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_inc_67017 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_inc_67017 group by a;
+select * from mv_inc_67017 order by a;
+a	s	cnt
+1	15	2
+2	7	1
+insert into t_mv_inc_67017 values (2, 3), (3, 4);
+refresh materialized view mv_inc_67017 complete delta apply;
+select * from mv_inc_67017 order by a;
+a	s	cnt
+1	15	2
+2	10	2
+3	4	1
+drop materialized view mv_inc_67017;
+drop materialized view log on t_mv_inc_67017;
+drop table if exists t_mv_inc_67017;
+create table t_mv_ddl_70457 (a int not null, b int not null);
+insert into t_mv_ddl_70457 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_ddl_70457 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_ddl_70457 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_ddl_70457 group by a;
+create index idx_a on mv_ddl_70457 (a);
+drop index idx_a on mv_ddl_70457;
+create index idx_expr on mv_ddl_70457 ((a + 1));
+Error 8200 (HY000): Unsupported ADD INDEX on materialized view table that changes writable columns
+alter table mv_ddl_70457 add index idx_expr2 ((a + 1));
+Error 8200 (HY000): Unsupported ADD INDEX on materialized view table that changes writable columns
+desc mv_ddl_70457;
+Field	Type	Null	Key	Default	Extra
+a	int	NO	PRI	NULL	
+s	decimal(32,0)	YES		NULL	
+cnt	bigint	NO		NULL	
+drop materialized view mv_ddl_70457;
+drop materialized view log on t_mv_ddl_70457;
+drop table if exists t_mv_ddl_70457;

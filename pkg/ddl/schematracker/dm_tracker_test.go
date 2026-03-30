@@ -570,7 +570,7 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 		return stmt.(*ast.CreateMaterializedViewLogStmt)
 	}
 
-	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next now()"))
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
 
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))

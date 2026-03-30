@@ -516,8 +516,10 @@ type RefreshMaterializedViewStmt struct {
 	ViewName      *TableName
 	WithAsyncMode bool
 	Type          RefreshMaterializedViewType
-	OutOfPlace    bool
-	ObserveType   RefreshMaterializedViewObserveType
+	// CompleteType configures COMPLETE refresh mode.
+	// It is only meaningful when Type == RefreshMaterializedViewTypeComplete.
+	CompleteType RefreshMaterializedViewCompleteType
+	ObserveType  RefreshMaterializedViewObserveType
 }
 
 // RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
@@ -584,6 +586,80 @@ func (t RefreshMaterializedViewType) String() string {
 	}
 }
 
+type RefreshMaterializedViewCompleteType int
+
+const (
+	RefreshMaterializedViewCompleteTypeDefault RefreshMaterializedViewCompleteType = iota
+	RefreshMaterializedViewCompleteTypeInPlace
+	RefreshMaterializedViewCompleteTypeOutOfPlace
+	RefreshMaterializedViewCompleteTypeDeltaApply
+)
+
+func (t RefreshMaterializedViewCompleteType) String() string {
+	switch t {
+	case RefreshMaterializedViewCompleteTypeDefault:
+		return "DEFAULT"
+	case RefreshMaterializedViewCompleteTypeInPlace:
+		return "IN PLACE"
+	case RefreshMaterializedViewCompleteTypeOutOfPlace:
+		return "OUT OF PLACE"
+	case RefreshMaterializedViewCompleteTypeDeltaApply:
+		return "DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+type RefreshMaterializedViewMode int
+
+const (
+	RefreshMaterializedViewModeFast RefreshMaterializedViewMode = iota
+	RefreshMaterializedViewModeCompleteInPlace
+	RefreshMaterializedViewModeCompleteOutOfPlace
+	RefreshMaterializedViewModeCompleteDeltaApply
+)
+
+func (m RefreshMaterializedViewMode) String() string {
+	switch m {
+	case RefreshMaterializedViewModeFast:
+		return "FAST"
+	case RefreshMaterializedViewModeCompleteInPlace:
+		return "COMPLETE IN PLACE"
+	case RefreshMaterializedViewModeCompleteOutOfPlace:
+		return "COMPLETE OUT OF PLACE"
+	case RefreshMaterializedViewModeCompleteDeltaApply:
+		return "COMPLETE DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Mode derives the concrete refresh execution mode from Type + CompleteType.
+func (n *RefreshMaterializedViewStmt) Mode() (RefreshMaterializedViewMode, error) {
+	if n == nil {
+		return 0, errors.New("RefreshMaterializedViewStmt: nil statement")
+	}
+	switch n.Type {
+	case RefreshMaterializedViewTypeFast:
+		return RefreshMaterializedViewModeFast, nil
+	case RefreshMaterializedViewTypeComplete:
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeDefault:
+			return RefreshMaterializedViewModeCompleteDeltaApply, nil
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			return RefreshMaterializedViewModeCompleteInPlace, nil
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			return RefreshMaterializedViewModeCompleteOutOfPlace, nil
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			return RefreshMaterializedViewModeCompleteDeltaApply, nil
+		default:
+			return 0, errors.New("RefreshMaterializedViewStmt: unknown COMPLETE mode")
+		}
+	default:
+		return 0, errors.New("RefreshMaterializedViewStmt: unknown REFRESH MATERIALIZED VIEW type")
+	}
+}
+
 type RefreshMaterializedViewObserveType int
 
 const (
@@ -603,8 +679,18 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
-	if n.OutOfPlace {
-		ctx.WriteKeyWord(" OUT OF PLACE")
+	if n.Type == RefreshMaterializedViewTypeComplete {
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeDefault:
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			ctx.WriteKeyWord(" IN PLACE")
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			ctx.WriteKeyWord(" OUT OF PLACE")
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			ctx.WriteKeyWord(" DELTA APPLY")
+		default:
+			return errors.New("RefreshMaterializedViewStmt: unknown COMPLETE mode")
+		}
 	}
 	switch n.ObserveType {
 	case RefreshMaterializedViewObserveDryRun:

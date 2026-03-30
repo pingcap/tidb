@@ -158,13 +158,13 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	err := tk.ExecToErr("create materialized view log on t (a) purge immediate")
 	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
 
-	err = tk.ExecToErr("create materialized view log on t (a) purge start with 1 next now()")
+	err = tk.ExecToErr("create materialized view log on t (a) purge start with 1 next date_add(now(), interval 1 hour)")
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
 
 	err = tk.ExecToErr("create materialized view log on t (a) purge next 600")
 	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
 
-	tk.MustExec("create materialized view log on t (a) purge start with now() next now()")
+	tk.MustExec("create materialized view log on t (a) purge start with now() next date_add(now(), interval 1 hour)")
 }
 
 func TestCreateMaterializedViewLogPurgeInfoNextTimeDerivation(t *testing.T) {
@@ -230,14 +230,14 @@ func TestCreateMaterializedViewLogPurgeInfoNextTimeUsesUTC(t *testing.T) {
 	}
 
 	tk.MustExec("create table t_purge_utc_next (a int)")
-	tk.MustExec("create materialized view log on t_purge_utc_next (a) purge next now()")
+	tk.MustExec("create materialized view log on t_purge_utc_next (a) purge next date_add(now(), interval 1 hour)")
 	mlogNextID := getMLogID("t_purge_utc_next")
 
 	tk.MustQuery(fmt.Sprintf(
 		"select NEXT_TIME is not null, "+
-			"NEXT_TIME > UTC_TIMESTAMP(6) - interval 5 minute, "+
-			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 5 minute, "+
-			"NEXT_TIME < NOW(6) - interval 7 hour "+
+			"NEXT_TIME > UTC_TIMESTAMP(6) + interval 50 minute, "+
+			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 2 hour, "+
+			"NEXT_TIME < NOW(6) - interval 6 hour "+
 			"from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogNextID,
 	)).Check(testkit.Rows("1 1 1 1"))
@@ -263,13 +263,13 @@ func TestAlterMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create materialized view log on t (a) purge next date_add(now(), interval 1 hour)")
 
-	err := tk.ExecToErr("alter materialized view log on t purge start with 1 next now()")
+	err := tk.ExecToErr("alter materialized view log on t purge start with 1 next date_add(now(), interval 1 hour)")
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
 
 	err = tk.ExecToErr("alter materialized view log on t purge next 300")
 	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
 
-	tk.MustExec("alter materialized view log on t purge start with now() next now()")
+	tk.MustExec("alter materialized view log on t purge start with now() next date_add(now(), interval 1 hour)")
 }
 
 func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
@@ -402,7 +402,7 @@ func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
 	tk.MustExec("create table t_truncate_mv (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_truncate_mv (a, b)")
 
-	tk.MustExec("create materialized view mv_truncate_mv (a, cnt) refresh fast next now() as select a, count(1) from t_truncate_mv group by a")
+	tk.MustExec("create materialized view mv_truncate_mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_truncate_mv group by a")
 
 	err := tk.ExecToErr("truncate table mv_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
@@ -420,7 +420,7 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_ddl_mv (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_ddl_mv (a, b)")
-	tk.MustExec("create materialized view mv_ddl_mv (a, cnt) refresh fast next now() as select a, count(1) from t_ddl_mv group by a")
+	tk.MustExec("create materialized view mv_ddl_mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_ddl_mv group by a")
 
 	tk.MustExec("alter table t_ddl_mv add column c int")
 	err := tk.ExecToErr("alter table t_ddl_mv modify column a bigint")
@@ -654,7 +654,7 @@ func TestPurgeMaterializedViewLogLastPurgedTSOShortCircuit(t *testing.T) {
 
 	tk.MustExec("create table t_purge_short_circuit (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_purge_short_circuit (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_purge_short_circuit (a, cnt) refresh fast next now() as select a, count(1) from t_purge_short_circuit group by a")
+	tk.MustExec("create materialized view mv_purge_short_circuit (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_purge_short_circuit group by a")
 	tk.MustExec("insert into t_purge_short_circuit values (1, 10), (1, 20), (2, 30)")
 
 	is := dom.InfoSchema()
@@ -850,7 +850,7 @@ func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 
 	tk.MustExec("create table t_purge_missing_public_refresh (a int)")
 	tk.MustExec("create materialized view log on t_purge_missing_public_refresh (a) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_purge_missing_public_refresh (a, cnt) refresh fast next now() as select a, count(1) from t_purge_missing_public_refresh group by a")
+	tk.MustExec("create materialized view mv_purge_missing_public_refresh (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_purge_missing_public_refresh group by a")
 
 	is := dom.InfoSchema()
 	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_purge_missing_public_refresh"))
@@ -884,13 +884,13 @@ func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
 
 	tk.MustExec("purge materialized view log on t_purge_state")
 	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
-		Check(testkit.Rows("success manually 0 1"))
+		Check(testkit.Rows("success manual 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("1"))
 
 	tk.MustExec("purge materialized view log on t_purge_state")
 	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
-		Check(testkit.Rows("success manually 0 1"))
+		Check(testkit.Rows("success manual 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("2"))
 }
@@ -916,7 +916,7 @@ func TestPurgeMaterializedViewLogNextTimeOnlyUpdatesForInternalSQL(t *testing.T)
 	tk.MustQuery(fmt.Sprintf(
 		"select PURGE_METHOD from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
-	)).Check(testkit.Rows("manually"))
+	)).Check(testkit.Rows("manual"))
 
 	// Internal SQL purge should update NEXT_TIME by evaluating PurgeNext.
 	mustExecInternal(t, tk, "purge materialized view log on t_purge_internal_next")
@@ -927,7 +927,7 @@ func TestPurgeMaterializedViewLogNextTimeOnlyUpdatesForInternalSQL(t *testing.T)
 	tk.MustQuery(fmt.Sprintf(
 		"select PURGE_METHOD from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
-	)).Check(testkit.Rows("automatically"))
+	)).Check(testkit.Rows("auto"))
 }
 
 func TestPurgeMaterializedViewLogInternalSQLStartWithNoNextSetsNextTimeNull(t *testing.T) {
@@ -955,7 +955,7 @@ func TestPurgeMaterializedViewLogInternalSQLStartWithNoNextSetsNextTimeNull(t *t
 	tk.MustQuery(fmt.Sprintf(
 		"select PURGE_METHOD from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
-	)).Check(testkit.Rows("manually"))
+	)).Check(testkit.Rows("manual"))
 
 	// Internal SQL purge should explicitly set NEXT_TIME = NULL when START WITH exists and NEXT is empty.
 	mustExecInternal(t, tk, "purge materialized view log on t_purge_internal_start_only")
@@ -964,5 +964,5 @@ func TestPurgeMaterializedViewLogInternalSQLStartWithNoNextSetsNextTimeNull(t *t
 	tk.MustQuery(fmt.Sprintf(
 		"select PURGE_METHOD from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
-	)).Check(testkit.Rows("automatically"))
+	)).Check(testkit.Rows("auto"))
 }

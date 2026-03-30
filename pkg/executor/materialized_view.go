@@ -15,8 +15,10 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math/bits"
 	"strconv"
 	"strings"
 	"time"
@@ -36,13 +38,18 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -76,6 +83,782 @@ type PurgeMaterializedViewLogExec struct {
 	exec.BaseExecutor
 	stmt *ast.PurgeMaterializedViewLogStmt
 	done bool
+}
+
+const (
+	mvCompleteDeltaDiffOpInsert = int64(1)
+	mvCompleteDeltaDiffOpDelete = int64(2)
+	mvCompleteDeltaDiffOpUpdate = int64(3)
+)
+
+// MVCompleteDeltaApplyExec applies COMPLETE DELTA APPLY diff rows to the target MV table.
+// It keeps the runtime single-threaded and only batches the UPDATE old/new comparison at chunk granularity.
+type MVCompleteDeltaApplyExec struct {
+	exec.BaseExecutor
+
+	TargetTable      table.Table
+	TargetHandleCols plannerutil.HandleCols
+	OpColID          int
+
+	MWritableInputColIDs []int
+	QWritableInputColIDs []int
+
+	CompareWritableIdxes []int
+	MCompareInputColIDs  []int
+	QCompareInputColIDs  []int
+
+	writableFieldTypes []*types.FieldType
+	compareColumns     []mvCompleteDeltaCompareColumn
+	oldRow             []types.Datum
+	newRow             []types.Datum
+	touched            []bool
+	// currTouchedIdxes caches writable-column indexes touched by the current UPDATE row.
+	// It lets us clear only previously-set bits in `touched` and patch only changed columns in `newRow`.
+	currTouchedIdxes        []int
+	updateTouchedSingleByte bool
+
+	childChunk          *chunk.Chunk
+	updateRows          []int
+	updateTouchedBitmap []uint8
+	updateTouchedStride int
+	executed            bool
+	runtimeStats        *mvCompleteDeltaApplyRuntimeStats
+}
+
+type mvCompleteDeltaCompareColumn struct {
+	writableIdx      int
+	mInputColID      int
+	qInputColID      int
+	fieldType        *types.FieldType
+	notNull          bool
+	touchedBitMask   uint8
+	touchedByteIndex int
+}
+
+type mvCompleteDeltaApplyWriterStats struct {
+	chunks int64
+	rowOps int64
+
+	insertRows int64
+	updateRows int64
+	deleteRows int64
+}
+
+func (s *mvCompleteDeltaApplyWriterStats) merge(other mvCompleteDeltaApplyWriterStats) {
+	s.chunks += other.chunks
+	s.rowOps += other.rowOps
+	s.insertRows += other.insertRows
+	s.updateRows += other.updateRows
+	s.deleteRows += other.deleteRows
+}
+
+type mvCompleteDeltaApplyRuntimeStats struct {
+	writerTime   time.Duration
+	writerDetail mvCompleteDeltaApplyWriterStats
+}
+
+func (s *mvCompleteDeltaApplyRuntimeStats) reset() {
+	if s == nil {
+		return
+	}
+	s.writerTime = 0
+	s.writerDetail = mvCompleteDeltaApplyWriterStats{}
+}
+
+func (s *mvCompleteDeltaApplyRuntimeStats) String() string {
+	if s == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("mv_complete_delta_apply:{writer:{time:")
+	buf.WriteString(execdetails.FormatDuration(s.writerTime))
+	buf.WriteString(", chunks:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.chunks, 10))
+	buf.WriteString(", row_ops:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.rowOps, 10))
+	buf.WriteString(", rows:{insert:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.insertRows, 10))
+	buf.WriteString(", update:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.updateRows, 10))
+	buf.WriteString(", delete:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.deleteRows, 10))
+	buf.WriteString("}}}")
+	return buf.String()
+}
+
+func (s *mvCompleteDeltaApplyRuntimeStats) Clone() execdetails.RuntimeStats {
+	if s == nil {
+		return &mvCompleteDeltaApplyRuntimeStats{}
+	}
+	return &mvCompleteDeltaApplyRuntimeStats{
+		writerTime:   s.writerTime,
+		writerDetail: s.writerDetail,
+	}
+}
+
+func (s *mvCompleteDeltaApplyRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*mvCompleteDeltaApplyRuntimeStats)
+	if !ok || tmp == nil {
+		return
+	}
+	s.writerTime += tmp.writerTime
+	s.writerDetail.merge(tmp.writerDetail)
+}
+
+func (*mvCompleteDeltaApplyRuntimeStats) Tp() int {
+	return execdetails.TpMVCompleteDeltaApplyRuntimeStats
+}
+
+// Open implements the Executor interface.
+func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
+	e.executed = false
+	e.childChunk = nil
+	e.updateRows = e.updateRows[:0]
+	e.updateTouchedBitmap = e.updateTouchedBitmap[:0]
+	e.updateTouchedStride = 0
+	e.updateTouchedSingleByte = false
+	e.currTouchedIdxes = e.currTouchedIdxes[:0]
+	clear(e.touched)
+
+	if err := e.BaseExecutor.Open(ctx); err != nil {
+		return err
+	}
+
+	if e.TargetTable == nil {
+		return errors.New("MVCompleteDeltaApply target table is nil")
+	}
+	if e.TargetHandleCols == nil {
+		return errors.New("MVCompleteDeltaApply target handle cols is nil")
+	}
+	child := e.Children(0)
+	if child == nil {
+		return errors.New("MVCompleteDeltaApply child executor is nil")
+	}
+
+	writableCols := e.TargetTable.WritableCols()
+	e.writableFieldTypes = make([]*types.FieldType, len(writableCols))
+	for i := range writableCols {
+		e.writableFieldTypes[i] = &writableCols[i].FieldType
+	}
+	e.oldRow = make([]types.Datum, len(writableCols))
+	e.newRow = make([]types.Datum, len(writableCols))
+	e.touched = make([]bool, len(writableCols))
+	if err := e.initCompareColumns(len(child.RetFieldTypes())); err != nil {
+		return err
+	}
+	e.currTouchedIdxes = make([]int, 0, len(e.compareColumns))
+	e.updateTouchedStride = (len(e.compareColumns) + 7) >> 3
+	e.updateTouchedSingleByte = e.updateTouchedStride == 1
+	e.childChunk = exec.NewFirstChunk(child)
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *MVCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.MaxChunkSize())
+	if e.executed {
+		return nil
+	}
+	e.executed = true
+	if e.BaseExecutor.RuntimeStats() != nil {
+		if e.runtimeStats == nil {
+			e.runtimeStats = &mvCompleteDeltaApplyRuntimeStats{}
+		} else {
+			e.runtimeStats.reset()
+		}
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
+	}
+
+	child := e.Children(0)
+	if child == nil {
+		return errors.New("MVCompleteDeltaApply child executor is nil")
+	}
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
+	}
+	tableCtx := e.Ctx().GetTableCtx()
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
+	insertSizeHintStep := int(e.Ctx().GetSessionVars().ShardAllocateStep)
+	if insertSizeHintStep <= 0 {
+		insertSizeHintStep = 1
+	}
+
+	for {
+		e.childChunk.Reset()
+		if err := exec.Next(ctx, child, e.childChunk); err != nil {
+			return err
+		}
+		if e.childChunk.NumRows() == 0 {
+			return nil
+		}
+		writeStart := time.Time{}
+		if e.runtimeStats != nil {
+			writeStart = time.Now()
+		}
+		if err := e.applyChunk(txn, tableCtx, stmtCtx, insertSizeHintStep, e.childChunk); err != nil {
+			return err
+		}
+		if e.runtimeStats != nil {
+			e.runtimeStats.writerTime += time.Since(writeStart)
+		}
+	}
+}
+
+// Close implements the Executor interface.
+func (e *MVCompleteDeltaApplyExec) Close() error {
+	e.writableFieldTypes = nil
+	e.compareColumns = nil
+	e.oldRow = nil
+	e.newRow = nil
+	e.touched = nil
+	e.currTouchedIdxes = nil
+	e.childChunk = nil
+	e.updateRows = nil
+	e.updateTouchedBitmap = nil
+	e.updateTouchedStride = 0
+	e.updateTouchedSingleByte = false
+	e.executed = false
+	e.runtimeStats = nil
+	return e.BaseExecutor.Close()
+}
+
+func (e *MVCompleteDeltaApplyExec) applyChunk(
+	txn kv.Transaction,
+	tableCtx table.MutateContext,
+	stmtCtx *stmtctx.StatementContext,
+	insertSizeHintStep int,
+	input *chunk.Chunk,
+) error {
+	ops := input.Column(e.OpColID).Int64s()[:input.NumRows()]
+	insertRemain, err := e.collectChunkUpdateRows(ops)
+	if err != nil {
+		return err
+	}
+	if err := e.markChunkUpdateTouchedColumns(input); err != nil {
+		return err
+	}
+	var writerStats *mvCompleteDeltaApplyWriterStats
+	var writerStatsDelta mvCompleteDeltaApplyWriterStats
+	if e.runtimeStats != nil {
+		writerStats = &e.runtimeStats.writerDetail
+		writerStatsDelta.chunks = 1
+		writerStatsDelta.rowOps = int64(input.NumRows())
+		defer func() {
+			writerStats.merge(writerStatsDelta)
+		}()
+	}
+
+	insertOrdinal := 0
+	updateOrdinal := 0
+	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
+		row := input.GetRow(rowIdx)
+		op := ops[rowIdx]
+		switch op {
+		case mvCompleteDeltaDiffOpInsert:
+			writerStatsDelta.insertRows++
+			e.buildInsertRow(row)
+
+			sizeHint := 0
+			if insertOrdinal%insertSizeHintStep == 0 {
+				sizeHint = min(insertSizeHintStep, insertRemain)
+			}
+			insertOrdinal++
+			insertRemain--
+			if sizeHint > 0 {
+				_, err = e.TargetTable.AddRecord(
+					tableCtx,
+					txn,
+					e.newRow,
+					table.WithReserveAutoIDHint(sizeHint),
+					table.DupKeyCheckLazy,
+				)
+			} else {
+				_, err = e.TargetTable.AddRecord(tableCtx, txn, e.newRow, table.DupKeyCheckLazy)
+			}
+			if err != nil {
+				return err
+			}
+		case mvCompleteDeltaDiffOpDelete:
+			writerStatsDelta.deleteRows++
+			e.buildDeleteRow(row)
+			handle, err := e.TargetHandleCols.BuildHandle(stmtCtx, row)
+			if err != nil {
+				return err
+			}
+			if err := e.TargetTable.RemoveRecord(tableCtx, txn, handle, e.oldRow); err != nil {
+				return err
+			}
+		case mvCompleteDeltaDiffOpUpdate:
+			changed, err := e.buildTouchedFromBitmap(updateOrdinal)
+			if err != nil {
+				return err
+			}
+			if changed {
+				writerStatsDelta.updateRows++
+				e.buildUpdateRows(row)
+				handle, err := e.TargetHandleCols.BuildHandle(stmtCtx, row)
+				if err != nil {
+					return err
+				}
+				if err := e.TargetTable.UpdateRecord(tableCtx, txn, handle, e.oldRow, e.newRow, e.touched); err != nil {
+					return err
+				}
+			}
+			updateOrdinal++
+		default:
+			return errors.Errorf("MVCompleteDeltaApply invalid diff op %d at row %d", op, rowIdx)
+		}
+	}
+	return nil
+}
+
+func (e *MVCompleteDeltaApplyExec) collectChunkUpdateRows(ops []int64) (int, error) {
+	if cap(e.updateRows) >= len(ops) {
+		e.updateRows = e.updateRows[:0]
+	} else {
+		e.updateRows = make([]int, 0, len(ops))
+	}
+	insertRemain := 0
+	for rowIdx, op := range ops {
+		switch op {
+		case mvCompleteDeltaDiffOpInsert:
+			insertRemain++
+		case mvCompleteDeltaDiffOpDelete:
+		case mvCompleteDeltaDiffOpUpdate:
+			e.updateRows = append(e.updateRows, rowIdx)
+		default:
+			return 0, errors.Errorf("MVCompleteDeltaApply invalid diff op %d at row %d", op, rowIdx)
+		}
+	}
+	return insertRemain, nil
+}
+
+func (e *MVCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
+	if len(e.MCompareInputColIDs) != len(e.CompareWritableIdxes) || len(e.QCompareInputColIDs) != len(e.CompareWritableIdxes) {
+		return errors.Errorf(
+			"MVCompleteDeltaApply compare mapping length mismatch (compare=%d, M=%d, Q=%d)",
+			len(e.CompareWritableIdxes),
+			len(e.MCompareInputColIDs),
+			len(e.QCompareInputColIDs),
+		)
+	}
+	if cap(e.compareColumns) >= len(e.CompareWritableIdxes) {
+		e.compareColumns = e.compareColumns[:len(e.CompareWritableIdxes)]
+	} else {
+		e.compareColumns = make([]mvCompleteDeltaCompareColumn, len(e.CompareWritableIdxes))
+	}
+	for compareIdx, writableIdx := range e.CompareWritableIdxes {
+		if writableIdx < 0 || writableIdx >= len(e.writableFieldTypes) {
+			return errors.Errorf(
+				"MVCompleteDeltaApply writable compare index %d out of field type range [0,%d)",
+				writableIdx,
+				len(e.writableFieldTypes),
+			)
+		}
+		mInputColID := e.MCompareInputColIDs[compareIdx]
+		if mInputColID < 0 || mInputColID >= inputColCount {
+			return errors.Errorf(
+				"MVCompleteDeltaApply M compare input col id %d out of source range [0,%d)",
+				mInputColID,
+				inputColCount,
+			)
+		}
+		qInputColID := e.QCompareInputColIDs[compareIdx]
+		if qInputColID < 0 || qInputColID >= inputColCount {
+			return errors.Errorf(
+				"MVCompleteDeltaApply Q compare input col id %d out of source range [0,%d)",
+				qInputColID,
+				inputColCount,
+			)
+		}
+		fieldType := e.writableFieldTypes[writableIdx]
+		e.compareColumns[compareIdx] = mvCompleteDeltaCompareColumn{
+			writableIdx:      writableIdx,
+			mInputColID:      mInputColID,
+			qInputColID:      qInputColID,
+			fieldType:        fieldType,
+			notNull:          mysql.HasNotNullFlag(fieldType.GetFlag()),
+			touchedBitMask:   uint8(1 << (compareIdx & 7)),
+			touchedByteIndex: compareIdx >> 3,
+		}
+	}
+	return nil
+}
+
+func (e *MVCompleteDeltaApplyExec) markChunkUpdateTouchedColumns(input *chunk.Chunk) error {
+	updateCnt := len(e.updateRows)
+	if updateCnt == 0 || e.updateTouchedStride == 0 {
+		e.updateTouchedBitmap = e.updateTouchedBitmap[:0]
+		return nil
+	}
+
+	requiredLen := updateCnt * e.updateTouchedStride
+	if cap(e.updateTouchedBitmap) < requiredLen {
+		e.updateTouchedBitmap = make([]uint8, requiredLen)
+	} else {
+		e.updateTouchedBitmap = e.updateTouchedBitmap[:requiredLen]
+		clear(e.updateTouchedBitmap)
+	}
+
+	for _, compareCol := range e.compareColumns {
+		if err := markMVCompleteDeltaTouchedRowsByColumn(
+			e.updateRows,
+			e.updateTouchedBitmap,
+			e.updateTouchedStride,
+			e.updateTouchedSingleByte,
+			compareCol,
+			input.Column(compareCol.mInputColID),
+			input.Column(compareCol.qInputColID),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *MVCompleteDeltaApplyExec) buildDeleteRow(row chunk.Row) {
+	for writableIdx, colID := range e.MWritableInputColIDs {
+		row.DatumWithBuffer(colID, e.writableFieldTypes[writableIdx], &e.oldRow[writableIdx])
+	}
+}
+
+func (e *MVCompleteDeltaApplyExec) buildInsertRow(row chunk.Row) {
+	for writableIdx, colID := range e.QWritableInputColIDs {
+		row.DatumWithBuffer(colID, e.writableFieldTypes[writableIdx], &e.newRow[writableIdx])
+	}
+}
+
+func (e *MVCompleteDeltaApplyExec) buildUpdateRows(row chunk.Row) {
+	for writableIdx, colID := range e.MWritableInputColIDs {
+		row.DatumWithBuffer(colID, e.writableFieldTypes[writableIdx], &e.oldRow[writableIdx])
+	}
+	copy(e.newRow, e.oldRow)
+	// `newRow` starts from the old row image and only patches columns marked touched for this UPDATE row.
+	for _, writableIdx := range e.currTouchedIdxes {
+		row.DatumWithBuffer(e.QWritableInputColIDs[writableIdx], e.writableFieldTypes[writableIdx], &e.newRow[writableIdx])
+	}
+}
+
+func (e *MVCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) (bool, error) {
+	if e.updateTouchedStride == 0 {
+		return false, nil
+	}
+	for _, idx := range e.currTouchedIdxes {
+		e.touched[idx] = false
+	}
+	e.currTouchedIdxes = e.currTouchedIdxes[:0]
+
+	offset := updateOrdinal * e.updateTouchedStride
+	rowBits := e.updateTouchedBitmap[offset : offset+e.updateTouchedStride]
+	changed := false
+	for byteIdx, b := range rowBits {
+		for b != 0 {
+			bitInByte := bits.TrailingZeros8(b)
+			bitPos := (byteIdx << 3) + bitInByte
+			writableIdx := e.compareColumns[bitPos].writableIdx
+			e.touched[writableIdx] = true
+			e.currTouchedIdxes = append(e.currTouchedIdxes, writableIdx)
+			changed = true
+			b &= b - 1
+		}
+	}
+	return changed, nil
+}
+
+func markMVCompleteDeltaTouchedRowsByColumn(
+	updateRows []int,
+	updateTouchedBitmap []uint8,
+	updateTouchedStride int,
+	updateTouchedSingleByte bool,
+	compareCol mvCompleteDeltaCompareColumn,
+	oldCol *chunk.Column,
+	newCol *chunk.Column,
+) error {
+	setTouched := func(updateOrdinal int) {
+		if updateTouchedSingleByte {
+			updateTouchedBitmap[updateOrdinal] |= compareCol.touchedBitMask
+			return
+		}
+		updateTouchedBitmap[updateOrdinal*updateTouchedStride+compareCol.touchedByteIndex] |= compareCol.touchedBitMask
+	}
+
+	switch compareCol.fieldType.EvalType() {
+	case types.ETInt:
+		if mysql.HasUnsignedFlag(compareCol.fieldType.GetFlag()) {
+			oldVals := oldCol.Uint64s()
+			newVals := newCol.Uint64s()
+			if compareCol.notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if oldVals[rowIdx] != newVals[rowIdx] {
+						setTouched(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						setTouched(updateOrdinal)
+					}
+					continue
+				}
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		oldVals := oldCol.Int64s()
+		newVals := newCol.Int64s()
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETReal:
+		if compareCol.fieldType.GetType() == mysql.TypeFloat {
+			oldVals := oldCol.Float32s()
+			newVals := newCol.Float32s()
+			if compareCol.notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if oldVals[rowIdx] != newVals[rowIdx] {
+						setTouched(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						setTouched(updateOrdinal)
+					}
+					continue
+				}
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		oldVals := oldCol.Float64s()
+		newVals := newCol.Float64s()
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETDecimal:
+		oldVals := oldCol.Decimals()
+		newVals := newCol.Decimals()
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETString:
+		binaryCollator := collate.GetBinaryCollator()
+		switch compareCol.fieldType.GetType() {
+		case mysql.TypeEnum:
+			if compareCol.notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
+						setTouched(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						setTouched(updateOrdinal)
+					}
+					continue
+				}
+				if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		case mysql.TypeSet:
+			if compareCol.notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
+						setTouched(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						setTouched(updateOrdinal)
+					}
+					continue
+				}
+				if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETDatetime, types.ETTimestamp:
+		oldVals := oldCol.Times()
+		newVals := newCol.Times()
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETDuration:
+		oldVals := oldCol.GoDurations()
+		newVals := newCol.GoDurations()
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETJson, types.ETVectorFloat32:
+		if compareCol.notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+					setTouched(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					setTouched(updateOrdinal)
+				}
+				continue
+			}
+			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+				setTouched(updateOrdinal)
+			}
+		}
+		return nil
+	default:
+		return errors.Errorf("unsupported eval type %d in COMPLETE DELTA APPLY comparison", compareCol.fieldType.EvalType())
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -663,9 +1446,9 @@ func validatePurgeMaterializedViewLogStmt(s *ast.PurgeMaterializedViewLogStmt, i
 		return "", errors.New("purge materialized view log: missing table name")
 	}
 	if isInternalSQL {
-		return "automatically", nil
+		return "auto", nil
 	}
-	return "manually", nil
+	return "manual", nil
 }
 
 func insertMLogPurgeHistRunning(
@@ -862,11 +1645,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		logutil.BgLogger().Info("refresh materialized view is slow", fields...)
 	}()
 
-	refreshMethod, err := validateRefreshMaterializedViewStmt(s, isInternalSQL)
+	refreshMode, refreshMethod, err := validateRefreshMaterializedViewStmt(s, isInternalSQL)
 	if err != nil {
 		return err
 	}
-	stepSet, err := newMVRefreshStepSet(s.Type, s.OutOfPlace)
+	stepSet, err := newMVRefreshStepSet(refreshMode)
 	if err != nil {
 		return err
 	}
@@ -936,7 +1719,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}()
 	failpoint.InjectCall("refreshMaterializedViewAfterAcquireAdvisoryLock")
 
-	if s.Type == ast.RefreshMaterializedViewTypeComplete && s.OutOfPlace {
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteOutOfPlace {
 		expectedLastSuccessReadTSO, expectedLastSuccessReadTSONull, err := readRefreshInfoReadTSO(kctx, sqlExec, mviewID)
 		if err != nil {
 			return err
@@ -1129,7 +1912,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
 
 	var lastSuccessfulRefreshReadTSO uint64
-	if s.Type == ast.RefreshMaterializedViewTypeFast {
+	if refreshMode == ast.RefreshMaterializedViewModeFast {
 		// LAST_SUCCESS_READ_TSO is BIGINT UNSIGNED DEFAULT NULL. FAST refresh requires it to be non-NULL.
 		if lockedReadTSONull {
 			return finalizeFailure(errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"))
@@ -1143,6 +1926,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		sqlExec,
 		sessVars,
 		s,
+		refreshMode,
 		schemaName,
 		tblInfo,
 		lastSuccessfulRefreshReadTSO,
@@ -1161,7 +1945,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 
 	var refreshRows *int64
-	if s.Type == ast.RefreshMaterializedViewTypeFast {
+	if refreshMode == ast.RefreshMaterializedViewModeFast {
 		refreshRows = collectFastRefreshMLogScanRows(sessVars)
 	}
 
@@ -1675,31 +2459,36 @@ func refreshErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
 	}
 }
 
-func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (string, error) {
+func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (ast.RefreshMaterializedViewMode, string, error) {
 	if s == nil || s.ViewName == nil {
-		return "", errors.New("refresh materialized view: missing view name")
+		return 0, "", errors.New("refresh materialized view: missing view name")
 	}
-	if s.OutOfPlace && s.Type != ast.RefreshMaterializedViewTypeComplete {
-		return "", errors.New("refresh materialized view: OUT OF PLACE is only supported for COMPLETE")
+	mode, err := s.Mode()
+	if err != nil {
+		return 0, "", errors.Trace(err)
 	}
 	methodType := ""
-	switch s.Type {
-	case ast.RefreshMaterializedViewTypeComplete:
-		methodType = "complete"
-	case ast.RefreshMaterializedViewTypeFast:
+	switch mode {
+	case ast.RefreshMaterializedViewModeFast:
 		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
 		methodType = "fast"
+	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
+		methodType = "complete delta apply"
+	case ast.RefreshMaterializedViewModeCompleteInPlace:
+		methodType = "complete in place"
+	case ast.RefreshMaterializedViewModeCompleteOutOfPlace:
+		methodType = "complete out of place"
 	default:
-		return "", errors.New("unknown REFRESH MATERIALIZED VIEW type")
+		return 0, "", errors.New("refresh materialized view: unknown mode")
 	}
-	methodOrigin := "manually"
+	methodOrigin := "manual"
 	if isInternalSQL {
-		methodOrigin = "automatically"
+		methodOrigin = "auto"
 	}
 	if s.WithAsyncMode {
-		return "", errors.New("refresh materialized view: WITH ASYNC MODE is not supported yet")
+		return 0, "", errors.New("refresh materialized view: WITH ASYNC MODE is not supported yet")
 	}
-	return methodType + " " + methodOrigin, nil
+	return mode, methodType + " " + methodOrigin, nil
 }
 
 func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
@@ -1851,6 +2640,7 @@ func executeRefreshMaterializedViewDataChanges(
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,
 	s *ast.RefreshMaterializedViewStmt,
+	refreshMode ast.RefreshMaterializedViewMode,
 	schemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 	lastSuccessfulRefreshReadTSO uint64,
@@ -1866,11 +2656,8 @@ func executeRefreshMaterializedViewDataChanges(
 		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
 	}()
 
-	switch s.Type {
-	case ast.RefreshMaterializedViewTypeComplete:
-		if s.OutOfPlace {
-			return errors.New("refresh materialized view: complete OUT OF PLACE should use dedicated execution path")
-		}
+	switch refreshMode {
+	case ast.RefreshMaterializedViewModeCompleteInPlace:
 		return executeRefreshMaterializedViewCompleteInPlace(
 			kctx,
 			sqlExec,
@@ -1882,7 +2669,7 @@ func executeRefreshMaterializedViewDataChanges(
 			stepObserver,
 			explainFormat,
 		)
-	case ast.RefreshMaterializedViewTypeFast:
+	case ast.RefreshMaterializedViewModeFast:
 		return executeRefreshMaterializedViewFast(
 			kctx,
 			sqlExec,
@@ -1893,8 +2680,20 @@ func executeRefreshMaterializedViewDataChanges(
 			stepObserver,
 			explainFormat,
 		)
+	case ast.RefreshMaterializedViewModeCompleteOutOfPlace:
+		return errors.New("refresh materialized view: complete OUT OF PLACE should use dedicated execution path")
+	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
+		return executeRefreshMaterializedViewCompleteDeltaApply(
+			kctx,
+			sqlExec,
+			sessVars,
+			s,
+			stepSet,
+			stepObserver,
+			explainFormat,
+		)
 	default:
-		return errors.New("unknown REFRESH MATERIALIZED VIEW type")
+		return errors.New("refresh materialized view: unknown mode")
 	}
 }
 
@@ -1942,7 +2741,13 @@ func executeRefreshMaterializedViewFast(
 	explainFormat string,
 ) error {
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeFastMerge, func() error {
-		return executeRefreshMaterializedViewFastImpl(kctx, sqlExec, sessVars, s, lastSuccessfulRefreshReadTSO)
+		return executeRefreshMaterializedViewImplement(
+			kctx,
+			sqlExec,
+			sessVars,
+			s,
+			lastSuccessfulRefreshReadTSO,
+		)
 	}); err != nil {
 		return err
 	}
@@ -1950,7 +2755,25 @@ func executeRefreshMaterializedViewFast(
 	return nil
 }
 
-func executeRefreshMaterializedViewFastImpl(
+func executeRefreshMaterializedViewCompleteDeltaApply(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sessVars *variable.SessionVars,
+	s *ast.RefreshMaterializedViewStmt,
+	stepSet mvRefreshStepSet,
+	stepObserver mvRefreshStepObserver,
+	explainFormat string,
+) error {
+	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDeltaApply, func() error {
+		return executeRefreshMaterializedViewImplement(kctx, sqlExec, sessVars, s, 0)
+	}); err != nil {
+		return err
+	}
+	emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteDeltaApply, sessVars, explainFormat)
+	return nil
+}
+
+func executeRefreshMaterializedViewImplement(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,

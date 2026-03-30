@@ -2043,6 +2043,18 @@ func checkIndexOperationMaterializedViewConstraints(
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
 }
 
+func checkMaterializedViewIndexWritableColumnConstraints(
+	tblInfo *model.TableInfo,
+	hiddenCols []*model.ColumnInfo,
+) error {
+	if tblInfo == nil || tblInfo.MaterializedView == nil || len(hiddenCols) == 0 {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		"ADD INDEX on materialized view table that changes writable columns",
+	)
+}
+
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	return e.alterTable(ctx, sctx, stmt, false)
 }
@@ -5295,6 +5307,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if len(indexName.L) == 0 {
 		// It means that there is already an index exists with same name
 		return nil
+	}
+	if err := checkMaterializedViewIndexWritableColumnConstraints(t.Meta(), hiddenCols); err != nil {
+		return errors.Trace(err)
 	}
 
 	tblInfo := t.Meta()
