@@ -683,21 +683,7 @@ func cloneSyncLoadFallbackItemsForPlanCache(enabled bool, items []model.TableIte
 	if !enabled || len(items) == 0 {
 		return nil
 	}
-	cloned := make([]model.TableItemID, 0, len(items))
-	seen := make(map[model.TableItemID]struct{}, len(items))
-	for _, item := range items {
-		itemID := model.TableItemID{
-			TableID: item.TableID,
-			ID:      item.ID,
-			IsIndex: item.IsIndex,
-		}
-		if _, ok := seen[itemID]; ok {
-			continue
-		}
-		seen[itemID] = struct{}{}
-		cloned = append(cloned, itemID)
-	}
-	return cloned
+	return slices.Clone(items)
 }
 
 func shouldInvalidatePlanCacheForFreshStats(sctx sessionctx.Context, pcv *PlanCacheValue) bool {

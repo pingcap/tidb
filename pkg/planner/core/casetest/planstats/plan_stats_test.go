@@ -411,7 +411,9 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
 	newConfig.Performance.StatsLoadQueueSize = 1
 	config.StoreGlobalConfig(newConfig)
-	defer config.StoreGlobalConfig(originConfig)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -452,6 +454,9 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	tk.MustExec("execute st using @p")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
+	// Wait for the async histogram load item corresponding to column b to be marked
+	// as sync-load failed, which confirms the sync-load path timed out and fell back
+	// to async loading for this full-load stats item.
 	require.Eventually(t, func() bool {
 		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
 			if item.TableID == tblInfo.ID && item.ID == colBID && !item.IsIndex && item.FullLoad && item.IsSyncLoadFailed {

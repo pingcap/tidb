@@ -389,6 +389,10 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	return nil
 }
 
+// recordSyncLoadFallbackItems records distinct full-load stats items that were still
+// unavailable when sync-load timed out. The deduplicated TableItemIDs are stored in
+// stmtCtx.StatsLoad.FallbackItems and later used to invalidate cached plans after
+// the missing stats become fully loaded.
 func recordSyncLoadFallbackItems(stmtCtx *stmtctx.StatementContext, neededItems []model.StatsLoadItem) {
 	if len(neededItems) == 0 {
 		stmtCtx.StatsLoad.FallbackItems = nil
