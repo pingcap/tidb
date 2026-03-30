@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -262,9 +263,21 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		batchSize = 5 * deleteSize
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
+<<<<<<< HEAD
 	tbCIStr := model.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
+=======
+	tbCIStr := ast.NewCIStr(tableName)
+	latestIS := rm.infoCache.GetLatest()
+	if latestIS == nil {
+		return
+	}
+	tbl, err := latestIS.TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
+>>>>>>> 8f624a21ed3 (resourcegroup/runaway: skip runaway GC before table exists (#67383))
 	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return
+		}
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}

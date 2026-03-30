@@ -53,9 +53,16 @@ go_test(
     ],
     embed = [":runaway"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 25,
+=======
+    shard_count = 16,
+>>>>>>> 8f624a21ed3 (resourcegroup/runaway: skip runaway GC before table exists (#67383))
     deps = [
+        "//pkg/ddl",
+        "//pkg/infoschema",
         "//pkg/metrics",
+<<<<<<< HEAD
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/planner/core/resolve",
@@ -64,9 +71,15 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
+=======
+        "//pkg/owner",
+>>>>>>> 8f624a21ed3 (resourcegroup/runaway: skip runaway GC before table exists (#67383))
         "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
