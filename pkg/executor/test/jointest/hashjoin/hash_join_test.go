@@ -224,6 +224,294 @@ func TestHashJoin(t *testing.T) {
 	require.Equal(t, "5", outerActRows)
 }
 
+func TestFullOuterJoinHashJoinV1(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_full_outer_join = 1")
+	tk.MustExec(join.DisableHashJoinV2)
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1,10,1), (2,20,0), (3,30,1), (null,40,1)")
+	tk.MustExec("insert into t2 values (1,100,1), (3,300,0), (4,400,1), (null,500,1)")
+
+	planSQL := "select * from t1 full outer join t2 on t1.a = t2.a"
+	tk.MustHavePlan(planSQL, "HashJoin")
+	tk.MustNotHavePlan(planSQL, "MergeJoin")
+	tk.MustNotHavePlan(planSQL, "IndexJoin")
+	tk.MustNotHavePlan(planSQL, "IndexHashJoin")
+
+	expectedBasicRows := testkit.Rows(
+		"1 10 1 100",
+		"2 20 <nil> <nil>",
+		"3 30 3 300",
+		"<nil> <nil> 4 400",
+		"<nil> <nil> <nil> 500",
+		"<nil> 40 <nil> <nil>",
+	)
+	basicSQL := "select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
+	tk.MustQuery(basicSQL).Check(expectedBasicRows)
+
+	// No equi keys: full join should still work via cartesian hash-join path.
+	tk.MustExec("drop table if exists t13, t14")
+	tk.MustExec("create table t13(a int)")
+	tk.MustExec("create table t14(a int)")
+	tk.MustExec("insert into t13 values (1), (2)")
+	tk.MustExec("insert into t14 values (10)")
+
+	onTrueSQL := "select t13.a, t14.a from t13 full outer join t14 on true order by t13.a, t14.a"
+	tk.MustHavePlan(onTrueSQL, "HashJoin")
+	onTrueExplain := tk.MustQuery("explain format = 'brief' " + onTrueSQL).Rows()
+	onTruePlan := make([]string, 0, len(onTrueExplain))
+	for _, row := range onTrueExplain {
+		onTruePlan = append(onTruePlan, fmt.Sprint(row))
+	}
+	require.Contains(t, strings.Join(onTruePlan, "\n"), "CARTESIAN", "sql=%s, explain=%v", onTrueSQL, onTrueExplain)
+	tk.MustQuery(onTrueSQL).Check(testkit.Rows(
+		"1 10",
+		"2 10",
+	))
+
+	nonEquiOnlySQL := "select t13.a, t14.a from t13 full outer join t14 on t13.a > t14.a order by isnull(t13.a), t13.a, isnull(t14.a), t14.a"
+	tk.MustHavePlan(nonEquiOnlySQL, "HashJoin")
+	nonEquiOnlyExplain := tk.MustQuery("explain format = 'brief' " + nonEquiOnlySQL).Rows()
+	nonEquiOnlyPlan := make([]string, 0, len(nonEquiOnlyExplain))
+	for _, row := range nonEquiOnlyExplain {
+		nonEquiOnlyPlan = append(nonEquiOnlyPlan, fmt.Sprint(row))
+	}
+	require.Contains(t, strings.Join(nonEquiOnlyPlan, "\n"), "CARTESIAN", "sql=%s, explain=%v", nonEquiOnlySQL, nonEquiOnlyExplain)
+	tk.MustQuery(nonEquiOnlySQL).Check(testkit.Rows(
+		"1 <nil>",
+		"2 <nil>",
+		"<nil> 10",
+	))
+
+	assertBuildSide := func(sql, buildTable string) {
+		rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+		explain := make([]string, 0, len(rows))
+		for _, row := range rows {
+			explain = append(explain, fmt.Sprint(row))
+		}
+		all := strings.Join(explain, "\n")
+		require.Contains(t, all, "TableReader(Build)", "sql=%s, explain=%v", sql, rows)
+		idxT1, idxT2 := strings.Index(all, "table:t1"), strings.Index(all, "table:t2")
+		require.NotEqual(t, -1, idxT1, "sql=%s, explain=%v", sql, rows)
+		require.NotEqual(t, -1, idxT2, "sql=%s, explain=%v", sql, rows)
+		if buildTable == "t1" {
+			require.Less(t, idxT1, idxT2, "build side is not %s, sql=%s, explain=%v", buildTable, sql, rows)
+		} else {
+			require.Less(t, idxT2, idxT1, "build side is not %s, sql=%s, explain=%v", buildTable, sql, rows)
+		}
+	}
+
+	// Both build directions should be executable for full outer join.
+	sqlBuildT1 := "select /*+ HASH_JOIN_BUILD(t1) */ t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
+	sqlBuildT2 := "select /*+ HASH_JOIN_BUILD(t2) */ t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
+	assertBuildSide(sqlBuildT1, "t1")
+	assertBuildSide(sqlBuildT2, "t2")
+	tk.MustQuery(sqlBuildT1).Check(expectedBasicRows)
+	tk.MustQuery(sqlBuildT2).Check(expectedBasicRows)
+
+	// t1/t2 side filters in ON should not be pushed down as child selections in full join.
+	tk.MustQuery("select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a and t1.c = 1 and t2.c = 1 order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b").Check(testkit.Rows(
+		"1 10 1 100",
+		"2 20 <nil> <nil>",
+		"3 30 <nil> <nil>",
+		"<nil> <nil> 3 300",
+		"<nil> <nil> 4 400",
+		"<nil> <nil> <nil> 500",
+		"<nil> 40 <nil> <nil>",
+	))
+
+	// Key bucket exists but other condition filters all rows: both sides must be preserved as unmatched.
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+	tk.MustExec("insert into t3 values (1,1)")
+	tk.MustExec("insert into t4 values (1,2)")
+	tk.MustQuery("select t3.a, t3.b, t4.a, t4.b from t3 full outer join t4 on t3.a = t4.a and t3.b > t4.b order by isnull(t3.a), t3.a, isnull(t4.a), t4.a, t3.b, t4.b").Check(testkit.Rows(
+		"1 1 <nil> <nil>",
+		"<nil> <nil> 1 2",
+	))
+
+	// Null-safe equality can match NULL keys, while normal equality cannot.
+	tk.MustQuery("select t1.b, t2.b from t1 full outer join t2 on t1.a = t2.a where t1.a is null and t2.a is null order by t1.b, t2.b").Check(testkit.Rows(
+		"<nil> 500",
+		"40 <nil>",
+	))
+	tk.MustQuery("select t1.b, t2.b from t1 full outer join t2 on t1.a <=> t2.a where t1.a is null and t2.a is null order by t1.b, t2.b").Check(testkit.Rows(
+		"40 500",
+	))
+
+	// NULL-safe equality with duplicated NULL keys should produce N x M matches.
+	tk.MustExec("drop table if exists t5, t6")
+	tk.MustExec("create table t5(a int, b int)")
+	tk.MustExec("create table t6(a int, b int)")
+	tk.MustExec("insert into t5 values (null,1), (null,2), (1,10)")
+	tk.MustExec("insert into t6 values (null,100), (null,200), (2,20)")
+	tk.MustQuery("select t5.b, t6.b from t5 full outer join t6 on t5.a <=> t6.a where t5.a is null and t6.a is null order by t5.b, t6.b").Check(testkit.Rows(
+		"1 100",
+		"1 200",
+		"2 100",
+		"2 200",
+	))
+	tk.MustQuery("select t5.b, t6.b from t5 full outer join t6 on t5.a = t6.a where t5.a is null or t6.a is null order by isnull(t5.b), t5.b, isnull(t6.b), t6.b").Check(testkit.Rows(
+		"1 <nil>",
+		"2 <nil>",
+		"10 <nil>",
+		"<nil> 20",
+		"<nil> 100",
+		"<nil> 200",
+	))
+
+	// Multi-row key bucket + other-condition all filtered: every row on both sides should remain unmatched.
+	tk.MustExec("drop table if exists t7, t8")
+	tk.MustExec("create table t7(a int, b int)")
+	tk.MustExec("create table t8(a int, b int)")
+	tk.MustExec("insert into t7 values (1,1), (1,2)")
+	tk.MustExec("insert into t8 values (1,3), (1,4)")
+	tk.MustQuery("select t7.a, t7.b, t8.a, t8.b from t7 full outer join t8 on t7.a = t8.a and t7.b > t8.b order by isnull(t7.b), t7.b, isnull(t8.b), t8.b").Check(testkit.Rows(
+		"1 1 <nil> <nil>",
+		"1 2 <nil> <nil>",
+		"<nil> <nil> 1 3",
+		"<nil> <nil> 1 4",
+	))
+
+	// In one key bucket, only matched build rows should be marked as matched.
+	tk.MustExec("drop table if exists t9, t10")
+	tk.MustExec("create table t9(a int, b int)")
+	tk.MustExec("create table t10(a int, b int)")
+	tk.MustExec("insert into t9 values (1,1), (1,10)")
+	tk.MustExec("insert into t10 values (1,5)")
+	tk.MustQuery("select t9.a, t9.b, t10.a, t10.b from t9 full outer join t10 on t9.a = t10.a and t9.b > t10.b order by isnull(t9.b), t9.b, isnull(t10.b), t10.b").Check(testkit.Rows(
+		"1 1 <nil> <nil>",
+		"1 10 1 5",
+	))
+
+	// Complex other conditions should still keep unmatched rows from both sides.
+	tk.MustExec("drop table if exists t11, t12")
+	tk.MustExec("create table t11(a int, b int, c int)")
+	tk.MustExec("create table t12(a int, b int, c int)")
+	tk.MustExec("insert into t11 values (1,10,1), (1,2,0), (2,5,1), (3,8,0)")
+	tk.MustExec("insert into t12 values (1,3,1), (1,20,0), (2,4,0), (4,7,1)")
+	tk.MustQuery("select t11.a, t11.b, t12.a, t12.b from t11 full outer join t12 on t11.a = t12.a and ((t11.b > t12.b and t12.c = 1) or (t11.c = 1 and t12.b < 5)) order by isnull(t11.a), t11.a, isnull(t12.a), t12.a, isnull(t11.b), t11.b, isnull(t12.b), t12.b").Check(testkit.Rows(
+		"1 10 1 3",
+		"1 2 <nil> <nil>",
+		"2 5 2 4",
+		"3 8 <nil> <nil>",
+		"<nil> <nil> 1 20",
+		"<nil> <nil> 4 7",
+	))
+}
+
+func TestFullOuterJoinHashJoinV1Spill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_full_outer_join = 1")
+	tk.MustExec(join.DisableHashJoinV2)
+
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill"
+	require.NoError(t, failpoint.Enable(fpName, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+
+	originEnableTmpStorageOnOOM := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_tmp_storage_on_oom").Rows()[0][0])
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom=on")
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_tmp_storage_on_oom=%s", originEnableTmpStorageOnOOM))
+
+	originMemOOMAction := fmt.Sprint(tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0])
+	tk.MustExec("set global tidb_mem_oom_action='LOG'")
+	defer tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action='%s'", originMemOOMAction))
+
+	tk.MustExec("set @@tidb_mem_quota_query=1")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (1,10), (2,20), (2,21), (null,30)")
+	tk.MustExec("insert into t2 values (2,200), (3,300), (null,400)")
+
+	sql := "select /*+ HASH_JOIN_BUILD(t2) */ t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a"
+	explainRows := tk.MustQuery("explain analyze " + sql).Rows()
+	foundHashJoin := false
+	for _, row := range explainRows {
+		line := fmt.Sprint(row)
+		if strings.Contains(line, "HashJoin") {
+			disk := fmt.Sprint(row[len(row)-1])
+			require.NotContains(t, disk, "0 Bytes", "hash join should spill, row=%v", row)
+			foundHashJoin = true
+		}
+	}
+	require.True(t, foundHashJoin, "explain rows=%v", explainRows)
+
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 10 <nil> <nil>",
+		"2 20 2 200",
+		"2 21 2 200",
+		"<nil> 30 <nil> <nil>",
+		"<nil> <nil> 3 300",
+		"<nil> <nil> <nil> 400",
+	))
+}
+
+func TestFullOuterJoinHashJoinV1AgainstRewriteOracle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_full_outer_join = 1")
+	tk.MustExec(join.DisableHashJoinV2)
+
+	tk.MustExec("drop table if exists l, r")
+	tk.MustExec("create table l(id int primary key, k int, v int, f int)")
+	tk.MustExec("create table r(id int primary key, k int, v int, f int)")
+	tk.MustExec("insert into l values (1,1,10,1), (2,1,2,0), (3,2,5,1), (4,null,7,1), (5,3,8,0)")
+	tk.MustExec("insert into r values (11,1,3,1), (12,1,20,0), (13,2,4,0), (14,null,30,1), (15,4,9,1)")
+
+	assertEquivalent := func(fojSQL, rewriteSQL string) {
+		for _, hinted := range []string{
+			fojSQL,
+			strings.Replace(fojSQL, "select ", "select /*+ HASH_JOIN_BUILD(l) */ ", 1),
+			strings.Replace(fojSQL, "select ", "select /*+ HASH_JOIN_BUILD(r) */ ", 1),
+		} {
+			got := tk.MustQuery(hinted).Sort()
+			expected := tk.MustQuery(rewriteSQL).Sort()
+			got.Check(expected.Rows())
+		}
+	}
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k = r.k",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k = r.k "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k = r2.k where l2.id is null",
+	)
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k <=> r.k",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k <=> r.k "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k <=> r2.k where l2.id is null",
+	)
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k = r.k and l.f = 1 and r.f = 1",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k = r.k and l.f = 1 and r.f = 1 "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k = r2.k and l2.f = 1 and r2.f = 1 where l2.id is null",
+	)
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k = r.k and ((l.v > r.v and r.f = 1) or (l.f = 1 and r.v < 5))",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k = r.k and ((l.v > r.v and r.f = 1) or (l.f = 1 and r.v < 5)) "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k = r2.k and ((l2.v > r2.v and r2.f = 1) or (l2.f = 1 and r2.v < 5)) where l2.id is null",
+	)
+}
+
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -1774,6 +1774,17 @@ func TestTiDBHashJoinVersion(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTiDBEnableFullOuterJoin(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, DefTiDBEnableFullOuterJoin, vars.EnableFullOuterJoin)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableFullOuterJoin, "on"))
+	require.True(t, vars.EnableFullOuterJoin)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableFullOuterJoin, "0"))
+	require.False(t, vars.EnableFullOuterJoin)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableFullOuterJoin, "1"))
+	require.True(t, vars.EnableFullOuterJoin)
+}
+
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
 

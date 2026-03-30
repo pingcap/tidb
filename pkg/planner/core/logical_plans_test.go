@@ -235,6 +235,291 @@ func TestJoinPredicatePushDown(t *testing.T) {
 	}
 }
 
+func TestFullOuterJoinFeatureSwitchDefaultOff(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	_, err = BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.Error(t, err, sql)
+	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
+	require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
+}
+
+func TestFullOuterJoinLogicalBuild(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.NoError(t, err, sql)
+
+	proj, ok := p.(*logicalop.LogicalProjection)
+	require.True(t, ok, sql)
+	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
+	require.True(t, ok, sql)
+	require.Equal(t, logicalop.FullOuterJoin, join.JoinType, sql)
+
+	for _, col := range join.Schema().Columns {
+		require.False(t, mysql.HasNotNullFlag(col.RetType.GetFlag()), sql)
+	}
+	require.NotNil(t, join.FullSchema, sql)
+	for _, col := range join.FullSchema.Columns {
+		require.False(t, mysql.HasNotNullFlag(col.RetType.GetFlag()), sql)
+	}
+
+	p, err = logicalOptimize(ctx, rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+	require.NoError(t, err, sql)
+	proj, ok = p.(*logicalop.LogicalProjection)
+	require.True(t, ok, sql)
+	join, ok = proj.Children()[0].(*logicalop.LogicalJoin)
+	require.True(t, ok, sql)
+	require.NotEmpty(t, join.LeftConditions, sql)
+	require.NotEmpty(t, join.RightConditions, sql)
+	leftPlan, ok := join.Children()[0].(*logicalop.DataSource)
+	require.True(t, ok, sql)
+	rightPlan, ok := join.Children()[1].(*logicalop.DataSource)
+	require.True(t, ok, sql)
+	require.Empty(t, leftPlan.PushedDownConds, sql)
+	require.Empty(t, rightPlan.PushedDownConds, sql)
+}
+
+func TestFullOuterJoinUnsupportedFormsFailFast(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+
+	ctx := context.Background()
+	sqls := []string{
+		"select * from t t1 full outer join t t2 using (a)",
+		"select * from t t1 natural full outer join t t2",
+	}
+	for _, sql := range sqls {
+		stmt, err := s.p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err, sql)
+		_, err = BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.Error(t, err, sql)
+		require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
+		require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
+	}
+}
+
+func TestFullOuterJoinCascadesFailFast(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+	s.sctx.GetSessionVars().SetEnableCascadesPlanner(true)
+	defer s.sctx.GetSessionVars().SetEnableCascadesPlanner(false)
+
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	_, err = BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.Error(t, err, sql)
+	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
+	require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
+}
+
+func TestFullOuterJoinPhysicalPlanHashJoinOnly(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err, sql)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
+	require.NoError(t, err, sql)
+	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	require.NoError(t, err, sql)
+
+	var hashJoin *PhysicalHashJoin
+	var findHashJoin func(plan base.PhysicalPlan)
+	findHashJoin = func(plan base.PhysicalPlan) {
+		if hashJoin != nil {
+			return
+		}
+		if hj, ok := plan.(*PhysicalHashJoin); ok {
+			hashJoin = hj
+			return
+		}
+		for _, child := range plan.Children() {
+			findHashJoin(child)
+		}
+	}
+	findHashJoin(p.(base.PhysicalPlan))
+	require.NotNil(t, hashJoin, sql)
+	require.Equal(t, logicalop.FullOuterJoin, hashJoin.JoinType, sql)
+	require.False(t, hashJoin.UseOuterToBuild, sql)
+}
+
+func findFirstLogicalJoinType(p base.LogicalPlan) (logicalop.JoinType, bool) {
+	var (
+		joinType logicalop.JoinType
+		found    bool
+	)
+	var walk func(base.LogicalPlan)
+	walk = func(cur base.LogicalPlan) {
+		if found {
+			return
+		}
+		if join, ok := cur.(*logicalop.LogicalJoin); ok {
+			joinType, found = join.JoinType, true
+			return
+		}
+		for _, child := range cur.Children() {
+			walk(child)
+		}
+	}
+	walk(p)
+	return joinType, found
+}
+
+func collectLogicalJoins(p base.LogicalPlan) []*logicalop.LogicalJoin {
+	joins := make([]*logicalop.LogicalJoin, 0, 4)
+	var walk func(base.LogicalPlan)
+	walk = func(cur base.LogicalPlan) {
+		if join, ok := cur.(*logicalop.LogicalJoin); ok {
+			joins = append(joins, join)
+		}
+		for _, child := range cur.Children() {
+			walk(child)
+		}
+	}
+	walk(p)
+	return joins
+}
+
+func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+	ctx := context.Background()
+	tests := []struct {
+		sql      string
+		joinType logicalop.JoinType
+	}{
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1",
+			joinType: logicalop.LeftOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t2.b > 1",
+			joinType: logicalop.RightOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 and t2.b > 1",
+			joinType: logicalop.InnerJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 or t2.b > 1",
+			joinType: logicalop.FullOuterJoin,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, tt.sql)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.NoError(t, err, tt.sql)
+		p, err = logicalOptimize(ctx, rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+		require.NoError(t, err, tt.sql)
+		joinType, ok := findFirstLogicalJoinType(p.(base.LogicalPlan))
+		require.True(t, ok, tt.sql)
+		require.Equal(t, tt.joinType, joinType, tt.sql)
+	}
+}
+
+func TestFullOuterJoinSkipJoinReOrder(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a full outer join t t3 on t2.a = t3.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.NoError(t, err, sql)
+	p, err = logicalOptimize(ctx, rule.FlagPredicatePushDown|rule.FlagJoinReOrder, p.(base.LogicalPlan))
+	require.NoError(t, err, sql)
+	joins := collectLogicalJoins(p.(base.LogicalPlan))
+	require.NotEmpty(t, joins, sql)
+	hasFullOuterJoin := false
+	for _, join := range joins {
+		if join.JoinType == logicalop.FullOuterJoin {
+			hasFullOuterJoin = true
+			require.False(t, join.Reordered, sql)
+		}
+	}
+	require.True(t, hasFullOuterJoin, sql)
+}
+
+func TestFullOuterJoinConvertOuterToInner(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+	ctx := context.Background()
+	tests := []struct {
+		sql      string
+		joinType logicalop.JoinType
+	}{
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1",
+			joinType: logicalop.LeftOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t2.b > 1",
+			joinType: logicalop.RightOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 and t2.b > 1",
+			joinType: logicalop.InnerJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 or t2.b > 1",
+			joinType: logicalop.FullOuterJoin,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, tt.sql)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.NoError(t, err, tt.sql)
+		p, err = logicalOptimize(ctx, rule.FlagConvertOuterToInnerJoin, p.(base.LogicalPlan))
+		require.NoError(t, err, tt.sql)
+		joinType, ok := findFirstLogicalJoinType(p.(base.LogicalPlan))
+		require.True(t, ok, tt.sql)
+		require.Equal(t, tt.joinType, joinType, tt.sql)
+	}
+}
+
 func TestOuterWherePredicatePushDown(t *testing.T) {
 	var (
 		input  []string
