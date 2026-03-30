@@ -321,7 +321,15 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	if matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo); matched {
+	matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	if !matched {
+		matchedBinding = nil
+	}
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding)
+}
+
+func newPlanCacheKeyWithMatchedBinding(sctx sessionctx.Context, stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding) (key, binding string, cacheable bool, reason string, err error) {
+	if matchedBinding != nil {
 		// Record the matched binding SQL so the plan cache key reflects the effective hints.
 		binding = matchedBinding.BindSQL
 	}
