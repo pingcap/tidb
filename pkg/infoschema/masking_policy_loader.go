@@ -57,6 +57,14 @@ func LoadMaskingPolicies(
 	if !ok {
 		return nil, errors.New("failed to cast resource to sessionctx.Context")
 	}
+	// During bootstrap/reload, the internal session may temporarily carry a
+	// SessionExtendedInfoSchema wrapper without a concrete base infoschema.
+	// Skip loading in this transient state and let a later reload pick policies up.
+	if is := sctx.GetInfoSchema(); is == nil {
+		return nil, nil
+	} else if ext, ok := is.(*SessionExtendedInfoSchema); ok && ext.InfoSchema == nil {
+		return nil, nil
+	}
 
 	query, args := buildLoadMaskingPoliciesQuery(tableIDs)
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)

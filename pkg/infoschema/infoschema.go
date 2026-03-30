@@ -993,6 +993,9 @@ func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, tab
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, ErrTableNotExists.FastGenByArgs(schema, table)
+	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 
@@ -1034,6 +1037,9 @@ func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (ta
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, false
+	}
 	return ts.InfoSchema.TableByID(ctx, id)
 }
 

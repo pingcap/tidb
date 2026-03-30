@@ -616,15 +616,29 @@ func collectCoverProfileFile() {
 }
 
 func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
-	f, err := os.Open(filepath.Join(coverFileTempDir, file.Name()))
+	path := filepath.Join(coverFileTempDir, file.Name())
+	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Println("open temp cover file error:", err)
 		os.Exit(-1)
 	}
-	//nolint: errcheck
-	defer f.Close()
+	// Some Bazel actions may leave LCOV snippets (e.g. lines starting with "SF:")
+	// in the same temporary directory. Skip non-Go coverage files instead of failing
+	// the whole unit-test pipeline.
+	firstLine := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			firstLine = line
+			break
+		}
+	}
+	if !strings.HasPrefix(firstLine, "mode:") {
+		log.Printf("skip non-go coverage profile %s, first line: %q", file.Name(), firstLine)
+		return
+	}
 
-	profs, err := cover.ParseProfilesFromReader(f)
+	profs, err := cover.ParseProfilesFromReader(bytes.NewReader(data))
 	if err != nil {
 		fmt.Println("parse cover profile file error:", err)
 		os.Exit(-1)

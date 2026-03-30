@@ -972,6 +972,15 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
+	// Ensure the wrapper is defensive when the underlying InfoSchema is unavailable.
+	nilBaseIS := &infoschema.SessionExtendedInfoSchema{}
+	tbl, err = nilBaseIS.TableByName(context.Background(), dbTest.Name, normalTbTestA.Meta().Name)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
+	require.Nil(t, tbl)
+	tbl, ok = nilBaseIS.TableByID(context.Background(), normalTbTestA.Meta().ID)
+	require.False(t, ok)
+	require.Nil(t, tbl)
+
 	// test SchemaByTable
 	info, ok := is.SchemaByID(normalTbTestA.Meta().DBID)
 	require.True(t, ok)
