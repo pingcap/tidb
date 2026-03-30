@@ -1656,6 +1656,9 @@ const (
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
+	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
+	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
+	DefConnectAttrsSize int64 = 4096
 )
 
 // Process global variables.
@@ -1785,6 +1788,13 @@ var (
 
 	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
+	// ConnectAttrsSize is the max aggregate byte size of connection attributes allowed per connection.
+	// Corresponds to performance_schema_session_connect_attrs_size. Default 4096.
+	ConnectAttrsSize = atomic.NewInt64(DefConnectAttrsSize)
+	// ConnectAttrsLongestSeen tracks the largest connection attribute aggregate size seen so far.
+	ConnectAttrsLongestSeen = atomic.NewInt64(0)
+	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
+	ConnectAttrsLost = atomic.NewInt64(0)
 )
 
 var (
