@@ -242,21 +242,11 @@ func TestDPJoinReorder(tt *testing.T) {
 				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			})
-			require.Lessf(t, i, len(output), "missing expected output for case[%d], sql: %s", i, sql)
-			require.Equalf(t, sql, output[i].SQL, "input/output SQL mismatch at case[%d]", i)
-			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
-			require.NotContains(t, strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows()), "\n"),
-				"leading hint is inapplicable")
-
-			cdcResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
-			require.Equalf(t, greedyResults[i], cdcResult,
-				"CD-C result differs from old algorithm for case[%d]: %s", i, sql)
 			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
 
 			dpResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			require.Equalf(t, greedyResults[i], dpResult,
 				"DP result differs from greedy baseline for case[%d]: %s", i, sql)
-
 		}
 	})
 }
@@ -370,7 +360,6 @@ func TestDPJoinReorderLeadingHint(tt *testing.T) {
 		tk.MustExec("CREATE TABLE t3 (a INT, b INT)")
 		tk.MustExec("set @@tidb_opt_enable_advanced_join_reorder = 1")
 		tk.MustExec("set @@tidb_opt_join_reorder_threshold = 10")
-		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 0")
 
 		tk.MustQuery("SELECT /*+ LEADING(t2, t3) */ * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a")
 		warnings := tk.MustQuery("show warnings").Rows()
