@@ -1502,6 +1502,61 @@ func collectColIdxFromByItems(byItems []*plannerutil.ByItems, cols []*model.Colu
 	return colIdxs, nil
 }
 
+// removeRedundantAccessConditions removes access conditions from allConds that are
+// already satisfied by the index kvRanges and don't need to be reserved (i.e., the
+// condition references only full-length index columns). This mirrors the ranger's
+// shouldReserve logic: a condition is safe to remove only when all its referenced
+// columns are full-length index columns (IdxColLens[i] == types.UnspecifiedLength
+// or IdxColLens[i] == col.GetFlen()).
+func removeRedundantAccessConditions(
+	allConds []expression.Expression,
+	accessConds []expression.Expression,
+	idxCols []*expression.Column,
+	idxColLens []int,
+	evalCtx expression.EvalContext,
+) []expression.Expression {
+	// Build a set of full-length index column UniqueIDs.
+	fullLenColIDs := make(map[int64]struct{}, len(idxCols))
+	for i, col := range idxCols {
+		if i < len(idxColLens) {
+			length := idxColLens[i]
+			if length == types.UnspecifiedLength || length == col.GetType(evalCtx).GetFlen() {
+				fullLenColIDs[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+
+	// Build the set of canonical hash codes for access conditions that are safe to remove.
+	safeToRemove := make(map[string]struct{}, len(accessConds))
+	for _, ac := range accessConds {
+		cols := expression.ExtractColumns(ac)
+		allFullLen := true
+		for _, col := range cols {
+			if _, ok := fullLenColIDs[col.UniqueID]; !ok {
+				allFullLen = false
+				break
+			}
+		}
+		if allFullLen {
+			// CanonicalHashCode caches inside expression objects and is not goroutine-safe.
+			// Clone before hashing to avoid data races when building executors concurrently.
+			safeToRemove[string(ac.Clone().CanonicalHashCode())] = struct{}{}
+		}
+	}
+	if len(safeToRemove) == 0 {
+		return allConds
+	}
+
+	// Filter out conditions whose canonical hash matches a safe-to-remove access condition.
+	result := make([]expression.Expression, 0, len(allConds))
+	for _, cond := range allConds {
+		if _, ok := safeToRemove[string(cond.Clone().CanonicalHashCode())]; !ok {
+			result = append(result, cond)
+		}
+	}
+	return result
+}
+
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
@@ -1587,6 +1642,18 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 			}
 		}
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
+		// Remove access conditions already satisfied by kvRanges to avoid redundant EvalBool.
+		if idxReader, ok := v.Children()[0].(*physicalop.PhysicalIndexReader); ok {
+			if idxScan, ok := idxReader.IndexPlans[0].(*physicalop.PhysicalIndexScan); ok {
+				if len(idxScan.AccessCondition) > 0 && len(us.conditions) > 0 {
+					us.conditions = removeRedundantAccessConditions(
+						us.conditions, idxScan.AccessCondition,
+						idxScan.IdxCols, idxScan.IdxColLens,
+						b.ctx.GetExprCtx().GetEvalCtx(),
+					)
+				}
+			}
+		}
 		us.columns = x.columns
 		us.partitionIDMap = x.partitionIDMap
 		us.table = x.table
@@ -1658,6 +1725,7 @@ type bypassDataSourceExecutor interface {
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
 	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		b.observeCachedTable(tbl.Meta().ID)
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
@@ -1666,10 +1734,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
-			// Record the first cached table for result set caching.
-			if b.cachedTbl == nil {
-				b.cachedTbl = cachedTable
-			}
+			b.recordCachedTable(cachedTable)
 		} else if loading {
 			return
 		} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
@@ -6357,10 +6422,7 @@ func (b *executorBuilder) recordCachedTable(cachedTable table.CachedTable) {
 // wrapWithResultCache wraps the top-level executor with CachedResultExec when
 // the query is eligible for result set caching on a cached table.
 func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.StmtNode, plan base.Plan) exec.Executor {
-	if b.disableResultCache {
-		return e
-	}
-	if b.cachedTbl == nil {
+	if b.cachedTbl == nil || b.disableResultCache {
 		return e
 	}
 	inDML := b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt
@@ -6376,7 +6438,7 @@ func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.Stmt
 		return e
 	}
 	return &CachedResultExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), 0, e),
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), physPlan.ID(), e),
 		original:     e,
 		cachedTable:  b.cachedTbl,
 		cacheKey:     key,

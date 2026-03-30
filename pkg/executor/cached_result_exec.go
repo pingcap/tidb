@@ -50,6 +50,14 @@ type CachedResultExec struct {
 
 // Open checks the result cache before opening the wrapped executor.
 func (e *CachedResultExec) Open(ctx context.Context) error {
+	// Reset state in case Open is called multiple times.
+	e.hitCache = false
+	e.cachedChunks = nil
+	e.chunkIdx = 0
+	e.collecting = false
+	e.collectedChunks = nil
+	e.resultSchema = nil
+
 	chunks, fieldTypes, ok := e.cachedTable.GetCachedResult(e.cacheKey, e.paramBytes)
 	if ok && schemaMatch(fieldTypes, e.RetFieldTypes()) {
 		e.hitCache = true
@@ -141,7 +149,13 @@ func schemaMatch(cached, current []*types.FieldType) bool {
 		return false
 	}
 	for i := range cached {
-		if cached[i].GetType() != current[i].GetType() {
+		if cached[i] == nil || current[i] == nil {
+			if cached[i] != current[i] {
+				return false
+			}
+			continue
+		}
+		if !cached[i].Equal(current[i]) {
 			return false
 		}
 	}

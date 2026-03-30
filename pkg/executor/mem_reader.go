@@ -487,10 +487,12 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			return err
 		}
 
-		mutableRow.SetDatums(resultRows...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
-		if err != nil || !matched {
-			return err
+		if len(m.conditions) > 0 {
+			mutableRow.SetDatums(resultRows...)
+			matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
+			if err != nil || !matched {
+				return err
+			}
 		}
 		m.addedRows = append(m.addedRows, resultRows)
 		resultRows = make([]types.Datum, len(m.columns))
@@ -716,7 +718,7 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 				handle = newHandle
 			}
 		}
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if ph, ok := handle.(kv.PartitionHandle); ok {
 			if _, exist := m.partitionIDMap[ph.PartitionID]; !exist {
 				return nil
@@ -959,6 +961,8 @@ type memRowsIterForTable struct {
 func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 	curr := iter.kvIter
 	var ret []types.Datum
+	evalCtx := iter.ctx.GetExprCtx().GetEvalCtx()
+	hasConds := len(iter.conditions) > 0
 	for curr.Valid() {
 		key := curr.Key()
 		value := curr.Value()
@@ -984,14 +988,16 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 				return nil, errors.Trace(err)
 			}
 
-			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
-			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, mutableRow.ToRow())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !matched {
-				continue
+			if hasConds {
+				mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+				mutableRow.SetDatums(iter.datumRow...)
+				matched, _, err := expression.EvalBool(evalCtx, iter.conditions, mutableRow.ToRow())
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if !matched {
+					continue
+				}
 			}
 			return iter.datumRow, nil
 		}
@@ -1002,12 +1008,14 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		}
 
 		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !matched {
-			continue
+		if hasConds {
+			matched, _, err := expression.EvalBool(evalCtx, iter.conditions, row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
 		}
 		ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
 		break
@@ -1149,6 +1157,21 @@ func decodeHandleFromRowKey(key kv.Key, intHandle bool) (kv.Handle, error) {
 	return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
 }
 
+func memBufferHasAnyEntryInRanges(mb kv.MemBuffer, kvRanges []kv.KeyRange) bool {
+	if mb == nil || len(kvRanges) == 0 {
+		return false
+	}
+	for _, rg := range kvRanges {
+		it := mb.SnapshotIter(rg.StartKey, rg.EndKey)
+		hasAny := it.Valid()
+		it.Close()
+		if hasAny {
+			return true
+		}
+	}
+	return false
+}
+
 func (iter *memRowsBatchIterForTable) Close() {
 	if iter.kvIter != nil {
 		iter.kvIter.Close()
@@ -1185,7 +1208,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
 			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
 			if err != nil {
