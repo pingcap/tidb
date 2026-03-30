@@ -62,6 +62,8 @@ type UnionScanExec struct {
 	// datumCache holds pre-decoded datum cache for cached tables.
 	// When non-nil, memCachedDatumIter is used to skip KV decode.
 	datumCache *tables.CachedDatumData
+	// indexDatumCaches holds pre-decoded datum caches for index scans, keyed by index ID.
+	indexDatumCaches map[int64]*tables.CachedIndexDatumData
 
 	// If partitioned table and the physical table id is encoded in the chuck at this column index
 	// used with dynamic prune mode

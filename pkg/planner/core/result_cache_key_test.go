@@ -228,7 +228,6 @@ func TestBuildResultCacheKey_DifferentTimezones(t *testing.T) {
 	require.Equal(t, key1, key3)
 	require.Equal(t, pb1, pb3)
 }
-<<<<<<< HEAD
 
 func TestBuildResultCacheKey_PlanDigestVerificationBytes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
