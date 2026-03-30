@@ -1127,15 +1127,19 @@ func (*session) isTxnRetryableError(err error) bool {
 }
 
 func isEndTxnStmt(stmt ast.StmtNode, vars *variable.SessionVars) (bool, error) {
-	switch n := stmt.(type) {
+	resolvedStmt, err := resolvePreparedStmt(stmt, vars)
+	if err != nil {
+		return false, err
+	}
+	if resolvedStmt == nil {
+		return false, nil
+	}
+	if resolvedStmt != stmt {
+		return isEndTxnStmt(resolvedStmt, vars)
+	}
+	switch resolvedStmt.(type) {
 	case *ast.RollbackStmt, *ast.CommitStmt:
 		return true, nil
-	case *ast.ExecuteStmt:
-		ps, err := plannercore.GetPreparedStmt(n, vars)
-		if err != nil {
-			return false, err
-		}
-		return isEndTxnStmt(ps.PreparedAst.Stmt, vars)
 	}
 	return false, nil
 }
@@ -2493,11 +2497,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	})
 
 	var stmtLabel string
-	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
-		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
-		}
+	if resolvedStmt, err := resolvePreparedStmt(stmtNode, s.sessionVars); err == nil && resolvedStmt != nil {
+		stmtLabel = stmtctx.GetStmtLabel(ctx, resolvedStmt)
 	}
 	if stmtLabel == "" {
 		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
@@ -2734,6 +2735,27 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 var isNextGenForRUV2 = kerneltype.IsNextGen
 
+func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.StmtNode, error) {
+	if stmt == nil {
+		return nil, nil
+	}
+	execStmt, ok := stmt.(*ast.ExecuteStmt)
+	if !ok {
+		return stmt, nil
+	}
+	if vars == nil {
+		return nil, nil
+	}
+	prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+	if err != nil {
+		return nil, err
+	}
+	if prepareStmt == nil || prepareStmt.PreparedAst == nil {
+		return nil, nil
+	}
+	return prepareStmt.PreparedAst.Stmt, nil
+}
+
 func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
 	switch kv.GetInternalSourceType(ctx) {
 	case kv.InternalTxnOthers:
@@ -2749,19 +2771,12 @@ func isAnalyzeStatementForRUV2(stmtNode ast.StmtNode, sessVars *variable.Session
 	if stmtNode == nil || sessVars == nil {
 		return false
 	}
-	switch stmt := stmtNode.(type) {
-	case *ast.AnalyzeTableStmt:
-		return true
-	case *ast.ExecuteStmt:
-		prepareStmt, err := plannercore.GetPreparedStmt(stmt, sessVars)
-		if err != nil {
-			return false
-		}
-		_, ok := prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
-		return ok
-	default:
+	resolvedStmt, err := resolvePreparedStmt(stmtNode, sessVars)
+	if err != nil || resolvedStmt == nil {
 		return false
 	}
+	_, ok := resolvedStmt.(*ast.AnalyzeTableStmt)
+	return ok
 }
 
 func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
@@ -4801,20 +4816,11 @@ func (s *session) shouldUsePessimisticAutoCommit(stmtNode ast.StmtNode) bool {
 }
 
 // isDMLStatement checks if the given statement should use pessimistic-auto-commit.
-// It handles EXECUTE unwrapping and properly handles EXPLAIN statements by checking their inner statement.
+// It unwraps EXECUTE statements and properly handles EXPLAIN statements by checking their inner statement.
 func (s *session) isDMLStatement(stmtNode ast.StmtNode) bool {
-	if stmtNode == nil {
+	actualStmt, err := resolvePreparedStmt(stmtNode, s.GetSessionVars())
+	if err != nil || actualStmt == nil {
 		return false
-	}
-
-	// Handle EXECUTE statements - unwrap to get the actual prepared statement
-	actualStmt := stmtNode
-	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
-		if err != nil || prepareStmt == nil {
-			return false
-		}
-		actualStmt = prepareStmt.PreparedAst.Stmt
 	}
 
 	// For EXPLAIN statements, check the underlying statement
