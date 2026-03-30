@@ -1878,6 +1878,7 @@ func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...a
 	defer r.End()
 	logutil.Eventf(ctx, "execute: %s", sql)
 
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
 	if err != nil {
 		return nil, err
