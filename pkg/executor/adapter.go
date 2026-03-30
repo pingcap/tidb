@@ -1699,7 +1699,6 @@ func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
 		return
 	}
 
-	metrics.RUV2ExecutorL5InsertRows.Add(float64(affectedRows))
 	if sessVars.RUV2Metrics != nil {
 		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
 	}

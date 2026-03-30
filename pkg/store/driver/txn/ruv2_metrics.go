@@ -15,7 +15,6 @@
 package txn
 
 import (
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -60,11 +59,9 @@ func updateResourceManagerRUV2Metrics(ruv2Metrics *execdetails.RUV2Metrics, req 
 		return
 	}
 	if req.IsTxnWriteRequest() || req.IsRawWriteRequest() {
-		metrics.RUV2ResourceManagerWriteCnt.Add(1)
 		ruv2Metrics.AddResourceManagerWriteCnt(1)
 		return
 	}
-	metrics.RUV2ResourceManagerReadCnt.Add(1)
 	ruv2Metrics.AddResourceManagerReadCnt(1)
 }
 
@@ -77,11 +74,9 @@ func updateStorageProcessedKeysRUV2Metrics(ruv2Metrics *execdetails.RUV2Metrics,
 		return
 	}
 	if details.RuV2.StorageProcessedKeysBatchGet != 0 {
-		metrics.RUV2TiKVStorageProcessedKeysBatchGet.Add(float64(details.RuV2.StorageProcessedKeysBatchGet))
 		ruv2Metrics.AddTiKVStorageProcessedKeysBatchGet(int64(details.RuV2.StorageProcessedKeysBatchGet))
 	}
 	if details.RuV2.StorageProcessedKeysGet != 0 {
-		metrics.RUV2TiKVStorageProcessedKeysGet.Add(float64(details.RuV2.StorageProcessedKeysGet))
 		ruv2Metrics.AddTiKVStorageProcessedKeysGet(int64(details.RuV2.StorageProcessedKeysGet))
 	}
 }
