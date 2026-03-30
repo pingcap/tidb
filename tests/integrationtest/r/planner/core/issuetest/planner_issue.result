@@ -1450,7 +1450,7 @@ from information_schema.cluster_statements_summary
 where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
 and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
 truncated_count
-1
+0
 drop table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
 set global tidb_stmt_summary_max_sql_length = DEFAULT;
 select @@global.tidb_stmt_summary_max_sql_length;

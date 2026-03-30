@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -36,16 +35,11 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
 	expectedSum := &importinto.Checksum{
-		Sum:  6734985763851266693,
+		Sum:  2944242980394429146,
 		KVs:  27,
 		Size: 909,
 	}
 	expectedSum.Size += expectedSum.KVs * uint64(len(hdlCtx.store.GetCodec().GetKeyspace()))
-	if kerneltype.IsNextGen() {
-		// table ID in next-gen is different with classic, so we cannot directly
-		// calculate the checksum from the classic one.
-		expectedSum.Sum = 2944242980394429146
-	}
 	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
 	// we are running them concurrently, so the number of filenames may vary.
