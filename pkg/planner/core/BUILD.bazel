@@ -222,6 +222,7 @@ go_test(
         "lateral_join_test.go",
         "logical_plans_test.go",
         "main_test.go",
+        "masking_policy_at_result_test.go",
         "masking_policy_expr_cache_test.go",
         "masking_policy_projection_test.go",
         "masking_policy_restrict_test.go",
