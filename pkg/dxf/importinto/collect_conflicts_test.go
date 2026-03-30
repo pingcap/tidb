@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -34,13 +35,19 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	expectedSum := &importinto.Checksum{
-		Sum:  2944242980394429146,
-		KVs:  27,
-		Size: 909,
+	expectedSums := []uint64{
+		2944242980394429146, // classic
+		6636364898488969870, // next-gen
 	}
-	expectedSum.Size += expectedSum.KVs * uint64(len(hdlCtx.store.GetCodec().GetKeyspace()))
-	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
+	if kerneltype.IsClassic() {
+		expectedSums = expectedSums[:1]
+	} else {
+		expectedSums = expectedSums[1:]
+	}
+	expectedSize := uint64(909) + uint64(27)*uint64(len(hdlCtx.store.GetCodec().GetKeyspace()))
+	require.Contains(t, expectedSums, outSTMeta.Checksum.Sum)
+	require.EqualValues(t, 27, outSTMeta.Checksum.KVs)
+	require.EqualValues(t, expectedSize, outSTMeta.Checksum.Size)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
 	// we are running them concurrently, so the number of filenames may vary.
 	require.GreaterOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 2)
