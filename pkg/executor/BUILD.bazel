@@ -364,6 +364,7 @@ go_test(
         "tikv_regions_peers_table_test.go",
         "trace_test.go",
         "union_scan_test.go",
+        "unionexec_shutdown_test.go",
         "update_test.go",
         "utils_test.go",
         "window_test.go",
