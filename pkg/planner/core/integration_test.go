@@ -2273,7 +2273,7 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "Column->Column, Column->Column, Column->Column, Column->Column, Column->Column, stream_count: 8"},
+			{"  └─Projection", "mpp[tiflash]", "Column, Column, Column, Column, Column, stream_count: 8"},
 			{"    └─Window", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column, count(test.t.v)->Column, avg(cast(test.t.v, decimal(10,0) BINARY))->Column, min(test.t.v)->Column, max(test.t.v)->Column over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
 			{"      └─Sort", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
 			{"        └─ExchangeReceiver", "mpp[tiflash]", "stream_count: 8"},
