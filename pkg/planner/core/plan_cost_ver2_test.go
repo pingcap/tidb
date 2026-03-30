@@ -131,6 +131,34 @@ func TestCostModelTraceVer2(t *testing.T) {
 	}
 }
 
+func TestFullOuterJoinTailScanCostVer2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+	tk.MustExec("set @@tidb_enable_full_outer_join=1")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+
+	parseTopHashJoinCost := func(sql string) float64 {
+		rows := tk.MustQuery("explain format=verbose " + sql).Rows()
+		require.NotEmpty(t, rows, "sql=%s", sql)
+		op := rows[0][0].(string)
+		require.Contains(t, op, "HashJoin", "sql=%s, explain=%v", sql, rows)
+		planCost, err := strconv.ParseFloat(rows[0][2].(string), 64)
+		require.NoError(t, err)
+		return planCost
+	}
+
+	innerJoinSQL := "select /*+ HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a = t2.a"
+	fullOuterJoinSQL := "select /*+ HASH_JOIN(t1, t2) */ * from t1 full outer join t2 on t1.a = t2.a"
+
+	innerCost := parseTopHashJoinCost(innerJoinSQL)
+	fullOuterCost := parseTopHashJoinCost(fullOuterJoinSQL)
+	require.Greater(t, fullOuterCost, innerCost)
+}
+
 func BenchmarkGetPlanCost(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

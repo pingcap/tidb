@@ -58,6 +58,7 @@ import (
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
+	fullJoinType         "FULL OUTER JOIN"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -1701,7 +1702,7 @@ import (
 %right '('
 %left ')'
 %precedence higherThanParenthese
-%left join straightJoin inner cross left right full natural
+%left join straightJoin inner cross left right full fullJoinType natural
 %precedence lowerThanOn
 %precedence on using
 %right assignmentEq
@@ -10604,6 +10605,10 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = ast.RightJoin
+	}
+|	fullJoinType
+	{
+		$$ = ast.FullJoin
 	}
 
 OuterOpt:

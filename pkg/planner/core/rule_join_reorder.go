@@ -55,8 +55,19 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
 	}
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
+	if isJoin && join.JoinType == logicalop.FullOuterJoin {
+		// Full outer join is not reordered in phase-1. Keep it as an atomic node even if join reorder is enabled.
+		if joinOrderHintInfo != nil {
+			join.HintInfo = nil
+		}
+		return &joinGroupResult{
+			group:              []base.LogicalPlan{p},
+			joinOrderHintInfo:  joinOrderHintInfo,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+	}
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
-		(join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin) ||
+		(join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin && join.JoinType != logicalop.FullOuterJoin) ||
 		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) ||
 		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
 		// so we skip the join order when to meet the NullEQ in the EQCond
