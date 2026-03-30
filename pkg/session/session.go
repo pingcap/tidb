@@ -151,6 +151,10 @@ type stmtRecord struct {
 	stmtCtx *stmtctx.StatementContext
 }
 
+const internalAdvisoryLockOwnerIDBase = uint64(1) << 32
+
+var internalAdvisoryLockOwnerIDAlloc atomic.Uint64
+
 // StmtHistory holds all histories of statements in a txn.
 type StmtHistory struct {
 	history []*stmtRecord
@@ -201,6 +205,9 @@ type session struct {
 	ddlOwnerManager owner.Manager
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
+	// advisoryLockOwnerID caches a stable non-zero owner ID for the session once
+	// it participates in advisory locking.
+	advisoryLockOwnerID atomic.Uint64
 
 	// client shared coprocessor client per session
 	client kv.Client
@@ -1677,7 +1684,7 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		return err
 	}
 	infosync.StoreInternalSession(sess)
-	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.getAdvisoryLockOwner()}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
@@ -1698,7 +1705,7 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	if err != nil {
 		return 0
 	}
-	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: 0}
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
 		// TODO: Return actual owner pid
@@ -1706,6 +1713,26 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 		return 1
 	}
 	return 0
+}
+
+func (s *session) getAdvisoryLockOwner() uint64 {
+	if ownerID := s.advisoryLockOwnerID.Load(); ownerID != 0 {
+		return ownerID
+	}
+	ownerID := uint64(0)
+	if processInfo := s.ShowProcess(); processInfo != nil {
+		ownerID = processInfo.ID
+	}
+	if ownerID == 0 {
+		// Use an internal namespace that cannot collide with real connection IDs:
+		// it is always even and larger than uint32, while real 64-bit connection IDs
+		// are odd and real 32-bit connection IDs fit in uint32.
+		ownerID = internalAdvisoryLockOwnerIDBase + (internalAdvisoryLockOwnerIDAlloc.Add(1) << 1)
+	}
+	if s.advisoryLockOwnerID.CompareAndSwap(0, ownerID) {
+		return ownerID
+	}
+	return s.advisoryLockOwnerID.Load()
 }
 
 // ReleaseAdvisoryLock releases an advisory locks held by the session.
@@ -2588,6 +2615,7 @@ func (s *session) Close() {
 		}
 	}
 	s.ReleaseAllAdvisoryLocks()
+	s.advisoryLockOwnerID.Store(0)
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
