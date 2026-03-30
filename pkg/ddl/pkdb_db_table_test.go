@@ -181,6 +181,27 @@ func TestCreateTableAsSelect(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// tk.MustQuery("select id, b, json_extract(jdata, '$.id') from t16").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 
+	// Case 17: Create table as select with GROUP_CONCAT oversized string metadata
+	tk.MustExec("create table t_gc_src (id varchar(32), name varchar(32));")
+	tk.MustExec("insert into t_gc_src values " +
+		"('1', 'abcdefghij')," +
+		"('1', 'mnopqrstu')," +
+		"('2', 'zzzzzzzzz')," +
+		"('2', 'yyyyyyyyy');")
+	tk.MustExec("create table t_gc as " +
+		"select id, group_concat(name order by name separator '') as name " +
+		"from (" +
+		"    select id, substring(name, 1, 7) as name " +
+		"    from t_gc_src " +
+		"    where length(name) > 8" +
+		") t " +
+		"group by id;")
+	tk.MustQuery("select * from t_gc order by id").Check(testkit.Rows("1 abcdefgmnopqrs", "2 yyyyyyyzzzzzzz"))
+	tk.MustQuery("show create table t_gc").Check(testkit.Rows("t_gc CREATE TABLE `t_gc` (\n" +
+		"  `id` varchar(32) DEFAULT NULL,\n" +
+		"  `name` longtext DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
 	// Case 17: Create table with default value
 
 	// tk.MustExec("create table t200 (id INT NOT NULL DEFAULT 100, name VARCHAR(50) DEFAULT 'unknown', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")

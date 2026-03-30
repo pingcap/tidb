@@ -5963,17 +5963,46 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 	return nil
 }
 
-// convertRetType checks the type of the column and changes it (eg. VarString -> Varchar)
-// it's used in create table as select statement to show the correct type, such as using `show create table`
-// for now, we only support convert VarString to Varchar
+// convertRetType adjusts inferred SELECT output types for CTAS column definitions.
 func convertRetType(fieldType *types.FieldType) *types.FieldType {
 	tp := fieldType.Clone()
 	if fieldType.GetType() == mysql.TypeVarString {
-		// change VarString to Varchar
-		// charset and collate are set behind the scenes
 		tp.SetType(mysql.TypeVarchar)
+		if ctasNeedsTextFallback(tp) {
+			ctasConvertToTextOrBlobFamily(tp)
+		}
 	}
 	return tp
+}
+
+func ctasNeedsTextFallback(tp *types.FieldType) bool {
+	if tp.GetType() != mysql.TypeVarchar || tp.GetFlen() == types.UnspecifiedLength {
+		return false
+	}
+	return terror.ErrorEqual(types.ErrTooBigFieldLength, types.IsVarcharTooBigFieldLength(tp.GetFlen(), "", tp.GetCharset()))
+}
+
+func ctasConvertToTextOrBlobFamily(tp *types.FieldType) {
+	cs, err := charset.GetCharsetInfo(tp.GetCharset())
+	if err != nil {
+		return
+	}
+
+	tp.SetType(mysql.TypeBlob)
+	l := tp.GetFlen() * cs.Maxlen
+	switch {
+	case l <= 255:
+		tp.SetType(mysql.TypeTinyBlob)
+		tp.SetFlen(255)
+	case l <= 65535:
+		tp.SetFlen(65535)
+	case l <= 16777215:
+		tp.SetType(mysql.TypeMediumBlob)
+		tp.SetFlen(16777215)
+	default:
+		tp.SetType(mysql.TypeLongBlob)
+		tp.SetFlen(mysql.MaxLongBlobWidth)
+	}
 }
 
 // checkCreateTableAsSelect checks the create table as select statement and necessary privileges
