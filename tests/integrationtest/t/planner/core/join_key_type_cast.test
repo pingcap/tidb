@@ -73,9 +73,42 @@ insert into t_null_str values ('1', 10), (NULL, 20), ('2', 30);
 select * from t_null_int join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
 select * from t_null_int left join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
 
+# TestJoinKeyTypeCastOverflow
+# VARCHAR values larger than INT64_MAX must not produce incorrect matches.
+drop table if exists t_overflow_int, t_overflow_str;
+create table t_overflow_int (id bigint primary key, v int);
+create table t_overflow_str (id varchar(30), v int);
+
+insert into t_overflow_int values (9223372036854775807, 1);
+insert into t_overflow_str values ('9223372036854775807', 10), ('9223372036854775808', 20), ('99999999999999999999', 30);
+
+# Only '9223372036854775807' should match (exact INT64_MAX).
+# '9223372036854775808' overflows SIGNED and must not match.
+select * from t_overflow_int join t_overflow_str on t_overflow_int.id = t_overflow_str.id;
+
 # TestJoinKeyTypeCastWhereClause
 # The optimization should also work when the join condition comes from WHERE.
 select * from t_int, t_varchar where t_int.id = t_varchar.id order by t_int.id;
+
+# TestJoinKeyTypeCastIndexJoin
+# Demonstrate that IndexJoin is now viable for INT-vs-VARCHAR joins.
+# Before the optimization, the condition was in OtherConditions with DOUBLE
+# casts on both sides, so IndexJoin was impossible. After the rewrite, the
+# INT column is a bare join key and its index can be used.
+drop table if exists t_idx_int, t_idx_str;
+create table t_idx_int (id int primary key, v int);
+create table t_idx_str (id varchar(20), v int, index idx_id(id));
+
+insert into t_idx_int values (1, 10), (2, 20), (3, 30);
+insert into t_idx_str values ('1', 10), ('2', 20), ('1.5', 15);
+analyze table t_idx_int;
+analyze table t_idx_str;
+
+# With INL_JOIN hint on the INT table: should produce IndexJoin using the PK.
+explain format = 'brief' select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
+
+# Verify correctness: '1.5' must NOT match int 1.
+select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id order by t_idx_int.id;
 
 # TestJoinKeyTypeCastMultiWayJoin
 # Complex multi-way join with VARCHAR vs INT across multiple joins.

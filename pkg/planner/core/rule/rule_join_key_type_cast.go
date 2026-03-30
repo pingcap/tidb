@@ -141,16 +141,21 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 			continue
 		}
 
-		// Add NEW expressions to each Projection (don't modify existing ones).
-		// INT side: pass through the bare int column.
+		// INT side: add a pass-through of the bare int column, keeping
+		// origCol.UniqueID. This preserves the identity so that the index
+		// join builder can match it to the table's PK/index and the
+		// selectivity estimator can look up the original column's NDV.
 		newIntCol := &expression.Column{
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: intInfo.origCol.UniqueID,
 			RetType:  intInfo.origCol.RetType.Clone(),
 		}
 		intInfo.proj.Exprs = append(intInfo.proj.Exprs, intInfo.origCol.Clone())
 		intInfo.proj.Schema().Append(newIntCol)
 
-		// VARCHAR side: CAST(varchar_col AS SIGNED).
+		// VARCHAR side: add CAST(varchar_col AS SIGNED). We allocate a new
+		// UniqueID here because the data type changes (VARCHAR→INT), and
+		// reusing the VARCHAR column's UniqueID would cause the executor to
+		// read VARCHAR chunk data as INT.
 		castIntExpr := expression.WrapWithCastAsInt(exprCtx, strInfo.origCol.Clone(), intInfo.origCol.RetType)
 		newStrCol := &expression.Column{
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
