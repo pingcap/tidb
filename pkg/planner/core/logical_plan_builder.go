@@ -725,7 +725,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// built (see below), where a tighter check is applied.
 	isLateral := containsLateralTableSource(joinNode.Right)
 
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagJoinKeyTypeCast
 	// Don't enable join reorder for LATERAL (similar to StraightJoin)
 	// LATERAL has order dependencies: right side can reference left side
 	if !isLateral {

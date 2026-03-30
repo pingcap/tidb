@@ -1,0 +1,78 @@
+# TestJoinKeyTypeCastBasic
+# When joining INT and VARCHAR columns, the planner should rewrite the
+# implicit double-cast join condition into an integer equality with a
+# guard predicate and projection, enabling index usage on the INT column.
+
+drop table if exists t_int, t_varchar;
+create table t_int (id int primary key, v int);
+create table t_varchar (id varchar(20) primary key, v int);
+
+insert into t_int values (1, 10), (2, 20), (3, 30), (100, 100), (0, 0);
+insert into t_varchar values ('1', 10), ('2', 20), ('4', 40), ('1.5', 15), ('abc', 99), ('100', 100), ('0', 0);
+analyze table t_int;
+analyze table t_varchar;
+
+# Basic inner join: should produce EqualConditions (not OtherConditions with casts).
+explain format = 'brief' select * from t_int join t_varchar on t_int.id = t_varchar.id;
+
+# Verify correctness: '1.5' should NOT match int 1, 'abc' SHOULD match int 0
+# (since CAST('abc' AS DOUBLE) = 0.0 and CAST(0 AS DOUBLE) = 0.0).
+select * from t_int join t_varchar on t_int.id = t_varchar.id order by t_int.id;
+
+# Left outer join: unmatched left rows should still appear with NULLs.
+select * from t_int left join t_varchar on t_int.id = t_varchar.id order by t_int.id;
+
+# Right outer join: unmatched right rows should still appear.
+select * from t_varchar right join t_int on t_int.id = t_varchar.id order by t_int.id;
+
+# TestJoinKeyTypeCastVariousIntTypes
+# Different INT widths should all work.
+drop table if exists t_tiny, t_big;
+create table t_tiny (id tinyint primary key, v int);
+create table t_big (id bigint primary key, v int);
+
+insert into t_tiny values (1, 10), (2, 20), (127, 127);
+insert into t_big values (1, 10), (3, 30), (9999999999, 99);
+
+select * from t_tiny join t_varchar on t_tiny.id = t_varchar.id order by t_tiny.id;
+select * from t_big join t_varchar on t_big.id = t_varchar.id order by t_big.id;
+
+# TestJoinKeyTypeCastUnsignedSkipped
+# Unsigned INT columns should NOT be rewritten (out of scope for initial implementation).
+drop table if exists t_uint;
+create table t_uint (id int unsigned primary key, v int);
+insert into t_uint values (1, 10), (2, 20);
+
+# This should still work correctly (using the original double-cast path).
+explain format = 'brief' select * from t_uint join t_varchar on t_uint.id = t_varchar.id;
+select * from t_uint join t_varchar on t_uint.id = t_varchar.id order by t_uint.id;
+
+# TestJoinKeyTypeCastMixedConditions
+# A join with both type-matched and type-mismatched conditions.
+drop table if exists t_mixed_int, t_mixed_str;
+create table t_mixed_int (id int, name varchar(20), index idx_id(id));
+create table t_mixed_str (id varchar(20), name varchar(20), index idx_id(id));
+
+insert into t_mixed_int values (1, 'a'), (2, 'b'), (3, 'c');
+insert into t_mixed_str values ('1', 'a'), ('2', 'x'), ('1.5', 'a');
+
+# name = name is same-type (goes to EqualConditions normally).
+# id = id is type-mismatched (rewritten by our rule).
+explain format = 'brief' select * from t_mixed_int join t_mixed_str on t_mixed_int.id = t_mixed_str.id and t_mixed_int.name = t_mixed_str.name;
+select * from t_mixed_int join t_mixed_str on t_mixed_int.id = t_mixed_str.id and t_mixed_int.name = t_mixed_str.name order by t_mixed_int.id;
+
+# TestJoinKeyTypeCastNullHandling
+# NULL values should not produce false matches.
+drop table if exists t_null_int, t_null_str;
+create table t_null_int (id int, v int);
+create table t_null_str (id varchar(20), v int);
+
+insert into t_null_int values (1, 10), (NULL, 20);
+insert into t_null_str values ('1', 10), (NULL, 20), ('2', 30);
+
+select * from t_null_int join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
+select * from t_null_int left join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
+
+# TestJoinKeyTypeCastWhereClause
+# The optimization should also work when the join condition comes from WHERE.
+select * from t_int, t_varchar where t_int.id = t_varchar.id order by t_int.id;
