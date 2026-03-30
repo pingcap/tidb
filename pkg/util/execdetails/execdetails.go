@@ -616,7 +616,6 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
-
 // ResultCacheRuntimeStats records result cache hit/miss info for EXPLAIN ANALYZE.
 type ResultCacheRuntimeStats struct {
 	HitCache   bool
