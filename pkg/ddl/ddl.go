@@ -966,6 +966,9 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
+// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
+// version is always started with V2, no need to detect kernel version.
+//
 // detect versions of all TiDB instances and choose a job version to use, rules:
 //   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
 //     is not set, else use V1, we use this rule to run unit-tests using V1.
