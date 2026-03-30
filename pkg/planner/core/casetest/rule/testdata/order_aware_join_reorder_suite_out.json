@@ -15,7 +15,7 @@
           "        ├─TableReader(Build) root  data:TableFullScan",
           "        │ └─TableFullScan cop[tikv] table:t7 keep order:true",
           "        └─IndexReader(Probe) root  index:IndexRangeScan",
-          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true"
+          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true"
         ],
         "Result": [
           "1 100 1000",
@@ -29,7 +29,7 @@
           "└─Limit root  offset:0, count:2",
           "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
           "    ├─IndexReader(Build) root  index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
           "    └─MergeJoin(Probe) root  inner join, left key:test.t7.id, right key:test.t8.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
           "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
@@ -51,7 +51,7 @@
           "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
           "      │ ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
           "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
-          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
           "      │ │ └─TableReader(Probe) root  data:TableRangeScan",
           "      │ │   └─TableRangeScan cop[tikv] table:t7 range: decided by [test.t6.id], keep order:false",
           "      │ └─TableReader(Probe) root  data:TableRangeScan",
@@ -71,7 +71,7 @@
           "└─Limit root  offset:0, count:2",
           "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
           "    ├─IndexReader(Build) root  index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
           "    └─IndexJoin(Probe) root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
           "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
           "      │ ├─TableReader(Build) root  data:TableFullScan",
@@ -104,7 +104,7 @@
           "        ├─TableReader(Build) root  data:TableFullScan",
           "        │ └─TableFullScan cop[tikv] table:t7 keep order:true",
           "        └─IndexReader(Probe) root  index:IndexRangeScan",
-          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true"
+          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true"
         ]
       },
       {
@@ -114,7 +114,7 @@
           "└─Limit root  offset:0, count:2",
           "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
           "    ├─IndexReader(Build) root  index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
           "    └─MergeJoin(Probe) root  inner join, left key:test.t7.id, right key:test.t8.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
           "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
@@ -132,7 +132,7 @@
           "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
           "      │ ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
           "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
-          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
           "      │ │ └─TableReader(Probe) root  data:TableRangeScan",
           "      │ │   └─TableRangeScan cop[tikv] table:t7 range: decided by [test.t6.id], keep order:false",
           "      │ └─TableReader(Probe) root  data:TableRangeScan",
@@ -148,7 +148,7 @@
           "└─Limit root  offset:0, count:2",
           "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
           "    ├─IndexReader(Build) root  index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
           "    └─IndexJoin(Probe) root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
           "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
           "      │ ├─TableReader(Build) root  data:TableFullScan",

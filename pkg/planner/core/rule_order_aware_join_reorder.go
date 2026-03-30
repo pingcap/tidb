@@ -163,6 +163,12 @@ func extractOrderingColumns(items []*plannerutil.ByItems) []*expression.Column {
 	}
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {
+		// The current matcher only reasons about forward index order, so bail out
+		// once ORDER BY contains a descending item instead of silently treating it
+		// as ascending.
+		if item.Desc {
+			return nil
+		}
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil

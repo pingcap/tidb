@@ -55,14 +55,16 @@ func AnnotateOrderedLeading(root base.LogicalPlan, orderingCols []*expression.Co
 	}
 
 	anchor := findLeadingHintAnchor(group.root)
-	if len(group.leadingHints) > 0 || anchor == nil || anchor.PreferJoinOrder || anchor.PreferJoinType > 0 || anchor.HintInfo != nil || choice.LeadingTable == nil {
+	if len(group.leadingHints) > 0 || anchor == nil || anchor.PreferJoinOrder || anchor.InternalPreferJoinOrder ||
+		anchor.PreferJoinType > 0 || anchor.HintInfo != nil || anchor.InternalHintInfo != nil || choice.LeadingTable == nil {
 		return nil, false
 	}
 
-	// once order is aware-ed, setting the leading hint on the anchor join and mark it as prefer join order.
-	// This is an internal hint that won't be exposed to users, we just take advantage of the existing leading hint preferring.
-	anchor.PreferJoinOrder = true
-	anchor.HintInfo = buildSingleTableLeadingHint(choice.LeadingTable)
+	// Record the ordered-leading choice separately from user hints so downstream
+	// warning paths can keep treating user-provided LEADING differently from this
+	// synthesized preference.
+	anchor.InternalPreferJoinOrder = true
+	anchor.InternalHintInfo = buildSingleTableLeadingHint(choice.LeadingTable)
 	return choice, true
 }
 
@@ -231,6 +233,9 @@ func indexMatchesOrdering(
 		colID := ds.TableInfo.Columns[idxCol.Offset].ID
 		if orderPos < len(orderingColIDs) && colID == orderingColIDs[orderPos] {
 			orderPos++
+			if orderPos == len(orderingColIDs) {
+				return true
+			}
 			continue
 		}
 		if orderPos == 0 {
@@ -342,17 +347,18 @@ func extractEqualityColumns(expr expression.Expression, result map[int64]struct{
 
 	if sf.FuncName.L == ast.In {
 		args := sf.GetArgs()
-		if len(args) < 2 {
+		// Only singleton IN behaves like a fixed prefix here. Multi-value IN still
+		// scans multiple point ranges on the leading index column, which does not
+		// preserve the global order of later index columns.
+		if len(args) != 2 {
 			return
 		}
 		col, ok := args[0].(*expression.Column)
 		if !ok || col.ID <= 0 {
 			return
 		}
-		for _, arg := range args[1:] {
-			if !isDeterministicConstExpr(arg) {
-				return
-			}
+		if !isDeterministicConstExpr(args[1]) {
+			return
 		}
 		result[col.ID] = struct{}{}
 	}

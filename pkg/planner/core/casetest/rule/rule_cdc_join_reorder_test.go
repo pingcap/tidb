@@ -20,14 +20,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
 func prepareOrderAwareJoinReorderTables(tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t6, t7, t8, t9")
-	tk.MustExec("create table t6(id int not null, category varchar(20), payload int, key idx_category_id(category, id))")
+	tk.MustExec("create table t6(id int not null, category varchar(20), payload int, key idx_category_id_payload(category, id, payload))")
 	tk.MustExec("create table t7(id int not null primary key, payload int)")
 	tk.MustExec("create table t8(id int not null primary key, payload int)")
 	tk.MustExec("create table t9(id int not null primary key, payload int)")
@@ -81,8 +80,6 @@ func TestCDCJoinReorder(tt *testing.T) {
 
 		// Phase 2: Enable CD-C algorithm, then verify both the plan and the
 		// result correctness for every case.
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
-
 		for i, sql := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
@@ -120,8 +117,6 @@ func TestJoinReorderPushSelection(tt *testing.T) {
 		tk.MustExec("analyze table t3 all columns")
 		tk.MustExec("analyze table t4 all columns")
 		tk.MustExec("analyze table t5 all columns")
-
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
 
 		var input []string
 		var output []struct {
@@ -181,8 +176,6 @@ func TestOrderAwareCDCJoinReorder(tt *testing.T) {
 			expectedResults[i] = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		}
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
-
 		for i, sql := range input {
 			testdata.OnRecord(func() {
 				if i >= len(output) {
@@ -199,6 +192,8 @@ func TestOrderAwareCDCJoinReorder(tt *testing.T) {
 			require.Lessf(t, i, len(output), "missing expected output for case[%d], sql: %s", i, sql)
 			require.Equalf(t, sql, output[i].SQL, "input/output SQL mismatch at case[%d]", i)
 			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
+			require.NotContains(t, strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows()), "\n"),
+				"leading hint is inapplicable")
 
 			cdcResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			require.Equalf(t, expectedResults[i], cdcResult,
@@ -211,8 +206,6 @@ func TestOrderAwareJoinReorderPushSelection(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		prepareOrderAwareJoinReorderTables(tk)
 		tk.MustExec("set @@tidb_opt_join_reorder_through_sel = 1")
-
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
 
 		var input []string
 		var output []struct {
@@ -236,6 +229,8 @@ func TestOrderAwareJoinReorderPushSelection(tt *testing.T) {
 			require.Lessf(t, i, len(output), "missing expected output for case[%d], sql: %s", i, sql)
 			require.Equalf(t, sql, output[i].SQL, "input/output SQL mismatch at case[%d]", i)
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Plan...))
+			require.NotContains(t, strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows()), "\n"),
+				"leading hint is inapplicable")
 		}
 	})
 }
