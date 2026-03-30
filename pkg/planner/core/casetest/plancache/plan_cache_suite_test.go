@@ -1849,6 +1849,17 @@ func TestPreparedPlanCacheHintOnlyWithBinding(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 1"))
 	tk.MustExec("execute st using @a")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf(
+		"CREATE BINDING FOR select * from %s where pk >= ? USING select /*+ ignore_plan_cache() */ * from %s where pk >= ?",
+		tableName, tableName,
+	))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheSupportsFeatures(t *testing.T) {
