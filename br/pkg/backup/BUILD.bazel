@@ -62,7 +62,7 @@ go_library(
 
 go_test(
     name = "backup_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "client_test.go",
         "limit_test.go",
