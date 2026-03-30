@@ -1700,6 +1700,11 @@ func TestSemiJoinRewriter(t *testing.T) {
 func TestDisableReuseChunk(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
 		tk.MustExec("use test")
+		originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
+		defer func() {
+			core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+		}()
+
 		tk.MustExec("drop table if exists t1;")
 		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
 		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)

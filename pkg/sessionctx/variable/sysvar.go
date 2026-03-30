@@ -3420,6 +3420,10 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheSkipStatsOnBinding, Value: BoolToOnOff(vardef.DefTiDBPlanCacheSkipStatsOnBinding), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheSkipStatsOnBinding = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiFlashReplicaRead, Value: vardef.DefTiFlashReplicaRead, Type: vardef.TypeEnum, PossibleValues: []string{vardef.DefTiFlashReplicaRead, vardef.ClosestAdaptiveStr, vardef.ClosestReplicasStr},
 		SetSession: func(s *SessionVars, val string) error {
 			s.TiFlashReplicaRead = tiflash.GetTiFlashReplicaReadByStr(val)

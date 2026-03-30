@@ -16,6 +16,7 @@ package joinorder
 
 import (
 	"maps"
+	"math"
 	"slices"
 
 	"github.com/pingcap/errors"
@@ -212,6 +213,19 @@ type Node struct {
 	usedEdges map[uint64]struct{}
 }
 
+func validateCumCost(cost float64) error {
+	switch {
+	case math.IsNaN(cost):
+		return errors.New("invalid cumulative cost: NaN")
+	case math.IsInf(cost, -1):
+		return errors.New("invalid cumulative cost: -Inf")
+	case cost < 0:
+		return errors.Errorf("invalid cumulative cost: negative value %v", cost)
+	default:
+		return nil
+	}
+}
+
 func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	var cost1, cost2 float64
 	if node1 != nil {
@@ -257,6 +271,9 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
 			cumCost: calcCumCostByChildren(v),
+		}
+		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
+			return nil, err
 		}
 	}
 
@@ -695,10 +712,14 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}
 	maps.Copy(usedEdges, node1.usedEdges)
 	maps.Copy(usedEdges, node2.usedEdges)
+	cumCost := calcCumCost(p, node1, node2)
+	if err := validateCumCost(cumCost); err != nil {
+		return nil, err
+	}
 	return &Node{
 		bitSet:    node1.bitSet.Union(node2.bitSet),
 		p:         p,
-		cumCost:   calcCumCost(p, node1, node2),
+		cumCost:   cumCost,
 		usedEdges: usedEdges,
 	}, nil
 }
@@ -923,6 +944,28 @@ func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (rem
 			}
 		}
 		return true
+	})
+	return
+}
+
+// HasRemainingEdgesInSubset checks whether a subset still misses any real edge
+// whose referenced relations are fully contained in the subset.
+func (d *ConflictDetector) HasRemainingEdgesInSubset(subset intset.FastIntSet, usedEdges map[uint64]struct{}) (remaining bool) {
+	d.iterateEdges(func(e *edge) bool {
+		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 {
+			return true
+		}
+		if _, ok := usedEdges[e.idx]; ok {
+			return true
+		}
+		if !e.tes.SubsetOf(subset) {
+			return true
+		}
+		if !e.leftVertexes.Union(e.rightVertexes).SubsetOf(subset) {
+			return true
+		}
+		remaining = true
+		return false
 	})
 	return
 }

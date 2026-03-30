@@ -2122,6 +2122,20 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
 	require.Equal(t, "gt(hour(cast(test.t.b, time)), 10)", fmt.Sprintf("%v", rows[0][4]))
 
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double, primary key (c0))")
+	tk.MustExec("insert into t0 values (1)")
+	expectedRows := testkit.Rows("1")
+	withPKRows := tk.MustQuery("select c0 from t0 where /* issue:67236 */ atan2((t0.c0 is null), -('a'))").Rows()
+	require.Equal(t, expectedRows, withPKRows)
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double)")
+	tk.MustExec("insert into t0 values (1)")
+	withoutPKRows := tk.MustQuery("select c0 from t0 where /* issue:67236 */ atan2((t0.c0 is null), -('a'))").Rows()
+	require.Equal(t, expectedRows, withoutPKRows)
+	require.Equal(t, withPKRows, withoutPKRows)
+
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'Cast.CastTimeAsDuration' and store_type = 'tikv' and reason = 'for test'")

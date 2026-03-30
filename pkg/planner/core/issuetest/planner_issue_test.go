@@ -338,6 +338,41 @@ set rowid_a._tidb_rowid = rowid_a._tidb_rowid`)
 		}()
 	}
 
+	// index-join-derived-projection-needs-table-column
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("set @@tidb_opt_index_join_build_v2 = on")
+		tk.MustExec("create table a (u varchar(20), q varchar(20), index iu(u))")
+		tk.MustExec("create table b (u varchar(20), index iu2(u))")
+		tk.MustExec("create table c (g varchar(20), index ig(g))")
+		tk.MustExec(`insert into a values ('u1', '{"g":"g1"}')`)
+		tk.MustExec(`insert into b values ('u1')`)
+		tk.MustExec(`insert into c values ('g1')`)
+
+		plan := fmt.Sprint(tk.MustQuery(`explain format='brief'
+select /* issue:65938 */ 1
+from
+  (select u, json_unquote(json_extract(cast(q as json), '$.g')) as g
+  from a) x
+join
+  (select u from b where u = 'u1') b1
+on x.u = b1.u
+left join c on c.g = x.g`).Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		require.Contains(t, plan, "table:a")
+		require.Contains(t, plan, "test.a.q")
+		require.Contains(t, plan, "TableRowIDScan")
+
+		tk.MustQuery(`select /* issue:65938 */ 1
+from
+  (select u, json_unquote(json_extract(cast(q as json), '$.g')) as g
+  from a) x
+join
+  (select u from b where u = 'u1') b1
+on x.u = b1.u
+left join c on c.g = x.g`).Check(testkit.Rows("1"))
+	}
+
 	// right-outer-join-view-rollup-runtime-panic
 	{
 		tk := prepareSharedTestKit(t)

@@ -505,7 +505,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if i != 0 {
 				buffer.WriteString(", ")
 			}
-			buffer.WriteString(runtimeFilter.ExplainInfo(false))
+			buffer.WriteString(runtimeFilter.ExplainInfo(false, ectx))
 		}
 	}
 	if len(p.UsedColumnarIndexes) > 0 {
@@ -542,7 +542,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
 					annIndexBuffer.WriteString("->")
 					cols := p.Schema().Columns
-					annIndexBuffer.WriteString(cols[len(cols)-1].String())
+					annIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
 				}
 				annIndexes = append(annIndexes, annIndexBuffer.String())
 			} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted && idx.QueryInfo != nil {

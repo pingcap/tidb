@@ -210,6 +210,11 @@ func TestJoinRegression(t *testing.T) {
 				`  └─Selection cop[tikv]  not(isnull(test.t0.c0))`,
 				`    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`))
 
+		tk.MustExec(`drop table if exists issue65325_t0, issue65325_t1`)
+		tk.MustExec(`create table issue65325_t0(c0 bool)`)
+		tk.MustExec(`create table issue65325_t1(c0 double)`)
+		tk.MustQuery(`SELECT /* issue:65325 */ issue65325_t1.c0, issue65325_t1.c0 FROM issue65325_t0 NATURAL JOIN issue65325_t1 ORDER BY CASE DEFAULT(issue65325_t1.c0) WHEN issue65325_t1.c0 THEN 397344251 ELSE issue65325_t0.c0 END`).Check(testkit.Rows())
+
 		tk.MustExec(`create table t1 (a int)`)
 		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
 		tk.MustUseIndex(`select /* issue:63949 */ /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t2.b=1 and t2.d=1`, "abcd")

@@ -16,9 +16,28 @@ package runaway
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+type stubOwnerManager struct{ owner.Manager }
+
+func (stubOwnerManager) IsOwner() bool { return true }
+
+type stubDDL struct {
+	ddl.DDL
+	om owner.Manager
+}
+
+func (s stubDDL) OwnerManager() owner.Manager { return s.om }
 
 func TestRecordKey(t *testing.T) {
 	// Initialize test data
@@ -71,4 +90,35 @@ func TestRecordKey(t *testing.T) {
 	assert.Len(t, recordMap, 2, "recordMap should have 1 element")
 	assert.Equal(t, "group1", recordMap[key1].ResourceGroupName, "Repeats should not be updated")
 	assert.Equal(t, "group2", recordMap[key2].ResourceGroupName, "ResourceGroupName should be updated")
+}
+
+func TestDeleteExpiredRowsSkipsUnavailableRunawayTable(t *testing.T) {
+	assertDeleteExpiredRowsStaysQuiet := func(t *testing.T, infoCache *infoschema.InfoCache) {
+		t.Helper()
+
+		core, recorded := observer.New(zap.ErrorLevel)
+		restore := log.ReplaceGlobals(
+			zap.New(core),
+			&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
+		)
+		defer restore()
+
+		rm := &Manager{
+			ddl:       stubDDL{om: stubOwnerManager{}},
+			infoCache: infoCache,
+		}
+		rm.deleteExpiredRows(time.Second)
+
+		require.Empty(t, recorded.FilterMessage("delete system table failed").All())
+	}
+
+	t.Run("nil latest infoschema", func(t *testing.T) {
+		assertDeleteExpiredRowsStaysQuiet(t, infoschema.NewCache(nil, 1))
+	})
+
+	t.Run("missing runaway table", func(t *testing.T) {
+		infoCache := infoschema.NewCache(nil, 1)
+		infoCache.Insert(infoschema.MockInfoSchema(nil), uint64(time.Now().Unix()))
+		assertDeleteExpiredRowsStaysQuiet(t, infoCache)
+	})
 }

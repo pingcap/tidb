@@ -1441,6 +1441,25 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 			testKit.MustQuery("show warnings").Check(testkit.Rows(
 				"Warning 1105 MPP mode may be blocked because operator `SelectLock` is not supported now."))
 		}
+
+		testKit.MustExec("drop table if exists t3")
+		testKit.MustExec("create table t3(a int, b int, c int, primary key(a))")
+		testKit.MustExec("insert into t3 values(1, 2, 3), (4, 5, 6)")
+		testKit.MustExec("drop table if exists t4")
+		testKit.MustExec("create table t4(a int, b int)")
+		tbl3, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t3", L: "t3"})
+		require.NoError(t, err)
+		tbl3.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		testKit.MustExec("set @@sql_mode = ''")
+		testKit.MustExec("set @@tidb_enforce_mpp=1")
+		testKit.MustExec("set @@tidb_isolation_read_engines = 'tidb, tikv'")
+		rs := testKit.MustQuery("explain insert into t4 select a, b from t3 where a in (1, 2)").Rows()
+		require.NotEmpty(t, rs)
+		for _, row := range rs {
+			require.NotEqual(t, "mpp[tiflash]", row[2])
+		}
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1105 MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tidb,tikv') not match, need 'tiflash'."))
 	})
 }
 
@@ -2323,4 +2342,48 @@ func TestIssue66619(t *testing.T) {
 		Check(testkit.Rows("20"))
 	tk.MustQuery("select /* issue:66947 derived-filter */ hex(ref0) from (select t0.c0 as ref0, (sum(t0.c0) > -1 and char_length(t0.c0)) as ref1 from t0 group by t0.c0) as s where ref1").
 		Check(testkit.Rows("20"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 decimal not null)")
+	tk.MustExec("insert into t1 values (-1000000000)")
+	tk.MustQuery("select /* issue:67237 not-null */ c1 from t1 where ifnull(c1, '') = c1").
+		Check(testkit.Rows("-1000000000"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 decimal)")
+	tk.MustExec("insert into t1 values (-1000000000)")
+	tk.MustQuery("select /* issue:67237 nullable */ c1 from t1 where ifnull(c1, '') = c1").
+		Check(testkit.Rows("-1000000000"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 float unique, c1 numeric zerofill, c2 text(192))")
+	tk.MustExec("insert into t0(c0, c1, c2) values (1.074197572E9, 0, '⋧h')")
+
+	tk.MustQuery(`select /* issue:66922-direct */ t0.c1, t0.c0, t0.c2
+from t0
+group by t0.c1, t0.c0, t0.c2
+having (
+    (count(t0.c1) != -1)
+        and
+    (
+        (case t0.c1 when false then t0.c0 else true end)
+            like
+        t0.c0
+    )
+)`).Check(testkit.Rows())
+
+	tk.MustQuery(`select /* issue:66922-derived */ ref0, ref1, ref2
+from (
+    select t0.c1 as ref0, t0.c0 as ref1, t0.c2 as ref2,
+           (
+               (count(t0.c1) != -1)
+                   and
+               (
+                   (case t0.c1 when false then t0.c0 else true end)
+                       like
+                   t0.c0
+               )
+           ) as ref3
+    from t0
+    group by t0.c1, t0.c0, t0.c2
+) as s where ref3`).Check(testkit.Rows())
 }

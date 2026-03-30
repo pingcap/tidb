@@ -282,7 +282,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window mpp[tiflash]  row_number()->Column#8 over(order by test.t.a rows between current row and current row)",
+          "  └─Window mpp[tiflash]  row_number()->Column over(order by test.t.a rows between current row and current row)",
           "    └─Sort mpp[tiflash]  test.t.a",
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",

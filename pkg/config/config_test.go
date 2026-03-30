@@ -1483,15 +1483,45 @@ func TestMetering(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("skip metering test in classic kernel")
 	}
-	conf := NewConfig()
-	conf.MeteringStorageURI = "s3://test-bucket/test-prefix?region-id=test-region"
-	require.NoError(t, conf.Valid())
-	mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
-	require.NoError(t, err)
-	require.Equal(t, "s3", string(mcfg.Type))
-	require.Equal(t, "test-bucket", mcfg.Bucket)
-	require.Equal(t, "test-prefix", mcfg.Prefix)
-	require.Equal(t, "test-region", mcfg.Region)
+	testCases := []struct {
+		name      string
+		uri       string
+		checkFunc func(*testing.T, *meter_config.MeteringConfig)
+	}{
+		{
+			name: "s3",
+			uri:  "s3://test-bucket/test-prefix?region-id=test-region",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "s3", string(mcfg.Type))
+				require.Equal(t, "test-bucket", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.Equal(t, "test-region", mcfg.Region)
+			},
+		},
+		{
+			name: "azure",
+			uri:  "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "azure", string(mcfg.Type))
+				require.Equal(t, "metering-data", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.NotNil(t, mcfg.Azure)
+				require.Equal(t, "test-account", mcfg.Azure.AccountName)
+				require.Equal(t, "test-key", mcfg.Azure.AccountKey)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := NewConfig()
+			conf.MeteringStorageURI = tc.uri
+			require.NoError(t, conf.Valid())
+			mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
+			require.NoError(t, err)
+			tc.checkFunc(t, mcfg)
+		})
+	}
 }
 
 func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {

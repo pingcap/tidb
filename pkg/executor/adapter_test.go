@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -505,6 +506,33 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
 	require.Equal(t, expected, reporter.tidbRUV2)
 	require.Equal(t, float64(412), reporter.tiflashRU)
+
+	t.Run("stmt summary ignores optimistic autocommit retry count", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		// Toggle stmt summary off and back on to clear any in-memory rows left by earlier tests.
+		tk.MustExec("set global tidb_enable_stmt_summary = 0")
+		tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+		tk = testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_txn_mode = 'optimistic'")
+		tk.MustExec("create table stmt_summary_retry (id int primary key, v int)")
+		tk.MustExec("insert into stmt_summary_retry values (1, 1)")
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		}()
+
+		updateSQL := "update stmt_summary_retry set v = v + 1 where id = 1"
+		tk.MustExec(updateSQL)
+		tk.MustQuery(
+			"select sum_exec_retry, sum_exec_retry_time from information_schema.statements_summary where digest_text like ?",
+			"update `stmt_summary_retry`%",
+		).Check(testkit.Rows("0 0"))
+	})
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {
