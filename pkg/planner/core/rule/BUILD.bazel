@@ -34,6 +34,7 @@ go_library(
         "//pkg/planner/util",
         "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/utilfuncp",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/asyncload",
