@@ -31,6 +31,7 @@ go_test(
     srcs = [
         "bench_test.go",
         "common_test.go",
+        "decoder_test.go",
         "main_test.go",
         "rowcodec_test.go",
     ],
