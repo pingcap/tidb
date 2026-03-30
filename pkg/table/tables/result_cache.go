@@ -74,19 +74,19 @@ func (c *resultSetCache) Get(key ResultCacheKey, paramBytes []byte) ([]*chunk.Ch
 	return nil, nil, false
 }
 
-// Put inserts into the cache. If limits are exceeded the entry is rejected
-// (no eviction — the entire cache is cleared when the lease expires).
-func (c *resultSetCache) Put(key ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
+// put inserts into the cache and returns whether the entry was accepted plus
+// the memory delta for a newly inserted entry.
+func (c *resultSetCache) put(key ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) (bool, int64) {
 	memSize := estimateChunksMemory(chunks) + int64(len(paramBytes))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if r, ok := c.items[key]; ok {
 		// Same hash key but different param bytes indicates a hash collision.
 		// Keep the existing entry and reject the new one to avoid cache thrash.
-		return bytes.Equal(r.paramBytes, paramBytes)
+		return bytes.Equal(r.paramBytes, paramBytes), 0
 	}
 	if len(c.items) >= c.maxEntries || c.totalMem+memSize > c.maxMemory {
-		return false
+		return false, 0
 	}
 	c.items[key] = &cachedResult{
 		chunks:     chunks,
@@ -95,7 +95,14 @@ func (c *resultSetCache) Put(key ResultCacheKey, paramBytes []byte, chunks []*ch
 		memSize:    memSize,
 	}
 	c.totalMem += memSize
-	return true
+	return true, memSize
+}
+
+// Put inserts into the cache. If limits are exceeded the entry is rejected
+// (no eviction — the entire cache is cleared when the lease expires).
+func (c *resultSetCache) Put(key ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
+	ok, _ := c.put(key, paramBytes, chunks, fieldTypes)
+	return ok
 }
 
 // Len returns the number of cached entries.

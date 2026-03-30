@@ -41,9 +41,10 @@ var (
 
 type cachedTable struct {
 	TableCommon
-	cacheData   atomic.Pointer[cacheData]
-	resultCache atomic.Pointer[resultSetCache]
-	totalSize   int64
+	cacheData      atomic.Pointer[cacheData]
+	resultCache    atomic.Pointer[resultSetCache]
+	resultCacheMem atomic.Int64
+	totalSize      int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
 }
@@ -326,12 +327,13 @@ func (c *cachedTable) getOrCreateResultCache() *resultSetCache {
 
 func (c *cachedTable) invalidateResultCache() {
 	old := c.resultCache.Swap(nil)
+	if accounted := c.resultCacheMem.Swap(0); accounted > 0 {
+		metrics.ResultCacheMemoryGauge.Sub(float64(accounted))
+	}
 	if old != nil {
-		n := old.Len()
-		if n > 0 {
+		if n := old.Len(); n > 0 {
 			metrics.ResultCacheEvictCounter.Add(float64(n))
 		}
-		metrics.ResultCacheMemoryGauge.Sub(float64(old.MemoryUsage()))
 	}
 }
 
@@ -345,9 +347,14 @@ func (c *cachedTable) GetCachedResult(key table.ResultCacheKey, paramBytes []byt
 
 func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
 	rc := c.getOrCreateResultCache()
-	ok := rc.Put(key, paramBytes, chunks, fieldTypes)
-	if ok {
-		metrics.ResultCacheMemoryGauge.Set(float64(rc.MemoryUsage()))
+	paramCopy := append([]byte(nil), paramBytes...)
+	ok, memSize := rc.put(key, paramCopy, chunks, fieldTypes)
+	if ok && memSize > 0 {
+		// If the result cache is invalidated concurrently, don't account its memory in metrics.
+		if c.resultCache.Load() == rc {
+			c.resultCacheMem.Add(memSize)
+			metrics.ResultCacheMemoryGauge.Add(float64(memSize))
+		}
 	}
 	return ok
 }
