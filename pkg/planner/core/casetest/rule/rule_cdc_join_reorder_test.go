@@ -26,6 +26,7 @@ import (
 
 func prepareOrderAwareJoinReorderTables(tk *testkit.TestKit) {
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
 	tk.MustExec("drop table if exists t6, t7, t8, t9")
 	tk.MustExec("create table t6(id int not null, category varchar(20), payload int, key idx_category_id_payload(category, id, payload))")
 	tk.MustExec("create table t7(id int not null primary key, payload int)")

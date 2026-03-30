@@ -529,6 +529,11 @@ func buildAndOptimizeLogicalPlanRound(
 		*beginOpt = time.Now()
 	}
 	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
@@ -555,6 +560,21 @@ func shouldTryAlternativeLogicalPlanRound(sessVars *variable.SessionVars) bool {
 	return sessVars.EnableAlternativeLogicalPlans &&
 		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
 		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
+
+type FlagAdjustFunc func(uint64) uint64
+
+var RoundList = [...]FlagAdjustFunc{
+	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+}
+
+var roundEnabled = [...]func(*variable.SessionVars) bool{
+	shouldTryAlternativeLogicalPlanRound,
+	func(sessVars *variable.SessionVars) bool {
+		return sessVars.EnableAlternativeLogicalPlans &&
+			sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+	},
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
@@ -626,7 +646,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-	if shouldTryAlternativeLogicalPlanRound(sessVars) {
+	for i, adjust := range RoundList {
+		if !roundEnabled[i](sessVars) {
+			continue
+		}
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
@@ -648,7 +671,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			&bestNames,
 			&bestCost,
 			&bestLogicalPlanCtx,
-			func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+			adjust,
 		)
 		if err != nil {
 			return nil, nil, 0, err
