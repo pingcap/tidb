@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -90,7 +89,7 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 		require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
 
 		dctx := se.GetDistSQLCtx()
-		require.Equal(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
+		require.Same(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
 		require.NotNil(t, dctx.RUV2RPCInterceptor)
 	})
 
@@ -110,7 +109,28 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 
 	t.Run("statement bypass decision follows internal analyze semantics", func(t *testing.T) {
 		statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-		require.Equal(t, kerneltype.IsNextGen(), shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
+		origIsNextGenForRUV2 := isNextGenForRUV2
+		defer func() {
+			isNextGenForRUV2 = origIsNextGenForRUV2
+		}()
+
+		MustExec(t, se, "use test")
+		MustExec(t, se, "drop table if exists bypass_prepare")
+		MustExec(t, se, "create table bypass_prepare (a int)")
+
+		stmtID, _, _, err := se.PrepareStmt("analyze table bypass_prepare")
+		require.NoError(t, err)
+		prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+		require.NoError(t, err)
+		execAnalyzeStmt := &ast.ExecuteStmt{PrepStmt: prepStmt}
+
+		isNextGenForRUV2 = func() bool { return true }
+		require.True(t, shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
+		require.True(t, shouldBypass(statsCtx, execAnalyzeStmt, se.sessionVars))
+
+		isNextGenForRUV2 = func() bool { return false }
+		require.False(t, shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
+		require.False(t, shouldBypass(statsCtx, execAnalyzeStmt, se.sessionVars))
 		require.False(t, shouldBypass(statsCtx, &ast.SelectStmt{}, se.sessionVars))
 	})
 }

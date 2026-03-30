@@ -2732,12 +2732,14 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	return recordSet, nil
 }
 
+var isNextGenForRUV2 = kerneltype.IsNextGen
+
 func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
 	switch kv.GetInternalSourceType(ctx) {
 	case kv.InternalTxnOthers:
 		return true
 	case kv.InternalTxnStats:
-		return kerneltype.IsNextGen() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
+		return isNextGenForRUV2() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
 	default:
 		return false
 	}

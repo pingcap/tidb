@@ -529,6 +529,9 @@ func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU float64) {
 
 // TotalRU returns the statement RU v2 total as TiDB + TiKV + TiFlash.
 func (m *RUV2Metrics) TotalRU(weights RUV2Weights, tiKVRU, tiFlashRU float64) float64 {
+	if m == nil {
+		return tiKVRU + tiFlashRU
+	}
 	if m.Bypass() {
 		return 0
 	}

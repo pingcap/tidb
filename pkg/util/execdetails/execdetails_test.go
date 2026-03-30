@@ -389,6 +389,11 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 		require.Empty(t, total)
 		require.Empty(t, detail)
 	})
+
+	t.Run("nil metrics keep tikv and tiflash ru", func(t *testing.T) {
+		var nilMetrics *RUV2Metrics
+		require.Equal(t, tikvRU+tiflashRU, nilMetrics.TotalRU(weights, tikvRU, tiflashRU))
+	})
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
