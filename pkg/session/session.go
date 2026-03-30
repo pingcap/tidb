@@ -2442,7 +2442,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 	sessVars.RUV2Metrics = ruv2Metrics
 	bypass := shouldBypass(ctx, stmtNode, sessVars)
-	sessVars.StmtCtx.BypassRU = bypass
 	if ruv2Metrics != nil {
 		ruv2Metrics.SetBypass(bypass)
 	}

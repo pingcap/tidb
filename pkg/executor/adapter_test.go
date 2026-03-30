@@ -546,7 +546,6 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 		sessVars.StmtCtx.OriginalSQL = "select 1"
 		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
 		sessVars.StmtCtx.ResourceGroupName = "rg1"
-		sessVars.StmtCtx.BypassRU = true
 
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)

@@ -482,9 +482,6 @@ type StatementContext struct {
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
-	// BypassRU marks statements whose RU accounting should be skipped to stay aligned with
-	// the existing v1 bypass semantics for internal low-impact and internal analyze requests.
-	BypassRU bool
 	// InsertRowsAsRUV2Recorded tracks whether the statement-level insert-row RUv2 cost has already been
 	// applied to RUV2Metrics. This must stay idempotent because EXPLAIN ANALYZE INSERT snapshots RU before
 	// FinishExecuteStmt runs, while FinishExecuteStmt still needs to reuse the same accounting path for the
