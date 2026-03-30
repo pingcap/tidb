@@ -380,6 +380,17 @@ func (c *cachedTable) GetCachedDatumData() *CachedDatumData {
 	return data.datumCache
 }
 
+// GetCachedDatumDataForMemBuffer returns the datum cache only when it belongs to
+// the same cacheData generation as mb. This prevents mixing a MemBuffer from one
+// lease generation with pre-decoded datums from a later reload.
+func (c *cachedTable) GetCachedDatumDataForMemBuffer(mb kv.MemBuffer) *CachedDatumData {
+	data := c.cacheData.Load()
+	if data == nil || data.MemBuffer != mb {
+		return nil
+	}
+	return data.datumCache
+}
+
 // buildIndexDatumCaches builds CachedIndexDatumData for all public indexes.
 // Returns nil if no indexes can be cached (non-fatal).
 func (c *cachedTable) buildIndexDatumCaches(mb kv.MemBuffer) map[int64]*CachedIndexDatumData {
@@ -413,6 +424,16 @@ func (c *cachedTable) buildIndexDatumCaches(mb kv.MemBuffer) map[int64]*CachedIn
 func (c *cachedTable) GetCachedIndexDatumData(indexID int64) *CachedIndexDatumData {
 	data := c.cacheData.Load()
 	if data == nil || data.indexDatumCaches == nil {
+		return nil
+	}
+	return data.indexDatumCaches[indexID]
+}
+
+// GetCachedIndexDatumDataForMemBuffer returns the index datum cache only when it
+// belongs to the same cacheData generation as mb.
+func (c *cachedTable) GetCachedIndexDatumDataForMemBuffer(mb kv.MemBuffer, indexID int64) *CachedIndexDatumData {
+	data := c.cacheData.Load()
+	if data == nil || data.MemBuffer != mb || data.indexDatumCaches == nil {
 		return nil
 	}
 	return data.indexDatumCaches[indexID]

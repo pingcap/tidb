@@ -258,3 +258,34 @@ func TestCachedTableTimestampConsistency(t *testing.T) {
 	))
 	require.True(t, lastReadFromCache(tk))
 }
+
+// TestCachedTableIndexTimestampTZConvert verifies that the pre-decoded index cache
+// preserves UTC storage and converts TIMESTAMP values to the session timezone on read.
+func TestCachedTableIndexTimestampTZConvert(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@time_zone = '+00:00'")
+	tk.MustExec("create table t_idx_ts (id int primary key, ts timestamp, index idx_ts (ts, id))")
+	tk.MustExec("insert into t_idx_ts values (1, '2024-01-01 12:00:00')")
+	tk.MustExec("insert into t_idx_ts values (2, '2024-06-15 00:00:00')")
+	tk.MustExec("alter table t_idx_ts cache")
+
+	query := "select id, ts from t_idx_ts force index (idx_ts) order by ts, id"
+	require.True(t, waitForCache(tk, query, 100))
+
+	tests := []struct {
+		tz   string
+		rows []string
+	}{
+		{"+00:00", []string{"1 2024-01-01 12:00:00", "2 2024-06-15 00:00:00"}},
+		{"+08:00", []string{"1 2024-01-01 20:00:00", "2 2024-06-15 08:00:00"}},
+		{"-05:00", []string{"1 2024-01-01 07:00:00", "2 2024-06-14 19:00:00"}},
+	}
+
+	for _, tt := range tests {
+		tk.MustExec(fmt.Sprintf("set @@time_zone = '%s'", tt.tz))
+		tk.MustQuery(query).Check(testkit.Rows(tt.rows...))
+		require.True(t, lastReadFromCache(tk), "expected cache read for tz=%s", tt.tz)
+	}
+}

@@ -17,11 +17,13 @@ package tables
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -227,6 +229,136 @@ func TestBuildCachedDatumDataCommonHandleTimestamp(t *testing.T) {
 	row := cd.Chunks[0].GetRow(0)
 	require.Equal(t, ts.String(), row.GetTime(0).String())
 	require.Equal(t, int64(123), row.GetInt64(1))
+}
+
+func TestBuildCachedIndexDatumDataRestoredDecoderDurability(t *testing.T) {
+	mb := newTestMemBuf()
+
+	ftPK := types.NewFieldType(mysql.TypeLonglong)
+	ftPK.AddFlag(mysql.PriKeyFlag)
+	ftJSON := types.NewFieldType(mysql.TypeJSON)
+
+	tblInfo := &model.TableInfo{
+		ID:         testTableID,
+		PKIsHandle: true,
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Offset: 0, FieldType: *ftPK},
+			{ID: 2, Offset: 1, FieldType: *ftJSON},
+		},
+	}
+	idxInfo := &model.IndexInfo{
+		ID:     1,
+		Unique: true,
+		Columns: []*model.IndexColumn{
+			{Offset: 1, Length: types.UnspecifiedLength},
+		},
+	}
+
+	buildIndexKV := func(handle int64, j types.BinaryJSON) (kv.Key, []byte) {
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, types.NewJSONDatum(j))
+		require.NoError(t, err)
+		key := tablecodec.EncodeIndexSeekKey(testTableID, idxInfo.ID, encodedCols)
+
+		rd := rowcodec.Encoder{Enable: true}
+		restoredBytes, err := rd.Encode(time.UTC, []int64{tblInfo.Columns[1].ID}, []types.Datum{types.NewJSONDatum(j)}, nil, nil)
+		require.NoError(t, err)
+
+		val := make([]byte, 0, 1+len(restoredBytes)+8)
+		val = append(val, 8) // tailLen = 8 (int handle)
+		val = append(val, restoredBytes...)
+		var hBuf [8]byte
+		binary.BigEndian.PutUint64(hBuf[:], uint64(handle))
+		val = append(val, hBuf[:]...)
+		return key, val
+	}
+
+	j1, err := types.ParseBinaryJSONFromString(`{"a":1}`)
+	require.NoError(t, err)
+	j2, err := types.ParseBinaryJSONFromString(`{"a":2}`)
+	require.NoError(t, err)
+
+	key1, val1 := buildIndexKV(1, j1)
+	key2, val2 := buildIndexKV(2, j2)
+	require.NoError(t, mb.Set(key1, val1))
+	require.NoError(t, mb.Set(key2, val2))
+
+	data, err := BuildCachedIndexDatumData(mb, testTableID, idxInfo, tblInfo)
+	require.NoError(t, err)
+	require.Len(t, data.Entries, 2)
+
+	row1, ok := data.Entries[string(key1)]
+	require.True(t, ok)
+	require.Len(t, row1, 2)
+	require.Equal(t, j1, row1[0].GetMysqlJSON())
+	require.Equal(t, int64(1), row1[1].GetInt64())
+
+	row2, ok := data.Entries[string(key2)]
+	require.True(t, ok)
+	require.Len(t, row2, 2)
+	require.Equal(t, j2, row2[0].GetMysqlJSON())
+	require.Equal(t, int64(2), row2[1].GetInt64())
+}
+
+func TestCachedTablePutCachedResultNoDoubleAccount(t *testing.T) {
+	ct := &cachedTable{}
+	chk := makeTestChunk()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	fts := []*types.FieldType{ft}
+	key := ResultCacheKey{PlanDigest: [16]byte{7}, ParamHash: 7}
+	paramBytes := []byte("pb")
+	expectedMem := estimateChunksMemory([]*chunk.Chunk{chk}) + int64(len(paramBytes))
+
+	require.True(t, ct.PutCachedResult(key, paramBytes, []*chunk.Chunk{chk}, fts))
+	require.Equal(t, expectedMem, ct.resultCacheMem.Load())
+
+	// A duplicate fill for the same cache entry should be a no-op for memory accounting.
+	require.True(t, ct.PutCachedResult(key, paramBytes, []*chunk.Chunk{chk}, fts))
+	require.Equal(t, expectedMem, ct.resultCacheMem.Load())
+
+	// A hash collision should still be rejected without changing the accounted memory.
+	require.False(t, ct.PutCachedResult(key, []byte("other"), []*chunk.Chunk{chk}, fts))
+	require.Equal(t, expectedMem, ct.resultCacheMem.Load())
+
+	ct.invalidateResultCache()
+	require.Zero(t, ct.resultCacheMem.Load())
+}
+
+func TestCachedTablePinnedDatumCacheAccessors(t *testing.T) {
+	mb1 := newTestMemBuf()
+	mb2 := newTestMemBuf()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+
+	datumCache1 := &CachedDatumData{FieldTypes: []*types.FieldType{ft}}
+	datumCache2 := &CachedDatumData{FieldTypes: []*types.FieldType{ft}}
+	indexCache1 := &CachedIndexDatumData{Entries: map[string][]types.Datum{"k1": {types.NewIntDatum(1)}}}
+	indexCache2 := &CachedIndexDatumData{Entries: map[string][]types.Datum{"k2": {types.NewIntDatum(2)}}}
+
+	ct := &cachedTable{}
+	ct.cacheData.Store(&cacheData{
+		MemBuffer:        mb1,
+		datumCache:       datumCache1,
+		indexDatumCaches: map[int64]*CachedIndexDatumData{1: indexCache1},
+	})
+
+	require.Same(t, datumCache1, ct.GetCachedDatumDataForMemBuffer(mb1))
+	require.Same(t, indexCache1, ct.GetCachedIndexDatumDataForMemBuffer(mb1, 1))
+	require.Nil(t, ct.GetCachedDatumDataForMemBuffer(mb2))
+	require.Nil(t, ct.GetCachedIndexDatumDataForMemBuffer(mb2, 1))
+
+	ct.cacheData.Store(&cacheData{
+		MemBuffer:        mb2,
+		datumCache:       datumCache2,
+		indexDatumCaches: map[int64]*CachedIndexDatumData{1: indexCache2},
+	})
+
+	// Unpinned accessors expose the latest generation, but the pinned variants must
+	// reject the stale MemBuffer from the earlier generation.
+	require.Same(t, datumCache2, ct.GetCachedDatumData())
+	require.Same(t, indexCache2, ct.GetCachedIndexDatumData(1))
+	require.Nil(t, ct.GetCachedDatumDataForMemBuffer(mb1))
+	require.Nil(t, ct.GetCachedIndexDatumDataForMemBuffer(mb1, 1))
+	require.Same(t, datumCache2, ct.GetCachedDatumDataForMemBuffer(mb2))
+	require.Same(t, indexCache2, ct.GetCachedIndexDatumDataForMemBuffer(mb2, 1))
 }
 
 func TestBuildCachedDatumDataEmpty(t *testing.T) {
