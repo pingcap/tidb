@@ -4658,12 +4658,12 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 	return pidCol
 }
 
-// getStatsVersionHashFromStatsTable gets statistics information for a table specified by "tableID", and returns the
-// max LastUpdateVersion among all Columns and Indices in it.
-// Its overall logic is quite similar to getStatsTable(). During plan cache matching, only a stable version-based
-// fingerprint is needed. Compared to getStatsTable(), this function can save some copies, memory allocations and
-// unnecessary checks. Also, this function won't trigger metrics changes.
-func getStatsVersionHashFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
+// getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
+// LastUpdateVersion among all Columns and Indices in it.
+// Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
+// In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
+// checks. Also, this function won't trigger metrics changes.
+func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
 	if statsHandle == nil {
@@ -4686,7 +4686,8 @@ func getStatsVersionHashFromStatsTable(ctx sessionctx.Context, tblInfo *model.Ta
 		return 0
 	}
 
-	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices.
+	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
+	// return statsTbl.LastAnalyzeVersion
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		version = max(version, col.LastUpdateVersion)
 		return false

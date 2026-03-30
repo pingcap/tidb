@@ -462,7 +462,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
-			statsVerHash += getStatsVersionHashFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
 		hash = codec.EncodeUint(hash, statsVerHash)
 	}
