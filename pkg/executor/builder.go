@@ -1734,6 +1734,12 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
+			// Try to use pre-decoded datum cache to skip KV decode.
+			if dcp, ok := cachedTable.(interface {
+				GetCachedDatumData() *tables.CachedDatumData
+			}); ok {
+				us.datumCache = dcp.GetCachedDatumData()
+			}
 			b.recordCachedTable(cachedTable)
 		} else if loading {
 			return
