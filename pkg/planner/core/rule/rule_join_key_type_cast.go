@@ -78,7 +78,7 @@ func rewriteJoinTypeCasts(p base.LogicalPlan) (base.LogicalPlan, bool) {
 
 // projCastInfo describes a CAST-to-DOUBLE expression in a child Projection.
 type projCastInfo struct {
-	childIdx int                // 0=left, 1=right
+	childIdx int // 0=left, 1=right
 	proj     *logicalop.LogicalProjection
 	exprIdx  int                // index in Projection.Exprs
 	origCol  *expression.Column // the underlying column inside CAST
