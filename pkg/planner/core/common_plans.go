@@ -705,6 +705,94 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 	return
 }
 
+// MVCompleteDeltaApply represents the apply sink contract for COMPLETE DELTA APPLY.
+// It consumes one diff-source stream and carries explicit row-image metadata for later sink execution.
+type MVCompleteDeltaApply struct {
+	baseSchemaProducer
+
+	// Source is the diff-source physical plan for COMPLETE DELTA APPLY.
+	Source base.PhysicalPlan
+
+	MVTableID     int64
+	MVColumnCount int
+
+	// OpColID is the child column index of diff_op.
+	OpColID int
+	// MarkerMVOffset identifies which MV column is used as the side-missing marker.
+	MarkerMVOffset int
+	// GroupKeyMVOffsets stores GROUP BY key offsets in MV column order.
+	GroupKeyMVOffsets []int `plan-cache-clone:"shallow"`
+	// MHandleCols contains physical locator columns from the current-MV side.
+	MHandleCols util.HandleCols `plan-cache-clone:"shallow"`
+	// MRowInputColIDs and QRowInputColIDs store the full old/new row-image input layout in MV column order.
+	MRowInputColIDs []int `plan-cache-clone:"shallow"`
+	QRowInputColIDs []int `plan-cache-clone:"shallow"`
+}
+
+// ExplainInfo returns the key sink mapping metadata for complete delta MV apply.
+func (p *MVCompleteDeltaApply) ExplainInfo() string {
+	return fmt.Sprintf(
+		"op_offset:%d, m_marker_offset:%d, q_marker_offset:%d, m_group_keys_offset:%s, q_group_keys_offset:%s, m_handle_offset:%s, m_row_offset:%s, q_row_offset:%s",
+		p.OpColID,
+		inputOffsetAtMVOffset(p.MRowInputColIDs, p.MarkerMVOffset),
+		inputOffsetAtMVOffset(p.QRowInputColIDs, p.MarkerMVOffset),
+		formatMVDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.MRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatMVDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.QRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatHandleColsInputOffsets(p.MHandleCols),
+		formatMVDeltaMergeOffsets(p.MRowInputColIDs),
+		formatMVDeltaMergeOffsets(p.QRowInputColIDs),
+	)
+}
+
+func inputOffsetAtMVOffset(inputColIDs []int, mvOffset int) int {
+	if mvOffset < 0 || mvOffset >= len(inputColIDs) {
+		return -1
+	}
+	return inputColIDs[mvOffset]
+}
+
+func inputOffsetsAtMVOffsets(inputColIDs, mvOffsets []int) []int {
+	if len(mvOffsets) == 0 {
+		return nil
+	}
+	offsets := make([]int, 0, len(mvOffsets))
+	for _, mvOffset := range mvOffsets {
+		offsets = append(offsets, inputOffsetAtMVOffset(inputColIDs, mvOffset))
+	}
+	return offsets
+}
+
+func formatHandleColsInputOffsets(handleCols util.HandleCols) string {
+	if handleCols == nil {
+		return "[]"
+	}
+	offsets := make([]int, 0, handleCols.NumCols())
+	for i := 0; i < handleCols.NumCols(); i++ {
+		col := handleCols.GetCol(i)
+		if col == nil {
+			continue
+		}
+		offsets = append(offsets, col.Index)
+	}
+	return formatMVDeltaMergeOffsets(offsets)
+}
+
+// MemoryUsage returns the memory usage of MVCompleteDeltaApply.
+func (p *MVCompleteDeltaApply) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfInt*3 + size.SizeOfSlice*3
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.MRowInputColIDs)) * size.SizeOfInt
+	sum += int64(cap(p.QRowInputColIDs)) * size.SizeOfInt
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
+	}
+	return
+}
+
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
 type AnalyzeInfo struct {
 	DBName        string

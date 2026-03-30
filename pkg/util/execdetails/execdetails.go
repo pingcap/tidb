@@ -1027,6 +1027,8 @@ const (
 	TpRURuntimeStats
 	// TpMViewDeltaMergeAggRuntimeStats is the tp for MViewDeltaMergeAggRuntimeStats
 	TpMViewDeltaMergeAggRuntimeStats
+	// TpMVCompleteDeltaApplyRuntimeStats is the tp for MVCompleteDeltaApplyRuntimeStats
+	TpMVCompleteDeltaApplyRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.

@@ -297,7 +297,7 @@ Core execution semantics:
 
 ### COMPLETE OUT OF PLACE (implemented)
 
-#### Current execution model
+Current execution model:
 
 1. Outer refresh path acquires the MV advisory lock and inserts a `running` history row before heavy work.
 2. Build stage runs in a dedicated internal autocommit session:
@@ -840,7 +840,6 @@ Still future work:
 
 Current targeted coverage lives mainly in `pkg/executor/test/executor/`, `pkg/planner/core/casetest/mview/`,
 and `pkg/planner/mview/`, including:
-
 1. Parser/AST acceptance and rejection for `COMPLETE OUT OF PLACE` / `COMPLETE DELTA APPLY`.
 2. Planner contract tests for:
    - `FULL OUTER JOIN` diff-source layout;
