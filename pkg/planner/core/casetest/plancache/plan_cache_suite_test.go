@@ -1835,6 +1835,12 @@ func TestPreparedPlanCacheHintOnlyWithoutUsePlanCacheHint(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec("execute st using @a")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(fmt.Sprintf("create global binding using select /*+ use_plan_cache() */ 1 from %s where a=1", tableName))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestPreparedPlanCacheHintOnlyWithBinding(t *testing.T) {
