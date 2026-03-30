@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,6 +134,20 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 		require.False(t, shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
 		require.False(t, shouldBypass(statsCtx, execAnalyzeStmt, se.sessionVars))
 		require.False(t, shouldBypass(statsCtx, &ast.SelectStmt{}, se.sessionVars))
+	})
+
+	t.Run("current-session restricted sql restores outer ruv2 metrics", func(t *testing.T) {
+		outerCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		outerMetrics := execdetails.RUV2MetricsFromContext(outerCtx)
+		require.NotNil(t, outerMetrics)
+		se.sessionVars.RUV2Metrics = outerMetrics
+
+		internalCtx := kv.WithInternalSourceType(outerCtx, kv.InternalTxnOthers)
+		_, _, err := se.ExecRestrictedSQL(internalCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select 1")
+		require.NoError(t, err)
+
+		require.Same(t, outerMetrics, se.sessionVars.RUV2Metrics)
+		require.False(t, outerMetrics.Bypass())
 	})
 }
 

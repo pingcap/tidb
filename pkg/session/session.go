@@ -2232,6 +2232,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
+	prevRUV2Metrics := s.sessionVars.RUV2Metrics
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2244,6 +2245,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.RUV2Metrics = prevRUV2Metrics
 		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
