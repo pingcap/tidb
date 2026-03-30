@@ -66,6 +66,11 @@ func AnnotateOrderedLeading(root base.LogicalPlan, orderingCols []*expression.Co
 	return choice, true
 }
 
+// findLeadingHintAnchor returns the top join that should receive the internal
+// LEADING hint for the current join group. The group root may be wrapped by a
+// Selection because TiDB can keep a pushed-down filter above a reorderable join
+// group, so we skip such wrappers and stop once the tree shape is no longer
+// "Selection -> Join".
 func findLeadingHintAnchor(root base.LogicalPlan) *logicalop.LogicalJoin {
 	for root != nil {
 		switch node := root.(type) {
@@ -108,9 +113,13 @@ func buildSingleTableLeadingHint(table *hint.HintedTable) *hint.PlanHints {
 }
 
 // findOrderedLeadingChoice picks one vertex that carries the ordering
-// requirement inside the current join group. If that vertex can also be
-// represented as a single hinted table, we additionally return the bridged
-// LEADING target for the current anchor join.
+// requirement inside the current join group. Each ordering vector must be
+// satisfied as a whole instead of column-by-column. For example, if the join
+// group is {t1, t2, t3} and the required order is (t2.a, t2.b), we only pick a
+// vertex whose schema contains both columns and whose access path can preserve
+// the full (a, b) order. If that vertex can also be represented as a single
+// hinted table, we additionally return the bridged LEADING target for the
+// current anchor join.
 func findOrderedLeadingChoice(group *joinGroup, orderingCols []*expression.Column, parentFilters []expression.Expression) *OrderedLeadingChoice {
 	groupSelectionConds := collectSelectionConds(group)
 	orderingColIDs, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
@@ -225,6 +234,14 @@ func indexMatchesOrdering(
 			continue
 		}
 		if orderPos == 0 {
+			// Equality predicates let us skip unmatched index-prefix columns before
+			// we consume the first ORDER BY column. Example:
+			//   index(category, id)
+			//   where category = 'hot'
+			//   order by id
+			// The category prefix is fixed to one value, so scanning the remaining
+			// suffix still preserves the order of id. Once we have started matching
+			// ORDER BY columns, any mismatch breaks the required order.
 			if _, ok := equalityColIDs[colID]; ok {
 				continue
 			}
@@ -309,8 +326,9 @@ func extractEqualityColumns(expr expression.Expression, result map[int64]struct{
 	if sf.FuncName.L == ast.EQ && len(sf.GetArgs()) == 2 {
 		// We only treat const equalities as index-prefix eliminators. For
 		// example, index(category, id) can satisfy "where category = 'hot'
-		// order by id", but we intentionally do not infer order equivalence from
-		// column-to-column predicates like "a = b" here.
+		// order by id". Keeping this conservative EQ-to-const case still helps
+		// TP-style queries without pulling in general column-equivalence
+		// reasoning such as inferring order from "a = b".
 		col, ok := sf.GetArgs()[0].(*expression.Column)
 		if ok && isDeterministicConstExpr(sf.GetArgs()[1]) && col.ID > 0 {
 			result[col.ID] = struct{}{}

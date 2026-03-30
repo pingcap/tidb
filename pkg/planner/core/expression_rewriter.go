@@ -1293,6 +1293,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
+		planCtx.builder.optFlag |= rule.FlagOrderAwareJoinReorder
 		planCtx.builder.optFlag |= rule.FlagJoinReOrder
 		planCtx.builder.optFlag |= rule.FlagEmptySelectionEliminator
 		distinctChild := np

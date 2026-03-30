@@ -565,8 +565,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	}
 
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
-	// Add join reorder flag regardless of inner join or outer join.
-	b.optFlag = b.optFlag | rule.FlagJoinReOrder
+	// Add join reorder related flags regardless of inner join or outer join.
+	b.optFlag = b.optFlag | rule.FlagOrderAwareJoinReorder | rule.FlagJoinReOrder
 	b.optFlag |= rule.FlagPredicateSimplification
 	b.optFlag |= rule.FlagEmptySelectionEliminator
 

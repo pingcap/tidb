@@ -26,16 +26,19 @@ import (
 
 func prepareOrderAwareJoinReorderTables(tk *testkit.TestKit) {
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t6, t7, t8")
+	tk.MustExec("drop table if exists t6, t7, t8, t9")
 	tk.MustExec("create table t6(id int not null, category varchar(20), payload int, key idx_category_id(category, id))")
 	tk.MustExec("create table t7(id int not null primary key, payload int)")
 	tk.MustExec("create table t8(id int not null primary key, payload int)")
+	tk.MustExec("create table t9(id int not null primary key, payload int)")
 	tk.MustExec("insert into t6 values (1,'hot',10),(2,'hot',20),(3,'cold',30),(4,'hot',40)")
 	tk.MustExec("insert into t7 values (1,100),(2,200),(4,400)")
 	tk.MustExec("insert into t8 values (1,1000),(2,2000),(4,4000)")
+	tk.MustExec("insert into t9 values (1,10000),(2,20000),(4,40000)")
 	tk.MustExec("analyze table t6 all columns")
 	tk.MustExec("analyze table t7 all columns")
 	tk.MustExec("analyze table t8 all columns")
+	tk.MustExec("analyze table t9 all columns")
 }
 
 func TestCDCJoinReorder(tt *testing.T) {

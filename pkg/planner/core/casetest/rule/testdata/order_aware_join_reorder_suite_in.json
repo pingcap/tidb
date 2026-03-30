@@ -3,14 +3,18 @@
     "name": "TestOrderAwareCDCJoinReorder",
     "cases": [
       "SELECT t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
-      "SELECT /*+ LEADING(t7, t8, t6) */ t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2"
+      "SELECT /*+ LEADING(t7, t8, t6) */ t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+      "SELECT /*+ TIDB_INLJ(t7, t8, t9) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+      "SELECT /*+ TIDB_INLJ(t7, t8, t9) LEADING(t7, t8, t9, t6) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2"
     ]
   },
   {
     "name": "TestOrderAwareJoinReorderPushSelection",
     "cases": [
       "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload from t7 join t8 on t7.id = t8.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2",
-      "explain format = 'plan_tree' select /*+ LEADING(t7, t8, t6) */ t6.id, t7.payload, t8.payload from t7 join t8 on t7.id = t8.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2"
+      "explain format = 'plan_tree' select /*+ LEADING(t7, t8, t6) */ t6.id, t7.payload, t8.payload from t7 join t8 on t7.id = t8.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2",
+      "explain format = 'plan_tree' select /*+ TIDB_INLJ(t7, t8, t9) */ t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2",
+      "explain format = 'plan_tree' select /*+ TIDB_INLJ(t7, t8, t9) LEADING(t7, t8, t9, t6) */ t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2"
     ]
   }
 ]

@@ -6,15 +6,16 @@
         "SQL": "SELECT t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
         "Plan": [
           "Projection root  test.t6.id, test.t7.payload, test.t8.payload",
-          "└─Limit root  offset:0, count:2",
-          "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
-          "    ├─IndexReader(Build) root  index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
-          "    └─MergeJoin(Probe) root  inner join, left key:test.t7.id, right key:test.t8.id",
+          "└─TopN root  test.t6.id, offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t6.id",
+          "    └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t8.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
           "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
-          "      └─TableReader(Probe) root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:t7 keep order:true"
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t6.id, right key:test.t7.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t7 keep order:true",
+          "        └─IndexReader(Probe) root  index:IndexRangeScan",
+          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true"
         ],
         "Result": [
           "1 100 1000",
@@ -39,6 +40,51 @@
           "1 100 1000",
           "2 200 2000"
         ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t7, t8, t9) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
+          "    └─IndexJoin root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
+          "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "      │ │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │ │   └─TableRangeScan cop[tikv] table:t7 range: decided by [test.t6.id], keep order:false",
+          "      │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │   └─TableRangeScan cop[tikv] table:t8 range: decided by [test.t7.id], keep order:false",
+          "      └─TableReader(Probe) root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:t9 range: decided by [test.t8.id], keep order:false"
+        ],
+        "Result": [
+          "1 100 1000 10000",
+          "2 200 2000 20000"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t7, t8, t9) LEADING(t7, t8, t9, t6) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
+          "    ├─IndexReader(Build) root  index:IndexRangeScan",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    └─IndexJoin(Probe) root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─TableReader(Build) root  data:TableFullScan",
+          "      │ │ └─TableFullScan cop[tikv] table:t7 keep order:true",
+          "      │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │   └─TableRangeScan cop[tikv] table:t8 range: decided by [test.t7.id], keep order:false",
+          "      └─TableReader(Probe) root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:t9 range: decided by [test.t8.id], keep order:false"
+        ],
+        "Result": [
+          "1 100 1000 10000",
+          "2 200 2000 20000"
+        ]
       }
     ]
   },
@@ -49,15 +95,16 @@
         "SQL": "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload from t7 join t8 on t7.id = t8.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2",
         "Plan": [
           "Projection root  test.t6.id, test.t7.payload, test.t8.payload",
-          "└─Limit root  offset:0, count:2",
-          "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
-          "    ├─IndexReader(Build) root  index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
-          "    └─MergeJoin(Probe) root  inner join, left key:test.t7.id, right key:test.t8.id",
+          "└─TopN root  test.t6.id, offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t6.id",
+          "    └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t8.id",
           "      ├─TableReader(Build) root  data:TableFullScan",
           "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
-          "      └─TableReader(Probe) root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:t7 keep order:true"
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t6.id, right key:test.t7.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t7 keep order:true",
+          "        └─IndexReader(Probe) root  index:IndexRangeScan",
+          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true"
         ]
       },
       {
@@ -73,6 +120,43 @@
           "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
           "      └─TableReader(Probe) root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:t7 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ TIDB_INLJ(t7, t8, t9) */ t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
+          "    └─IndexJoin root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
+          "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "      │ │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │ │   └─TableRangeScan cop[tikv] table:t7 range: decided by [test.t6.id], keep order:false",
+          "      │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │   └─TableRangeScan cop[tikv] table:t8 range: decided by [test.t7.id], keep order:false",
+          "      └─TableReader(Probe) root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:t9 range: decided by [test.t8.id], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ TIDB_INLJ(t7, t8, t9) LEADING(t7, t8, t9, t6) */ t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' order by t6.id limit 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
+          "    ├─IndexReader(Build) root  index:IndexRangeScan",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id(category, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    └─IndexJoin(Probe) root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─TableReader(Build) root  data:TableFullScan",
+          "      │ │ └─TableFullScan cop[tikv] table:t7 keep order:true",
+          "      │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │   └─TableRangeScan cop[tikv] table:t8 range: decided by [test.t7.id], keep order:false",
+          "      └─TableReader(Probe) root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:t9 range: decided by [test.t8.id], keep order:false"
         ]
       }
     ]
