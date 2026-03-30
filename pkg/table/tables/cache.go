@@ -77,7 +77,7 @@ type cacheData struct {
 	Start uint64
 	Lease uint64
 	kv.MemBuffer
-	datumCache      *CachedDatumData                // pre-decoded datum cache for table scans
+	datumCache       *CachedDatumData                // pre-decoded datum cache for table scans
 	indexDatumCaches map[int64]*CachedIndexDatumData // pre-decoded datum caches for index scans, keyed by index ID
 }
 
@@ -220,8 +220,8 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 			MemBuffer: nil, // Async loading, this will be set later.
 		})
 
-		// Make the load data process async, in case that loading data takes longer the
-		// lease duration, then the loaded data get staled and that process repeats forever.
+		// Make the load data process async, in case that loading data takes longer than the
+		// lease duration, then the loaded data becomes stale and that process repeats forever.
 		go func() {
 			start := time.Now()
 			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
@@ -269,7 +269,7 @@ func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTab
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
-	// Prevent furthur writing when the table is already too large.
+	// Prevent further writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
@@ -332,12 +332,13 @@ func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
 	colInfo := make([]rowcodec.ColInfo, len(cols))
 	fieldTypes := make([]*types.FieldType, len(cols))
 	for i, col := range cols {
+		ft := rowcodec.FieldTypeFromModelColumn(col.ColumnInfo)
 		colInfo[i] = rowcodec.ColInfo{
 			ID:         col.ID,
 			IsPKHandle: tblMeta.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col.ColumnInfo),
+			Ft:         ft,
 		}
-		fieldTypes[i] = rowcodec.FieldTypeFromModelColumn(col.ColumnInfo)
+		fieldTypes[i] = ft
 	}
 
 	pkColIDs := TryGetCommonPkColumnIds(tblMeta)
