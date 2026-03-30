@@ -104,6 +104,13 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 	evalCtx := exprCtx.GetEvalCtx()
 	anyChanged := false
 
+	// Track which Projections need guard Selections added, keyed by child index.
+	type guardEntry struct {
+		proj  *logicalop.LogicalProjection
+		conds []expression.Expression
+	}
+	guards := map[int]*guardEntry{}
+
 	// Process each EqualCondition.
 	for eqIdx := 0; eqIdx < len(join.EqualConditions); eqIdx++ {
 		eq := join.EqualConditions[eqIdx]
@@ -134,18 +141,32 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 			continue
 		}
 
-		// Rewrite the INT-side Projection: CAST(int_col AS DOUBLE) → int_col
-		intInfo.proj.Exprs[intInfo.exprIdx] = intInfo.origCol.Clone()
-		intSchemaCol := intInfo.proj.Schema().Columns[intInfo.exprIdx]
-		intSchemaCol.RetType = intInfo.origCol.RetType.Clone()
+		// Add NEW expressions to each Projection (don't modify existing ones).
+		// INT side: pass through the bare int column.
+		newIntCol := &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  intInfo.origCol.RetType.Clone(),
+		}
+		intInfo.proj.Exprs = append(intInfo.proj.Exprs, intInfo.origCol.Clone())
+		intInfo.proj.Schema().Append(newIntCol)
 
-		// Rewrite the VARCHAR-side Projection: CAST(varchar_col AS DOUBLE) → CAST(varchar_col AS SIGNED)
+		// VARCHAR side: CAST(varchar_col AS SIGNED).
 		castIntExpr := expression.WrapWithCastAsInt(exprCtx, strInfo.origCol.Clone(), intInfo.origCol.RetType)
-		strInfo.proj.Exprs[strInfo.exprIdx] = castIntExpr
-		strSchemaCol := strInfo.proj.Schema().Columns[strInfo.exprIdx]
-		strSchemaCol.RetType = castIntExpr.GetType(evalCtx).Clone()
+		newStrCol := &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  castIntExpr.GetType(evalCtx).Clone(),
+		}
+		strInfo.proj.Exprs = append(strInfo.proj.Exprs, castIntExpr)
+		strInfo.proj.Schema().Append(newStrCol)
 
-		// Add guard Selection below the VARCHAR-side Projection.
+		// Accumulate guard condition for the VARCHAR-side Projection.
+		strChildIdx := 1
+		if strInfo.proj == leftProj {
+			strChildIdx = 0
+		}
+		if guards[strChildIdx] == nil {
+			guards[strChildIdx] = &guardEntry{proj: strInfo.proj}
+		}
 		guardLeft := expression.WrapWithCastAsReal(exprCtx, expression.WrapWithCastAsInt(exprCtx, strInfo.origCol.Clone(), intInfo.origCol.RetType))
 		guardRight := expression.WrapWithCastAsReal(exprCtx, strInfo.origCol.Clone())
 		guard := expression.NewFunctionInternal(
@@ -155,18 +176,23 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 			guardLeft,
 			guardRight,
 		)
-		strProjChild := strInfo.proj.Children()[0]
-		sel := logicalop.LogicalSelection{Conditions: []expression.Expression{guard}}.Init(ctx, join.QueryBlockOffset())
-		sel.SetChildren(strProjChild)
-		strInfo.proj.SetChildren(sel)
+		guards[strChildIdx].conds = append(guards[strChildIdx].conds, guard)
 
-		// Replace the EQ condition with a new one comparing INT columns.
+		// Replace the EQ condition with a new one using the NEW columns.
+		// Preserve left/right ordering: args[0] must be from the left child,
+		// args[1] from the right child (matching the original EQ condition).
+		var newLeftCol, newRightCol *expression.Column
+		if intInfo.proj == leftProj {
+			newLeftCol, newRightCol = newIntCol, newStrCol
+		} else {
+			newLeftCol, newRightCol = newStrCol, newIntCol
+		}
 		newEq := expression.NewFunctionInternal(
 			exprCtx,
 			eq.FuncName.L,
 			types.NewFieldType(mysql.TypeTiny),
-			intSchemaCol.Clone(),
-			strSchemaCol.Clone(),
+			newLeftCol.Clone(),
+			newRightCol.Clone(),
 		)
 		if sf, ok := newEq.(*expression.ScalarFunction); ok {
 			join.EqualConditions[eqIdx] = sf
@@ -175,9 +201,19 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 		anyChanged = true
 	}
 
-	if anyChanged {
-		join.MergeSchema()
+	// Insert guard Selections below the affected Projections.
+	for childIdx, g := range guards {
+		projChild := g.proj.Children()[0]
+		sel := logicalop.LogicalSelection{Conditions: g.conds}.Init(ctx, join.QueryBlockOffset())
+		sel.SetChildren(projChild)
+		g.proj.SetChildren(sel)
+		_ = childIdx
 	}
+
+	// Note: we do NOT call MergeSchema() here. The new columns are only used
+	// internally by EqualConditions as join keys, not by the join's output.
+	// Column pruning (FlagPruneColumnsAgain) runs later and will rebuild
+	// schemas correctly.
 	return anyChanged
 }
 

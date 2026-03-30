@@ -76,3 +76,16 @@ select * from t_null_int left join t_null_str on t_null_int.id = t_null_str.id o
 # TestJoinKeyTypeCastWhereClause
 # The optimization should also work when the join condition comes from WHERE.
 select * from t_int, t_varchar where t_int.id = t_varchar.id order by t_int.id;
+
+# TestJoinKeyTypeCastMultiWayJoin
+# Complex multi-way join with VARCHAR vs INT across multiple joins.
+# Regression test: must not produce "Can't find column" errors.
+drop table if exists t_mj;
+create table t_mj (a varchar(1), b integer);
+insert into t_mj values ('1', 1), ('2', 2);
+
+select * from t_mj t1
+  join t_mj t2 on t1.b = t2.b
+  join t_mj t3
+  join (t_mj t4 straight_join t_mj t5 on t4.a = t5.b) on t1.b = t4.b
+where t1.a = t5.b;
