@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"math"
@@ -507,9 +508,14 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	intHandle := !m.table.IsCommonHandle
 	if m.cacheTable != nil {
 		// Try pre-decoded datum cache fast path to skip KV decode.
-		if iter := m.buildDatumCacheIter(); iter != nil {
-			kvIter.Close()
-			return iter, nil
+		// The datum cache is built from cacheTable only and currently only supports full-table scans.
+		// If txn membuffer has any key in the scan range or the scan only covers a subset of record keys,
+		// fall back to KV iteration so pushed-down handle ranges are preserved.
+		if m.kvRangesCoverFullTable() && !memBufferHasAnyEntryInRanges(kvIter.txn.GetMemBuffer(), m.kvRanges) {
+			if iter := m.buildDatumCacheIter(); iter != nil {
+				kvIter.Close()
+				return iter, nil
+			}
 		}
 		batchChk := chunk.New(m.retFieldTypes, cachedTableBatchSize, cachedTableBatchSize)
 		return &memRowsBatchIterForTable{
@@ -532,6 +538,15 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		intHandle:      intHandle,
 		memTableReader: m,
 	}, nil
+}
+
+func (m *memTableReader) kvRangesCoverFullTable() bool {
+	if len(m.kvRanges) != 1 {
+		return false
+	}
+	recordPrefix := tablecodec.GenTableRecordPrefix(m.table.ID)
+	rg := m.kvRanges[0]
+	return bytes.Equal(rg.StartKey, recordPrefix) && bytes.Equal(rg.EndKey, recordPrefix.PrefixNext())
 }
 
 func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
