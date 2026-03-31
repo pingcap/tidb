@@ -81,6 +81,13 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
+// useProvidedInfoSchemaAsIs returns a PreprocessOpt that tells preprocessor to resolve
+// table names against the provided infoschema without upgrading them to the
+// latest domain schema via MDL.
+func useProvidedInfoSchemaAsIs(p *preprocessor) {
+	p.useInfoSchemaAsIs = true
+}
+
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -250,6 +257,10 @@ type preprocessor struct {
 	err error
 
 	resolveCtx *resolve.Context
+
+	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
+	// caller, instead of upgrading table metadata to the latest domain schema.
+	useInfoSchemaAsIs bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -1666,7 +1677,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	if !p.skipLockMDL() {
+	if !p.skipLockMDL() && !p.useInfoSchemaAsIs {
 		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err

@@ -17,12 +17,14 @@ package mview_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -425,7 +427,7 @@ func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mview.BuildOptions{FromTS: 10},
+		mview.BuildOptions{FromTS: 10, ToTS: 25},
 		nil,
 	)
 	require.NoError(t, err)
@@ -455,6 +457,7 @@ func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
 	}
 
 	require.EqualValues(t, 10, tsValueByOp[opcode.GT])
+	require.EqualValues(t, 25, tsValueByOp[opcode.LE])
 }
 
 func TestBuildMergeSourceSelectJoinOperatorByMVNullability(t *testing.T) {
@@ -1519,6 +1522,15 @@ func collectAndPredicates(t *testing.T, expr ast.ExprNode) []*ast.BinaryOperatio
 		return []*ast.BinaryOperationExpr{bin}
 	}
 	return append(collectAndPredicates(t, bin.L), collectAndPredicates(t, bin.R)...)
+}
+
+func restoreNodeForTest(t *testing.T, node ast.Node) string {
+	t.Helper()
+
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, node.Restore(ctx))
+	return sb.String()
 }
 
 func columnNameRef(t *testing.T, expr ast.ExprNode) (string, string) {

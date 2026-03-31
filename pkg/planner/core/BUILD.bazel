@@ -278,6 +278,7 @@ go_test(
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",

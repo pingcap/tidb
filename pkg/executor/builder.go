@@ -3800,6 +3800,32 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	}, nil
 }
 
+func (b *executorBuilder) newDataReaderBuilderWithSnapshot(
+	p base.PhysicalPlan,
+	snapshot *plannercore.MVFullUpdateSnapshot,
+) (*dataReaderBuilder, error) {
+	if snapshot == nil {
+		return nil, errors.New("snapshot is nil")
+	}
+	if snapshot.TS == 0 {
+		return nil, errors.New("snapshot ts is zero")
+	}
+	if snapshot.InfoSchema == nil {
+		return nil, errors.New("snapshot infoschema is nil")
+	}
+
+	builderForDataReader := *b
+	builderForDataReader.forDataReaderBuilder = true
+	builderForDataReader.dataReaderTS = snapshot.TS
+	builderForDataReader.is = snapshot.InfoSchema
+	builderForDataReader.isStaleness = true
+
+	return &dataReaderBuilder{
+		plan:            p,
+		executorBuilder: &builderForDataReader,
+	}, nil
+}
+
 func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {

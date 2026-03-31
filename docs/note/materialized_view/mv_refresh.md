@@ -440,8 +440,8 @@ With this feature, one `FAST` refresh must distinguish three timestamps:
 Required invariants:
 
 1. `targetTSO >= fromTS`
-   - if `targetTSO < fromTS`, refresh should fail
-   - if `targetTSO == fromTS`, implementation may treat refresh as a no-op success
+   - if `targetTSO < fromTS`, refresh should return an error directly
+   - if `targetTSO == fromTS`, refresh should return no-op success
 2. `targetTSO <= writeTxnTSO`
    - refresh must not claim to apply beyond the current transaction read horizon
 3. `targetTSO` must pass normal snapshot/gc-safe-point validation before execution starts
@@ -509,6 +509,24 @@ The cleanest execution model is:
 3. this snapshot override should happen below SQL syntax level, inside planner/executor wiring,
    rather than by injecting generic SQL `AS OF TIMESTAMP`
 
+For `MIN/MAX` full-update lookup, changing only the read ts is not sufficient.
+
+That lookup path must use the schema snapshot at `targetTSO` as well:
+
+1. build the full-update lookup template AST as usual
+2. preprocess / resolve / optimize that template with the snapshot InfoSchema at `targetTSO`
+3. build the full-update inner reader executor with the same snapshot InfoSchema
+4. execute that inner reader at `targetTSO`
+
+Reason:
+
+1. base tables with MV dependencies already block many incompatible DDL operations
+2. but index / physical-layout changes may still happen after `targetTSO`
+3. planning the full-update lookup with current InfoSchema and only forcing read-ts to `targetTSO`
+   may let the optimizer depend on indexes or physical layout that did not exist at `targetTSO`
+4. therefore the full-update lookup path must keep schema snapshot and data snapshot aligned at
+   `targetTSO`
+
 Implementation notes:
 
 1. planner/executor contract should carry `targetTSO` explicitly for `FAST` refresh
@@ -518,6 +536,11 @@ Implementation notes:
 4. full-update/min-max recompute readers should get a dedicated read-ts override equal to `targetTSO`
 5. that inner reader should also be treated as stale read at request level, even if the outer refresh
    statement itself is not a generic stale-read statement
+6. full-update/min-max lookup planning should use `targetTSO` snapshot InfoSchema rather than current
+   InfoSchema
+7. full-update/min-max executor build should also use the same `targetTSO` snapshot InfoSchema
+8. if full-update/min-max lookup cannot be planned/extracted under the `targetTSO` snapshot schema,
+   refresh should fail rather than silently fall back to current-schema planning
 
 #### Metadata and schema assumptions
 
@@ -526,72 +549,194 @@ This design relies on two existing MV constraints:
 1. refresh execution for one MV is serialized by the existing mutex path
 2. base tables with MV dependencies already block relevant DDL operations
 
-Because of these constraints, planning base-table recompute with the current InfoSchema and reading
-data at `targetTSO` is acceptable for this feature.
+However, those DDL constraints are not sufficient to justify planning `MIN/MAX` full-update lookup
+with the current InfoSchema.
+
+Therefore the intended assumption split is:
+
+1. MV table / MV log planning can continue to use current InfoSchema inside the current refresh
+   framework
+2. base-table `MIN/MAX` full-update lookup must use the snapshot InfoSchema at `targetTSO`
+3. this is required even if many incompatible base-table DDLs are already blocked, because later
+   index / physical-layout changes can still affect lookup planning correctness
 
 #### GC-safe-point protection
 
-If users want to refresh an old backlog in many small windows, ordinary snapshot validation alone is
-not sufficient. GC may already have advanced beyond the desired historical target, or may advance
-during a long-running refresh.
+This feature should not introduce any persistent MV-level GC blocking policy.
 
-The recommended protection model has two layers.
+In particular:
 
-##### 1. Persistent backlog protection (opt-in per MV)
+1. do not add an MV option such as `block gc`
+2. do not keep cluster GC pinned to `MIN(LAST_SUCCESS_READ_TSO)` across MVs
+3. if users leave a backlog unrefreshed for too long and GC advances past the desired historical
+   target, later bounded refresh should fail and require a newer target timestamp
 
-Introduce one MV-level option, for example a `block gc` style flag.
+What is still required is defining per-execution semantics for one bounded fast refresh.
 
-Semantics:
+##### Per-refresh execution semantics
 
-1. default should be disabled
-2. only MVs with this option enabled participate in GC blocking
-3. the owner/service side periodically computes:
-   `MIN(LAST_SUCCESS_READ_TSO)` across opted-in MVs
-4. TiDB then publishes that value through PD service safe point
-
-Rationale:
-
-1. if an MV falls far behind and the user still wants to recover by repeated bounded fast refresh,
-   GC must not pass below that MV's current watermark
-2. making this behavior opt-in avoids pinning cluster GC unexpectedly for all MVs
-
-Operational notes:
-
-1. if no MV opts in, the MV service safe point should be removed
-2. documentation should make the trade-off explicit: a stalled opted-in MV can hold back cluster GC
-
-##### 2. Per-refresh execution protection
-
-A second, temporary protection is still needed for each bounded fast refresh execution.
+Bounded `FAST ... AS OF TIMESTAMP ...` should follow ordinary stale-read GC semantics rather than
+introducing MV-specific GC blocking.
 
 Semantics:
 
-1. before running one `FAST ... AS OF TIMESTAMP ...` refresh, publish a temporary service safe point
-   at `targetTSO`
-2. keep it for the whole refresh execution
-3. remove it after the refresh finishes (success or failure)
+1. if current GC safe point is already newer than `targetTSO`, refresh must fail
+2. refresh must not acquire a temporary service safe point or otherwise block GC advancement
+3. if GC advances beyond `targetTSO` during execution, refresh may fail and roll back
+4. users can retry with a newer `targetTSO`
+
+Recommended ordering:
+
+1. parse/evaluate `AS OF TIMESTAMP` into `targetTSO`
+2. if `targetTSO < fromTS`, return an error directly
+3. if `targetTSO == fromTS`, return no-op success directly
+4. run normal stale-read style snapshot / GC-safe-point validation before execution
+5. execute bounded fast refresh without blocking GC
+6. rely on the normal snapshot read path to fail if `targetTSO` becomes invalid during execution
 
 Rationale:
 
-1. even if `targetTSO` is valid when refresh starts, GC may advance during a long refresh
-2. the outer refresh transaction's own `startTS` / `for_update_tso` does not protect this older
-   historical snapshot automatically
+1. this matches TiDB's existing stale-read behavior better
+2. correctness is preserved because refresh is transactional and can roll back on mid-execution
+   stale-read failure
+3. long-term backlog retention remains an operational concern and should not be encoded as MV-level
+   GC blocking behavior
 
 #### Recommended implementation shape
 
 1. Extend parser/AST for `FAST` refresh to carry an optional `AS OF TIMESTAMP` expression.
 2. Parse/evaluate that expression into `targetTSO` during refresh preparation.
-3. Keep current outer refresh transaction framework unchanged.
-4. Carry both `fromTS` and `targetTSO` into `mvmerge` build/execution.
-5. Read MV at `writeTxnTSO`.
-6. Read MV log at `writeTxnTSO`, but explicitly filter `_tidb_commit_ts` into `(fromTS, targetTSO]`.
-7. Read base-table recompute paths at `targetTSO` through dedicated inner reader wiring.
-8. Persist `LAST_SUCCESS_READ_TSO = targetTSO` on success.
-9. If enabled for the MV, maintain persistent GC protection from the minimum opted-in watermark.
-10. For every bounded fast refresh execution, hold one temporary service safe point at `targetTSO`.
+3. If `targetTSO == fromTS`, return no-op success without entering `mvmerge`.
+4. Keep current outer refresh transaction framework unchanged.
+5. For every bounded fast refresh execution, run the same kind of snapshot / GC-safe-point
+   legality checks that ordinary stale reads rely on, but do not block GC.
+6. Carry both `fromTS` and `targetTSO` into `mvmerge` build/execution.
+7. Read MV at `writeTxnTSO`.
+8. Read MV log at `writeTxnTSO`, but explicitly filter `_tidb_commit_ts` into `(fromTS, targetTSO]`.
+9. For `MIN/MAX` full-update lookup, preprocess / optimize the lookup template with the snapshot
+   InfoSchema at `targetTSO`.
+10. Build the `MIN/MAX` full-update inner reader with the same snapshot InfoSchema and execute it at
+    `targetTSO` as a stale-read request.
+11. If that `MIN/MAX` full-update lookup cannot be planned/extracted under the snapshot schema at
+    `targetTSO`, fail refresh directly.
+12. Persist `LAST_SUCCESS_READ_TSO = targetTSO` on success.
 
 This feature should be implemented as an MV-refresh-specific extension of `FAST` refresh,
 not as generic in-transaction stale-read SQL.
+
+#### Recommended development stages
+
+To keep implementation debuggable, the recommended development order is:
+
+##### Stage 1: parser and outer refresh semantics
+
+Goal: add the user-visible `FAST ... AS OF TIMESTAMP ...` entry and finalize outer refresh
+statement semantics before touching `mvmerge`.
+
+Scope:
+
+1. extend parser/AST so `REFRESH MATERIALIZED VIEW ... FAST AS OF TIMESTAMP <expr>` is accepted
+2. store the optional `AS OF TIMESTAMP` clause on `RefreshMaterializedViewStmt`
+3. reject `AS OF TIMESTAMP` for non-`FAST` refresh modes
+4. evaluate `AS OF TIMESTAMP` into `targetTSO` during outer refresh preparation
+5. define the three outer semantic branches:
+   - `targetTSO < fromTS` => return error directly
+   - `targetTSO == fromTS` => return no-op success directly
+   - `targetTSO > fromTS` => continue bounded fast refresh
+6. pass numeric `targetTSO` into the internal refresh-implement statement rather than re-evaluating
+   the expression later
+
+Completion criteria:
+
+1. parser/AST tests cover the new syntax
+2. outer executor semantics for `<`, `==`, `>` against `fromTS` are fixed
+3. no bounded merge logic is required yet
+
+##### Stage 2: bounded-path GC validation semantics
+
+Goal: align bounded fast refresh with ordinary stale-read GC semantics before implementing the
+bounded merge window.
+
+Scope:
+
+1. reuse normal stale-read style snapshot / GC-safe-point validation for `targetTSO`
+2. keep no-op path (`targetTSO == fromTS`) outside this validation flow
+3. do not acquire a temporary service safe point or otherwise block GC
+4. document that bounded refresh may fail and roll back if GC advances beyond `targetTSO` during
+   execution
+
+Completion criteria:
+
+1. `gcSafePoint > targetTSO` fails refresh
+2. no temporary or persistent MV-level GC blocking behavior is introduced
+3. bounded execution semantics are explicitly documented as best-effort with rollback on stale-read
+   failure
+
+##### Stage 3: bounded FAST merge window
+
+Goal: make the incremental merge logic respect `(fromTS, targetTSO]`.
+
+Scope:
+
+1. extend internal refresh-implement statement to carry `targetTSO`
+2. extend `mvmerge.BuildOptions` from `FromTS` to `FromTS + ToTS`
+3. generate MV log delta predicates using both bounds:
+   `_tidb_commit_ts > fromTS AND _tidb_commit_ts <= targetTSO`
+4. keep MV reads at `writeTxnTSO`
+5. after successful bounded fast refresh, persist `LAST_SUCCESS_READ_TSO = targetTSO`
+6. assert bounded refresh does not persist a watermark newer than the actual statement read horizon
+
+Completion criteria:
+
+1. bounded fast refresh without `MIN/MAX` can advance watermark in smaller windows
+2. repeated bounded runs do not skip any interval
+
+##### Stage 4: `MIN/MAX` full-update lookup with snapshot schema + snapshot data
+
+Goal: make `MIN/MAX` recomputation correct even when current schema/index layout differs from the
+schema at `targetTSO`.
+
+Scope:
+
+1. obtain snapshot InfoSchema at `targetTSO`
+2. preprocess / resolve / optimize full-update lookup template under that snapshot InfoSchema
+3. extract full-update lookup metadata from the snapshot-schema physical plan
+4. extend `MVDeltaMerge` plan metadata so executor build can see `targetTSO` for the full-update
+   path
+5. build the full-update inner reader with:
+   - snapshot InfoSchema at `targetTSO`
+   - read ts = `targetTSO`
+   - stale-read request flag enabled
+6. if full-update lookup cannot be planned/extracted under snapshot schema at `targetTSO`, fail
+   refresh directly instead of falling back to current-schema planning
+
+Completion criteria:
+
+1. `MIN/MAX` recomputation reads both schema and data at `targetTSO`
+2. later index / physical-layout changes do not affect bounded fast refresh correctness
+
+##### Stage 5: end-to-end validation
+
+Goal: add focused regression coverage for the new bounded fast refresh behavior.
+
+Minimum validation scope:
+
+1. parser tests for `FAST ... AS OF TIMESTAMP ...`
+2. executor tests for:
+   - `targetTSO < fromTS`
+   - `targetTSO == fromTS`
+   - successful bounded watermark advance
+3. GC-related tests for start-time rejection when `targetTSO` is older than GC safe point
+4. `MIN/MAX` tests proving recomputation uses `targetTSO`
+5. schema/index change tests proving snapshot-schema planning is honored for full-update lookup
+
+Recommended execution order:
+
+1. Stage 1
+2. Stage 2
+3. Stage 3
+4. Stage 4
+5. Stage 5
 
 ### COMPLETE DELTA APPLY (implemented)
 

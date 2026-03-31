@@ -306,6 +306,11 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// useInfoSchemaAsIs keeps table metadata on the infoschema chosen by the
+	// caller, instead of upgrading tables to the latest domain schema during
+	// plan building.
+	useInfoSchemaAsIs bool
 }
 
 type handleColHelper struct {
@@ -432,6 +437,16 @@ type PlanBuilderOptAllowCastArray struct{}
 // Apply implements the interface PlanBuilderOpt.
 func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 	builder.allowBuildCastArray = true
+}
+
+// planBuilderOptUseProvidedInfoSchemaAsIs means the plan builder should keep using the
+// provided infoschema as-is, without upgrading resolved tables to the latest
+// domain schema through MDL.
+type planBuilderOptUseProvidedInfoSchemaAsIs struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (planBuilderOptUseProvidedInfoSchemaAsIs) Apply(builder *PlanBuilder) {
+	builder.useInfoSchemaAsIs = true
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
@@ -3890,14 +3905,26 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	}
 
 	fromTS := stmt.LastSuccessfulRefreshReadTSO
-
-	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
-		nodeW := resolve.NewNodeW(sel)
-		sctx, ok := b.ctx.(sessionctx.Context)
-		if !ok {
-			return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+	toTS := stmt.TargetRefreshReadTSO
+	sctx, ok := b.ctx.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+	}
+	ensureSessionExtendedInfoSchema := func(planIS infoschema.InfoSchema) infoschema.InfoSchema {
+		if _, ok := planIS.(*infoschema.SessionExtendedInfoSchema); ok {
+			return planIS
 		}
-		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
+		return &infoschema.SessionExtendedInfoSchema{InfoSchema: planIS}
+	}
+
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt, planIS infoschema.InfoSchema, useInfoSchemaAsIs bool) (base.PhysicalPlan, error) {
+		planIS = ensureSessionExtendedInfoSchema(planIS)
+		nodeW := resolve.NewNodeW(sel)
+		preprocessOpts := []PreprocessOpt{WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: planIS})}
+		if useInfoSchemaAsIs {
+			preprocessOpts = append(preprocessOpts, useProvidedInfoSchemaAsIs)
+		}
+		if err := Preprocess(optCtx, sctx, nodeW, preprocessOpts...); err != nil {
 			return nil, err
 		}
 
@@ -3905,7 +3932,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		savedBlockNames := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 		defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(savedBlockNames)
 
-		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+		var builderOpts []PlanBuilderOpt
+		if useInfoSchemaAsIs {
+			builderOpts = append(builderOpts, planBuilderOptUseProvidedInfoSchemaAsIs{})
+		}
+		innerBuilder, _ := NewPlanBuilder(builderOpts...).Init(b.ctx, planIS, hint.NewQBHintHandler(nil))
 		p, err := innerBuilder.Build(optCtx, nodeW)
 		if err != nil {
 			return nil, err
@@ -3923,7 +3954,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 
 	switch mode {
 	case ast.RefreshMaterializedViewModeFast:
-		res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS}, nil)
+		res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -3931,7 +3962,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if res.MergeSourceSelect == nil {
 			return nil, errors.New("mview: merge source select is nil")
 		}
-		sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
+		sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect, b.is, false)
 		if err != nil {
 			return nil, err
 		}
@@ -3949,6 +3980,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullUpdateKeyOff2IdxOff     []int
 			fullUpdateKeyResultColIdxes []int
 			fullUpdateOutputMVOffsets   []int
+			fullUpdateSnapshot          *MVFullUpdateSnapshot
 		)
 		if res.FullUpdateLookupTemplateSelect != nil {
 			if res.FullUpdateLookupColumnCount <= 0 {
@@ -3961,11 +3993,33 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 					res.FullUpdateLookupColumnCount,
 				)
 			}
+			fullUpdateLookupIS := b.is
+			if toTS > 0 {
+				fullUpdateLookupIS, err = staleread.GetSessionSnapshotInfoSchema(sctx, toTS)
+				if err != nil {
+					return nil, err
+				}
+				fullUpdateSnapshot = &MVFullUpdateSnapshot{
+					TS:         toTS,
+					InfoSchema: ensureSessionExtendedInfoSchema(fullUpdateLookupIS),
+				}
+				fullUpdateLookupIS = fullUpdateSnapshot.InfoSchema
+			}
+			if err := validateMVFullUpdateSupportingIndex(
+				ctx,
+				fullUpdateLookupIS,
+				res.BaseTableID,
+				res.FullUpdateLookupTemplateSelect,
+				res.FullUpdateLookupMVOffsets,
+				res.GroupKeyMVOffsets,
+			); err != nil {
+				return nil, err
+			}
 			// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
 			// so force-enable the switch during this one-shot optimization and restore it afterward.
 			savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
 			b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
-			fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
+			fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect, fullUpdateLookupIS, toTS > 0)
 			b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
 			if err != nil {
 				return nil, err
@@ -4000,6 +4054,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			FullUpdateKeyOff2IdxOff:     fullUpdateKeyOff2IdxOff,
 			FullUpdateKeyResultColIdxes: fullUpdateKeyResultColIdxes,
 			FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
+			FullUpdateSnapshot:          fullUpdateSnapshot,
 			MVTableID:                   res.MVTableID,
 			BaseTableID:                 res.BaseTableID,
 			MLogTableID:                 res.MLogTableID,
@@ -4028,7 +4083,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		sessionVars.SetEnableCascadesPlanner(false)
 		sessionVars.StmtCtx.HasEnableCascadesPlannerHint = false
 		sessionVars.StmtCtx.EnableCascadesPlanner = false
-		sourcePlan, err := optimizeSelect(ctx, diffRes.DiffSourceSelect)
+		sourcePlan, err := optimizeSelect(ctx, diffRes.DiffSourceSelect, b.is, false)
 		sessionVars.EnableFullOuterJoin = savedEnableFullOuterJoin
 		sessionVars.SetEnableCascadesPlanner(savedEnableCascadesPlanner)
 		sessionVars.StmtCtx.HasEnableCascadesPlannerHint = savedHasEnableCascadesPlannerHint
@@ -4062,6 +4117,75 @@ type mvFullUpdateLookupTemplate struct {
 	KeyOff2IdxOff     []int
 	KeyResultColIdxes []int
 	OutputMVOffsets   []int
+}
+
+func validateMVFullUpdateSupportingIndex(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	baseTableID int64,
+	lookupSel *ast.SelectStmt,
+	outputMVOffsets []int,
+	groupKeyMVOffsets []int,
+) error {
+	if lookupSel == nil {
+		return errors.New("mview full-update lookup template: lookup select is nil")
+	}
+	baseTable, ok := is.TableByID(ctx, baseTableID)
+	if !ok || baseTable == nil {
+		return errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
+	}
+	groupKeyBaseCols, err := extractMVFullUpdateGroupKeyBaseCols(lookupSel, outputMVOffsets, groupKeyMVOffsets)
+	if err != nil {
+		return err
+	}
+	if !mview.HasVisibleIndexWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols) {
+		return errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
+	}
+	return nil
+}
+
+func extractMVFullUpdateGroupKeyBaseCols(
+	lookupSel *ast.SelectStmt,
+	outputMVOffsets []int,
+	groupKeyMVOffsets []int,
+) ([]string, error) {
+	if lookupSel == nil || lookupSel.Fields == nil {
+		return nil, errors.New("mview full-update lookup template: lookup select fields are nil")
+	}
+	if len(lookupSel.Fields.Fields) != len(outputMVOffsets) {
+		return nil, errors.Errorf(
+			"mview full-update lookup template: unexpected field count: got %d, expected %d",
+			len(lookupSel.Fields.Fields),
+			len(outputMVOffsets),
+		)
+	}
+	groupKeySet := make(map[int]struct{}, len(groupKeyMVOffsets))
+	for _, mvOffset := range groupKeyMVOffsets {
+		groupKeySet[mvOffset] = struct{}{}
+	}
+	groupKeyBaseCols := make([]string, 0, len(groupKeyMVOffsets))
+	for i, mvOffset := range outputMVOffsets {
+		if _, ok := groupKeySet[mvOffset]; !ok {
+			continue
+		}
+		colExpr, ok := lookupSel.Fields.Fields[i].Expr.(*ast.ColumnNameExpr)
+		if !ok {
+			return nil, errors.Errorf(
+				"mview full-update lookup template: field %d for group key mv offset %d is not a column",
+				i,
+				mvOffset,
+			)
+		}
+		groupKeyBaseCols = append(groupKeyBaseCols, colExpr.Name.Name.L)
+	}
+	if len(groupKeyBaseCols) != len(groupKeyMVOffsets) {
+		return nil, errors.Errorf(
+			"mview full-update lookup template: extracted %d group key base columns, expected %d",
+			len(groupKeyBaseCols),
+			len(groupKeyMVOffsets),
+		)
+	}
+	return groupKeyBaseCols, nil
 }
 
 // extractMVFullUpdateLookupTemplate extracts executor-facing lookup metadata from the optimized
