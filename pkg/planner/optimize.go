@@ -407,7 +407,7 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-		// allow analyze table
+	// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,
@@ -556,25 +556,27 @@ func buildAndOptimizeLogicalPlanRound(
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
-func shouldTryAlternativeLogicalPlanRound(sessVars *variable.SessionVars) bool {
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
 	return sessVars.EnableAlternativeLogicalPlans &&
 		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
 		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
 }
 
-type FlagAdjustFunc func(uint64) uint64
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
 
-var RoundList = [...]FlagAdjustFunc{
+type flagAdjustFunc func(uint64) uint64
+
+var roundList = [...]flagAdjustFunc{
 	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
 	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
 }
 
 var roundEnabled = [...]func(*variable.SessionVars) bool{
-	shouldTryAlternativeLogicalPlanRound,
-	func(sessVars *variable.SessionVars) bool {
-		return sessVars.EnableAlternativeLogicalPlans &&
-			sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
-	},
+	shouldTryNonDecorrelationRound,
+	shouldTryOrderAwareReorderRound,
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
@@ -646,7 +648,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-	for i, adjust := range RoundList {
+	for i, adjust := range roundList {
 		if !roundEnabled[i](sessVars) {
 			continue
 		}
