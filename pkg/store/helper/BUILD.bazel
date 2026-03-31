@@ -40,7 +40,6 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/infoschema/context",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
