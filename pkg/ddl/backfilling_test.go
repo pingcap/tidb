@@ -18,12 +18,15 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -90,6 +94,78 @@ func TestPickBackfillType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeIngest)
 	ingest.LitInitialized = false
+}
+
+func TestTableScanWorkerStreamsChunks(t *testing.T) {
+	reorgMeta := &model.DDLReorgMeta{}
+	reorgMeta.SetBatchSize(1)
+	srcChkPool := &sync.Pool{
+		New: func() any {
+			return chunk.NewChunkWithCapacity(nil, 1)
+		},
+	}
+	wctx := NewLocalWorkerCtx(context.Background(), 1)
+	defer wctx.Cancel()
+
+	task := TableScanTask{ID: 1, ctx: wctx}
+	worker := &tableScanWorker{
+		ctx:        wctx,
+		srcChkPool: srcChkPool,
+		reorgMeta:  reorgMeta,
+		collector:  &execute.TestCollector{},
+		totalCount: &atomic.Int64{},
+	}
+
+	firstChunkSent := make(chan struct{})
+	releaseFirstChunk := make(chan struct{})
+	secondFetchStarted := make(chan struct{})
+	var senderCount atomic.Int64
+	var fetchCount atomic.Int64
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- worker.streamScanResults(context.Background(), task, false, func(_ *chunk.Chunk) (bool, int64, error) {
+			call := fetchCount.Add(1)
+			switch call {
+			case 1:
+				return false, 1, nil
+			case 2:
+				close(secondFetchStarted)
+				return true, 1, nil
+			default:
+				return true, 0, nil
+			}
+		}, nil, func(idxResult IndexRecordChunk) {
+			senderCount.Add(1)
+			select {
+			case <-firstChunkSent:
+			default:
+				close(firstChunkSent)
+				<-releaseFirstChunk
+			}
+			_ = idxResult
+		})
+	}()
+
+	select {
+	case <-firstChunkSent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the first chunk to be sent")
+	}
+
+	select {
+	case <-secondFetchStarted:
+		t.Fatal("scan fetched the next chunk before the first chunk was accepted downstream")
+	case <-time.After(100 * time.Millisecond):
+	}
+	require.Equal(t, int64(1), fetchCount.Load())
+	require.Equal(t, int64(1), senderCount.Load())
+	require.Zero(t, worker.totalCount.Load())
+
+	close(releaseFirstChunk)
+	require.NoError(t, <-errCh)
+	require.Equal(t, int64(2), fetchCount.Load())
+	require.Equal(t, int64(2), senderCount.Load())
+	require.Equal(t, int64(2), worker.totalCount.Load())
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

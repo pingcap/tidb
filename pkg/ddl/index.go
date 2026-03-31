@@ -2644,9 +2644,13 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunk(
-	ctx context.Context,
-	writers []ingest.Writer,
+type indexKVPair struct {
+	key    []byte
+	val    []byte
+	handle kv.Handle
+}
+
+func encodeChunk(
 	indexes []table.Index,
 	indexConditionCheckers []func(row chunk.Row) (bool, error),
 	copCtx copr.CopContext,
@@ -2654,8 +2658,7 @@ func writeChunk(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
-	tblInfo *model.TableInfo,
-) (rowCnt int, bytes int, err error) {
+) (rowCnt int, encodedKVs [][]indexKVPair, bytes int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
@@ -2666,17 +2669,7 @@ func writeChunk(
 	var restoreDataBuf []types.Datum
 	count := 0
 	totalBytes := 0
-
-	unlockFns := make([]func(), 0, len(writers))
-	for _, w := range writers {
-		unlock := w.LockForWrite()
-		unlockFns = append(unlockFns, unlock)
-	}
-	defer func() {
-		for _, unlock := range unlockFns {
-			unlock()
-		}
-	}()
+	encodedKVs = make([][]indexKVPair, len(indexes))
 	needRestoreForIndexes := make([]bool, len(indexes))
 	restore, pkNeedRestore := false, false
 	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
@@ -2701,7 +2694,7 @@ func writeChunk(
 		}
 		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
-			return 0, totalBytes, errors.Trace(err)
+			return 0, nil, totalBytes, errors.Trace(err)
 		}
 		for i, index := range indexes {
 			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
@@ -2709,7 +2702,7 @@ func writeChunk(
 			if index.Meta().HasCondition() && indexConditionCheckers != nil {
 				ok, err := indexConditionCheckers[i](row)
 				if err != nil {
-					return 0, 0, errors.Trace(err)
+					return 0, nil, 0, errors.Trace(err)
 				}
 				if !ok {
 					continue
@@ -2724,16 +2717,16 @@ func writeChunk(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			kvs, kvBytes, err := encodeOneIndexKV(index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
-				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, totalBytes, errors.Trace(err)
+				return 0, nil, totalBytes, errors.Trace(err)
 			}
+			encodedKVs[i] = append(encodedKVs[i], kvs...)
 			totalBytes += int(kvBytes)
 		}
 		count++
 	}
-	return count, totalBytes, nil
+	return count, encodedKVs, totalBytes, nil
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {
@@ -2747,39 +2740,69 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKV(
-	ctx context.Context,
-	writer ingest.Writer,
+func encodeOneIndexKV(
 	index table.Index,
 	loc *time.Location,
 	errCtx errctx.Context,
 	writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
-) (int64, error) {
+) ([]indexKVPair, int64, error) {
+	kvs := make([]indexKVPair, 0, 1)
 	var kvBytes int64
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return kvBytes, errors.Trace(err)
+			return nil, kvBytes, errors.Trace(err)
 		}
-		failpoint.Inject("mockLocalWriterPanic", func() {
-			panic("mock panic")
-		})
-		err = writer.WriteRow(ctx, key, idxVal, handle)
-		if err != nil {
-			return kvBytes, errors.Trace(err)
-		}
+		keyCopy := append([]byte(nil), key...)
+		valCopy := append([]byte(nil), idxVal...)
+		kvs = append(kvs, indexKVPair{key: keyCopy, val: valCopy, handle: handle})
 		// TODO this size doesn't consider keyspace prefix.
-		kvBytes += int64(len(key) + len(idxVal))
-		failpoint.Inject("mockLocalWriterError", func() {
-			failpoint.Return(0, errors.New("mock engine error"))
-		})
+		kvBytes += int64(len(keyCopy) + len(valCopy))
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
 	}
-	return kvBytes, nil
+	return kvs, kvBytes, nil
+}
+
+func writeEncodedChunk(
+	ctx context.Context,
+	writers []ingest.Writer,
+	indexes []table.Index,
+	tblInfo *model.TableInfo,
+	encodedKVs [][]indexKVPair,
+) (int, error) {
+	unlockFns := make([]func(), 0, len(writers))
+	for _, w := range writers {
+		unlock := w.LockForWrite()
+		unlockFns = append(unlockFns, unlock)
+	}
+	defer func() {
+		for _, unlock := range unlockFns {
+			unlock()
+		}
+	}()
+
+	totalBytes := 0
+	for i, kvs := range encodedKVs {
+		for _, kvPair := range kvs {
+			failpoint.Inject("mockLocalWriterPanic", func() {
+				panic("mock panic")
+			})
+			err := writers[i].WriteRow(ctx, kvPair.key, kvPair.val, kvPair.handle)
+			if err != nil {
+				err = ingest.TryConvertToKeyExistsErr(err, indexes[i].Meta(), tblInfo)
+				return totalBytes, errors.Trace(err)
+			}
+			totalBytes += len(kvPair.key) + len(kvPair.val)
+			failpoint.Inject("mockLocalWriterError", func() {
+				failpoint.Return(0, errors.New("mock engine error"))
+			})
+		}
+	}
+	return totalBytes, nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
