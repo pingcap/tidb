@@ -145,7 +145,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.NoError(t, wctx.OperatorErr())
 	}
 
-	// Test IndexIngestOperator.
+	// Test the read+encode/write pipeline.
 	{
 		ctx := context.Background()
 		wctx := workerpool.NewContext(ctx)
@@ -172,17 +172,21 @@ func TestBackfillOperators(t *testing.T) {
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		mockEngine.SetHook(onWrite)
 
-		src := testutil.NewOperatorTestSource(chunkResults...)
+		src := testutil.NewOperatorTestSource(opTasks...)
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
+		scanEncodeOp := ddl.NewTableScanEncodeOperator(
+			wctx, sessPool, copCtx, pTbl, []table.Index{index}, srcChkPool, 3, 0, reorgMeta, nil, &execute.TestCollector{},
+		)
 		ingestOp := ddl.NewIndexIngestOperator(
-			wctx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			srcChkPool, 3, reorgMeta, &execute.TestCollector{})
+			wctx, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, 3, &execute.TestCollector{},
+		)
 		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
-		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
+		operator.Compose[ddl.TableScanTask](src, scanEncodeOp)
+		operator.Compose[ddl.EncodedIndexRecordChunk](scanEncodeOp, ingestOp)
 		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)
 
-		pipeline := operator.NewAsyncPipeline(src, ingestOp, sink)
+		pipeline := operator.NewAsyncPipeline(src, scanEncodeOp, ingestOp, sink)
 		err = pipeline.Execute()
 		require.NoError(t, err)
 		err = pipeline.Close()
@@ -449,8 +453,9 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		require.NoError(t, err)
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)
-		ingestOp := ddl.NewIndexIngestOperator(wctx, copCtx, sessPool, pTbl, []table.Index{index},
-			[]ingest.Engine{mockEngine}, nil, 2, nil, &execute.TestCollector{})
+		ingestOp := ddl.NewIndexIngestOperator(
+			wctx, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, 2, &execute.TestCollector{},
+		)
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))

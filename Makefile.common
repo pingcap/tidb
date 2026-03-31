@@ -150,5 +150,5 @@ endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...,//lightning/...
 TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
 IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
-TIDB_SERVER_CHECK_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server_check
+TIDB_SERVER_CHECK_PATH := ./bazel-bin/cmd/tidb-server/tidb-server-check_/tidb-server-check
 NOGO_FLAG=true
