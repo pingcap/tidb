@@ -193,6 +193,7 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 		if schema == "" {
 			schema = sctx.GetSessionVars().CurrentDB
 		}
+		schemaLookup := pmodel.NewCIStr(schema).L
 		key := [2]string{schema, name}
 		sc.UserFuncCtx.Lock()
 		if _, exists := sc.UserFuncCtx.StoredFuncName[key]; exists {
@@ -214,10 +215,10 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 		internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 		rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
 			internalExecCtx,
-			"SELECT definition_utf8, sql_mode FROM %n.%n WHERE route_schema = %? AND name = %? AND type = 'FUNCTION'",
+			"SELECT definition_utf8, sql_mode FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
 			mysql.SystemDB,
 			mysql.Routines,
-			schema,
+			schemaLookup,
 			name,
 		)
 		if err != nil {

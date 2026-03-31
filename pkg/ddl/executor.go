@@ -1026,7 +1026,7 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 		oldUser := internalVars.User
 		oldActiveRoles := internalVars.ActiveRoles
 		oldPrivilegeManager := privilege.GetPrivilegeManager(sctx)
-		oldSQLMode, hadOldSQLMode := internalVars.GetSystemVar(vardef.SQLModeVar)
+		oldSQLMode, hadOldSQLMode := internalVars.GetSystemVar(variable.SQLModeVar)
 		restoreSQLMode := oldSQLMode
 		if !hadOldSQLMode {
 			restoreSQLMode = mysql.DefaultSQLMode
@@ -1037,7 +1037,7 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 			internalVars.User = oldUser
 			internalVars.ActiveRoles = oldActiveRoles
 			privilege.BindPrivilegeManager(sctx, oldPrivilegeManager)
-			if restoreErr := internalVars.SetSystemVar(vardef.SQLModeVar, restoreSQLMode); restoreErr != nil {
+			if restoreErr := internalVars.SetSystemVar(variable.SQLModeVar, restoreSQLMode); restoreErr != nil {
 				logutil.DDLLogger().Warn("restore sql_mode for CTAS internal session failed", zap.Error(restoreErr))
 			}
 		}()
@@ -1046,13 +1046,13 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 		if callerVars.CurrentDBCI.L != "" {
 			internalVars.CurrentDBCI = callerVars.CurrentDBCI
 		} else {
-			internalVars.CurrentDBCI = ast.NewCIStr(callerVars.CurrentDB)
+			internalVars.CurrentDBCI = pmodel.NewCIStr(callerVars.CurrentDB)
 		}
-		sqlMode, ok := callerVars.GetSystemVar(vardef.SQLModeVar)
+		sqlMode, ok := callerVars.GetSystemVar(variable.SQLModeVar)
 		if !ok {
-			return errors.New("unknown system var " + vardef.SQLModeVar)
+			return errors.New("unknown system var " + variable.SQLModeVar)
 		}
-		if err := internalVars.SetSystemVar(vardef.SQLModeVar, sqlMode); err != nil {
+		if err := internalVars.SetSystemVar(variable.SQLModeVar, sqlMode); err != nil {
 			return err
 		}
 		internalVars.User = callerVars.User
