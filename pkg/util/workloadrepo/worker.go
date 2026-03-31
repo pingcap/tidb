@@ -214,6 +214,28 @@ func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string,
 	w.wg = util.NewWaitGroupEnhancedWrapper("workloadrepo", nil, false)
 }
 
+func drainTickerChannel(ch <-chan time.Time) {
+	select {
+	case <-ch:
+	default:
+	}
+}
+
+func resetStoppedTickerChannel(ch <-chan time.Time, stop func(), reset func(time.Duration), d time.Duration) {
+	stop()
+	drainTickerChannel(ch)
+	if d > 0 {
+		reset(d)
+	}
+}
+
+func resetStoppedTicker(ticker *time.Ticker, d time.Duration) {
+	if ticker == nil {
+		return
+	}
+	resetStoppedTickerChannel(ticker.C, ticker.Stop, ticker.Reset, d)
+}
+
 // SetupRepository finishes the initialization of the workload repository.
 func SetupRepository(dom *domain.Domain) {
 	workerCtx.Lock()

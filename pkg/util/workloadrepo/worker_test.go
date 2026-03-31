@@ -146,6 +146,61 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 	}, time.Minute, time.Second)
 }
 
+func hasBufferedTick(ch <-chan time.Time) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func resetTickerWithoutDrainChannel(ch <-chan time.Time, stop func(), reset func(time.Duration), d time.Duration) {
+	stop()
+	if d > 0 {
+		reset(d)
+	}
+}
+
+func TestResetTickerWithoutDrainLeavesBufferedTick(t *testing.T) {
+	tickCh := make(chan time.Time, 1)
+	tickCh <- time.Now()
+
+	stopped := false
+	resetCalled := false
+	resetTickerWithoutDrainChannel(tickCh, func() { stopped = true }, func(time.Duration) { resetCalled = true }, 20*time.Millisecond)
+
+	require.True(t, stopped)
+	require.True(t, resetCalled)
+	require.True(t, hasBufferedTick(tickCh))
+}
+
+func TestResetStoppedTickerChannelDropsBufferedTick(t *testing.T) {
+	tickCh := make(chan time.Time, 1)
+	tickCh <- time.Now()
+
+	stopped := false
+	resetDelay := time.Duration(0)
+	resetStoppedTickerChannel(tickCh, func() { stopped = true }, func(d time.Duration) { resetDelay = d }, 20*time.Millisecond)
+
+	require.True(t, stopped)
+	require.Equal(t, 20*time.Millisecond, resetDelay)
+	require.False(t, hasBufferedTick(tickCh))
+}
+
+func TestResetStoppedTickerChannelDisablesTickerWithoutReset(t *testing.T) {
+	tickCh := make(chan time.Time, 1)
+	tickCh <- time.Now()
+
+	stopped := false
+	resetCalled := false
+	resetStoppedTickerChannel(tickCh, func() { stopped = true }, func(time.Duration) { resetCalled = true }, 0)
+
+	require.True(t, stopped)
+	require.False(t, resetCalled)
+	require.False(t, hasBufferedTick(tickCh))
+}
+
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 

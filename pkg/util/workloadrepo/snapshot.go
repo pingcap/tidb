@@ -272,15 +272,15 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 }
 
 func (w *worker) resetSnapshotInterval(newRate int32) {
-	w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
+	resetStoppedTicker(w.snapshotTicker, time.Duration(newRate)*time.Second)
 }
 
 func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
 
-	failpoint.Inject("FastRunawayGC", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
 		err = errors.New("fake error")
-	})
+	}
 
 	if err != nil {
 		return errWrongValueForVar.GenWithStackByArgs(repositorySnapshotInterval, d)
