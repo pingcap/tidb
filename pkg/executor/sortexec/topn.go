@@ -45,6 +45,16 @@ type truncateKey struct {
 	isNull bool
 }
 
+type RankInfo struct {
+	TruncateKeyExprs            []expression.Expression
+	truncateFieldTypes          []*types.FieldType
+	truncateFieldCollators      []collate.Collator
+	truncateKeyColIdxs          []int
+	TruncateKeyPrefixCharCounts []int
+	prevTruncateKeys            []truncateKey
+	truncateKeyCount            int
+}
+
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
@@ -83,13 +93,7 @@ type TopNExec struct {
 
 	typeCtx types.Context
 
-	TruncateKeyExprs            []expression.Expression
-	truncateFieldTypes          []*types.FieldType
-	truncateFieldCollators      []collate.Collator
-	truncateKeyColIdxs          []int
-	TruncateKeyPrefixCharCounts []int
-	prevTruncateKeys            []truncateKey
-	truncateKeyCount            int
+	RankInfo RankInfo
 }
 
 // Open implements the Executor Open interface.
@@ -117,7 +121,7 @@ func (e *TopNExec) OpenSelf() error {
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
 
-	if len(e.TruncateKeyPrefixCharCounts) > 0 {
+	if len(e.RankInfo.TruncateKeyPrefixCharCounts) > 0 {
 		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	}
 
@@ -300,7 +304,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		return nil
 	}
 
-	if len(e.TruncateKeyExprs) > 0 {
+	if len(e.RankInfo.TruncateKeyExprs) > 0 {
 		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
 		if err != nil {
 			close(e.resultChannel)
@@ -331,24 +335,24 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		return err
 	}
 
-	e.truncateKeyCount = len(e.TruncateKeyExprs)
-	e.truncateFieldCollators = make([]collate.Collator, 0, e.truncateKeyCount)
-	e.truncateFieldTypes = make([]*types.FieldType, 0, e.truncateKeyCount)
-	e.truncateKeyColIdxs = make([]int, 0, e.truncateKeyCount)
-	for i := range e.TruncateKeyExprs {
-		fieldType := e.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
-		e.truncateFieldTypes = append(e.truncateFieldTypes, fieldType)
+	e.RankInfo.truncateKeyCount = len(e.RankInfo.TruncateKeyExprs)
+	e.RankInfo.truncateFieldCollators = make([]collate.Collator, 0, e.RankInfo.truncateKeyCount)
+	e.RankInfo.truncateFieldTypes = make([]*types.FieldType, 0, e.RankInfo.truncateKeyCount)
+	e.RankInfo.truncateKeyColIdxs = make([]int, 0, e.RankInfo.truncateKeyCount)
+	for i := range e.RankInfo.TruncateKeyExprs {
+		fieldType := e.RankInfo.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+		e.RankInfo.truncateFieldTypes = append(e.RankInfo.truncateFieldTypes, fieldType)
 		switch fieldType.GetType() {
 		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			collateName := fieldType.GetCollate()
-			e.truncateFieldCollators = append(e.truncateFieldCollators, collate.GetCollator(collateName))
+			e.RankInfo.truncateFieldCollators = append(e.RankInfo.truncateFieldCollators, collate.GetCollator(collateName))
 		default:
-			e.truncateFieldCollators = append(e.truncateFieldCollators, nil)
+			e.RankInfo.truncateFieldCollators = append(e.RankInfo.truncateFieldCollators, nil)
 		}
 
-		switch col := e.TruncateKeyExprs[i].(type) {
+		switch col := e.RankInfo.TruncateKeyExprs[i].(type) {
 		case *expression.Column:
-			e.truncateKeyColIdxs = append(e.truncateKeyColIdxs, col.Index)
+			e.RankInfo.truncateKeyColIdxs = append(e.RankInfo.truncateKeyColIdxs, col.Index)
 		default:
 			return errors.NewNoStackError("Get unexpected expression")
 		}
@@ -431,21 +435,24 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 }
 
 func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
-	prefixKeys := make([]truncateKey, 0, e.truncateKeyCount)
-	for i := range e.truncateFieldCollators {
-		if row.IsNull(e.truncateKeyColIdxs[i]) {
+	prefixKeys := make([]truncateKey, 0, e.RankInfo.truncateKeyCount)
+	for i := range e.RankInfo.truncateFieldCollators {
+		if row.IsNull(e.RankInfo.truncateKeyColIdxs[i]) {
 			prefixKeys = append(prefixKeys, truncateKey{isNull: true})
 			continue
 		}
-		if e.TruncateKeyPrefixCharCounts[i] == -1 {
-			_, bytes, err := codec.EncodeHashChunkRowIdx(e.typeCtx, row, e.truncateFieldTypes[i], e.truncateKeyColIdxs[i])
+		if e.RankInfo.TruncateKeyPrefixCharCounts[i] == -1 {
+			_, bytes, err := codec.EncodeHashChunkRowIdx(e.typeCtx, row, e.RankInfo.truncateFieldTypes[i], e.RankInfo.truncateKeyColIdxs[i])
 			if err != nil {
 				return nil, err
 			}
 			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(bytes))})
 		} else {
-			key := row.GetString(e.truncateKeyColIdxs[i])
-			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.TruncateKeyPrefixCharCounts[i])))})
+			if e.RankInfo.truncateFieldCollators[i] == nil {
+				return nil, errors.Errorf("Get nil collator at idx %d", i)
+			}
+			key := row.GetString(e.RankInfo.truncateKeyColIdxs[i])
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.RankInfo.truncateFieldCollators[i].ImmutablePrefixKey(key, e.RankInfo.TruncateKeyPrefixCharCounts[i])))})
 		}
 	}
 	return prefixKeys, nil
@@ -460,7 +467,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 
 	if savedRowCount+rowCnt <= totalLimit {
 		// Fast path
-		e.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		e.RankInfo.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
 		return rowCnt, err
 	}
 
@@ -473,7 +480,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 
 	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
 	if idx > 0 {
-		e.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
+		e.RankInfo.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
 		if err != nil {
 			return 0, err
 		}
@@ -486,7 +493,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 		return 0, err
 	}
 
-	if slices.Equal(lastRowPrefixKeys, e.prevTruncateKeys) {
+	if slices.Equal(lastRowPrefixKeys, e.RankInfo.prevTruncateKeys) {
 		// Fast path: if the last row in the chunk is equal to the current prefix key,
 		// we can skip this chunk
 		return rowCnt, nil
@@ -502,7 +509,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if slices.Equal(currentPrefixKeys, e.prevTruncateKeys) {
+		if slices.Equal(currentPrefixKeys, e.RankInfo.prevTruncateKeys) {
 			left = mid + 1
 		} else {
 			right = mid
@@ -885,6 +892,6 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 
 // SetTruncateKeyMetasForTest sets truncate key fields for testing the RankTopN path.
 func (e *TopNExec) SetTruncateKeyMetasForTest(truncateKeyExprs []expression.Expression, truncateKeyCharCounts []int) {
-	e.TruncateKeyExprs = truncateKeyExprs
-	e.TruncateKeyPrefixCharCounts = truncateKeyCharCounts
+	e.RankInfo.TruncateKeyExprs = truncateKeyExprs
+	e.RankInfo.TruncateKeyPrefixCharCounts = truncateKeyCharCounts
 }
