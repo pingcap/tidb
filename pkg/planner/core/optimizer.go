@@ -1218,25 +1218,14 @@ func checkSkipReuseChunkForOverlongType(sctx base.PlanContext, plan base.Physica
 		return false, false
 	}
 	switch plan.(type) {
-<<<<<<< HEAD
 	case *PhysicalTableReader, *PhysicalIndexReader,
 		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader:
-		if existsOverlongType(plan.Schema(), false) {
-			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true, false
-		}
-	case *PointGetPlan:
-		if existsOverlongType(plan.Schema(), true) {
-=======
-	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
-		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
 		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
-	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+	case *PointGetPlan, *BatchPointGetPlan:
 		if shouldSkipReuseChunkForPhysicalPlan(plan) {
->>>>>>> de3035d3fa5 (planner: refine reuse chunk gating for overlong types (#67235))
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
@@ -1321,7 +1310,7 @@ func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*e
 	// Estimate the retained reusable chunk size as rows per chunk * bytes per row.
 	rowsPerReusableChunk := estimatedRows
 	switch plan.(type) {
-	case *physicalop.PointGetPlan:
+	case *PointGetPlan:
 	default:
 		rowsPerReusableChunk = min(rowsPerReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
 	}
@@ -1365,15 +1354,15 @@ func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimated
 	}
 
 	switch plan.(type) {
-	case *physicalop.PointGetPlan:
+	case *PointGetPlan:
 		return math.Ceil(statsInfo.RowCount), true
-	case *physicalop.BatchPointGetPlan:
+	case *BatchPointGetPlan:
 		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
 			return math.Ceil(statsInfo.RowCount), false
 		}
 		return math.Ceil(statsInfo.RowCount), true
-	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
-		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+	case *PhysicalTableReader, *PhysicalIndexReader,
+		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader:
 		// Non-point readers only take the relaxed path when row-count stats are trusted.
 		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
 			statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {

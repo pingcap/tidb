@@ -1534,19 +1534,23 @@ func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 }
 
 func TestDisableReuseChunk(t *testing.T) {
-<<<<<<< HEAD
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
-	tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
-	core.MaxMemoryLimitForOverlongType = 0
-	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
-	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
-	core.MaxMemoryLimitForOverlongType = 500 * size.GB
-	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
-	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
+		defer func() {
+			core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+		}()
+
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+		core.MaxMemoryLimitForOverlongType = 0
+		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+		core.MaxMemoryLimitForOverlongType = 500 * size.GB
+		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
+	})
 }
 
 func TestSemiJoinRewriter(t *testing.T) {
@@ -1566,23 +1570,4 @@ func TestSemiJoinRewriter(t *testing.T) {
 		`└─Projection(Probe) 10000.00 root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
 		`  └─TableReader 10000.00 root  data:TableFullScan`,
 		`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
-=======
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
-		tk.MustExec("use test")
-		originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
-		defer func() {
-			core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
-		}()
-
-		tk.MustExec("drop table if exists t1;")
-		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
-		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
-		core.MaxMemoryLimitForOverlongType = 0
-		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
-		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
-		core.MaxMemoryLimitForOverlongType = 500 * size.GB
-		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
-		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
-	})
->>>>>>> de3035d3fa5 (planner: refine reuse chunk gating for overlong types (#67235))
 }

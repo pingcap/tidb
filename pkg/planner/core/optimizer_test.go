@@ -29,11 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
->>>>>>> de3035d3fa5 (planner: refine reuse chunk gating for overlong types (#67235))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -119,7 +115,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
 
 	t.Run("overlong type chunk reuse uses reusable chunk size", func(t *testing.T) {
-		sctx := coretestsdk.MockContext()
+		sctx := MockContext()
 		defer func() {
 			domain.GetDomain(sctx).StatsHandle().Close()
 		}()
@@ -139,10 +135,10 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(i + 1)})
 		}
 		readerSchema := expression.NewSchema(columns...)
-		reader := physicalop.PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
-		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
+		reader := PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
+		reader.SetSchema(readerSchema)
 		buildTrustedHistColl := func(cols []*expression.Column, rowCount int64, avgColSize int64) *statistics.HistColl {
-			histColl := statistics.NewHistColl(1, rowCount, 0, len(cols), 0)
+			histColl := statistics.NewHistColl(1, false, rowCount, 0, len(cols), 0)
 			for _, col := range cols {
 				histColl.SetCol(col.UniqueID, &statistics.Column{
 					Histogram: *statistics.NewHistogram(col.UniqueID, rowCount, 0, 0, col.RetType, 0, avgColSize*rowCount),
@@ -176,13 +172,13 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			colType.SetFlen(1000001)
 			wideColumns = append(wideColumns, &expression.Column{RetType: colType, UniqueID: int64(1000 + i + 1)})
 		}
-		reader.PhysicalSchemaProducer.SetSchema(expression.NewSchema(wideColumns...))
+		reader.SetSchema(expression.NewSchema(wideColumns...))
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
 		})
 		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
-		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
+		reader.SetSchema(readerSchema)
 		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
 		reader.SetStats(&property.StatsInfo{
 			RowCount: 2048,
@@ -202,7 +198,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	})
 
 	t.Run("point get uses exact row bound for overlong type estimation", func(t *testing.T) {
-		sctx := coretestsdk.MockContext()
+		sctx := MockContext()
 		defer func() {
 			domain.GetDomain(sctx).StatsHandle().Close()
 		}()
@@ -211,7 +207,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			sctx.GetPlanCtx(),
 			"test",
 			expression.NewSchema(),
-			&model.TableInfo{Name: ast.NewCIStr("t")},
+			&model.TableInfo{Name: model.NewCIStr("t")},
 			nil,
 		)
 
@@ -221,7 +217,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	})
 
 	t.Run("batch point get participates in overlong type chunk reuse gating", func(t *testing.T) {
-		sctx := coretestsdk.MockContext()
+		sctx := MockContext()
 		defer func() {
 			domain.GetDomain(sctx).StatsHandle().Close()
 		}()
@@ -241,7 +237,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			colType.SetFlen(1001)
 			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(2000 + i + 1)})
 		}
-		batchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
+		batchPointGet := (&BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
 			sctx.GetPlanCtx(),
 			&property.StatsInfo{RowCount: 2048},
 			expression.NewSchema(columns...),
@@ -255,7 +251,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		sctx.GetSessionVars().MaxChunkSize = 1024
 		require.True(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
 
-		jsonBatchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
+		jsonBatchPointGet := (&BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
 			sctx.GetPlanCtx(),
 			&property.StatsInfo{RowCount: 1},
 			expression.NewSchema(&expression.Column{
