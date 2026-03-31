@@ -57,6 +57,8 @@ var (
 	telemetryStoreBatchedFallbackCnt = metrics.TelemetryStoreBatchedFallbackCnt
 )
 
+var reuseIntermChkLogCount atomic.Uint64
+
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
@@ -566,6 +568,14 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 		if r.respChunkDecoder.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
 			if chk.NumRows() > 0 {
 				return nil
+			}
+			if cnt := reuseIntermChkLogCount.Add(1); cnt <= 20 || cnt%1000 == 0 {
+				logutil.BgLogger().Info("selectResult reuse intermediate chunk",
+					zap.Uint64("count", cnt),
+					zap.Int("remainedRows", r.respChunkDecoder.RemainedRows()),
+					zap.Int("requiredRows", chk.RequiredRows()),
+					zap.Int("respChkIdx", r.respChkIdx),
+					zap.Int("selectRespChunks", len(r.selectResp.Chunks)))
 			}
 			r.respChunkDecoder.ReuseIntermChk(chk)
 			r.respChkIdx++
