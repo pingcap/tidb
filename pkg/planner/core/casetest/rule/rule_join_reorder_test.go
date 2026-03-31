@@ -37,10 +37,10 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades st
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + input[i]).Rows())
 			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
-		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'plan_tree' " + input[i]).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
@@ -141,7 +141,7 @@ func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
 		testKit.MustExec("create table t2_lh(k0 int, k1 int, k2 int);")
 		testKit.MustExec("create table t3_lh(k0 int, k1 int, k2 int);")
 
-		testKit.MustQuery("explain format = 'brief' " +
+		testKit.MustQuery("explain format = 'plan_tree' " +
 			"select /*+ leading(t0_lh, t2_lh, t3_lh, t1_lh) */ t1_lh.k0 " +
 			"from t0_lh right join t2_lh on (t0_lh.k1 = t2_lh.k1) " +
 			"join t3_lh on (t0_lh.k2 = t3_lh.k2 and t2_lh.k1 < t3_lh.k2) " +
@@ -170,7 +170,7 @@ func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 
 		// No leading hint: greedy solver (checkConnectionAndMakeJoin) picks the
 		// join order autonomously. The OR condition must be preserved.
-		testKit.MustQuery("explain format = 'brief' " +
+		testKit.MustQuery("explain format = 'plan_tree' " +
 			"select * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
 			"left join t3_56513 on t1_56513.a = t3_56513.b;").
@@ -179,7 +179,7 @@ func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 		// With leading(t1, t3, t2): the leading hint path (connectJoinNodes)
 		// joins t1 with t3 first via the left join eq edge, then the greedy
 		// solver joins the result with t2 via the OR condition.
-		plan132 := testKit.MustQuery("explain format = 'brief' " +
+		plan132 := testKit.MustQuery("explain format = 'plan_tree' " +
 			"select /*+ leading(t1_56513, t3_56513, t2_56513) */ * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
 			"left join t3_56513 on t1_56513.a = t3_56513.b;")
@@ -188,7 +188,7 @@ func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 
 		// With leading(t1, t2, t3): connectJoinNodes joins t1 with t2 via the
 		// OR condition (non-equijoin bypass), then joins with t3 via the eq edge.
-		plan123 := testKit.MustQuery("explain format = 'brief' " +
+		plan123 := testKit.MustQuery("explain format = 'plan_tree' " +
 			"select /*+ leading(t1_56513, t2_56513, t3_56513) */ * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
 			"left join t3_56513 on t1_56513.a = t3_56513.b;")

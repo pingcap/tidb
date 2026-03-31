@@ -2000,7 +2000,7 @@ func buildExceedsBoundDiagFields(
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
-		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
+		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, task.bucketsVer, ver)
 	}
 	if regionErr := getRegionError(bo.GetCtx(), resp.pbResp); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {
@@ -2489,6 +2489,9 @@ func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetai
 }
 
 func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
+	if resp != nil && resp.pbResp != nil {
+		updateRUV2MetricsFromExecDetailsV2(bo.GetCtx(), resp.pbResp.ExecDetailsV2)
+	}
 	if worker.stats == nil {
 		return nil
 	}

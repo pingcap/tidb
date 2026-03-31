@@ -164,25 +164,50 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	return rowContainer, copiedRC
 }
 
+func concurrentMapHashTableTrackedMemoryUsage(m *concurrentMapHashTable) int64 {
+	memoryUsage := int64(unsafe.Sizeof(concurrentMapHashTable{})) + int64(len(m.hashMap))*int64(unsafe.Sizeof(concurrentMapShared{}))
+	for _, shard := range m.hashMap {
+		memoryUsage += int64(shard.items.Bytes)
+	}
+	memoryUsage += int64(unsafe.Sizeof(entryStore{}))
+	for _, store := range m.entryStore.slices {
+		memoryUsage += int64(unsafe.Sizeof(entry{})) * int64(cap(store))
+	}
+	return memoryUsage
+}
+
+func concurrentMapHashTableRealMemoryUsage(m *concurrentMapHashTable) int64 {
+	memoryUsage := int64(unsafe.Sizeof(concurrentMapHashTable{})) + int64(len(m.hashMap))*int64(unsafe.Sizeof(uintptr(0))+unsafe.Sizeof(concurrentMapShared{}))
+	for _, shard := range m.hashMap {
+		memoryUsage += int64(shard.items.RealBytes())
+	}
+	memoryUsage += int64(unsafe.Sizeof(entryStore{}))
+	for _, store := range m.entryStore.slices {
+		memoryUsage += int64(unsafe.Sizeof(entry{})) * int64(cap(store))
+	}
+	return memoryUsage
+}
+
 func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
 	m := NewConcurrentMapHashTable()
-	require.Equal(t, int64(77904), m.memDelta)
+	require.Equal(t, concurrentMapHashTableTrackedMemoryUsage(m), m.memDelta)
 	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.
 	for i := range 6656 {
 		// Add entry to map.
 		m.Put(uint64(i*ShardCount), chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)})
 	}
-	{
-		realSize := int64(unsafe.Sizeof(concurrentMapHashTable{})) + int64(len(m.hashMap))*int64(unsafe.Sizeof(uintptr(0))+(unsafe.Sizeof(concurrentMapShared{})))
-		for _, m := range m.hashMap {
-			realSize += int64(m.items.RealBytes())
-		}
-		realSize += int64(unsafe.Sizeof(entryStore{}))
-		for _, s := range m.entryStore.slices {
-			realSize += int64(unsafe.Sizeof(entry{})) * int64(cap(s))
-		}
-		require.Equal(t, int64(348936), realSize)
+	require.Len(t, m.entryStore.slices, 7)
+	for idx, capacity := range []int{64, 128, 256, 512, 1024, 2048, 4096} {
+		require.Equal(t, capacity, cap(m.entryStore.slices[idx]))
 	}
-	require.Equal(t, int64(377203), m.GetAndCleanMemoryDelta())
+	trackedMapMemoryUsage := int64(0)
+	realMapMemoryUsage := int64(0)
+	for _, shard := range m.hashMap {
+		trackedMapMemoryUsage += int64(shard.items.Bytes)
+		realMapMemoryUsage += int64(shard.items.RealBytes())
+	}
+	require.GreaterOrEqual(t, trackedMapMemoryUsage, realMapMemoryUsage*75/100)
+	require.Equal(t, concurrentMapHashTableTrackedMemoryUsage(m), m.GetAndCleanMemoryDelta())
+	require.Greater(t, concurrentMapHashTableRealMemoryUsage(m), int64(0))
 	require.Equal(t, int64(0), m.GetAndCleanMemoryDelta())
 }

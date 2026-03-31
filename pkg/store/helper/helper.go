@@ -660,14 +660,16 @@ func (t TableInfoWithKeyRange) GetStartKey() string { return t.StartKey }
 // GetEndKey implements `withKeyRange` interface.
 func (t TableInfoWithKeyRange) GetEndKey() string { return t.EndKey }
 
-// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
-func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, nil)
+// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table with the specified codec.
+// It is exported only for test.
+func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec)
 }
 
-// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
-func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, index)
+// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index with the specified codec.
+// It is exported only for test.
+func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec)
 }
 
 // FilterMemDBs filters memory databases in the input schemas.
@@ -696,7 +698,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.
 	return tableInfos
 }
 
-func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo) TableInfoWithKeyRange {
+func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
 	var sk, ek []byte
 	if partition == nil && index == nil {
 		sk, ek = tablecodec.GetTableHandleKeyRange(table.ID)
@@ -707,8 +709,9 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 	} else {
 		sk, ek = tablecodec.GetTableIndexKeyRange(partition.ID, index.ID)
 	}
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	encodedSk, encodedEk := regionKeyCodec.EncodeRegionRange(sk, ek)
+	startKey := bytesKeyToHex(encodedSk)
+	endKey := bytesKeyToHex(encodedEk)
 	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:          db,
@@ -724,29 +727,33 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (*Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
+func (h *Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	dbInfos := is.AllSchemas()
 	if filter != nil {
 		dbInfos = filter(dbInfos)
+	}
+	regionKeyCodec := tikv.NewCodecV1(tikv.ModeTxn)
+	if h.Store != nil {
+		regionKeyCodec = h.Store.GetCodec()
 	}
 	for _, db := range dbInfos {
 		tableInfos, _ := is.SchemaTableInfos(context.Background(), db.Name)
 		for _, table := range tableInfos {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil, regionKeyCodec))
 				}
 			} else {
-				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil))
+				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec))
 			}
 			for _, index := range table.Indices {
 				if table.Partition == nil || index.Global {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec))
 					continue
 				}
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index, regionKeyCodec))
 				}
 			}
 		}
@@ -823,8 +830,7 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = kv.Key(startKey).PrefixNext()
 	}
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
+	startKey, endKey = h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
 
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }

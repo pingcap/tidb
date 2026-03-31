@@ -1328,8 +1328,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			if rowCount != 0 {
 				avgRowLength = dataLength / rowCount
 			}
-			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
-			if ex.HasPartitionPred() {
+			// If there are any conditions on PARTITION_NAME or TIDB_PARTITION_ID in the extractor, this record should be ignored.
+			if ex.HasPartitionPred() || ex.HasPartitionIDPred() {
 				continue
 			}
 			record := types.MakeDatums(
@@ -1366,7 +1366,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			e.recordMemoryConsume(record)
 		} else {
 			for i, pi := range table.GetPartitionInfo().Definitions {
-				if !ex.HasPartition(pi.Name.L) {
+				if !ex.HasPartition(pi.Name.L) || !ex.HasPartitionID(pi.ID) {
 					continue
 				}
 				rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)

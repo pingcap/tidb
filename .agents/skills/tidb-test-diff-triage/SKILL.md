@@ -13,32 +13,13 @@ Use this workflow when:
 - A single test run and full-suite run produce different outputs.
 - Planner/executor testdata changed unexpectedly after merge/rebase.
 
-## Rule 1: check failpoint path first
+## Rule 1: rule out failpoint setup first
 
 In TiDB, many test behaviors rely on failpoint instrumentation. `-tags=intest,deadlock` does not enable failpoints.
 
-1. Detect failpoint usage in the affected package:
-```bash
-rg -n --fixed-strings -- "failpoint." pkg/<package_name>
-rg -n --fixed-strings -- "testfailpoint." pkg/<package_name>
-test -f pkg/<package_name>/BUILD.bazel && \
-  rg -n --fixed-strings -- "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
-```
-
-2. If any hit exists, rerun with failpoint enable/disable wrapper:
-```bash
-make failpoint-enable && (
-  go test ./pkg/<package_name> \
-    -run '<TestName>' \
-    -tags=intest,deadlock \
-    -count=1
-  rc=$?
-  make failpoint-disable
-  exit $rc
-)
-```
-
-3. If diff disappears after failpoint enable, classify as environment/setup issue, not logic regression.
+- Use `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests` against the affected package.
+- If any hit exists, rerun with `Failpoint-enabled run` and add `-count=1` to the `go test` command for reproducibility.
+- If the diff disappears after failpoint enable, classify it as an environment/setup issue instead of a logic regression.
 
 ## Rule 2: isolate merge impact
 
@@ -55,7 +36,7 @@ git bisect bad <bad_commit>
 git bisect good <good_commit>
 ```
 
-## Rule 3: update testdata only after cause is proven
+## Rule 3: update testdata only after the cause is proven
 
 Only sync expected plan/result when one of these is true:
 

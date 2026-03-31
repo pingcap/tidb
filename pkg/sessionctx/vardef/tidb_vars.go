@@ -334,6 +334,11 @@ const (
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
+	// TiDBOptEnableAlternativeLogicalPlans controls whether the optimizer may build
+	// an extra non-decorrelate logical alternative when decorrelation does not
+	// produce an equivalent same-order index join candidate.
+	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
+
 	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
 	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
 	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
@@ -660,6 +665,9 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
@@ -948,6 +956,10 @@ const (
 	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
+	// TiDBPlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when
+	// a SQL binding is matched. Since a binding pins the plan via hints, stats changes cannot alter
+	// the chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	TiDBPlanCacheSkipStatsOnBinding = "tidb_plan_cache_skip_stats_on_binding"
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
@@ -1068,7 +1080,7 @@ const (
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
-	// TiDBOptIndexJoinBuild indicates which way to build index join.
+	// TiDBOptIndexJoinBuild is kept for compatibility. Index join build v2 is always enabled now.
 	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build_v2"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
@@ -1453,6 +1465,7 @@ const (
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableAlternativeLogicalPlans     = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
@@ -1522,6 +1535,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptEnableAdvancedJoinReorder     = true
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
@@ -1723,6 +1737,7 @@ const (
 	DefTiDBOptOrderingIdxSelRatio                     = 0.01
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBPlanCacheSkipStatsOnBinding                = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
 	DefAuthenticationLDAPSASLServerPort               = 389
@@ -1772,6 +1787,9 @@ const (
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
+	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
+	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
+	DefConnectAttrsSize int64 = 4096
 )
 
 // Process global variables.
@@ -1907,6 +1925,14 @@ var (
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	EnableBindingUsage         = atomic.NewBool(DefTiDBEnableBindingUsage)
+
+	// ConnectAttrsSize is the max aggregate byte size of connection attributes allowed per connection.
+	// Corresponds to performance_schema_session_connect_attrs_size. Default 4096.
+	ConnectAttrsSize = atomic.NewInt64(DefConnectAttrsSize)
+	// ConnectAttrsLongestSeen tracks the largest connection attribute aggregate size seen so far.
+	ConnectAttrsLongestSeen = atomic.NewInt64(0)
+	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
+	ConnectAttrsLost = atomic.NewInt64(0)
 )
 
 func serverMemoryLimitDefaultValue() string {
