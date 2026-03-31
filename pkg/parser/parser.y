@@ -987,6 +987,7 @@ import (
 	BinlogStmt                    "Binlog base64 statement"
 	BRIEStmt                      "BACKUP or RESTORE statement"
 	CalibrateResourceStmt         "CALIBRATE RESOURCE statement"
+	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW ... JOB statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                    "COMMIT statement"
 	CreateTableStmt               "CREATE TABLE statement"
@@ -5619,6 +5620,22 @@ PurgeMaterializedViewLogStmt:
 	"PURGE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
 	{
 		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+	}
+
+CancelMaterializedViewJobStmt:
+	"CANCEL" "MATERIALIZED" "VIEW" "REFRESH" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeRefresh,
+			JobID: $6.(int64),
+		}
+	}
+|	"CANCEL" "MATERIALIZED" "VIEW" "LOG" "PURGE" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
+			JobID: $7.(int64),
+		}
 	}
 
 RefreshMaterializedViewStmt:
@@ -12844,6 +12861,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelMaterializedViewJobStmt
 |	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt

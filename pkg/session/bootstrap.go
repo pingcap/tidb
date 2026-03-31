@@ -787,6 +787,8 @@ const (
 		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
 		REFRESH_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
 		PRIMARY KEY(REFRESH_JOB_ID),
 		KEY idx_mview_status (MVIEW_ID, REFRESH_STATUS, REFRESH_TIME),
 		KEY idx_refresh_status (REFRESH_STATUS, REFRESH_TIME))`
@@ -801,6 +803,8 @@ const (
 		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
 		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
 		PRIMARY KEY(PURGE_JOB_ID),
 		KEY idx_mlog_status (MLOG_ID, PURGE_STATUS, PURGE_TIME),
 		KEY idx_purge_status (PURGE_STATUS, PURGE_TIME))`
@@ -1253,12 +1257,16 @@ const (
 	// Create system tables for materialized views / materialized view logs.
 	version221 = 221
 
+	// version 222
+	// Add CANCEL_REQUESTED_AT and CANCEL_REQUESTED_BY to MV refresh/purge history tables.
+	version222 = 222
+
 	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version221
+var currentBootstrapVersion int64 = version222
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1435,6 +1443,7 @@ var (
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
+		upgradeToVer222,
 	}
 )
 
@@ -3319,6 +3328,16 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateTiDBMLogPurgeInfoTable)
 	doReentrantDDL(s, CreateTiDBMViewRefreshHistTable)
 	doReentrantDDL(s, CreateTiDBMLogPurgeHistTable)
+}
+
+func upgradeToVer222(s sessiontypes.Session, ver int64) {
+	if ver >= version222 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `CANCEL_REQUESTED_AT` datetime(6) DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `CANCEL_REQUESTED_BY` varchar(512) DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `CANCEL_REQUESTED_AT` datetime(6) DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `CANCEL_REQUESTED_BY` varchar(512) DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

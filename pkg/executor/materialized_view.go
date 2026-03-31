@@ -21,6 +21,7 @@ import (
 	"math/bits"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -50,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -66,8 +68,16 @@ type RefreshMaterializedViewExec struct {
 	done                  bool
 }
 
+// CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
+type CancelMaterializedViewJobExec struct {
+	exec.BaseExecutor
+	stmt *ast.CancelMaterializedViewJobStmt
+	done bool
+}
+
 var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")
 var errMVRefreshAdvisoryLockConflict = errors.NewNoStackError("materialized view refresh advisory lock conflict")
+var errMVTaskCanceledManually = errors.NewNoStackError("materialized view task canceled manually")
 
 const (
 	purgeHistStatusRunning          = "running"
@@ -76,6 +86,7 @@ const (
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
 	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
+	mvTaskCancelWatchPollInterval   = 5 * time.Second
 )
 
 // PurgeMaterializedViewLogExec executes "PURGE MATERIALIZED VIEW LOG" as a utility-style statement.
@@ -90,6 +101,396 @@ const (
 	mvCompleteDeltaDiffOpDelete = int64(2)
 	mvCompleteDeltaDiffOpUpdate = int64(3)
 )
+
+type mvTaskCancelReason uint8
+
+const (
+	mvTaskCancelReasonNone mvTaskCancelReason = iota
+	mvTaskCancelReasonManual
+)
+
+type mvTaskCancelController struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	mu        sync.Mutex
+	reason    mvTaskCancelReason
+	requester string
+}
+
+func newMVTaskCancelController(parent context.Context) *mvTaskCancelController {
+	ctx, cancel := context.WithCancel(parent)
+	return &mvTaskCancelController{
+		ctx:    ctx,
+		cancel: cancel,
+	}
+}
+
+func (c *mvTaskCancelController) context() context.Context {
+	if c == nil {
+		return nil
+	}
+	return c.ctx
+}
+
+func (c *mvTaskCancelController) requestManualCancelByRequester(requester string) {
+	if c == nil {
+		return
+	}
+
+	c.mu.Lock()
+	if c.reason == mvTaskCancelReasonNone {
+		c.reason = mvTaskCancelReasonManual
+	}
+	if c.requester == "" && requester != "" {
+		c.requester = requester
+	}
+	cancel := c.cancel
+	c.mu.Unlock()
+
+	cancel()
+}
+
+func (c *mvTaskCancelController) normalizeTaskFailure(taskErr error) (*string, error) {
+	if c == nil {
+		return nil, taskErr
+	}
+
+	c.mu.Lock()
+	reason := c.reason
+	requester := c.requester
+	c.mu.Unlock()
+
+	if reason != mvTaskCancelReasonManual {
+		return nil, taskErr
+	}
+
+	failedReason := formatMVManualCancelFailureReason(requester)
+	return &failedReason, errMVTaskCanceledManually
+}
+
+func formatMVManualCancelFailureReason(requester string) string {
+	if requester == "" {
+		return "cancelled manually"
+	}
+	return "cancelled manually by " + requester
+}
+
+func formatMVManualCancelRequester(user *auth.UserIdentity) string {
+	if user == nil {
+		return ""
+	}
+
+	username := user.AuthUsername
+	if username == "" {
+		username = user.Username
+	}
+	hostname := user.AuthHostname
+	if hostname == "" {
+		hostname = user.Hostname
+	}
+	if username == "" && hostname == "" {
+		return ""
+	}
+	return "'" + strings.ReplaceAll(username, "'", "''") + "'@'" + strings.ReplaceAll(hostname, "'", "''") + "'"
+}
+
+type mvTaskCancelPoller func(context.Context, sqlexec.SQLExecutor) (requested bool, requester string, err error)
+
+func startMVTaskCancelWatcher(
+	taskCtx context.Context,
+	getSysSession func() (sessionctx.Context, error),
+	releaseWatchSession func(sessionctx.Context),
+	taskCancelController *mvTaskCancelController,
+	watchName string,
+	poller mvTaskCancelPoller,
+) (func(), error) {
+	if taskCancelController == nil {
+		return func() {}, errors.New("mv task cancel watcher: task cancel controller is nil")
+	}
+
+	watchSctx, err := getSysSession()
+	if err != nil {
+		return func() {}, err
+	}
+
+	watcherCtx, stopWatcher := context.WithCancel(taskCtx)
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		defer releaseWatchSession(watchSctx)
+
+		sqlExec := watchSctx.GetSQLExecutor()
+		ticker := time.NewTicker(getMVTaskCancelWatchPollInterval())
+		defer ticker.Stop()
+
+		for {
+			requested, requester, err := poller(watcherCtx, sqlExec)
+			failpoint.InjectCall("mvTaskCancelWatcherPolled", watchName)
+			if err != nil {
+				if watcherCtx.Err() != nil {
+					return
+				}
+				logutil.BgLogger().Warn("materialized view task cancel watcher poll failed",
+					zap.String("watch", watchName),
+					zap.Error(err),
+				)
+			} else if requested {
+				taskCancelController.requestManualCancelByRequester(requester)
+				return
+			}
+
+			select {
+			case <-watcherCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	return func() {
+		stopWatcher()
+		<-watcherDone
+	}, nil
+}
+
+func getMVTaskCancelWatchPollInterval() time.Duration {
+	interval := mvTaskCancelWatchPollInterval
+	failpoint.Inject("mockMVTaskCancelWatchPollInterval", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case int:
+			interval = time.Duration(v) * time.Millisecond
+		case int64:
+			interval = time.Duration(v) * time.Millisecond
+		}
+	})
+	return interval
+}
+
+func readRefreshHistCancelRequest(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	refreshJobID uint64,
+	mviewID int64,
+) (bool, string, error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT CANCEL_REQUESTED_AT, CANCEL_REQUESTED_BY
+FROM mysql.tidb_mview_refresh_hist
+WHERE REFRESH_JOB_ID = %?
+  AND MVIEW_ID = %?`,
+		refreshJobID,
+		mviewID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return false, "", errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
+		}
+		return false, "", errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return false, "", nil
+	}
+	if rows[0].IsNull(1) {
+		return true, "", nil
+	}
+	return true, rows[0].GetString(1), nil
+}
+
+func readPurgeHistCancelRequest(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	purgeJobID uint64,
+	mlogID int64,
+) (bool, string, error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT CANCEL_REQUESTED_AT, CANCEL_REQUESTED_BY
+FROM mysql.tidb_mlog_purge_hist
+WHERE PURGE_JOB_ID = %?
+  AND MLOG_ID = %?`,
+		purgeJobID,
+		mlogID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return false, "", errors.New("required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return false, "", errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return false, "", nil
+	}
+	if rows[0].IsNull(1) {
+		return true, "", nil
+	}
+	return true, rows[0].GetString(1), nil
+}
+
+func requestRefreshHistCancel(
+	kctx context.Context,
+	sctx sessionctx.Context,
+	refreshJobID uint64,
+	requester any,
+) (bool, error) {
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(
+		kctx,
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET CANCEL_REQUESTED_AT = NOW(6),
+	CANCEL_REQUESTED_BY = %?
+WHERE REFRESH_JOB_ID = %?
+  AND REFRESH_STATUS = 'running'
+  AND CANCEL_REQUESTED_AT IS NULL`,
+		requester,
+		refreshJobID,
+	)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return sctx.GetSessionVars().StmtCtx.AffectedRows() > 0, nil
+}
+
+func requestPurgeHistCancel(
+	kctx context.Context,
+	sctx sessionctx.Context,
+	purgeJobID uint64,
+	requester any,
+) (bool, error) {
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(
+		kctx,
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET CANCEL_REQUESTED_AT = NOW(6),
+	CANCEL_REQUESTED_BY = %?
+WHERE PURGE_JOB_ID = %?
+  AND PURGE_STATUS = 'running'
+  AND CANCEL_REQUESTED_AT IS NULL`,
+		requester,
+		purgeJobID,
+	)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return sctx.GetSessionVars().StmtCtx.AffectedRows() > 0, nil
+}
+
+func checkCancelMaterializedViewJobPrivilege(
+	kctx context.Context,
+	ctx sessionctx.Context,
+	sqlExec sqlexec.SQLExecutor,
+	stmt *ast.CancelMaterializedViewJobStmt,
+) error {
+	if stmt == nil {
+		return errors.New("cancel materialized view job: missing statement")
+	}
+	pm := privilege.GetPrivilegeManager(ctx)
+	user := ctx.GetSessionVars().User
+	if pm == nil || user == nil {
+		return nil
+	}
+
+	is := domain.GetDomain(ctx).InfoSchema()
+	var dbName string
+	var tableName string
+	var found bool
+	var err error
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		dbName, tableName, found, err = resolveCancelRefreshJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		dbName, tableName, found, err = resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
+	}
+	if err != nil || !found {
+		return err
+	}
+	if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.AlterPriv) {
+		return nil
+	}
+	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, tableName)
+}
+
+func resolveCancelRefreshJobPrivilegeTarget(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	is infoschema.InfoSchema,
+	refreshJobID uint64,
+) (dbName string, tableName string, found bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT MVIEW_ID
+FROM mysql.tidb_mview_refresh_hist
+WHERE REFRESH_JOB_ID = %?
+  AND REFRESH_STATUS = 'running'`,
+		refreshJobID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return "", "", false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
+		}
+		return "", "", false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return "", "", false, nil
+	}
+	mviewID := rows[0].GetInt64(0)
+	mvTable, ok := is.TableByID(context.Background(), mviewID)
+	if !ok {
+		return "", "", false, errors.Errorf("refresh materialized view: cannot resolve target materialized view %d for cancel job %d", mviewID, refreshJobID)
+	}
+	dbInfo, ok := infoschema.SchemaByTable(is, mvTable.Meta())
+	if !ok {
+		return "", "", false, errors.Errorf("refresh materialized view: cannot resolve schema for materialized view %d", mviewID)
+	}
+	return dbInfo.Name.L, mvTable.Meta().Name.L, true, nil
+}
+
+func resolveCancelPurgeJobPrivilegeTarget(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	is infoschema.InfoSchema,
+	purgeJobID uint64,
+) (dbName string, tableName string, found bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT MLOG_ID
+FROM mysql.tidb_mlog_purge_hist
+WHERE PURGE_JOB_ID = %?
+  AND PURGE_STATUS = 'running'`,
+		purgeJobID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return "", "", false, errors.New("required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return "", "", false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return "", "", false, nil
+	}
+	mlogID := rows[0].GetInt64(0)
+	mlogTable, ok := is.TableByID(context.Background(), mlogID)
+	if !ok {
+		return "", "", false, errors.Errorf("cannot resolve materialized view log %d for cancel job %d", mlogID, purgeJobID)
+	}
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if mlogInfo == nil {
+		return "", "", false, errors.Errorf("table %d is not a materialized view log", mlogID)
+	}
+	baseTable, ok := is.TableByID(context.Background(), mlogInfo.BaseTableID)
+	if !ok {
+		return "", "", false, errors.Errorf("cannot resolve base table %d for materialized view log %d", mlogInfo.BaseTableID, mlogID)
+	}
+	dbInfo, ok := infoschema.SchemaByTable(is, baseTable.Meta())
+	if !ok {
+		return "", "", false, errors.Errorf("cannot resolve schema for base table %d", mlogInfo.BaseTableID)
+	}
+	return dbInfo.Name.L, baseTable.Meta().Name.L, true, nil
+}
 
 // MVCompleteDeltaApplyExec applies COMPLETE DELTA APPLY diff rows to the target MV table.
 // It keeps the runtime single-threaded and only batches the UPDATE old/new comparison at chunk granularity.
@@ -874,6 +1275,59 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 // Next implements the Executor Next interface.
+func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	requester := formatMVManualCancelRequester(e.Ctx().GetSessionVars().User)
+	var requesterArg any
+	if requester != "" {
+		requesterArg = requester
+	}
+
+	sctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(ctx, sctx)
+	if err := checkCancelMaterializedViewJobPrivilege(ctx, e.Ctx(), sctx.GetSQLExecutor(), e.stmt); err != nil {
+		return err
+	}
+
+	var applied bool
+	switch e.stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		applied, err = requestRefreshHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return errors.NewNoStackErrorf(
+				"cannot cancel materialized view refresh job %d: job not running, not found, or cancel already requested",
+				e.stmt.JobID,
+			)
+		}
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		applied, err = requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return errors.NewNoStackErrorf(
+				"cannot cancel materialized view log purge job %d: job not running, not found, or cancel already requested",
+				e.stmt.JobID,
+			)
+		}
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", e.stmt.Tp)
+	}
+	return nil
+}
+
+// Next implements the Executor Next interface.
 func (e *PurgeMaterializedViewLogExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
@@ -898,6 +1352,10 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return err
 	}
+	releaseCtx := kctx
+	taskCancelController := newMVTaskCancelController(kctx)
+	defer taskCancelController.cancel()
+	kctx = taskCancelController.context()
 	finalizeCtx := context.WithoutCancel(kctx)
 	batchSize := int64(e.Ctx().GetSessionVars().MLogPurgeBatchSize)
 	if batchSize <= 0 {
@@ -908,7 +1366,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return err
 	}
-	defer e.ReleaseSysSession(kctx, purgeSctx)
+	defer e.ReleaseSysSession(releaseCtx, purgeSctx)
 	purgeSessVars := purgeSctx.GetSessionVars()
 	targetMaintainMemQuota := e.Ctx().GetSessionVars().MVMaintainMemQuota
 	restorePurgeMemQuota, err := applyMVMaintenanceMemQuota(purgeSessVars, targetMaintainMemQuota)
@@ -923,7 +1381,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return err
 	}
-	defer e.ReleaseSysSession(kctx, histSctx)
+	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
 
 	var scheduleEvalSctx sessionctx.Context
@@ -932,7 +1390,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		if err != nil {
 			return err
 		}
-		defer e.ReleaseSysSession(kctx, scheduleEvalSctx)
+		defer e.ReleaseSysSession(releaseCtx, scheduleEvalSctx)
 	}
 
 	totalPurgeRows := int64(0)
@@ -942,12 +1400,20 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	lockedLastPurgedTSOReady := false
 	purgeJobID := uint64(0)
 	purgeHistRunningInserted := false
+	stopCancelWatcher := func() {}
+	defer func() {
+		stopCancelWatcher()
+	}()
 
 	finalizeFailure := func(purgeErr error) error {
+		purgeFailedReason, finalErr := taskCancelController.normalizeTaskFailure(purgeErr)
 		if !purgeHistRunningInserted {
-			return errors.Trace(purgeErr)
+			return errors.Trace(finalErr)
 		}
-		purgeErrMsg := purgeErr.Error()
+		purgeErrMsg := finalErr.Error()
+		if purgeFailedReason != nil {
+			purgeErrMsg = *purgeFailedReason
+		}
 		if histErr := finalizeMLogPurgeHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
@@ -957,9 +1423,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			totalPurgeRows,
 			&purgeErrMsg,
 		); histErr != nil {
-			return errors.Annotatef(histErr, "purge materialized view log: failed to finalize purge history after error %v", purgeErr)
+			return errors.Annotatef(histErr, "purge materialized view log: failed to finalize purge history after error %v", finalErr)
 		}
-		return errors.Trace(purgeErr)
+		return errors.Trace(finalErr)
 	}
 	finalizeSuccess := func() error {
 		if !purgeHistRunningInserted {
@@ -1029,6 +1495,22 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					return errors.Trace(err)
 				}
 				purgeHistRunningInserted = true
+				stopCancelWatcher, err = startMVTaskCancelWatcher(
+					kctx,
+					e.GetSysSession,
+					func(sctx sessionctx.Context) {
+						e.ReleaseSysSession(releaseCtx, sctx)
+					},
+					taskCancelController,
+					fmt.Sprintf("mlog-purge-%d", purgeJobID),
+					func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
+						return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
+					},
+				)
+				if err != nil {
+					_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+					return finalizeFailure(err)
+				}
 				failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
 			}
 
@@ -1072,6 +1554,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				mlogInfo.PurgeNext,
 				isInternalSQL,
 				mlogInfo.DefinitionSQLMode,
+				func() {
+					logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(schemaName.O, mlogName.O, mlogInfo.PurgeNext)
+				},
 			)
 			if deriveErr != nil {
 				batchErr = deriveErr
@@ -1653,6 +2138,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
+	releaseCtx := kctx
+	taskCancelController := newMVTaskCancelController(kctx)
+	defer taskCancelController.cancel()
+	kctx = taskCancelController.context()
 	finalizeCtx := context.WithoutCancel(kctx)
 
 	schemaName, tblInfo, err := e.resolveRefreshMaterializedViewTarget(s)
@@ -1664,7 +2153,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
-	defer e.ReleaseSysSession(kctx, refreshSctx)
+	defer e.ReleaseSysSession(releaseCtx, refreshSctx)
 	if collectorAware, ok := refreshSctx.(interface{ AttachStatsCollectorForInternalSession() func() }); ok {
 		// REFRESH MATERIALIZED VIEW runs real maintenance reads/writes against user tables, so
 		// reuse the full session collectors here, including index usage collection when enabled.
@@ -1732,7 +2221,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if err != nil {
 			return err
 		}
-		defer e.ReleaseSysSession(kctx, histSctx)
+		defer e.ReleaseSysSession(releaseCtx, histSctx)
 		histSQLExec := histSctx.GetSQLExecutor()
 
 		if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
@@ -1740,11 +2229,13 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}); err != nil {
 			return err
 		}
-		failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
-		failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
 
 		finalizeFailure := func(refreshErr error) error {
-			refreshErrMsg := refreshErr.Error()
+			refreshFailedReason, finalErr := taskCancelController.normalizeTaskFailure(refreshErr)
+			refreshErrMsg := finalErr.Error()
+			if refreshFailedReason != nil {
+				refreshErrMsg = *refreshFailedReason
+			}
 			histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
 				return finalizeRefreshHistWithRetry(
 					finalizeCtx,
@@ -1758,13 +2249,32 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				)
 			})
 			if histErr != nil {
-				return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", refreshErr)
+				return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", finalErr)
 			}
-			return errors.Trace(refreshErr)
+			return errors.Trace(finalErr)
 		}
+		stopCancelWatcher, err := startMVTaskCancelWatcher(
+			kctx,
+			e.GetSysSession,
+			func(sctx sessionctx.Context) {
+				e.ReleaseSysSession(releaseCtx, sctx)
+			},
+			taskCancelController,
+			fmt.Sprintf("refresh-%d", refreshJobID),
+			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
+				return readRefreshHistCancelRequest(watchCtx, watchSQLExec, refreshJobID, mviewID)
+			},
+		)
+		if err != nil {
+			return finalizeFailure(err)
+		}
+		defer stopCancelWatcher()
+		failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
+		failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
 
 		buildReadTSO, err := e.executeRefreshMaterializedViewCompleteOutOfPlace(
 			kctx,
+			releaseCtx,
 			s,
 			refreshSctx,
 			isInternalSQL,
@@ -1802,7 +2312,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if err != nil {
 			return err
 		}
-		defer e.ReleaseSysSession(kctx, scheduleEvalSctx)
+		defer e.ReleaseSysSession(releaseCtx, scheduleEvalSctx)
 	}
 
 	txnStarted := false
@@ -1862,7 +2372,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
-	defer e.ReleaseSysSession(kctx, histSctx)
+	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
@@ -1872,7 +2382,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 
 	finalizeFailure := func(refreshErr error) error {
-		refreshErrMsg := refreshErr.Error()
+		refreshFailedReason, finalErr := taskCancelController.normalizeTaskFailure(refreshErr)
+		refreshErrMsg := finalErr.Error()
+		if refreshFailedReason != nil {
+			refreshErrMsg = *refreshFailedReason
+		}
 		var rollbackErr error
 		if !txnFinished {
 			if _, err := sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK"); err != nil {
@@ -1898,15 +2412,31 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		})
 		if histErr != nil {
 			if rollbackErr != nil {
-				return errors.Annotatef(histErr, "refresh materialized view: rollback failed (%v) and failed to finalize refresh history after error %v", rollbackErr, refreshErr)
+				return errors.Annotatef(histErr, "refresh materialized view: rollback failed (%v) and failed to finalize refresh history after error %v", rollbackErr, finalErr)
 			}
-			return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", refreshErr)
+			return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", finalErr)
 		}
 		if rollbackErr != nil {
-			return errors.Annotatef(rollbackErr, "refresh materialized view: rollback failed after error %v", refreshErr)
+			return errors.Annotatef(rollbackErr, "refresh materialized view: rollback failed after error %v", finalErr)
 		}
-		return errors.Trace(refreshErr)
+		return errors.Trace(finalErr)
 	}
+	stopCancelWatcher, err := startMVTaskCancelWatcher(
+		kctx,
+		e.GetSysSession,
+		func(sctx sessionctx.Context) {
+			e.ReleaseSysSession(releaseCtx, sctx)
+		},
+		taskCancelController,
+		fmt.Sprintf("refresh-%d", refreshJobID),
+		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
+			return readRefreshHistCancelRequest(watchCtx, watchSQLExec, refreshJobID, mviewID)
+		},
+	)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	defer stopCancelWatcher()
 
 	failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
 	failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
@@ -1957,6 +2487,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		tblInfo.MaterializedView.RefreshNext,
 		isInternalSQL,
 		tblInfo.MaterializedView.DefinitionSQLMode,
+		func() {
+			logRuntimeMaterializedViewRefreshNextTimeUpdateNull(schemaName.O, tblInfo.Name.O, tblInfo.MaterializedView.RefreshNext)
+		},
 	)
 	if err != nil {
 		return finalizeFailure(err)
@@ -2009,6 +2542,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutOfPlace(
 	kctx context.Context,
+	releaseCtx context.Context,
 	s *ast.RefreshMaterializedViewStmt,
 	refreshSctx sessionctx.Context,
 	isInternalSQL bool,
@@ -2019,11 +2553,14 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	expectedLastSuccessReadTSONull bool,
 	targetMaintainMemQuota int64,
 ) (buildReadTSO uint64, err error) {
+	if err := kctx.Err(); err != nil {
+		return 0, err
+	}
 	buildSctx, err := e.GetSysSession()
 	if err != nil {
 		return 0, err
 	}
-	defer e.ReleaseSysSession(kctx, buildSctx)
+	defer e.ReleaseSysSession(releaseCtx, buildSctx)
 
 	buildSessVars := buildSctx.GetSessionVars()
 	restoreBuildMemQuota, err := applyMVMaintenanceMemQuota(buildSessVars, targetMaintainMemQuota)
@@ -2074,6 +2611,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		return 0, err
 	}
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceCreateShadow, func() error {
+		if err := kctx.Err(); err != nil {
+			return err
+		}
 		if execErr := domain.GetDomain(e.Ctx()).DDLExecutor().CreateMaterializedViewShadowTable(
 			refreshSctx,
 			tblInfo.DBID,
@@ -2150,7 +2690,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			if scheduleErr != nil {
 				return scheduleErr
 			}
-			defer e.ReleaseSysSession(kctx, scheduleEvalSctx)
+			defer e.ReleaseSysSession(releaseCtx, scheduleEvalSctx)
 			nextTime, shouldUpdateNextTime, scheduleErr = deriveRuntimeMaterializedScheduleNextTime(
 				kctx,
 				scheduleEvalSctx,
@@ -2159,10 +2699,16 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 				tblInfo.MaterializedView.RefreshNext,
 				isInternalSQL,
 				tblInfo.MaterializedView.DefinitionSQLMode,
+				func() {
+					logRuntimeMaterializedViewRefreshNextTimeUpdateNull(schemaName.O, tblInfo.Name.O, tblInfo.MaterializedView.RefreshNext)
+				},
 			)
 			if scheduleErr != nil {
 				return scheduleErr
 			}
+		}
+		if err := kctx.Err(); err != nil {
+			return err
 		}
 		return domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 			e.Ctx(),
@@ -2957,97 +3503,62 @@ func deriveRuntimeMaterializedScheduleNextTime(
 	nextExpr string,
 	isInternalSQL bool,
 	scheduleSQLMode mysql.SQLMode,
+	logNullUpdate func(),
 ) (*string, bool, error) {
 	if !isInternalSQL {
 		return nil, false, nil
 	}
-	if evalSctx == nil || templateSctx == nil {
-		return nil, false, errors.New("runtime materialized schedule eval session is unavailable")
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTimeUTC(
+		kctx,
+		evalSctx,
+		templateSctx,
+		startExpr,
+		nextExpr,
+		scheduleSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
 	}
-	startExpr = strings.TrimSpace(startExpr)
-	nextExpr = strings.TrimSpace(nextExpr)
-
-	if nextExpr != "" {
-		nextAt, err := evalMaterializedScheduleExprToDatetimeUTC(kctx, evalSctx, templateSctx, nextExpr, scheduleSQLMode)
-		if err != nil {
-			return nil, true, err
-		}
-		if nextAt == nil {
-			return nil, true, nil
-		}
-		nextAtStr := nextAt.String()
-		return &nextAtStr, true, nil
+	if shouldUpdate && nextAt == nil && logNullUpdate != nil {
+		logNullUpdate()
 	}
-	if startExpr != "" {
-		return nil, true, nil
+	if nextAt == nil {
+		return nil, shouldUpdate, nil
 	}
-	return nil, false, nil
+	nextAtStr := nextAt.String()
+	return &nextAtStr, shouldUpdate, nil
 }
 
-func evalMaterializedScheduleExprToDatetimeUTC(
-	kctx context.Context,
-	evalSctx sessionctx.Context,
-	templateSctx sessionctx.Context,
-	exprSQL string,
-	scheduleSQLMode mysql.SQLMode,
-) (*types.Time, error) {
-	sessVars := evalSctx.GetSessionVars()
-	templateVars := templateSctx.GetSessionVars()
-	origSQLMode := sessVars.SQLMode
-	origTypeFlags := sessVars.StmtCtx.TypeFlags()
-	origErrLevels := sessVars.StmtCtx.ErrLevels()
-	origTimeZone := sessVars.TimeZone
-	origStmtTimeZone := sessVars.StmtCtx.TimeZone()
-	sessVars.SQLMode = scheduleSQLMode
-	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
-	sessVars.StmtCtx.SetTypeFlags(templateVars.StmtCtx.TypeFlags())
-	sessVars.StmtCtx.SetErrLevels(templateVars.StmtCtx.ErrLevels())
-	sessVars.TimeZone = time.UTC
-	sessVars.StmtCtx.SetTimeZone(time.UTC)
-	defer func() {
-		sessVars.SQLMode = origSQLMode
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
-		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
-		sessVars.StmtCtx.SetErrLevels(origErrLevels)
-		sessVars.TimeZone = origTimeZone
-		if origStmtTimeZone != nil {
-			sessVars.StmtCtx.SetTimeZone(origStmtTimeZone)
-			return
-		}
-		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
-	}()
+func logRuntimeMaterializedViewRefreshNextTimeUpdateNull(
+	schemaName string,
+	mvName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"refresh materialized view: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mvName),
+		zap.String("refreshNext", nextExpr),
+	)
+}
 
-	exprNode, err := generatedexpr.ParseExpression(exprSQL)
-	if err != nil {
-		return nil, errors.Trace(err)
+func logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(
+	schemaName string,
+	mlogName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
 	}
-	builtExpr, err := expression.BuildSimpleExpr(evalSctx.GetExprCtx(), exprNode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// Refresh statement timestamp before evaluating expressions that may contain NOW.
-	if _, err := sqlexec.ExecSQL(kctx, evalSctx.GetSQLExecutor(), "SELECT NOW(6)"); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	evalCtx := evalSctx.GetExprCtx().GetEvalCtx()
-	v, err := builtExpr.Eval(evalCtx, chunk.Row{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if v.IsNull() {
-		return nil, nil
-	}
-
-	targetTp := types.NewFieldType(mysql.TypeDatetime)
-	targetTp.SetDecimal(types.MaxFsp)
-	datetimeV, err := v.ConvertTo(evalCtx.TypeCtx(), targetTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	t := datetimeV.GetMysqlTime()
-	return &t, nil
+	logutil.BgLogger().Error(
+		"purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mlogName),
+		zap.String("purgeNext", nextExpr),
+	)
 }
 
 func persistRefreshSuccess(

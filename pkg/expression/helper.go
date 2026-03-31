@@ -15,19 +15,25 @@
 package expression
 
 import (
+	"context"
 	"math"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -210,4 +216,100 @@ func getStmtTimestamp(ctx EvalContext) (now time.Time, err error) {
 		failpoint.Return(v, nil)
 	})
 	return ctx.CurrentTime()
+}
+
+// DeriveMaterializedScheduleNextTimeUTC evaluates the runtime NEXT expression and
+// returns the next execution time in UTC. Runtime scheduling only depends on NEXT:
+// when NEXT is absent, callers should still update NEXT_TIME to NULL to clear
+// stale schedule state.
+func DeriveMaterializedScheduleNextTimeUTC(
+	kctx context.Context,
+	evalSctx sessionctx.Context,
+	templateSctx sessionctx.Context,
+	startExpr string,
+	nextExpr string,
+	scheduleSQLMode mysql.SQLMode,
+) (*types.Time, bool, error) {
+	if evalSctx == nil || templateSctx == nil {
+		return nil, false, errors.New("runtime materialized schedule eval session is unavailable")
+	}
+	nextExpr = strings.TrimSpace(nextExpr)
+
+	if nextExpr != "" {
+		nextAt, err := evalMaterializedScheduleExprToDatetimeUTC(kctx, evalSctx, templateSctx, nextExpr, scheduleSQLMode)
+		if err != nil {
+			return nil, true, err
+		}
+		if nextAt == nil {
+			return nil, true, nil
+		}
+		return nextAt, true, nil
+	}
+	return nil, true, nil
+}
+
+func evalMaterializedScheduleExprToDatetimeUTC(
+	kctx context.Context,
+	evalSctx sessionctx.Context,
+	templateSctx sessionctx.Context,
+	exprSQL string,
+	scheduleSQLMode mysql.SQLMode,
+) (*types.Time, error) {
+	sessVars := evalSctx.GetSessionVars()
+	templateVars := templateSctx.GetSessionVars()
+	origSQLMode := sessVars.SQLMode
+	origTypeFlags := sessVars.StmtCtx.TypeFlags()
+	origErrLevels := sessVars.StmtCtx.ErrLevels()
+	origTimeZone := sessVars.TimeZone
+	origStmtTimeZone := sessVars.StmtCtx.TimeZone()
+	sessVars.SQLMode = scheduleSQLMode
+	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
+	sessVars.StmtCtx.SetTypeFlags(templateVars.StmtCtx.TypeFlags())
+	sessVars.StmtCtx.SetErrLevels(templateVars.StmtCtx.ErrLevels())
+	sessVars.TimeZone = time.UTC
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
+	defer func() {
+		sessVars.SQLMode = origSQLMode
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
+		sessVars.StmtCtx.SetErrLevels(origErrLevels)
+		sessVars.TimeZone = origTimeZone
+		if origStmtTimeZone != nil {
+			sessVars.StmtCtx.SetTimeZone(origStmtTimeZone)
+			return
+		}
+		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
+	}()
+
+	exprNode, err := generatedexpr.ParseExpression(exprSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	builtExpr, err := BuildSimpleExpr(evalSctx.GetExprCtx(), exprNode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Refresh statement timestamp before evaluating expressions that may contain NOW.
+	if _, err := sqlexec.ExecSQL(kctx, evalSctx.GetSQLExecutor(), "SELECT NOW(6)"); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	evalCtx := evalSctx.GetExprCtx().GetEvalCtx()
+	v, err := builtExpr.Eval(evalCtx, chunk.Row{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if v.IsNull() {
+		return nil, nil
+	}
+
+	targetTp := types.NewFieldType(mysql.TypeDatetime)
+	targetTp.SetDecimal(types.MaxFsp)
+	datetimeV, err := v.ConvertTo(evalCtx.TypeCtx(), targetTp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	t := datetimeV.GetMysqlTime()
+	return &t, nil
 }

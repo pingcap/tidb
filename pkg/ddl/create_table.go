@@ -1137,7 +1137,7 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 // deriveCreateMaterializedViewNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW post-build upsert.
 //
 // Rules:
-//  1. If both START WITH and NEXT are absent, NEXT_TIME is not updated.
+//  1. If both START WITH and NEXT are absent, NEXT_TIME is updated to NULL.
 //  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
 //  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
 //  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
@@ -1165,7 +1165,7 @@ func deriveCreateMaterializedViewNextTime(
 // deriveCreateMaterializedViewLogNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW LOG upsert.
 //
 // Rules:
-//  1. If both START WITH and NEXT are absent, NEXT_TIME is not updated.
+//  1. If both START WITH and NEXT are absent, NEXT_TIME is updated to NULL.
 //  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
 //  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
 //  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
@@ -1202,7 +1202,7 @@ func deriveCreateMaterializedScheduleNextTime(
 	startExpr = strings.TrimSpace(startExpr)
 	nextExpr = strings.TrimSpace(nextExpr)
 	if startExpr == "" && nextExpr == "" {
-		return nil, false, nil
+		return nil, true, nil
 	}
 
 	nowTime, err := loadCreateMaterializedViewScheduleNowUTC(ctx, ddlSess)
@@ -1281,6 +1281,17 @@ func logCreateMaterializedViewNextTimeUpdateNull(
 	startExpr string,
 	nextExpr string,
 ) {
+	if strings.TrimSpace(nextExpr) != "" {
+		logutil.DDLLogger().Error(
+			"create materialized view: automatic refresh schedule disabled because schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+			zap.String("schemaName", mvSchemaName),
+			zap.String("tableName", mvTableName),
+			zap.String("nullExprClause", nullExprClause),
+			zap.String("refreshStartWith", startExpr),
+			zap.String("refreshNext", nextExpr),
+		)
+		return
+	}
 	logutil.DDLLogger().Warn(
 		"create materialized view: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
 		zap.String("schemaName", mvSchemaName),
@@ -1298,6 +1309,17 @@ func logCreateMaterializedViewLogNextTimeUpdateNull(
 	startExpr string,
 	nextExpr string,
 ) {
+	if strings.TrimSpace(nextExpr) != "" {
+		logutil.DDLLogger().Error(
+			"create materialized view log: automatic purge schedule disabled because schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+			zap.String("schemaName", mlogSchemaName),
+			zap.String("tableName", mlogTableName),
+			zap.String("nullExprClause", nullExprClause),
+			zap.String("purgeStartWith", startExpr),
+			zap.String("purgeNext", nextExpr),
+		)
+		return
+	}
 	logutil.DDLLogger().Warn(
 		"create materialized view log: purge schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
 		zap.String("schemaName", mlogSchemaName),

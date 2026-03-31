@@ -94,6 +94,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/parser/types",
         "//pkg/planner/cascades/base",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",

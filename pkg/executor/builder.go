@@ -977,6 +977,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
 			jobID:        uint64(s.JobID),
 		}
+	case *ast.CancelMaterializedViewJobStmt:
+		return &CancelMaterializedViewJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			stmt:         s,
+		}
 	}
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)

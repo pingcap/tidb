@@ -19,16 +19,20 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -212,6 +216,9 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 	defer restoreRefreshSessionVars()
 
 	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
+		if isMVTaskCanceledManually(err) {
+			return time.Time{}, errMVTaskCanceledManually
+		}
 		return time.Time{}, err
 	}
 
@@ -458,6 +465,9 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	defer restoreMaintainMemQuota()
 
 	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
+		if isMVTaskCanceledManually(err) {
+			return time.Time{}, errMVTaskCanceledManually
+		}
 		return time.Time{}, err
 	}
 
@@ -470,6 +480,252 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}
 	nextPurge = mvsUnix(rows[0].GetInt64(0), 0)
 	return nextPurge, nil
+}
+
+func (*serviceHelper) TryBackoffRefreshManualCancel(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	mvID int64,
+	nextRefresh time.Time,
+) (bool, time.Time, error) {
+	return tryBackoffMVTaskManualCancel(
+		ctx,
+		sysSessionPool,
+		`SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`,
+		mvID,
+		nextRefresh,
+		deriveMVRefreshManualCancelNextTime,
+	)
+}
+
+func (*serviceHelper) TryBackoffPurgeManualCancel(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	mvLogID int64,
+	nextPurge time.Time,
+) (bool, time.Time, error) {
+	return tryBackoffMVTaskManualCancel(
+		ctx,
+		sysSessionPool,
+		`SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`,
+		mvLogID,
+		nextPurge,
+		deriveMLogPurgeManualCancelNextTime,
+	)
+}
+
+type mvTaskManualCancelNextResolver func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error)
+
+func deriveMVRefreshManualCancelNextTime(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvID int64,
+) (*time.Time, bool, error) {
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mvTbl, ok := infoSchema.TableByID(ctx, mvID)
+	if !ok {
+		return nil, false, nil
+	}
+	mvMeta := mvTbl.Meta()
+	if mvMeta == nil || mvMeta.MaterializedView == nil {
+		return nil, false, errors.New("materialized view metadata is invalid")
+	}
+	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
+		ctx,
+		sctx,
+		mvMeta.MaterializedView.RefreshStartWith,
+		mvMeta.MaterializedView.RefreshNext,
+		mvMeta.MaterializedView.DefinitionSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if shouldUpdate && nextTime == nil {
+		if dbInfo, ok := infoschema.SchemaByTable(infoSchema, mvMeta); ok && dbInfo != nil {
+			logManualCancelMaterializedViewRefreshNextTimeUpdateNull(dbInfo.Name.O, mvMeta.Name.O, mvMeta.MaterializedView.RefreshNext)
+		} else {
+			logManualCancelMaterializedViewRefreshNextTimeUpdateNull("", mvMeta.Name.O, mvMeta.MaterializedView.RefreshNext)
+		}
+	}
+	return nextTime, shouldUpdate, nil
+}
+
+func deriveMLogPurgeManualCancelNextTime(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvLogID int64,
+) (*time.Time, bool, error) {
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mlogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	if !ok {
+		return nil, false, nil
+	}
+	mlogMeta := mlogTbl.Meta()
+	if mlogMeta == nil || mlogMeta.MaterializedViewLog == nil {
+		return nil, false, errors.New("materialized view log metadata is invalid")
+	}
+	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
+		ctx,
+		sctx,
+		mlogMeta.MaterializedViewLog.PurgeStartWith,
+		mlogMeta.MaterializedViewLog.PurgeNext,
+		mlogMeta.MaterializedViewLog.DefinitionSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if shouldUpdate && nextTime == nil {
+		if dbInfo, ok := infoschema.SchemaByTable(infoSchema, mlogMeta); ok && dbInfo != nil {
+			logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull(dbInfo.Name.O, mlogMeta.Name.O, mlogMeta.MaterializedViewLog.PurgeNext)
+		} else {
+			logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull("", mlogMeta.Name.O, mlogMeta.MaterializedViewLog.PurgeNext)
+		}
+	}
+	return nextTime, shouldUpdate, nil
+}
+
+func deriveMaterializedScheduleNextTimeForManualCancel(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	startExpr string,
+	nextExpr string,
+	scheduleSQLMode mysql.SQLMode,
+) (*time.Time, bool, error) {
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTimeUTC(
+		ctx,
+		sctx,
+		sctx,
+		startExpr,
+		nextExpr,
+		scheduleSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if !shouldUpdate || nextAt == nil {
+		return nil, shouldUpdate, nil
+	}
+	goTime, err := nextAt.GoTime(time.UTC)
+	if err != nil {
+		return nil, false, err
+	}
+	return &goTime, true, nil
+}
+
+func logManualCancelMaterializedViewRefreshNextTimeUpdateNull(
+	schemaName string,
+	mvName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"refresh MV manual cancel backoff: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mvName),
+		zap.String("refreshNext", nextExpr),
+	)
+}
+
+func logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull(
+	schemaName string,
+	mlogName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"purge MV log manual cancel backoff: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mlogName),
+		zap.String("purgeNext", nextExpr),
+	)
+}
+
+func tryBackoffMVTaskManualCancel(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	lockSQL string,
+	updateSQL string,
+	objectID int64,
+	nextTime time.Time,
+	resolveExpectedNext mvTaskManualCancelNextResolver,
+) (bool, time.Time, error) {
+	if objectID <= 0 {
+		return false, time.Time{}, errors.New("mv service manual cancel backoff target id is invalid")
+	}
+	if nextTime.IsZero() {
+		return false, time.Time{}, errors.New("mv service manual cancel backoff target time is invalid")
+	}
+	nextTimeLoc := nextTime.Location()
+	nextTimeUTC := nextTime.UTC()
+
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	defer sysSessionPool.Put(se)
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+	sqlExec := sctx.GetSQLExecutor()
+	if _, err := sqlExec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return false, time.Time{}, err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = sqlExec.ExecuteInternal(ctx, "ROLLBACK")
+		}
+	}()
+
+	rows, err := execRestrictedSQLWithSession(ctx, sctx, lockSQL, []any{objectID})
+	if err != nil {
+		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+			return false, time.Time{}, nil
+		}
+		return false, time.Time{}, err
+	}
+	if len(rows) == 0 {
+		return false, time.Time{}, nil
+	}
+
+	appliedNextUTC := nextTimeUTC
+	var appliedNextArg any = nextTimeUTC
+	clearAppliedNext := false
+	resolvedNext, shouldUpdate, err := resolveExpectedNext(ctx, sctx, objectID)
+	// If current metadata cannot provide a better schedule, keep the cooldown fallback
+	// instead of dropping the persisted backoff on the floor.
+	if err == nil {
+		if shouldUpdate {
+			if resolvedNext == nil {
+				appliedNextArg = nil
+				clearAppliedNext = true
+			} else {
+				appliedNextUTC = resolvedNext.UTC()
+				if appliedNextUTC.Before(nextTimeUTC) {
+					appliedNextUTC = nextTimeUTC
+				}
+				appliedNextArg = appliedNextUTC
+			}
+		}
+	}
+	if _, err := execRCRestrictedSQLWithSession(ctx, sctx, updateSQL, []any{appliedNextArg, objectID}); err != nil {
+		return false, time.Time{}, err
+	}
+	if _, err := sqlExec.ExecuteInternal(ctx, "COMMIT"); err != nil {
+		return false, time.Time{}, err
+	}
+	committed = true
+	if clearAppliedNext {
+		return true, time.Time{}, nil
+	}
+	return true, appliedNextUTC.In(nextTimeLoc), nil
 }
 
 // GetCurrentTSO fetches current cluster TSO from TiDB.
@@ -645,9 +901,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 
 // execRCRestrictedSQLWithSession executes SQL through the restricted SQL executor.
 func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
-	r, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		sql, params...,
-	)
+	r, err := execRestrictedSQLWithSession(ctx, sctx, sql, params)
 	if err != nil {
 		logutil.BgLogger().Warn(
 			"execute restricted SQL failed",
@@ -657,6 +911,16 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 			zap.Error(err),
 		)
 	}
+	return r, err
+}
+
+func execRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
+	r, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		ctx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		sql,
+		params...,
+	)
 	return r, err
 }
 

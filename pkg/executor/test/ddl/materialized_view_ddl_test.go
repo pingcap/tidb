@@ -551,23 +551,67 @@ func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
 		mviewID,
 	)).Check(testkit.Rows("1 1 1"))
 
-	beforeRows := tk.MustQuery(fmt.Sprintf(
-		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
-		mviewID,
-	)).Rows()
 	tk.MustExec("alter materialized view mv refresh")
 	_, mvInfo = getMViewMeta()
 	require.Equal(t, "FAST", mvInfo.RefreshMethod)
 	require.Equal(t, "", mvInfo.RefreshStartWith)
 	require.Equal(t, "", mvInfo.RefreshNext)
-	afterRows := tk.MustQuery(fmt.Sprintf(
-		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
-	)).Rows()
-	require.Equal(t, beforeRows, afterRows)
+	)).Check(testkit.Rows("1"))
 
 	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view log on t")
+}
+
+func TestAlterMaterializedViewRefreshBestEffortInfoUpdateWarning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tkLock := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tkLock.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) as select a, sum(b), count(1) from t group by a")
+
+	getMViewMeta := func() (int64, *model.MaterializedViewInfo) {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+		require.NoError(t, err)
+		require.NotNil(t, mvTable.Meta().MaterializedView)
+		return mvTable.Meta().ID, mvTable.Meta().MaterializedView
+	}
+
+	mviewID, mvInfo := getMViewMeta()
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", mvInfo.RefreshNext)
+
+	const expectedNextTime = "2031-01-02 03:04:05"
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set NEXT_TIME = cast('%s' as datetime) where MVIEW_ID = %d",
+		expectedNextTime,
+		mviewID,
+	))
+	tkLock.MustExec("begin pessimistic")
+	defer tkLock.MustExec("rollback")
+	tkLock.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set NEXT_TIME = NEXT_TIME where MVIEW_ID = %d",
+		mviewID,
+	))
+
+	tk.MustExec("alter materialized view mv refresh next date_add(now(), interval 25 minute)")
+	tk.MustQuery("show warnings").CheckContain(
+		"alter materialized view refresh: metadata updated but failed to update mysql.tidb_mview_refresh_info.NEXT_TIME within 10s due to row lock contention",
+	)
+
+	_, mvInfo = getMViewMeta()
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME = cast('%s' as datetime) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		expectedNextTime,
+		mviewID,
+	)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewRefreshInfoNextTimeDerivation(t *testing.T) {

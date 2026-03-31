@@ -35,17 +35,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	exeerrors "github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
 
 const (
-	mviewAttrAlertWarning = "mview_alert_warning"
-	mviewAttrAlertOverdue = "mview_alert_overdue"
+	mviewAttrAlertWarning                                 = "mview_alert_warning"
+	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
+	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 )
 
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
@@ -770,33 +773,18 @@ func (e *executor) updateMaterializedViewRefreshInfoNextTime(
 	mviewID int64,
 	nextTime *string,
 ) error {
-	exec := ctx.GetRestrictedSQLExecutor()
-	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
-	rows, _, err := exec.ExecRestrictedSQL(
-		kctx,
-		nil,
-		"SELECT 1 FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? LIMIT 1",
-		mviewID,
-	)
-	if err != nil {
-		return errors.Trace(convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err))
-	}
-	if len(rows) == 0 {
-		return errors.New("alter materialized view refresh: refresh info row missing in mysql.tidb_mview_refresh_info")
-	}
-
-	var nextTimeArg any
-	if nextTime != nil {
-		nextTimeArg = *nextTime
-	}
-	_, _, err = exec.ExecRestrictedSQL(
-		kctx,
-		nil,
-		"UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?",
-		nextTimeArg,
-		mviewID,
-	)
-	return errors.Trace(convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err))
+	return errors.Trace(e.bestEffortUpdateMaterializedScheduleInfoNextTime(
+		ctx,
+		alterMaterializedScheduleInfoNextTimeUpdateSpec{
+			operation:                  "alter materialized view refresh",
+			infoTable:                  "mysql.tidb_mview_refresh_info",
+			idColumn:                   "MVIEW_ID",
+			objectID:                   mviewID,
+			rowMissingErr:              "alter materialized view refresh: refresh info row missing in mysql.tidb_mview_refresh_info",
+			tableNotExistsErrConverter: convertAlterMaterializedViewRefreshInfoTableNotExistsErr,
+		},
+		nextTime,
+	))
 }
 
 func convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
@@ -813,6 +801,17 @@ func logAlterMaterializedViewRefreshNextTimeUpdateNull(
 	startExpr string,
 	nextExpr string,
 ) {
+	if strings.TrimSpace(nextExpr) != "" {
+		logutil.DDLLogger().Error(
+			"alter materialized view refresh: automatic refresh schedule disabled because schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+			zap.String("schemaName", mvSchemaName),
+			zap.String("tableName", mvTableName),
+			zap.String("nullExprClause", nullExprClause),
+			zap.String("refreshStartWith", startExpr),
+			zap.String("refreshNext", nextExpr),
+		)
+		return
+	}
 	logutil.DDLLogger().Warn(
 		"alter materialized view refresh: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
 		zap.String("schemaName", mvSchemaName),
@@ -828,33 +827,107 @@ func (e *executor) updateMaterializedViewLogPurgeInfoNextTime(
 	mlogID int64,
 	nextTime *string,
 ) error {
-	exec := ctx.GetRestrictedSQLExecutor()
+	return errors.Trace(e.bestEffortUpdateMaterializedScheduleInfoNextTime(
+		ctx,
+		alterMaterializedScheduleInfoNextTimeUpdateSpec{
+			operation:                  "alter materialized view log purge",
+			infoTable:                  "mysql.tidb_mlog_purge_info",
+			idColumn:                   "MLOG_ID",
+			objectID:                   mlogID,
+			rowMissingErr:              "alter materialized view log purge: purge info row missing in mysql.tidb_mlog_purge_info",
+			tableNotExistsErrConverter: convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr,
+		},
+		nextTime,
+	))
+}
+
+type alterMaterializedScheduleInfoNextTimeUpdateSpec struct {
+	operation                  string
+	infoTable                  string
+	idColumn                   string
+	objectID                   int64
+	rowMissingErr              string
+	tableNotExistsErrConverter func(error) error
+}
+
+func (e *executor) bestEffortUpdateMaterializedScheduleInfoNextTime(
+	ctx sessionctx.Context,
+	spec alterMaterializedScheduleInfoNextTimeUpdateSpec,
+	nextTime *string,
+) error {
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
-	rows, _, err := exec.ExecRestrictedSQL(
-		kctx,
-		nil,
-		"SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? LIMIT 1",
-		mlogID,
+	ddlSess := sess.NewSession(ctx)
+	if err := ddlSess.BeginPessimistic(kctx); err != nil {
+		return errors.Trace(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			ddlSess.Rollback()
+		}
+	}()
+
+	lockSQL := fmt.Sprintf(
+		"SELECT 1 FROM %s WHERE %s = %%? LIMIT 1 FOR UPDATE WAIT %d",
+		spec.infoTable,
+		spec.idColumn,
+		alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec,
 	)
+	rows, err := ddlSess.Execute(kctx, lockSQL, spec.operation+"-lock-info-row", spec.objectID)
 	if err != nil {
-		return errors.Trace(convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err))
+		if isAlterMaterializedScheduleInfoUpdateLockContentionErr(err) {
+			appendAlterMaterializedScheduleInfoUpdateWarning(ctx, spec)
+			return nil
+		}
+		return errors.Trace(spec.tableNotExistsErrConverter(err))
 	}
 	if len(rows) == 0 {
-		return errors.New("alter materialized view log purge: purge info row missing in mysql.tidb_mlog_purge_info")
+		return errors.New(spec.rowMissingErr)
 	}
 
 	var nextTimeArg any
 	if nextTime != nil {
 		nextTimeArg = *nextTime
 	}
-	_, _, err = exec.ExecRestrictedSQL(
-		kctx,
-		nil,
-		"UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?",
-		nextTimeArg,
-		mlogID,
+	updateSQL := fmt.Sprintf(
+		"UPDATE %s SET NEXT_TIME = %%? WHERE %s = %%?",
+		spec.infoTable,
+		spec.idColumn,
 	)
-	return errors.Trace(convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err))
+	if _, err := ddlSess.Execute(kctx, updateSQL, spec.operation+"-update-next-time", nextTimeArg, spec.objectID); err != nil {
+		if isAlterMaterializedScheduleInfoUpdateLockContentionErr(err) {
+			appendAlterMaterializedScheduleInfoUpdateWarning(ctx, spec)
+			return nil
+		}
+		return errors.Trace(spec.tableNotExistsErrConverter(err))
+	}
+	if err := ddlSess.Commit(kctx); err != nil {
+		if isAlterMaterializedScheduleInfoUpdateLockContentionErr(err) {
+			appendAlterMaterializedScheduleInfoUpdateWarning(ctx, spec)
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	committed = true
+	return nil
+}
+
+func isAlterMaterializedScheduleInfoUpdateLockContentionErr(err error) bool {
+	return storeerr.ErrLockWaitTimeout.Equal(err) ||
+		exeerrors.ErrDeadlock.Equal(err) ||
+		kv.ErrWriteConflict.Equal(err)
+}
+
+func appendAlterMaterializedScheduleInfoUpdateWarning(
+	ctx sessionctx.Context,
+	spec alterMaterializedScheduleInfoNextTimeUpdateSpec,
+) {
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"%s: metadata updated but failed to update %s.NEXT_TIME within %ds due to row lock contention; please retry later if immediate reschedule is needed",
+		spec.operation,
+		spec.infoTable,
+		alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec,
+	))
 }
 
 func convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err error) error {
@@ -871,6 +944,17 @@ func logAlterMaterializedViewLogPurgeNextTimeUpdateNull(
 	startExpr string,
 	nextExpr string,
 ) {
+	if strings.TrimSpace(nextExpr) != "" {
+		logutil.DDLLogger().Error(
+			"alter materialized view log purge: automatic purge schedule disabled because schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+			zap.String("schemaName", mlogSchemaName),
+			zap.String("tableName", mlogTableName),
+			zap.String("nullExprClause", nullExprClause),
+			zap.String("purgeStartWith", startExpr),
+			zap.String("purgeNext", nextExpr),
+		)
+		return
+	}
 	logutil.DDLLogger().Warn(
 		"alter materialized view log purge: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
 		zap.String("schemaName", mlogSchemaName),
