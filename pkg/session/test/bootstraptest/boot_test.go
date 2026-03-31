@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -188,7 +189,6 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := session.CreateSessionAndSetID(t, store)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -198,17 +198,24 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
 
 	// downgrade DDL table version
-	m.SetDDLTableVersion(meta.BackfillTableVersion)
-	session.MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	require.NoError(t, m.SetDDLTableVersion(meta.BackfillTableVersion))
+	require.NoError(t, txn.Commit(context.Background()))
 
 	// to upgrade session for create ddl notifier table
 	dom.Close()
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	systemDBID, err := m.GetSystemDBID()
+	require.NoError(t, err)
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBDDLNotifierTableID))
+	require.NoError(t, txn.Commit(context.Background()))
+
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	se = session.CreateSessionAndSetID(t, store)
+	se := session.CreateSessionAndSetID(t, store)
 	session.MustExec(t, se, "select * from mysql.tidb_ddl_notifier")
 	dom.Close()
 }

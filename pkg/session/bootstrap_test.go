@@ -288,7 +288,40 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
+	downgradeAndDropDDLTablesForBootstrapTest(t, store, dom)
+
+	// to upgrade session for create ddl related tables
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+
 	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "select * from mysql.tidb_background_subtask")
+	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
+	dom.Close()
+}
+
+func TestDDLTableCreateBackfillTablePreciseRepro(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	downgradeAndDropDDLTablesForBootstrapTest(t, store, dom)
+	state := readDDLTableBootstrapState(t, store)
+	require.Equal(t, meta.MDLTableVersion, state.ver)
+	require.False(t, state.backfillExists)
+	require.False(t, state.backfillHistoryExists)
+	require.False(t, state.ddlNotifierExists)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "select * from mysql.tidb_background_subtask")
+	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
+	dom.Close()
+}
+
+func downgradeAndDropDDLTablesForBootstrapTest(t *testing.T, store kv.Storage, dom *domain.Domain) {
+	t.Helper()
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -296,25 +329,62 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	ver, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
+	require.NoError(t, m.SetDDLTableVersion(meta.MDLTableVersion))
+	require.NoError(t, txn.Commit(context.Background()))
 
-	// downgrade `mDDLTableVersion`
-	m.SetDDLTableVersion(meta.MDLTableVersion)
-	MustExec(t, se, "drop table mysql.tidb_background_subtask")
-	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	dom.Close()
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	systemDBID, err := m.GetSystemDBID()
+	require.NoError(t, err)
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskTableID))
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskHistoryTableID))
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
-	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
-	err = txn.Commit(context.Background())
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBDDLNotifierTableID))
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+type ddlTableBootstrapState struct {
+	ver                   meta.DDLTableVersion
+	backfillExists        bool
+	backfillHistoryExists bool
+	ddlNotifierExists     bool
+}
+
+func readDDLTableBootstrapState(t *testing.T, store kv.Storage) ddlTableBootstrapState {
+	t.Helper()
+
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	reader := meta.NewReader(store.GetSnapshot(ver))
+	m, ok := reader.(*meta.Mutator)
+	require.True(t, ok)
+	ddlTableVer, err := m.GetDDLTableVersion()
+	require.NoError(t, err)
+	systemDBID, err := m.GetSystemDBID()
 	require.NoError(t, err)
 
-	// to upgrade session for create ddl related tables
-	dom.Close()
-	dom, err = BootstrapSession(store)
-	require.NoError(t, err)
+	return ddlTableBootstrapState{
+		ver:                   ddlTableVer,
+		backfillExists:        tableExistsInBootstrapState(t, m, systemDBID, metadef.TiDBBackgroundSubtaskTableID),
+		backfillHistoryExists: tableExistsInBootstrapState(t, m, systemDBID, metadef.TiDBBackgroundSubtaskHistoryTableID),
+		ddlNotifierExists:     tableExistsInBootstrapState(t, m, systemDBID, metadef.TiDBDDLNotifierTableID),
+	}
+}
 
-	se = CreateSessionAndSetID(t, store)
-	MustExec(t, se, "select * from mysql.tidb_background_subtask")
-	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
-	dom.Close()
+func tableExistsInBootstrapState(t *testing.T, m *meta.Mutator, dbID, tblID int64) bool {
+	t.Helper()
+
+	tables, err := m.ListTables(context.Background(), dbID)
+	require.NoError(t, err)
+	for _, tbl := range tables {
+		if tbl.ID == tblID {
+			return true
+		}
+	}
+	return false
 }
 
 // TestUpgrade tests upgrading
