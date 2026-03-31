@@ -413,6 +413,7 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/distsql",
         "//pkg/distsql/context",
