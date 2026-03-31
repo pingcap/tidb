@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	kvutil "github.com/tikv/client-go/v2/util"
 )
 
 // backfillExecutor is used to manage the lifetime of backfill workers.
@@ -185,6 +186,9 @@ func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReo
 	ctx.Location = loc
 	ctx.ErrCtx = errctx.NewContextWithLevels(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode), ctx.WarnHandler)
 	ctx.ResourceGroupName = reorgMeta.ResourceGroupName
+	ctx.InRestrictedSQL = true
+	ctx.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
+	ctx.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
 	return ctx, nil
 }
 
