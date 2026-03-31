@@ -529,7 +529,6 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var (
-		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
 	var scanCtx context.Context = w.ctx
@@ -574,20 +573,17 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
+			sender(idxResult)
+			if w.cpOp != nil {
+				w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+			}
+			w.totalCount.Add(idxResult.tableScanRowCount)
+			w.recycleChunk(srcChk)
 		}
 		return rs.Close()
 	})
-
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
-		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
-	}
 
 	return err
 }
