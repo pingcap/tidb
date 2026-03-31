@@ -862,15 +862,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
-<<<<<<< HEAD
 	d.detectAndUpdateJobVersion()
-=======
-	if kerneltype.IsClassic() {
-		d.detectAndUpdateJobVersion()
-	} else {
-		d.detectAndUpdateGlobalIndexV1Support()
-	}
->>>>>>> a9af575b068 (ddl: gate global index V1 key format behind cluster version check (#66847))
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
 		if !campaignOwner {
@@ -1071,41 +1063,6 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
 	}
 	return nil
-}
-
-// detectAndUpdateGlobalIndexV1Support is used in NextGen mode where
-// detectAndUpdateJobVersion is not called. It only handles the global
-// index V1 support flag.
-func (d *ddl) detectAndUpdateGlobalIndexV1Support() {
-	if d.etcdCli == nil {
-		model.SetGlobalIndexV1Supported(true)
-		return
-	}
-	// In production NextGen with etcd, run the same detection logic.
-	if err := d.detectAndUpdateJobVersionOnce(); err != nil {
-		logutil.DDLLogger().Warn("detect global index V1 support failed", zap.String("err", err.Error()))
-	}
-	if model.GetGlobalIndexV1Supported() {
-		return
-	}
-	d.wg.RunWithLog(func() {
-		ticker := time.NewTicker(detectJobVerInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-			case <-d.ctx.Done():
-				return
-			}
-			if err := d.detectAndUpdateJobVersionOnce(); err != nil {
-				logutil.SampleLogger().Warn("detect global index V1 support failed", zap.String("err", err.Error()))
-			}
-			if model.GetGlobalIndexV1Supported() {
-				logutil.DDLLogger().Info("global index V1 supported now, stop detecting")
-				return
-			}
-		}
-	})
 }
 
 func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
