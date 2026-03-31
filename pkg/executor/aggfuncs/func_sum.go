@@ -436,7 +436,7 @@ func (e *baseSumDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext,
 		if p.valSet.Exist(keyStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + pointerSize
+		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr))
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
@@ -472,7 +472,7 @@ func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, s
 			continue
 		}
 
-		memDelta += d.valSet.Insert(key, val) + int64(len(key)+types.MyDecimalStructSize)
+		memDelta += d.valSet.Insert(key, val)
 
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&d.val, val, newSum); err != nil {

@@ -330,7 +330,7 @@ func (*avgPartial4DistinctDecimal) MergePartialResult(_ AggFuncUpdateContext, sr
 			continue
 		}
 
-		memDelta += d.valSet.Insert(key, val) + int64(len(key)) + types.MyDecimalStructSize
+		memDelta += d.valSet.Insert(key, val)
 
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&d.sum, val, newSum)

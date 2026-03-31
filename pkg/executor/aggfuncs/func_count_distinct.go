@@ -265,7 +265,7 @@ func (*countPartialWithDistinct4Decimal) MergePartialResult(_ AggFuncUpdateConte
 			continue
 		}
 
-		memDelta += d.valSet.Insert(val) + int64(len(val))
+		memDelta += d.valSet.Insert(val)
 	}
 	return
 }
