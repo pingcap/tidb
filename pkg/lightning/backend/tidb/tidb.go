@@ -225,8 +225,12 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 					)
 					for rows.Next() {
 						var tableName, columnName, columnType, generationExpr, columnExtra string
-						if err2 := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); err2 != nil {
+						var gen sql.NullString
+						if err2 := rows.Scan(&tableName, &columnName, &columnType, &gen, &columnExtra); err2 != nil {
 							return err2
+						}
+						if gen.Valid {
+							generationExpr = gen.String
 						}
 						if tableName != curTableName {
 							tableIdx++
