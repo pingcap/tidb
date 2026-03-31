@@ -15,6 +15,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/internal/exec",
         "//pkg/expression",
