@@ -254,12 +254,15 @@ func TestFlightRecorder(t *testing.T) {
 		}
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
+		// Clear any stale events from previous recorder sessions before assertion.
+		sink.DiscardOrFlush(ctx)
+		drainEvents(eventCh)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
 		sink.DiscardOrFlush(ctx)
 		require.NotEmpty(t, eventCh)
 		events := <-eventCh
 		for _, event := range events {
-			require.Equal(t, event.Category, traceevent.KvRequest)
+			require.Equal(t, traceevent.KvRequest, event.Category)
 		}
 		flightRecorder.Close()
 	}
