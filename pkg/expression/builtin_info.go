@@ -237,6 +237,8 @@ func (c *currentRoleFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
+	// current_role() is always non-NULL and returns "NONE" when no role is active.
+	bf.tp.AddFlag(mysql.NotNullFlag)
 	sig := &builtinCurrentRoleSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
