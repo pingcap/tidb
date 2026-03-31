@@ -42,7 +42,6 @@ go_test(
         "plan_replayer_test.go",
         "statistics_handler_test.go",
     ],
-    data = glob(["testdata/**"]),
     flaky = True,
     shard_count = 10,
     deps = [
