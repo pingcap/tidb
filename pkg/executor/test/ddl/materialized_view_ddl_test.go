@@ -190,6 +190,11 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("create table t_minmax_ok (a int not null, b int not null, c int not null, index idx_bac(b, a, c))")
 	tk.MustExec("create materialized view log on t_minmax_ok (a, b, c) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_minmax_ok (a, b, minc, c1) as select a, b, min(c), count(1) from t_minmax_ok group by a, b")
+	tk.MustExec("create table t_minmax_invisible (a int not null, b int not null, c int not null, index idx_ab(a, b))")
+	tk.MustExec("alter table t_minmax_invisible alter index idx_ab invisible")
+	tk.MustExec("create materialized view log on t_minmax_invisible (a, b, c) purge next date_add(now(), interval 1 hour)")
+	err = tk.ExecToErr("create materialized view mv_bad_minmax_invisible_index (a, b, minc, c1) as select a, b, min(c), count(1) from t_minmax_invisible group by a, b")
+	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
 
 	// SELECT clauses outside Stage-1 scope should be rejected.
 	err = tk.ExecToErr("create materialized view mv_bad_distinct (a, c) as select distinct a, count(1) from t group by a")

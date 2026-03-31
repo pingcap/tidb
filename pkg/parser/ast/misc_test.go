@@ -108,12 +108,13 @@ func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
 			Type: ast.RefreshMaterializedViewTypeFast,
 		},
 		LastSuccessfulRefreshReadTSO: 4242,
+		TargetRefreshReadTSO:         5252,
 	}
 
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242", sb.String())
+	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252", sb.String())
 }
 
 func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
@@ -216,6 +217,24 @@ func TestRefreshMaterializedViewStmtRestoreFastIgnoresDeltaApplyCompleteType(t *
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	require.NoError(t, stmt.Restore(rctx))
 	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` FAST", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtRestoreFastAsOfTimestamp(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type: ast.RefreshMaterializedViewTypeFast,
+		AsOf: &ast.AsOfClause{
+			TsExpr: ast.NewValueExpr("2021-04-15 00:00:00", mysql.DefaultCharset, mysql.DefaultCollationName),
+		},
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'", sb.String())
 }
 
 func TestRefreshMaterializedViewStmtMode(t *testing.T) {

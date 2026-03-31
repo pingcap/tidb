@@ -127,6 +127,7 @@ go_library(
         "//pkg/parser/opcode",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/planner/mview",
         "//pkg/privilege",
         "//pkg/resourcegroup",
         "//pkg/resourcemanager/pool/workerpool",

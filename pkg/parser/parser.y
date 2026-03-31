@@ -5651,14 +5651,19 @@ RefreshMaterializedViewStmt:
 			ObserveType:   observeType,
 		}
 	}
-|	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "FAST" RefreshMaterializedViewObserveOpt
+|	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "FAST" AsOfClauseOpt RefreshMaterializedViewObserveOpt
 	{
-		observeType := $7.(ast.RefreshMaterializedViewObserveType)
+		var asOf *ast.AsOfClause
+		if $7 != nil {
+			asOf = $7.(*ast.AsOfClause)
+		}
+		observeType := $8.(ast.RefreshMaterializedViewObserveType)
 		$$ = &ast.RefreshMaterializedViewStmt{
 			ViewName:      $4.(*ast.TableName),
 			WithAsyncMode: $5.(bool),
 			Type:          ast.RefreshMaterializedViewTypeFast,
 			CompleteType:  ast.RefreshMaterializedViewCompleteTypeInPlace,
+			AsOf:          asOf,
 			ObserveType:   observeType,
 		}
 	}

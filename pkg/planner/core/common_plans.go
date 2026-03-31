@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -55,6 +56,13 @@ import (
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	baseSchemaProducer
+}
+
+// MVFullUpdateSnapshot binds a read ts with the snapshot infoschema resolved for that ts.
+// It is statement-local runtime metadata and is not intended for persistence or serialization.
+type MVFullUpdateSnapshot struct {
+	TS         uint64
+	InfoSchema infoschema.InfoSchema
 }
 
 // ShowSlow is for showing slow queries.
@@ -592,6 +600,9 @@ type MVDeltaMerge struct {
 	FullUpdateKeyResultColIdxes []int `plan-cache-clone:"shallow"`
 	// FullUpdateOutputMVOffsets maps FullUpdateInnerSource output columns to MV output offsets.
 	FullUpdateOutputMVOffsets []int `plan-cache-clone:"shallow"`
+	// FullUpdateSnapshot is the snapshot used to plan and execute FullUpdateInnerSource.
+	// It is only set for bounded FAST refresh that needs MIN/MAX full-update lookup.
+	FullUpdateSnapshot *MVFullUpdateSnapshot `plan-cache-clone:"shallow"`
 
 	MVTableID   int64
 	BaseTableID int64
@@ -687,12 +698,15 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfInt*4 + size.SizeOfSlice*3
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*3
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
 	sum += int64(cap(p.FullUpdateKeyResultColIdxes)) * size.SizeOfInt
 	sum += int64(cap(p.FullUpdateOutputMVOffsets)) * size.SizeOfInt
+	if p.FullUpdateSnapshot != nil {
+		sum += size.SizeOfUint64 + size.SizeOfInterface
+	}
 	if p.Source != nil {
 		sum += p.Source.MemoryUsage()
 	}

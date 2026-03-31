@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -28,9 +29,11 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestBuildDryRunRefreshMaterializedViewPlan(t *testing.T) {
@@ -327,6 +330,39 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 	require.NoError(t, explain.RenderResult())
 	require.NotEmpty(t, explain.Rows)
 	require.Contains(t, explain.Rows[0][4], "full_update:index_lookup")
+}
+
+func TestBuildRefreshMVFastAsOfTimestampPlanWithMinMaxCarriesFullUpdateSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_asof_plan (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_plan (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_plan (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_plan group by a")
+
+	targetTSO := oracle.GoTimeToTS(time.Now().UTC().Add(time.Second))
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv_refresh_asof_plan"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 1,
+		TargetRefreshReadTSO:         targetTSO,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.FullUpdateInnerSource)
+	require.NotNil(t, mergePlan.FullUpdateSnapshot)
+	require.Equal(t, targetTSO, mergePlan.FullUpdateSnapshot.TS)
+	require.NotNil(t, mergePlan.FullUpdateSnapshot.InfoSchema)
 }
 
 func TestExplainRefreshMVFastPlanTree(t *testing.T) {

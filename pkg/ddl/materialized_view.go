@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -1277,7 +1278,7 @@ func validateCreateMaterializedViewQuery(
 		groupByInfos = append(groupByInfos, mviewGroupByInfo{SelectIdx: idx, NotNull: groupByNotNull[colName]})
 	}
 
-	if hasMinOrMax && !hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo, groupByCols) {
+	if hasMinOrMax && !mvmerge.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols) {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
 	}
 
@@ -1367,55 +1368,6 @@ func (*columnNameCollector) Leave(n ast.Node) (ast.Node, bool) { return n, true 
 func isCountStarOrOne(arg ast.ExprNode) bool {
 	v, ok := arg.(*driver.ValueExpr)
 	return ok && v.Kind() == types.KindInt64 && v.GetInt64() == 1
-}
-
-func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	prefixLen := len(groupByCols)
-	if prefixLen == 0 {
-		return false
-	}
-	groupBySet := make(map[string]struct{}, prefixLen)
-	for _, col := range groupByCols {
-		groupBySet[col] = struct{}{}
-	}
-
-	if baseTableInfo.PKIsHandle && prefixLen == 1 {
-		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
-			_, ok := groupBySet[pkCol.Name.L]
-			if ok {
-				return true
-			}
-		}
-	}
-
-	for _, idx := range baseTableInfo.Indices {
-		if idx == nil || len(idx.Columns) < prefixLen {
-			continue
-		}
-		matched := make(map[string]struct{}, prefixLen)
-		ok := true
-		for i := 0; i < prefixLen; i++ {
-			idxCol := idx.Columns[i]
-			if idxCol.Length > 0 {
-				ok = false
-				break
-			}
-			name := idxCol.Name.L
-			if _, exists := groupBySet[name]; !exists {
-				ok = false
-				break
-			}
-			if _, exists := matched[name]; exists {
-				ok = false
-				break
-			}
-			matched[name] = struct{}{}
-		}
-		if ok && len(matched) == prefixLen {
-			return true
-		}
-	}
-	return false
 }
 
 func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool {

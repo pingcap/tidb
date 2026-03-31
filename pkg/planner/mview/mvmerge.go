@@ -52,6 +52,60 @@ const (
 	diffNewRowPrefix = "__mvd_n_"
 )
 
+// HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has a usable key layout
+// for MIN/MAX full-update lookup: either PK-is-handle on the single group key, or a public visible
+// index whose leading columns cover all group-by columns without prefix length.
+func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
+	if baseTableInfo == nil {
+		return false
+	}
+	prefixLen := len(groupByCols)
+	if prefixLen == 0 {
+		return false
+	}
+	groupBySet := make(map[string]struct{}, prefixLen)
+	for _, col := range groupByCols {
+		groupBySet[strings.ToLower(col)] = struct{}{}
+	}
+
+	if baseTableInfo.PKIsHandle && prefixLen == 1 {
+		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
+			if _, ok := groupBySet[pkCol.Name.L]; ok {
+				return true
+			}
+		}
+	}
+
+	for _, idx := range baseTableInfo.Indices {
+		if idx == nil || idx.Invisible || idx.State != model.StatePublic || len(idx.Columns) < prefixLen {
+			continue
+		}
+		matched := make(map[string]struct{}, prefixLen)
+		ok := true
+		for i := 0; i < prefixLen; i++ {
+			idxCol := idx.Columns[i]
+			if idxCol.Length > 0 {
+				ok = false
+				break
+			}
+			name := idxCol.Name.L
+			if _, exists := groupBySet[name]; !exists {
+				ok = false
+				break
+			}
+			if _, exists := matched[name]; exists {
+				ok = false
+				break
+			}
+			matched[name] = struct{}{}
+		}
+		if ok && len(matched) == prefixLen {
+			return true
+		}
+	}
+	return false
+}
+
 // SQL construction overview:
 //   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
 //   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
@@ -59,10 +113,11 @@ const (
 //      [all delta payload columns][all MV columns][optional rowid handle].
 // The executor consumes this one merged source stream and applies aggregate-specific update rules by offset.
 
-// BuildOptions defines the commit-ts lower bound (FromTS, +inf) used to read incremental mv-log rows.
-// Upper bound is provided by statement snapshot ts (for_update_ts at execution time).
+// BuildOptions defines the commit-ts window used to read incremental mv-log rows.
+// When ToTS is zero, no explicit upper bound is added and statement snapshot ts still acts as the read horizon.
 type BuildOptions struct {
 	FromTS uint64
+	ToTS   uint64
 }
 
 // BuildResult is the merge source produced by Build.
@@ -1258,6 +1313,9 @@ func buildMLogDeltaSelect(
 	buildMLogWhere := func() (ast.ExprNode, error) {
 		tsCol := colExpr(model.ExtraCommitTSName.L)
 		var where ast.ExprNode = binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", ""))
+		if opt.ToTS > 0 {
+			where = andExpr(where, binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")))
+		}
 		if mvSel.Where != nil {
 			mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
 			if err != nil {

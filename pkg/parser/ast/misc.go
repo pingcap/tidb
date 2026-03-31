@@ -520,6 +520,7 @@ type RefreshMaterializedViewStmt struct {
 	// It is only meaningful when Type == RefreshMaterializedViewTypeComplete.
 	CompleteType RefreshMaterializedViewCompleteType
 	ObserveType  RefreshMaterializedViewObserveType
+	AsOf         *AsOfClause
 }
 
 // RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
@@ -535,6 +536,7 @@ type RefreshMaterializedViewImplementStmt struct {
 
 	RefreshStmt                  *RefreshMaterializedViewStmt
 	LastSuccessfulRefreshReadTSO uint64
+	TargetRefreshReadTSO         uint64
 }
 
 // Restore implements Node interface.
@@ -548,6 +550,10 @@ func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) e
 	}
 	ctx.WriteKeyWord(" USING TIMESTAMP ")
 	ctx.WritePlain(strconv.FormatUint(n.LastSuccessfulRefreshReadTSO, 10))
+	if n.TargetRefreshReadTSO > 0 {
+		ctx.WriteKeyWord(" UP TO TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.TargetRefreshReadTSO, 10))
+	}
 	return nil
 }
 
@@ -692,6 +698,12 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.New("RefreshMaterializedViewStmt: unknown COMPLETE mode")
 		}
 	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.AsOf")
+		}
+	}
 	switch n.ObserveType {
 	case RefreshMaterializedViewObserveDryRun:
 		ctx.WriteKeyWord(" DRY RUN")
@@ -714,6 +726,13 @@ func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
 	}
 	return v.Leave(n)
 }

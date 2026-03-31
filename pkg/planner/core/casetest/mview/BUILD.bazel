@@ -8,7 +8,7 @@ go_test(
         "mv_refresh_test.go",
     ],
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
@@ -20,11 +20,13 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/mview",
         "//pkg/session",
+        "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/hint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_goleak//:goleak",
     ],
 )

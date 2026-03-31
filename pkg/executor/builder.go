@@ -1844,9 +1844,17 @@ func (b *executorBuilder) buildMVDeltaMergeMinMaxRecompute(
 		return nil, nil
 	}
 
-	readerBuilder, err := b.newDataReaderBuilder(v.FullUpdateInnerSource)
-	if err != nil {
-		return nil, err
+	var readerBuilder *dataReaderBuilder
+	if v.FullUpdateSnapshot != nil {
+		readerBuilder, err = b.newDataReaderBuilderWithSnapshot(v.FullUpdateInnerSource, v.FullUpdateSnapshot)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		readerBuilder, err = b.newDataReaderBuilder(v.FullUpdateInnerSource)
+		if err != nil {
+			return nil, err
+		}
 	}
 	templateRanges := v.FullUpdateIndexRanges.Range()
 	clonedTemplateRanges := make([]*ranger.Range, len(templateRanges))
@@ -4357,6 +4365,32 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	}, nil
 }
 
+func (b *executorBuilder) newDataReaderBuilderWithSnapshot(
+	p base.PhysicalPlan,
+	snapshot *plannercore.MVFullUpdateSnapshot,
+) (*dataReaderBuilder, error) {
+	if snapshot == nil {
+		return nil, errors.New("snapshot is nil")
+	}
+	if snapshot.TS == 0 {
+		return nil, errors.New("snapshot ts is zero")
+	}
+	if snapshot.InfoSchema == nil {
+		return nil, errors.New("snapshot infoschema is nil")
+	}
+
+	builderForDataReader := *b
+	builderForDataReader.forDataReaderBuilder = true
+	builderForDataReader.dataReaderTS = snapshot.TS
+	builderForDataReader.is = snapshot.InfoSchema
+	builderForDataReader.isStaleness = true
+
+	return &dataReaderBuilder{
+		plan:            p,
+		executorBuilder: &builderForDataReader,
+	}, nil
+}
+
 func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
@@ -4645,9 +4679,11 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
+	treCtx := newTableReaderExecutorContext(b.ctx)
+	treCtx.infoSchema = b.is
 	e := &TableReaderExecutor{
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
-		tableReaderExecutorContext: newTableReaderExecutorContext(b.ctx),
+		tableReaderExecutorContext: treCtx,
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
@@ -4986,8 +5022,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
+	ireCtx := newIndexReaderExecutorContext(b.ctx)
+	ireCtx.infoSchema = b.is
 	e := &IndexReaderExecutor{
-		indexReaderExecutorContext: newIndexReaderExecutorContext(b.ctx),
+		indexReaderExecutorContext: ireCtx,
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,

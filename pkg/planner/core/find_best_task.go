@@ -1641,7 +1641,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
 				// BatchPointGet plan for more cases.
-				hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.Table.Meta())
+				hashPartColName := getHashOrKeyPartitionColumnName(ds.Table)
 				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
