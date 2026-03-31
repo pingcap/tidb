@@ -190,6 +190,24 @@ select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.i
 id	v	id	v
 1	10	1	10
 2	20	2	20
+explain format = 'brief' select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double);
+id	estRows	task	access object	operator info
+Projection	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v
+└─HashJoin	5.00	root		inner join, equal:[eq(Column#1, Column#12)]
+  ├─Projection(Build)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#1
+  │ └─TableReader	5.00	root		data:TableFullScan
+  │   └─TableFullScan	5.00	cop[tikv]	table:t_int	keep order:false
+  └─Projection(Probe)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
+    └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
+      └─TableReader	7.00	root		data:TableFullScan
+        └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double) order by t_int.id;
+id	v	id	v
+0	0	abc	99
+0	0	0	0
+1	10	1	10
+2	20	2	20
+100	100	100	100
 drop table if exists t_mj;
 create table t_mj (a varchar(1), b integer);
 insert into t_mj values ('1', 1), ('2', 2);

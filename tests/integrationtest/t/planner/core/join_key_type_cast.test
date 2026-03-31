@@ -151,6 +151,15 @@ explain format = 'brief' select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join
 # Verify correctness: '1.5' must NOT match int 1.
 select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id order by t_idx_int.id;
 
+# TestJoinKeyTypeCastExplicitCast
+# Explicit CAST(col AS DOUBLE) in join conditions produces the same plan-tree
+# pattern as implicit type coercion (updateEQCond materializes the CAST into a
+# child Projection). The rule rewrites both identically. This is intentional:
+# for values within DOUBLE's exact integer range the results are identical, and
+# for values outside that range the INT comparison is more precise.
+explain format = 'brief' select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double);
+select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double) order by t_int.id;
+
 # TestJoinKeyTypeCastMultiWayJoin
 # Complex multi-way join with VARCHAR vs INT across multiple joins.
 # Regression test: must not produce "Can't find column" errors.

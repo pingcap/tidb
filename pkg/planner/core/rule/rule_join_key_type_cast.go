@@ -45,6 +45,16 @@ import (
 // The guard predicate filters non-integer VARCHAR values:
 //
 //	CAST(CAST(varchar_col AS SIGNED) AS DOUBLE) = CAST(varchar_col AS DOUBLE)
+//
+// Limitation: TiDB's expression framework does not distinguish implicit CASTs
+// (inserted by type coercion) from explicit user-written CASTs. If a user
+// writes CAST(int_col AS DOUBLE) = CAST(varchar_col AS DOUBLE) in a join
+// condition, updateEQCond materializes these into child projections that are
+// indistinguishable from the implicit case, so this rule will rewrite them too.
+// In practice the semantic difference is negligible: it only manifests for
+// integers outside DOUBLE's exact range (>2^53), where the INT comparison is
+// arguably more correct than DOUBLE (which would silently equate distinct
+// values due to precision loss).
 type JoinKeyTypeCastRewriter struct{}
 
 // Optimize implements base.LogicalOptRule.
@@ -78,10 +88,9 @@ func rewriteJoinTypeCasts(p base.LogicalPlan) (base.LogicalPlan, bool) {
 
 // projCastInfo describes a CAST-to-DOUBLE expression in a child Projection.
 type projCastInfo struct {
-	childIdx int // 0=left, 1=right
-	proj     *logicalop.LogicalProjection
-	exprIdx  int                // index in Projection.Exprs
-	origCol  *expression.Column // the underlying column inside CAST
+	proj    *logicalop.LogicalProjection
+	exprIdx int                // index in Projection.Exprs
+	origCol *expression.Column // the underlying column inside CAST
 }
 
 // rewriteJoinEqConds scans EqualConditions for DOUBLE-typed column pairs
