@@ -129,7 +129,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock regions
-	router.Handle(pd.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
+	regionsHandler := fn.Wrap(func() (*pd.RegionsInfo, error) {
 		return &pd.RegionsInfo{
 			Count: 1,
 			Regions: []pd.RegionInfo{
@@ -148,7 +148,9 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 				},
 			},
 		}, nil
-	}))
+	})
+	router.Handle(pd.Regions, regionsHandler)
+	router.Handle("/pd/api/v1/regions/key", regionsHandler)
 	// mock PD API
 	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
@@ -331,6 +333,11 @@ func TestTikvRegionStatus(t *testing.T) {
 		"1 test test_t1 0 <nil> 0 <nil>",
 		"1 test test_t1 1 p_a 0 <nil>",
 	))
+	tableID := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t1'").Rows()[0][0]
+	tk.MustQuery(fmt.Sprintf("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX", tableID)).Check(testkit.Rows(
+		"1 test test_t1 0 <nil> 0 <nil>",
+		"1 test test_t1 1 p_a 0 <nil>",
+	))
 
 	tk.MustExec("alter table test_t1 add unique p_b (b);")
 	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX, INDEX_NAME").Check(testkit.Rows(
@@ -359,6 +366,14 @@ func TestTikvRegionStatus(t *testing.T) {
 
 	tk.MustExec("alter table test_t2 add unique p_b (b) global")
 	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> 1 p0",
+		"1 test test_t2 0 <nil> 1 p1",
+		"1 test test_t2 1 p_a 1 p0",
+		"1 test test_t2 1 p_a 1 p1",
+		"1 test test_t2 1 p_b 0 <nil>",
+	))
+	tableID = tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t2'").Rows()[0][0]
+	tk.MustQuery(fmt.Sprintf("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME", tableID)).Check(testkit.Rows(
 		"1 test test_t2 0 <nil> 1 p0",
 		"1 test test_t2 0 <nil> 1 p1",
 		"1 test test_t2 1 p_a 1 p0",
