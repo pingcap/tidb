@@ -45,7 +45,7 @@ type truncateKey struct {
 	isNull bool
 }
 
-type RankInfo struct {
+type rankInfo struct {
 	TruncateKeyExprs            []expression.Expression
 	truncateFieldTypes          []*types.FieldType
 	truncateFieldCollators      []collate.Collator
@@ -93,7 +93,7 @@ type TopNExec struct {
 
 	typeCtx types.Context
 
-	RankInfo RankInfo
+	RankInfo rankInfo
 }
 
 // Open implements the Executor Open interface.
