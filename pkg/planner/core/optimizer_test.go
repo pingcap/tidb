@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -207,7 +208,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 			sctx.GetPlanCtx(),
 			"test",
 			expression.NewSchema(),
-			&model.TableInfo{Name: model.NewCIStr("t")},
+			&model.TableInfo{Name: pmodel.NewCIStr("t")},
 			nil,
 		)
 
