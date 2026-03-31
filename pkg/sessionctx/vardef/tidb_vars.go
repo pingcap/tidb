@@ -1473,7 +1473,7 @@ const (
 	DefCurretTS                             = 0
 	DefInitChunkSize                        = 32
 	DefMinPagingSize                        = int(paging.MinPagingSize)
-	DefMaxPagingSize                        = int(paging.MaxPagingSize)
+	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1

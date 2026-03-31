@@ -90,6 +90,10 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
+// the returned kv.Response might hold at most concurrency * resp-channel-size
+// number of coprocessor responses depending on the request type, this might be
+// a large memory.
+// see BuildCopIterator and buildCopTasks for resp-channel-size.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, option *kv.ClientSendOption) kv.Response {
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
@@ -1761,8 +1765,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 
 	var result *copTaskResult
-	if worker.req.Paging.Enable ||
-		copResp.GetRange() != nil { // For next-gen, the storage may return paging range even if paging is not enabled.
+	// For next-gen, the storage may return paging range even if paging is not
+	// enabled. coprocessor have a max_resp_size to control the response size,
+	// the default is 32MiB
+	if worker.req.Paging.Enable || copResp.GetRange() != nil {
 		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
