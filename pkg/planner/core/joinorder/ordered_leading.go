@@ -111,7 +111,7 @@ func buildSingleTableLeadingHint(table *hint.HintedTable) *hint.PlanHints {
 	return &hint.PlanHints{
 		LeadingJoinOrder: []hint.HintedTable{*table},
 		LeadingList: &ast.LeadingList{
-			Items: []interface{}{
+			Items: []any{
 				&ast.HintTable{
 					DBName:    table.DBName,
 					TableName: table.TblName,
