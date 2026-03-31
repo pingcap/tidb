@@ -207,12 +207,12 @@ const (
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
-	ctx          base.PlanContext
-	is           infoschema.InfoSchema
-	outerSchemas         []*expression.Schema
-	outerNames           [][]*types.FieldName
-	outerSchemaTableIDs  [][]int64 // table ID per column for each outer level; nil if unknown
-	outerCTEs            []*cteInfo
+	ctx                 base.PlanContext
+	is                  infoschema.InfoSchema
+	outerSchemas        []*expression.Schema
+	outerNames          [][]*types.FieldName
+	outerSchemaTableIDs [][]int64 // table ID per column for each outer level; nil if unknown
+	outerCTEs           []*cteInfo
 	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
 	outerBlockExpand   []*logicalop.LogicalExpand
 	currentBlockExpand *logicalop.LogicalExpand

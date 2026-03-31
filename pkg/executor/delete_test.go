@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -240,4 +241,25 @@ func TestDeleteWithExistsSubqueryDifferentTable(t *testing.T) {
 
 	tk.MustExec("DELETE FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a)")
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("2"))
+}
+
+// TestDeleteMultiTableInnerFromNonTargetNoCorrelatedTableDual ensures a table referenced only
+// inside the subquery FROM, but not listed in DELETE targets, still uses its normal scan plan.
+func TestDeleteMultiTableInnerFromNonTargetNoCorrelatedTableDual(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists dmt1, dmt2")
+	tk.MustExec("create table dmt1 (id int primary key, v int)")
+	tk.MustExec("create table dmt2 (id int primary key, v int)")
+
+	rows := tk.MustQuery(`explain format='brief' delete dmt1 from dmt1 join dmt2 on dmt1.id=dmt2.id
+		where exists (select 1 from dmt2 where dmt2.v = dmt1.v)`).Rows()
+	var plan strings.Builder
+	for _, r := range rows {
+		plan.WriteString(r[0].(string))
+		plan.WriteByte('\n')
+	}
+	require.NotContains(t, strings.ToLower(plan.String()), "tabledual",
+		"inner FROM dmt2 is not a delete target; expect full scan, not correlated TableDual")
 }

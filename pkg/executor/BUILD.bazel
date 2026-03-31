@@ -359,7 +359,6 @@ go_test(
         "detach_test.go",
         "distribute_table_test.go",
         "distsql_test.go",
-        "dml_correlation_test.go",
         "executor_failpoint_test.go",
         "executor_pkg_test.go",
         "executor_required_rows_test.go",
