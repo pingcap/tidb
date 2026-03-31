@@ -1407,7 +1407,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 }
 
 func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
@@ -1417,12 +1417,14 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 		partition p2 values less than (20)
 	);`)
 	tt := external.GetTableByName(t, tk, "test", "test_global")
+	tableID := tt.Meta().ID
 	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
 	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
+<<<<<<< HEAD
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test`)
 	tk2.MustExec(`begin`)
@@ -1447,8 +1449,51 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				}
 			}
 			time.Sleep(10 * time.Millisecond)
+=======
+	doneMap := make(map[model.SchemaState]struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionTruncateTablePartition || job.TableID != tableID {
+			return
+>>>>>>> 60f1ad0a5f2 (ddl/tests/partition: stabilize truncate partition global index test (#67306))
 		}
+		switch job.SchemaState {
+		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization:
+		default:
+			return
+		}
+		if _, ok := doneMap[job.SchemaState]; ok {
+			return
+		}
+		doneMap[job.SchemaState] = struct{}{}
+
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			tk1.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+			tk1.MustExec(`insert into test_global values (5,5,5)`)
+		case model.StateDeleteOnly:
+			tk1.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+			tk1.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
+			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
+			assert.Error(t, err)
+			assert.ErrorContains(t, err, "Duplicate entry '15'")
+		case model.StateDeleteReorganization:
+			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
+			assert.NoError(t, err)
+		}
+	})
+
+	tk.MustExec("alter table test_global truncate partition p2")
+	for _, state := range []model.SchemaState{model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization} {
+		_, ok := doneMap[state]
+		require.Truef(t, ok, "schema state %s was not observed", state)
 	}
+<<<<<<< HEAD
 	waitFor(4, "write only")
 	tkTmp := testkit.NewTestKit(t, store)
 	tkTmp.MustExec(`begin`)
@@ -1479,6 +1524,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3.MustExec(`commit`)
 	tk.MustExec(`commit`)
 	<-syncChan
+=======
+
+>>>>>>> 60f1ad0a5f2 (ddl/tests/partition: stabilize truncate partition global index test (#67306))
 	result := tk.MustQuery("select * from test_global;")
 	result.Sort().Check(testkit.Rows(`1 1 1`, `15 15 15`, `2 2 2`, `5 5 5`))
 
@@ -1494,8 +1542,8 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	require.Equal(t, 4, cnt)
 	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows("15"))
 	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows("15"))
-	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
-	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
+	tk.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+	tk.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
