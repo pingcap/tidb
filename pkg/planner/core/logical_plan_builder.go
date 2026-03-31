@@ -1983,9 +1983,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 	}
 
-	if b.buildingSetOprOperands == 0 {
+	if b.buildingSetOprOperands == 0 && !b.isCTE {
 		// Apply masking at the final result stage (AT RESULT semantics).
 		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+		// For CTEs, we skip masking here because CTE definitions should preserve original values.
 		// Pass nil for originalFields as we don't have access to the original field expressions here.
 		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
 		if err != nil {
@@ -4295,9 +4296,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 	}
 
-	if b.buildingSetOprOperands == 0 {
+	if b.buildingSetOprOperands == 0 && !b.isCTE {
 		// Apply masking at the final result stage (AT RESULT semantics).
 		// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+		// For CTEs, we skip masking here because:
+		// 1. CTE definitions should preserve original values for correct filtering/joining
+		// 2. Masking is applied when CTE results are materialized to the final output
 		// Pass originalFields so masking is applied to the original expression trees before they were materialized.
 		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
 		if err != nil {
