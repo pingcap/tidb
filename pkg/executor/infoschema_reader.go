@@ -2169,7 +2169,7 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	}
 	// Query the whole table prefix so both record and index regions are covered.
 	sk := tablecodec.EncodeTablePrefix(tableID)
-	ek := kv.Key(sk).PrefixNext()
+	ek := sk.PrefixNext()
 	start, end := helper.Store.GetCodec().EncodeRegionRange(sk, ek)
 	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), -1)
 }
