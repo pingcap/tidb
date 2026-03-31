@@ -4720,13 +4720,23 @@ func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.Log
 			errName: tn.Name.O,
 		})
 	}
-	return b.resolveDMLTargetTableIDs(ds.TableRefs.TableRefs, targets, "MULTI DELETE")
+	ids, err := b.resolveDMLTargetTableIDs(ds.TableRefs.TableRefs, targets, "MULTI DELETE")
+	if err != nil {
+		// Keep planning behavior compatible with delete target resolution in buildDelete.
+		// For unresolved table-name forms, avoid failing target-ID collection and
+		// conservatively allow all table IDs from the delete source plan.
+		if errors.ErrorEqual(err, plannererrors.ErrUnknownTable) {
+			return collectTableIDsFromLogicalPlan(p), nil
+		}
+		return nil, err
+	}
+	return ids, nil
 }
 
 // collectUpdateTargetTableIDs returns the set of table IDs that are the actual UPDATE targets.
 // Qualified SET targets use (schema, table) from the AST; unqualified columns are resolved against
 // the FROM plan output names so only the touched table(s) are included (multi-table UPDATE).
-func (b *PlanBuilder) collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
+func collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
 	ids := make(map[int64]struct{})
 	outputNames := p.OutputNames()
 	schemaTableIDs := getSchemaTableIDs(p)
@@ -6322,7 +6332,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
-	b.dmlTargetTableIDs, err = b.collectUpdateTargetTableIDs(update, p)
+	b.dmlTargetTableIDs, err = collectUpdateTargetTableIDs(update, p)
 	if err != nil {
 		return nil, err
 	}
