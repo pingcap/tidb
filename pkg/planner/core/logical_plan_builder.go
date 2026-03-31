@@ -438,28 +438,23 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
 	case *ast.TableSource:
-		// Scope lateral outer schemas based on whether this table source is LATERAL.
+		// Scope lateral outer contexts based on whether this table source is LATERAL.
 		if b.lateralOuterCount > 0 {
 			if !x.Lateral {
-				// Non-LATERAL derived table: temporarily hide outer schemas pushed
+				// Non-LATERAL derived table: temporarily hide outer scopes pushed
 				// for LATERAL so the subquery cannot resolve outer columns that are
 				// only available to LATERAL siblings.
 				n := b.lateralOuterCount
-				savedSchemas := make([]*expression.Schema, n)
-				savedNames := make([][]*types.FieldName, n)
-				copy(savedSchemas, b.outerSchemas[len(b.outerSchemas)-n:])
-				copy(savedNames, b.outerNames[len(b.outerNames)-n:])
-				b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-n]
-				b.outerNames = b.outerNames[:len(b.outerNames)-n]
+				savedScopes := slices.Clone(b.outerScopes[len(b.outerScopes)-n:])
+				b.outerScopes = b.outerScopes[:len(b.outerScopes)-n]
 				savedCount := b.lateralOuterCount
 				b.lateralOuterCount = 0
 				defer func() {
-					b.outerSchemas = append(b.outerSchemas, savedSchemas...)
-					b.outerNames = append(b.outerNames, savedNames...)
+					b.outerScopes = append(b.outerScopes, savedScopes...)
 					b.lateralOuterCount = savedCount
 				}()
 			} else {
-				// LATERAL derived table: "adopt" the lateral outer schemas into
+				// LATERAL derived table: "adopt" the lateral outer scopes into
 				// regular correlated scope so that non-LATERAL subqueries nested
 				// inside this LATERAL table can still resolve outer columns.
 				savedCount := b.lateralOuterCount
@@ -671,7 +666,7 @@ func findJoinFullSchema(p base.LogicalPlan) (*expression.Schema, types.NameSlice
 }
 
 // containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source
-// anywhere in its subtree. Used only to decide whether to push outerSchemas before
+// anywhere in its subtree. Used only to decide whether to push outer scopes before
 // building the right side, so nested LATERAL sources can resolve outer columns.
 func containsLateralTableSource(node ast.ResultSetNode) bool {
 	switch n := node.(type) {
@@ -742,7 +737,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	}
 
 	// Detect whether the right subtree contains any LATERAL table source.
-	// This is used only to decide whether to push outerSchemas before building
+	// This is used only to decide whether to push outer scopes before building
 	// the right side, so that nested LATERAL sources can resolve outer columns.
 	// The decision to produce a LogicalApply is deferred until after rightPlan is
 	// built (see below), where a tighter check is applied.
@@ -762,7 +757,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
-	// For LATERAL: Push left side schema onto outerSchemas stack
+	// For LATERAL: Push left side schema onto the outer-scope stack
 	// This makes left-side columns visible when building right-side subquery
 	if isLateral {
 		// For USING/NATURAL joins, use FullSchema/FullNames which include redundant columns
@@ -775,16 +770,14 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 			outerSchema = fullSchema
 			outerNames = fullNames
 		}
-		b.outerSchemas = append(b.outerSchemas, outerSchema)
-		b.outerNames = append(b.outerNames, outerNames)
+		b.pushOuterScope(outerSchema, outerNames, nil)
 		b.lateralOuterCount++
 		// Use a single defer to ensure consistent cleanup in all paths (success and error).
 		// Note: buildingLateralSubquery is NOT set here — it is set per-TableSource in
 		// buildResultSetNode when x.Lateral is true, so non-LATERAL siblings don't
 		// bypass recursive-CTE ORDER BY/LIMIT checks.
 		defer func() {
-			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
-			b.outerNames = b.outerNames[:len(b.outerNames)-1]
+			b.popOuterScope()
 			b.lateralOuterCount--
 		}()
 	}
@@ -797,7 +790,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 
 	// Decide whether this join should produce a LogicalApply.
 	// containsLateralTableSource (isLateral) was used above only to decide
-	// whether to push outerSchemas. The LogicalApply decision requires a
+	// whether to push outer scopes. The LogicalApply decision requires a
 	// tighter check so that a LATERAL nested *inside* the right subtree —
 	// one that correlates only with something inside that subtree, not with
 	// the current left side — does not cause the outer join to be mis-classified
@@ -2639,8 +2632,7 @@ type havingWindowAndOrderbyExprResolver struct {
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	colMapper    map[*ast.ColumnNameExpr]int
 	gbyItems     []*ast.ByItem
-	outerSchemas []*expression.Schema
-	outerNames   [][]*types.FieldName
+	outerScopes  []outerScopeInfo
 	curClause    clauseCode
 	prevClause   []clauseCode
 }
@@ -2876,8 +2868,8 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		}
 		if index == -1 {
 			// If we can't find it any where, it may be a correlated columns.
-			for _, names := range a.outerNames {
-				idx, err1 := expression.FindFieldName(names, v.Name)
+			for _, scope := range a.outerScopes {
+				idx, err1 := expression.FindFieldName(scope.names, v.Name)
 				if err1 != nil {
 					a.err = err1
 					return node, false
@@ -2907,8 +2899,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
 		colMapper:    b.colMapper,
-		outerSchemas: b.outerSchemas,
-		outerNames:   b.outerNames,
+		outerScopes:  b.outerScopes,
 	}
 	if sel.GroupBy != nil {
 		extractor.gbyItems = sel.GroupBy.Items
@@ -3050,8 +3041,7 @@ func (b *PlanBuilder) resolveWindowFunction(ctx context.Context, sel *ast.Select
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
 		colMapper:    b.colMapper,
-		outerSchemas: b.outerSchemas,
-		outerNames:   b.outerNames,
+		outerScopes:  b.outerScopes,
 	}
 	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
@@ -3135,10 +3125,7 @@ type correlatedAggregateResolver struct {
 func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 	if v, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
-			outerSchema := r.outerPlan.Schema()
-			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
-			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
-			r.b.outerSchemaTableIDs = append(r.b.outerSchemaTableIDs, getSchemaTableIDs(r.outerPlan))
+			r.b.pushOuterScope(r.outerPlan.Schema(), r.outerPlan.OutputNames(), getSchemaTableIDs(r.outerPlan))
 			r.b.outerBlockExpand = append(r.b.outerBlockExpand, r.b.currentBlockExpand)
 		}
 		r.err = r.resolveSelect(v)
@@ -3291,9 +3278,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p base.LogicalPlan, where
 func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 	if _, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
-			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
-			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
-			r.b.outerSchemaTableIDs = r.b.outerSchemaTableIDs[0 : len(r.b.outerSchemaTableIDs)-1]
+			r.b.popOuterScope()
 			r.b.currentBlockExpand = r.b.outerBlockExpand[len(r.b.outerBlockExpand)-1]
 			r.b.outerBlockExpand = r.b.outerBlockExpand[0 : len(r.b.outerBlockExpand)-1]
 		}
@@ -4676,30 +4661,35 @@ func collectTableIDsFromLogicalPlan(p base.LogicalPlan) map[int64]struct{} {
 // collectDeleteTargetTableIDs returns the set of table IDs that are the actual DELETE targets.
 // For multi-table DELETE (e.g. DELETE a, b FROM a, b, c), only tables in ds.Tables are targets.
 // For single-table DELETE (DELETE FROM t), the single table in the FROM is the target.
-func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
-	if ds.Tables == nil {
-		return collectTableIDsFromLogicalPlan(p), nil
-	}
+type dmlTargetTableName struct {
+	schema  string
+	table   string
+	errName string
+}
+
+func (b *PlanBuilder) resolveDMLTargetTableIDs(tableRefs *ast.Join, targets []dmlTargetTableName, stmtType string) (map[int64]struct{}, error) {
 	updatableList := make(map[string]bool)
 	tbInfoList := make(map[string]*ast.TableName)
-	collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
-	ids := make(map[int64]struct{})
-	for _, tn := range ds.Tables.Tables {
-		var foundMatch bool
-		name := tn.Name.L
-		if tn.Schema.L == "" {
-			_, foundMatch = updatableList[name]
+	collectTableName(tableRefs, &updatableList, &tbInfoList)
+
+	ids := make(map[int64]struct{}, len(targets))
+	currentDB := b.ctx.GetSessionVars().CurrentDB
+	for _, target := range targets {
+		name := target.table
+		if target.schema != "" {
+			name = target.schema + "." + target.table
 		}
-		if !foundMatch {
-			if tn.Schema.L == "" {
-				name = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
+		_, found := updatableList[name]
+		if !found {
+			if target.schema == "" {
+				name = currentDB + "." + target.table
 			} else {
-				name = tn.Schema.L + "." + tn.Name.L
+				name = target.schema + "." + target.table
 			}
-			_, foundMatch = updatableList[name]
+			_, found = updatableList[name]
 		}
-		if !foundMatch {
-			return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
+		if !found {
+			return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(target.errName, stmtType)
 		}
 		tb := tbInfoList[name]
 		if tb == nil {
@@ -4711,6 +4701,21 @@ func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.Log
 		}
 	}
 	return ids, nil
+}
+
+func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
+	if ds.Tables == nil {
+		return collectTableIDsFromLogicalPlan(p), nil
+	}
+	targets := make([]dmlTargetTableName, 0, len(ds.Tables.Tables))
+	for _, tn := range ds.Tables.Tables {
+		targets = append(targets, dmlTargetTableName{
+			schema:  tn.Schema.L,
+			table:   tn.Name.L,
+			errName: tn.Name.O,
+		})
+	}
+	return b.resolveDMLTargetTableIDs(ds.TableRefs.TableRefs, targets, "MULTI DELETE")
 }
 
 // collectUpdateTargetTableIDs returns the set of table IDs that are the actual UPDATE targets.
@@ -4742,35 +4747,15 @@ func (b *PlanBuilder) collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base
 	if len(modifiedTables) == 0 {
 		return collectTableIDsFromLogicalPlan(p), nil
 	}
-	updatableList := make(map[string]bool)
-	tbInfoList := make(map[string]*ast.TableName)
-	collectTableName(update.TableRefs.TableRefs, &updatableList, &tbInfoList)
-	ids := make(map[int64]struct{})
+	targets := make([]dmlTargetTableName, 0, len(modifiedTables))
 	for k := range modifiedTables {
-		var name string
-		if k.schema == "" {
-			name = k.table
-		} else {
-			name = k.schema + "." + k.table
-		}
-		_, inList := updatableList[name]
-		if !inList && k.schema == "" {
-			name = b.ctx.GetSessionVars().CurrentDB + "." + k.table
-			_, inList = updatableList[name]
-		}
-		if !inList {
-			return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(k.table, "UPDATE")
-		}
-		tb := tbInfoList[name]
-		if tb == nil {
-			continue
-		}
-		tnW := b.resolveCtx.GetTableName(tb)
-		if tnW != nil && tnW.TableInfo != nil {
-			ids[tnW.TableInfo.ID] = struct{}{}
-		}
+		targets = append(targets, dmlTargetTableName{
+			schema:  k.schema,
+			table:   k.table,
+			errName: k.table,
+		})
 	}
-	return ids, nil
+	return b.resolveDMLTargetTableIDs(update.TableRefs.TableRefs, targets, "UPDATE")
 }
 
 // getSchemaTableIDs returns the table ID for each column in p.Schema() (0 for non-table or unknown).
@@ -4785,7 +4770,7 @@ func getSchemaTableIDs(p base.LogicalPlan) []int64 {
 	case *logicalop.DataSource:
 		if x.TableInfo != nil {
 			tid := x.TableInfo.ID
-			for i := 0; i < n; i++ {
+			for i := range ids {
 				ids[i] = tid
 			}
 		}
@@ -4828,35 +4813,29 @@ func getSchemaTableIDs(p base.LogicalPlan) []int64 {
 // scope, then schema order) with that table ID whose name matches refTblName against outer
 // TblName or OrigTblName, then return outerInstanceTbl = that column's TblName so only that
 // alias's columns are projected (avoids merging t AS a JOIN t AS b into one pseudo-table).
-// Returns (nil, nil, -1, empty) if no match.
-func findOuterScopeTable(b *PlanBuilder, refDbName, refTblName ast.CIStr, targetTableID int64) (*expression.Schema, []*types.FieldName, int, ast.CIStr) {
-	if len(b.outerSchemas) == 0 {
-		return nil, nil, -1, ast.CIStr{}
+// Returns (empty, empty, false) if no match.
+func findOuterScopeTable(b *PlanBuilder, refDbName, refTblName ast.CIStr, targetTableID int64) (outerScopeInfo, ast.CIStr, bool) {
+	if len(b.outerScopes) == 0 {
+		return outerScopeInfo{}, ast.CIStr{}, false
 	}
-	for i := len(b.outerSchemas) - 1; i >= 0; i-- {
-		outerSchema := b.outerSchemas[i]
-		outerNames := b.outerNames[i]
-		if outerSchema == nil || len(outerNames) == 0 {
+	for i := len(b.outerScopes) - 1; i >= 0; i-- {
+		scope := b.outerScopes[i]
+		if scope.schema == nil || len(scope.names) == 0 || scope.tableIDs == nil {
 			continue
 		}
-		levelIDs := b.outerSchemaTableIDs
-		if i >= len(levelIDs) || levelIDs[i] == nil {
-			continue
-		}
-		ids := levelIDs[i]
-		for j, name := range outerNames {
-			if name.Hidden || j >= len(ids) || ids[j] != targetTableID {
+		for j, name := range scope.names {
+			if name.Hidden || j >= len(scope.tableIDs) || scope.tableIDs[j] != targetTableID {
 				continue
 			}
 			dbMatch := refDbName.L == "" || refDbName.L == name.DBName.L ||
 				(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && refDbName.L == b.ctx.GetSessionVars().CurrentDB)
 			tblMatch := refTblName.L == name.TblName.L || refTblName.L == name.OrigTblName.L
 			if dbMatch && tblMatch {
-				return outerSchema, outerNames, i, name.TblName
+				return scope, name.TblName, true
 			}
 		}
 	}
-	return nil, nil, -1, ast.CIStr{}
+	return outerScopeInfo{}, ast.CIStr{}, false
 }
 
 // buildCorrelatedTableFromOuterScope builds a single-row plan that projects the
@@ -4867,36 +4846,31 @@ func findOuterScopeTable(b *PlanBuilder, refDbName, refTblName ast.CIStr, target
 // alias (TblName) for exactly one table occurrence; only columns from that instance
 // are projected (same physical table ID may appear twice as a JOIN).
 func (b *PlanBuilder) buildCorrelatedTableFromOuterScope(
-	outerSchema *expression.Schema,
-	outerNames []*types.FieldName,
+	scope outerScopeInfo,
 	targetTableID int64,
-	levelIndex int,
 	outerInstanceTbl ast.CIStr,
 	innerRefTbl ast.CIStr,
 	asName *ast.CIStr,
 ) base.LogicalPlan {
-	levelIDs := b.outerSchemaTableIDs
-	if levelIndex >= len(levelIDs) || levelIDs[levelIndex] == nil || outerInstanceTbl.L == "" {
+	if scope.schema == nil || scope.tableIDs == nil || outerInstanceTbl.L == "" {
 		return nil
 	}
-	ids := levelIDs[levelIndex]
-	var exprs []expression.Expression
+	exprs := make([]expression.Expression, 0, len(scope.schema.Columns))
 	var outSchema *expression.Schema
-	var outNames []*types.FieldName
-	for i, name := range outerNames {
+	outNames := make([]*types.FieldName, 0, len(scope.schema.Columns))
+	for i, name := range scope.names {
 		if name.Hidden {
 			continue
 		}
-		if i >= len(ids) || ids[i] != targetTableID || name.TblName.L != outerInstanceTbl.L {
+		if i >= len(scope.tableIDs) || scope.tableIDs[i] != targetTableID || name.TblName.L != outerInstanceTbl.L {
 			continue
 		}
-		col := outerSchema.Columns[i]
+		col := scope.schema.Columns[i]
 		corCol := &expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)}
 		corCol.Index = i // position in outer schema; used by executor's outerRow.GetDatum(col.Index, ...)
 		exprs = append(exprs, corCol)
 		if outSchema == nil {
 			outSchema = expression.NewSchema()
-			outNames = make([]*types.FieldName, 0, outerSchema.Len())
 		}
 		outCol := col.Clone().(*expression.Column)
 		outCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -5208,13 +5182,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// Plain SELECT subqueries never hit this (dmlTargetTableIDs is nil), so e.g. scalar
 	// (SELECT MAX(a) FROM t) is not rewritten to a correlated single-row FROM t.
 	// Only do this when the resolved table is the actual DML target (by table ID).
-	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerSchemas) > 0 && b.dmlTargetTableIDs != nil {
+	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerScopes) > 0 && b.dmlTargetTableIDs != nil {
 		tbl, resolveErr := b.is.TableByName(ctx, dbName, tn.Name)
 		if resolveErr == nil && tbl != nil {
 			targetID := tbl.Meta().ID
 			if _, isTarget := b.dmlTargetTableIDs[targetID]; isTarget {
-				if outerSchema, outerNames, levelIdx, instTbl := findOuterScopeTable(b, dbName, tn.Name, targetID); outerSchema != nil {
-					p := b.buildCorrelatedTableFromOuterScope(outerSchema, outerNames, targetID, levelIdx, instTbl, tn.Name, asName)
+				if scope, instTbl, ok := findOuterScopeTable(b, dbName, tn.Name, targetID); ok {
+					p := b.buildCorrelatedTableFromOuterScope(scope, targetID, instTbl, tn.Name, asName)
 					if p != nil {
 						return p, nil
 					}

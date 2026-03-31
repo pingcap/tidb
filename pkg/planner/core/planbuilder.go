@@ -207,12 +207,10 @@ const (
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
-	ctx                 base.PlanContext
-	is                  infoschema.InfoSchema
-	outerSchemas        []*expression.Schema
-	outerNames          [][]*types.FieldName
-	outerSchemaTableIDs [][]int64 // table ID per column for each outer level; nil if unknown
-	outerCTEs           []*cteInfo
+	ctx         base.PlanContext
+	is          infoschema.InfoSchema
+	outerScopes []outerScopeInfo
+	outerCTEs   []*cteInfo
 	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
 	outerBlockExpand   []*logicalop.LogicalExpand
 	currentBlockExpand *logicalop.LogicalExpand
@@ -323,7 +321,7 @@ type PlanBuilder struct {
 	// This allows resolving column references against the left side of the join
 	buildingLateralSubquery bool
 
-	// lateralOuterCount tracks how many of the last entries in outerSchemas
+	// lateralOuterCount tracks how many of the last entries in outerScopes
 	// were pushed by buildJoin for LATERAL purposes. Non-LATERAL derived tables
 	// must not see these entries, so buildResultSetNode temporarily hides them.
 	lateralOuterCount int
@@ -332,6 +330,24 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+}
+
+type outerScopeInfo struct {
+	schema   *expression.Schema
+	names    []*types.FieldName
+	tableIDs []int64 // table ID per column; nil if unknown
+}
+
+func (b *PlanBuilder) pushOuterScope(schema *expression.Schema, names []*types.FieldName, tableIDs []int64) {
+	b.outerScopes = append(b.outerScopes, outerScopeInfo{
+		schema:   schema,
+		names:    names,
+		tableIDs: tableIDs,
+	})
+}
+
+func (b *PlanBuilder) popOuterScope() {
+	b.outerScopes = b.outerScopes[:len(b.outerScopes)-1]
 }
 
 type handleColHelper struct {

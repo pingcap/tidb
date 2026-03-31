@@ -481,21 +481,16 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder
 	if er.schema != nil {
-		outerSchema := er.schema.Clone()
-		b.outerSchemas = append(b.outerSchemas, outerSchema)
-		b.outerNames = append(b.outerNames, er.names)
 		var tableIDs []int64
 		if planCtx.plan != nil {
 			tableIDs = getSchemaTableIDs(planCtx.plan)
 		}
-		b.outerSchemaTableIDs = append(b.outerSchemaTableIDs, tableIDs)
+		b.pushOuterScope(er.schema.Clone(), er.names, tableIDs)
 		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)
 		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
 		b.currentBlockExpand = nil
 		defer func() {
-			b.outerSchemas = b.outerSchemas[0 : len(b.outerSchemas)-1]
-			b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
-			b.outerSchemaTableIDs = b.outerSchemaTableIDs[0 : len(b.outerSchemaTableIDs)-1]
+			b.popOuterScope()
 			b.currentBlockExpand = b.outerBlockExpand[len(b.outerBlockExpand)-1]
 			b.outerBlockExpand = b.outerBlockExpand[0 : len(b.outerBlockExpand)-1]
 		}()
@@ -2789,12 +2784,12 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(col, name)
 		return
 	}
-	for i := len(planCtx.builder.outerSchemas) - 1; i >= 0; i-- {
-		outerSchema, outerName := planCtx.builder.outerSchemas[i], planCtx.builder.outerNames[i]
-		idx, err = expression.FindFieldName(outerName, v)
+	for i := len(planCtx.builder.outerScopes) - 1; i >= 0; i-- {
+		scope := planCtx.builder.outerScopes[i]
+		idx, err = expression.FindFieldName(scope.names, v)
 		if idx >= 0 {
-			column := outerSchema.Columns[idx]
-			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
+			column := scope.schema.Columns[idx]
+			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, scope.names[idx])
 			return
 		}
 		if err != nil {
