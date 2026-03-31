@@ -406,6 +406,14 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
+func disableAutoAnalyzeForPlanReplayerLoad(ctx sessionctx.Context) error {
+	return errors.AddStack(ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(
+		context.Background(),
+		vardef.TiDBEnableAutoAnalyze,
+		vardef.Off,
+	))
+}
+
 // createSchemaAndItems creates schema and tables or views
 func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
@@ -492,6 +500,11 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 	// load variable
 	err = loadVariables(e.Ctx, z)
+	if err != nil {
+		return err
+	}
+	// Keep restored statistics stable until users explicitly re-enable auto-analyze.
+	err = disableAutoAnalyzeForPlanReplayerLoad(e.Ctx)
 	if err != nil {
 		return err
 	}

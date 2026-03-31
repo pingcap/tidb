@@ -191,10 +191,23 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	tk := testkit.NewDBTestKit(t, db)
+	autoAnalyzeRows := tk.MustQuery("select @@global.tidb_enable_auto_analyze")
+	require.True(t, autoAnalyzeRows.Next(), "unexpected data")
+	var originAutoAnalyze string
+	require.NoError(t, autoAnalyzeRows.Scan(&originAutoAnalyze))
+	require.NoError(t, autoAnalyzeRows.Close())
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = '%s'", originAutoAnalyze))
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = ON")
 
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	autoAnalyzeRows = tk.MustQuery("select @@global.tidb_enable_auto_analyze = 0")
+	require.True(t, autoAnalyzeRows.Next(), "unexpected data")
+	var autoAnalyzeDisabled int
+	require.NoError(t, autoAnalyzeRows.Scan(&autoAnalyzeDisabled))
+	require.Equal(t, 1, autoAnalyzeDisabled)
+	require.NoError(t, autoAnalyzeRows.Close())
 
 	// 3-3. assert that the count and modify count in the stats is as expected
 	rows := tk.MustQuery(`show stats_meta where table_name="t"`)
