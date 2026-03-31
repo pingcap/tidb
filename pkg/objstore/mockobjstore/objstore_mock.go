@@ -12,6 +12,7 @@ package mockobjstore
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	objectio "github.com/pingcap/tidb/pkg/objstore/objectio"
 	storeapi "github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -158,6 +159,21 @@ func (m *MockStorage) Rename(arg0 context.Context, arg1, arg2 string) error {
 func (mr *MockStorageMockRecorder) Rename(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rename", reflect.TypeOf((*MockStorage)(nil).Rename), arg0, arg1, arg2)
+}
+
+// PresignFile mocks base method.
+func (m *MockStorage) PresignFile(arg0 context.Context, arg1 string, arg2 time.Duration) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PresignFile", arg0, arg1, arg2)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PresignFile indicates an expected call of PresignFile.
+func (mr *MockStorageMockRecorder) PresignFile(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PresignFile", reflect.TypeOf((*MockStorage)(nil).PresignFile), arg0, arg1, arg2)
 }
 
 // URI mocks base method.

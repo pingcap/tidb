@@ -24,7 +24,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -41,7 +43,6 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec(`create table t (pk int, a int, b int, c int, d int, primary key(pk), index ab(a, b), index abc(a, b, c))`)
 		tk.MustExec("insert into t values (1, 1, 1, 1, 1)")
-		tk.MustExec(`set @@tidb_cost_model_version=2`)
 		tk.MustExec("set global tidb_enable_collect_execution_info=1;")
 
 		cases := []struct {
@@ -69,12 +70,12 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 			require.Equal(t, formula, c.scanFormula)
 		}
 
-		tk.MustQuery("explain select a from t where a=1").Check(testkit.Rows(
-			`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_ab automatically since it has the smallest row-size in all access paths.
-			`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
-		tk.MustQuery("explain select a, b, c from t where a=1").Check(testkit.Rows(
-			`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_abc automatically
-			`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		tk.MustQuery("explain format = 'brief' select a from t where a=1").Check(testkit.Rows(
+			`IndexReader 10.00 root  index:IndexRangeScan`, // use idx_ab automatically since it has the smallest row-size in all access paths.
+			`└─IndexRangeScan 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
+		tk.MustQuery("explain format = 'brief' select a, b, c from t where a=1").Check(testkit.Rows(
+			`IndexReader 10.00 root  index:IndexRangeScan`, // use idx_abc automatically
+			`└─IndexRangeScan 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
 	})
 }
 
@@ -718,4 +719,95 @@ func TestTiFlashCostFactors(t *testing.T) {
 		// Reset TiFlash cop to default
 		tk.MustExec("set @@session.tidb_allow_tiflash_cop=OFF")
 	})
+}
+
+func TestTrueCardCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key(b))`)
+
+	checkPlanCost := func(sql string) {
+		rs := tk.MustQuery(`explain analyze format=verbose ` + sql).Rows()
+		planCost1 := rs[0][2].(string)
+
+		rs = tk.MustQuery(`explain analyze format=true_card_cost ` + sql).Rows()
+		planCost2 := rs[0][2].(string)
+
+		// `true_card_cost` can work since the plan cost is changed
+		require.NotEqual(t, planCost1, planCost2)
+	}
+
+	checkPlanCost(`select * from t`)
+	checkPlanCost(`select * from t where a>10`)
+	checkPlanCost(`select * from t where a>10 limit 10`)
+	checkPlanCost(`select sum(a), b*2 from t use index(b) group by b order by sum(a) limit 10`)
+}
+
+func TestIssue36243(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into mysql.expr_pushdown_blacklist values ('>','tikv','')`)
+	tk.MustExec(`admin reload expr_pushdown_blacklist`)
+
+	getCost := func() (selCost, readerCost float64) {
+		res := tk.MustQuery(`explain format=verbose select * from t where a>0`).Rows()
+		// TableScan -> TableReader -> Selection
+		require.Equal(t, len(res), 3)
+		require.Contains(t, res[0][0], "Selection")
+		require.Contains(t, res[1][0], "TableReader")
+		require.Contains(t, res[2][0], "Scan")
+		var err error
+		selCost, err = strconv.ParseFloat(res[0][2].(string), 64)
+		require.NoError(t, err)
+		readerCost, err = strconv.ParseFloat(res[1][2].(string), 64)
+		require.NoError(t, err)
+		return
+	}
+
+	// In cost model ver2, Selection cost is greater than TableReader cost.
+	selCost, readerCost := getCost()
+	require.True(t, selCost > readerCost)
+}
+
+func TestScanOnSmallTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec("analyze table t all columns")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	result := tk.MustQuery("explain select * from t")
+	resStr := result.String()
+	rs := result.Rows()
+	useTiKVScan := false
+	for _, r := range rs {
+		op := r[0].(string)
+		task := r[2].(string)
+		if strings.Contains(op, "Scan") && strings.Contains(task, "tikv") {
+			useTiKVScan = true
+		}
+	}
+	require.True(t, useTiKVScan, "should use tikv scan, but got:\n%s", resStr)
 }

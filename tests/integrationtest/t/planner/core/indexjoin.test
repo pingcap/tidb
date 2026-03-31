@@ -102,6 +102,44 @@ explain format='plan_tree' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as 
 select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
 rollback;
 
+# Test IndexJoin with agg inner side correctness: join key must be subset of group by items
+# Issue: when join key is NOT in GROUP BY columns, different outerTasks may split the same
+# aggregation group, leading to wrong results.
+drop table if exists tj1, tj2;
+create table tj1(c1 int, c2 int);
+create table tj2(c1 int, c2 int, key(c2));
+insert into tj1 values(1, 2), (2, 3);
+insert into tj2 values(2, 2), (2, 2), (2, 3);
+
+# Case 1: UNSAFE - join key (c2) is NOT in GROUP BY (c1) -> INL_JOIN hint should be rejected
+# Need sql_mode='' to allow non-GROUP BY columns in SELECT
+set @@sql_mode='';
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2;
+show warnings;
+# Verify correctness: INL_JOIN result should match HASH_JOIN result
+select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.c2 from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.c2;
+select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.c2 from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.c2;
+
+# Case 2: UNSAFE - join key (c1) NOT in GROUP BY (c2) -> INL_JOIN hint should be rejected
+drop table if exists tj3;
+create table tj3(c1 int, c2 int, key(c1));
+insert into tj3 values(1, 10), (1, 20), (2, 30);
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1;
+show warnings;
+select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.c1;
+select /*+ HASH_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.c1;
+set @@sql_mode=default;
+
+# Case 3: SAFE - join key (c2) IS in GROUP BY (c2) -> INL_JOIN should work
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2;
+select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+
+# Case 4: SAFE - join key (c1) is subset of GROUP BY (c1, c2) -> INL_JOIN should work
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1;
+select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.s from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.s;
+select /*+ HASH_JOIN(a_t) */ tj1.c1, a_t.s from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.s;
+
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
 
 CREATE TABLE `td89f296a` (

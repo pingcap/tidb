@@ -120,7 +120,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err erro
 	if err != nil {
 		return err
 	}
-	req.AppendString(0, e.DumpInfo.FileName)
+	req.AppendString(0, e.Ctx().GetSessionVars().LastPlanReplayerToken)
 	e.endFlag = true
 	return nil
 }
@@ -199,7 +199,11 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
+	token := e.FileName
+	if task.PresignedURL != "" {
+		token = task.PresignedURL
+	}
+	e.ctx.GetSessionVars().LastPlanReplayerToken = token
 	return nil
 }
 

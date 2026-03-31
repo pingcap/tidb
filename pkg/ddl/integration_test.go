@@ -19,8 +19,12 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -142,6 +146,37 @@ func TestPartialIndex(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestDropTableAdminCheckTableFastCheckTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+
+	dom := domain.GetDomain(tk.Session())
+	require.NotNil(t, dom)
+	pool := dom.SysSessionPool()
+
+	seOn, err := pool.Get()
+	require.NoError(t, err)
+	seOff, err := pool.Get()
+	require.NoError(t, err)
+
+	seOffCtx := seOff.(sessionctx.Context)
+	require.NoError(t, seOffCtx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off))
+
+	pool.Put(seOn)
+	pool.Put(seOff)
+
+	oldCheckTableBeforeDrop := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = oldCheckTableBeforeDrop
+	}()
+	tk.MustExec("drop table t;")
 }
 
 func TestMaintainAffectColumns(t *testing.T) {

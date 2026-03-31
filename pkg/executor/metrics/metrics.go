@@ -44,9 +44,11 @@ var (
 	TotalCopProcHistogramGeneral    prometheus.Observer
 	TotalCopWaitHistogramGeneral    prometheus.Observer
 	CopMVCCRatioHistogramGeneral    prometheus.Observer
+	SlowQueryCounterGeneral         prometheus.Counter
 	TotalQueryProcHistogramInternal prometheus.Observer
 	TotalCopProcHistogramInternal   prometheus.Observer
 	TotalCopWaitHistogramInternal   prometheus.Observer
+	SlowQueryCounterInternal        prometheus.Counter
 
 	SelectForUpdateFirstAttemptDuration prometheus.Observer
 	SelectForUpdateRetryDuration        prometheus.Observer
@@ -159,9 +161,11 @@ func InitMetricsVars() {
 	TotalCopProcHistogramGeneral = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopWaitHistogramGeneral = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
 	CopMVCCRatioHistogramGeneral = metrics.CopMVCCRatioHistogram.WithLabelValues(metrics.LblGeneral)
+	SlowQueryCounterGeneral = metrics.SlowQueryCounter.WithLabelValues(metrics.LblGeneral)
 	TotalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopProcHistogramInternal = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopWaitHistogramInternal = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
+	SlowQueryCounterInternal = metrics.SlowQueryCounter.WithLabelValues(metrics.LblInternal)
 
 	SelectForUpdateFirstAttemptDuration = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("select-for-update", "first-attempt")
 	SelectForUpdateRetryDuration = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("select-for-update", "retry")

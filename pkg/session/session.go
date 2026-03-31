@@ -91,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
@@ -108,6 +109,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	drivertxn "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -145,7 +147,6 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -969,9 +970,9 @@ func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infosc
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for _, item := range mapper {
-			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
+		for tableID, item := range mapper {
+			if tableID > 0 {
+				s.statsCollector.Update(tableID, item.Delta, item.Count)
 			}
 		}
 	}
@@ -1155,7 +1156,9 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
+	originalStmtCtx := s.sessionVars.StmtCtx
 	defer func() {
+		s.sessionVars.StmtCtx = originalStmtCtx
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		if s.sessionVars.InRestrictedSQL {
@@ -1219,6 +1222,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
 			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, st.GetStmtNode()); err == nil {
+				failpoint.Inject("txnRetryPreExecError", func(val failpoint.Value) {
+					if val.(bool) {
+						err = errors.New("mock txn retry pre-exec error")
+					}
+				})
+			}
+			if err == nil {
+				// Only surface the optimistic retry count after replay actually reaches statement execution.
+				s.sessionVars.StmtCtx.ExecRetryCount = uint64(retryCnt + 1)
+				originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 				_, err = st.Exec(ctx)
 			}
 			s.txn.onStmtEnd()
@@ -1917,6 +1930,7 @@ func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) 
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	s.resetPendingRUV2SessionParserTotal()
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 
@@ -1949,6 +1963,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -1959,6 +1974,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
+	s.resetPendingRUV2SessionParserTotal()
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlescape.EscapeSQL(sql, args...)
@@ -1994,6 +2010,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -2008,6 +2025,12 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 		}
 	}
 	return stmts[0], nil
+}
+
+func (s *session) resetPendingRUV2SessionParserTotal() {
+	// Standalone Parse/ParseWithParams calls may never reach ExecuteStmt(), so
+	// clear any leftover parser count before starting a new statement parse.
+	s.sessionVars.RUV2PendingSessionParserTotal.Store(0)
 }
 
 // GetAdvisoryLock acquires an advisory lock of lockName.
@@ -2412,6 +2435,15 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+	if ruv2Metrics == nil {
+		ruv2Metrics = execdetails.NewRUV2Metrics()
+		ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, ruv2Metrics)
+	}
+	sessVars.RUV2Metrics = ruv2Metrics
+	if pending := sessVars.RUV2PendingSessionParserTotal.Swap(0); pending > 0 && ruv2Metrics != nil {
+		ruv2Metrics.AddSessionParserTotal(pending)
+	}
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
@@ -2561,8 +2593,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
 				sql = parser.Normalize(sql, s.sessionVars.EnableRedactLog)
-				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
-					zap.String("SQL", sql))
+				if sql == `select $$` {
+					logutil.Logger(ctx).Debug("compile SQL failed, expected for this query", zap.Error(err),
+						zap.String("SQL", sql))
+				} else {
+					logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+						zap.String("SQL", sql))
+				}
 			}
 		}
 		return nil, err
@@ -3239,9 +3276,11 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		// cross ks session does not have domain.
 		dom := s.GetDomain().(*domain.Domain)
-		var rgCtl *rmclient.ResourceGroupsController
+		var ruConsumptionReporter resourcegroup.ConsumptionReporter
 		if dom != nil {
-			rgCtl = dom.ResourceGroupsController()
+			if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+				ruConsumptionReporter = rgCtl
+			}
 		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
@@ -3253,6 +3292,8 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			OriginalSQL:            sc.OriginalSQL,
 			KVVars:                 vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
+			RUV2Metrics:            vars.RUV2Metrics,
+			RUV2RPCInterceptor:     drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics),
 			SessionMemTracker:      vars.MemTracker,
 
 			Location:         sc.TimeZone(),
@@ -3287,7 +3328,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ResourceGroupName:             sc.ResourceGroupName,
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
-			RUConsumptionReporter:         rgCtl,
+			RUConsumptionReporter:         ruConsumptionReporter,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 
@@ -3305,6 +3346,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	// Ref: https://github.com/pingcap/tidb/issues/61899
 	if dctx.RunawayChecker != sc.RunawayChecker {
 		dctx.RunawayChecker = sc.RunawayChecker
+	}
+	if dctx.RUV2Metrics != vars.RUV2Metrics {
+		dctx.RUV2Metrics = vars.RUV2Metrics
+		dctx.RUV2RPCInterceptor = drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics)
 	}
 
 	return dctx
@@ -4958,6 +5003,9 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 				session_metrics.StatementPerTransactionOptimisticOKGeneral.Observe(float64(counter))
 			}
 		}
+	}
+	if s.sessionVars.RUV2Metrics != nil {
+		s.sessionVars.RUV2Metrics.AddTxnCnt(1)
 	}
 }
 

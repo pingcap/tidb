@@ -298,7 +298,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys))
+	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys), false)
 	if err != nil {
 		return err
 	}
@@ -335,7 +335,7 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 	return nil
 }
 
-func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inSharedMode bool) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
@@ -344,6 +344,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.InShareMode = inSharedMode
 
 	// Set max_execution_time deadline for SELECT statements
 	maxExectionTime := seVars.GetMaxExecutionTime()
@@ -540,6 +541,10 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *LimitExec) open(ctx context.Context) error {
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0

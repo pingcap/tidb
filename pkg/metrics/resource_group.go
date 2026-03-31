@@ -23,6 +23,17 @@ import (
 // Query duration by query is QueryDurationHistogram in `server.go`.
 var (
 	RunawayCheckerCounter *prometheus.CounterVec
+
+	RunawayFlusherCounter            *prometheus.CounterVec
+	RunawayFlusherAddCounter         *prometheus.CounterVec
+	RunawayFlusherBatchSizeHistogram *prometheus.HistogramVec
+	RunawayFlusherDurationHistogram  *prometheus.HistogramVec
+	RunawayFlusherIntervalHistogram  *prometheus.HistogramVec
+
+	RunawaySyncerDurationHistogram *prometheus.HistogramVec
+	RunawaySyncerIntervalHistogram *prometheus.HistogramVec
+	RunawaySyncerCheckpointGauge   *prometheus.GaugeVec
+	RunawaySyncerCounter           *prometheus.CounterVec
 )
 
 // InitResourceGroupMetrics initializes resource group metrics.
@@ -34,4 +45,81 @@ func InitResourceGroupMetrics() {
 			Name:      "query_runaway_check",
 			Help:      "Counter of query triggering runaway check.",
 		}, []string{LblResourceGroup, LblType, LblAction})
+
+	RunawayFlusherCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_flusher_total",
+			Help:      "Counter of runaway flusher operations.",
+		}, []string{LblName, LblResult})
+
+	RunawayFlusherAddCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_flusher_add_total",
+			Help:      "Counter of records added to runaway flusher.",
+		}, []string{LblName})
+
+	RunawayFlusherBatchSizeHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_flusher_batch_size",
+			Help:      "Batch size of runaway flusher operations.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 10), // 1, 2, 4, ..., 512
+		}, []string{LblName})
+
+	RunawayFlusherDurationHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_flusher_duration_seconds",
+			Help:      "Duration of runaway flusher operations in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms ~ 16s
+		}, []string{LblName})
+
+	RunawayFlusherIntervalHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_flusher_interval_seconds",
+			Help:      "Interval between runaway flusher operations in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s ~ 200s
+		}, []string{LblName})
+
+	RunawaySyncerDurationHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_duration_seconds",
+			Help:      "Duration of runaway syncer read operations in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms ~ 16s
+		}, []string{LblType})
+
+	RunawaySyncerIntervalHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_interval_seconds",
+			Help:      "Interval between runaway syncer read operations in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s ~ 200s
+		}, []string{LblType})
+
+	RunawaySyncerCheckpointGauge = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_checkpoint",
+			Help:      "Current checkpoint (last synced record ID) of runaway syncer.",
+		}, []string{LblType})
+
+	RunawaySyncerCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_total",
+			Help:      "Counter of runaway syncer operations.",
+		}, []string{LblType, LblResult})
 }
