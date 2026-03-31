@@ -90,6 +90,9 @@ func NewCursorRUV2Tracker(
 	if metrics == nil && ruDetails == nil {
 		return nil
 	}
+	if metrics != nil && metrics.Bypass() {
+		return nil
+	}
 	tracker := &CursorRUV2Tracker{
 		reporter:          reporter,
 		resourceGroupName: resourceGroupName,

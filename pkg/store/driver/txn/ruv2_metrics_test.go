@@ -59,6 +59,27 @@ func TestStatementRUV2RPCInterceptor(t *testing.T) {
 	require.Equal(t, int64(1), ruv2Metrics.ResourceManagerWriteCnt())
 	require.Equal(t, int64(9), ruv2Metrics.TiKVStorageProcessedKeysBatchGet())
 	require.Equal(t, int64(1), ruv2Metrics.TiKVStorageProcessedKeysGet())
+
+	t.Run("bypass ru skips interceptor accounting", func(t *testing.T) {
+		bypassed := execdetails.NewRUV2Metrics()
+		bypassed.SetBypass(true)
+		it := NewStatementRUV2RPCInterceptor(bypassed)
+		require.NotNil(t, it)
+
+		wrapFn := it.Wrap(func(_ string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			return &tikvrpc.Response{
+				Resp: &kvrpcpb.BatchGetResponse{
+					ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
+						RuV2: &kvrpcpb.RUV2{StorageProcessedKeysBatchGet: 4},
+					},
+				},
+			}, nil
+		})
+		_, err := wrapFn("tikv-1", &tikvrpc.Request{Type: tikvrpc.CmdBatchGet, StoreTp: tikvrpc.TiKV})
+		require.NoError(t, err)
+		require.Zero(t, bypassed.ResourceManagerReadCnt())
+		require.Zero(t, bypassed.TiKVStorageProcessedKeysBatchGet())
+	})
 }
 
 func TestStatementRUV2RPCInterceptorNilMetrics(t *testing.T) {

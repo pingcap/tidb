@@ -240,6 +240,22 @@ func TestCursorWithParams(t *testing.T) {
 		require.Equal(t, float64(13), reporter.tiflashRU)
 	})
 
+	t.Run("cursor ruv2 bypass skips tracker creation", func(t *testing.T) {
+		reporter := &mockCursorRUV2ConsumptionReporter{}
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ruv2Metrics)
+		ruv2Metrics.SetBypass(true)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddTiKVRUV2(11)
+		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, execdetails.RUV2Weights{})
+		require.Nil(t, tracker)
+		require.Empty(t, reporter.group)
+		require.Zero(t, reporter.tikvRUV2)
+		require.Zero(t, reporter.tidbRUV2)
+		require.Zero(t, reporter.tiflashRU)
+	})
+
 	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
 		store, dom := testkit.CreateMockStoreAndDomain(t)
 		srv := CreateMockServer(t, store)
