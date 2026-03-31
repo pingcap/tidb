@@ -352,6 +352,10 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if checkStableResultMode(logic.SCtx()) {
 		flag |= rule.FlagStabilizeResults
 	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^rule.FlagJoinReOrder
+	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagCollectPredicateColumnsPoint
