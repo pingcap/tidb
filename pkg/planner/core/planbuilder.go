@@ -347,6 +347,9 @@ func (b *PlanBuilder) pushOuterScope(schema *expression.Schema, names []*types.F
 }
 
 func (b *PlanBuilder) popOuterScope() {
+	if len(b.outerScopes) == 0 {
+		return
+	}
 	b.outerScopes = b.outerScopes[:len(b.outerScopes)-1]
 }
 

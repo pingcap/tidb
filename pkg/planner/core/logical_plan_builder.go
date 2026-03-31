@@ -445,14 +445,19 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				// for LATERAL so the subquery cannot resolve outer columns that are
 				// only available to LATERAL siblings.
 				n := b.lateralOuterCount
-				savedScopes := slices.Clone(b.outerScopes[len(b.outerScopes)-n:])
-				b.outerScopes = b.outerScopes[:len(b.outerScopes)-n]
-				savedCount := b.lateralOuterCount
-				b.lateralOuterCount = 0
-				defer func() {
-					b.outerScopes = append(b.outerScopes, savedScopes...)
-					b.lateralOuterCount = savedCount
-				}()
+				if n > len(b.outerScopes) {
+					n = len(b.outerScopes)
+				}
+				if n > 0 {
+					savedScopes := slices.Clone(b.outerScopes[len(b.outerScopes)-n:])
+					b.outerScopes = b.outerScopes[:len(b.outerScopes)-n]
+					savedCount := b.lateralOuterCount
+					b.lateralOuterCount = 0
+					defer func() {
+						b.outerScopes = append(b.outerScopes, savedScopes...)
+						b.lateralOuterCount = savedCount
+					}()
+				}
 			} else {
 				// LATERAL derived table: "adopt" the lateral outer scopes into
 				// regular correlated scope so that non-LATERAL subqueries nested
@@ -4722,40 +4727,28 @@ func (b *PlanBuilder) collectDeleteTargetTableIDs(ds *ast.DeleteStmt, p base.Log
 // Qualified SET targets use (schema, table) from the AST; unqualified columns are resolved against
 // the FROM plan output names so only the touched table(s) are included (multi-table UPDATE).
 func (b *PlanBuilder) collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base.LogicalPlan) (map[int64]struct{}, error) {
-	type tableKey struct {
-		schema, table string
-	}
-	modifiedTables := make(map[tableKey]struct{})
+	ids := make(map[int64]struct{})
+	outputNames := p.OutputNames()
+	schemaTableIDs := getSchemaTableIDs(p)
 	for _, assign := range update.List {
 		if assign.Column == nil {
 			continue
 		}
-		if assign.Column.Table.L != "" {
-			modifiedTables[tableKey{assign.Column.Schema.L, assign.Column.Table.L}] = struct{}{}
-			continue
-		}
-		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
+		idx, err := expression.FindFieldName(outputNames, assign.Column)
 		if err != nil {
 			return nil, err
 		}
 		if idx < 0 {
 			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name.O, "field list")
 		}
-		name := p.OutputNames()[idx]
-		modifiedTables[tableKey{schema: name.DBName.L, table: name.TblName.L}] = struct{}{}
+		if idx < len(schemaTableIDs) && schemaTableIDs[idx] != 0 {
+			ids[schemaTableIDs[idx]] = struct{}{}
+		}
 	}
-	if len(modifiedTables) == 0 {
+	if len(ids) == 0 {
 		return collectTableIDsFromLogicalPlan(p), nil
 	}
-	targets := make([]dmlTargetTableName, 0, len(modifiedTables))
-	for k := range modifiedTables {
-		targets = append(targets, dmlTargetTableName{
-			schema:  k.schema,
-			table:   k.table,
-			errName: k.table,
-		})
-	}
-	return b.resolveDMLTargetTableIDs(update.TableRefs.TableRefs, targets, "UPDATE")
+	return ids, nil
 }
 
 // getSchemaTableIDs returns the table ID for each column in p.Schema() (0 for non-table or unknown).
@@ -5182,7 +5175,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// Plain SELECT subqueries never hit this (dmlTargetTableIDs is nil), so e.g. scalar
 	// (SELECT MAX(a) FROM t) is not rewritten to a correlated single-row FROM t.
 	// Only do this when the resolved table is the actual DML target (by table ID).
-	if (b.inDeleteStmt || b.inUpdateStmt) && len(b.outerScopes) > 0 && b.dmlTargetTableIDs != nil {
+	if (b.inDeleteStmt || b.inUpdateStmt) &&
+		b.subQueryCtx == handlingExistsSubquery &&
+		len(b.outerScopes) > 0 &&
+		b.dmlTargetTableIDs != nil {
 		tbl, resolveErr := b.is.TableByName(ctx, dbName, tn.Name)
 		if resolveErr == nil && tbl != nil {
 			targetID := tbl.Meta().ID
