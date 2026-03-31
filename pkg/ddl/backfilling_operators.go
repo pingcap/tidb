@@ -254,6 +254,9 @@ type IndexRecordChunk struct {
 	Chunk *chunk.Chunk
 	Err   error
 	Done  bool
+	// releaseChunk releases the ownership of Chunk after the downstream consumer
+	// has finished using it.
+	releaseChunk func(*chunk.Chunk)
 
 	// tableScanRowCount is the number of rows scanned by the corresponding TableScanTask.
 	// If the index is a partial index, the number of rows in the Chunk may be less than tableScanRowCount.
@@ -529,7 +532,6 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var (
-		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
 	var scanCtx context.Context = w.ctx
@@ -574,20 +576,24 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResult := IndexRecordChunk{
+				ID:               task.ID,
+				Chunk:            srcChk,
+				Done:             done,
+				ctx:              w.ctx,
+				tableScanRowCount: tableScanRowCount - lastTableScanRowCount,
+				conditionPushed:  conditionPushed,
+				releaseChunk:     w.recycleChunk,
+			}
 			lastTableScanRowCount = tableScanRowCount
+			sender(idxResult)
+			if w.cpOp != nil {
+				w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+			}
+			w.totalCount.Add(idxResult.tableScanRowCount)
 		}
 		return rs.Close()
 	})
-
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
-		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
-	}
 
 	return err
 }
@@ -791,7 +797,11 @@ type indexIngestWorker struct {
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
 	defer func() {
 		if ck.Chunk != nil {
-			w.srcChunkPool.Put(ck.Chunk)
+			if ck.releaseChunk != nil {
+				ck.releaseChunk(ck.Chunk)
+			} else {
+				w.srcChunkPool.Put(ck.Chunk)
+			}
 		}
 	}()
 	failpoint.InjectCall("mockIndexIngestWorkerFault")
