@@ -245,6 +245,54 @@ func TestCreateTableAsSelectNoWarning(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
+func TestCreateTableAsSelectWithStoredFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableCreateTableAsSelect = true
+	})
+
+	tk.MustExec("create database BG00DSCB00")
+	tk.MustExec("use BG00DSCB00")
+	tk.MustExec("create table src(id2 varchar(36), extend_1 varchar(400))")
+	tk.MustExec("insert into src values ('row1', 'ABCDEFGFXZZ')")
+	tk.MustExec(`create function instr_n(str varchar(1000), sub varchar(255), start_pos int, occurrence int)
+returns int
+deterministic
+begin
+	declare pos int default 0;
+	declare i int default 1;
+	declare search_start int default start_pos;
+	if occurrence <= 0 then
+		return 0;
+	end if;
+	while i <= occurrence do
+		set pos = locate(sub, str, search_start);
+		if pos = 0 then
+			return 0;
+		end if;
+		set search_start = pos + length(sub);
+		set i = i + 1;
+	end while;
+	return pos;
+end`)
+
+	tk.MustExec("create table t_sf_u as " +
+		"select id2, substring(extend_1, 1, 7) as extend_fx " +
+		"from BG00DSCB00.src " +
+		"where length(extend_1) > 8 and instr_n(extend_1, 'FX', 1, 1) > 0")
+	tk.MustQuery("select * from t_sf_u").Check(testkit.Rows("row1 ABCDEFG"))
+
+	tk.MustExec("create table t_sf_q as " +
+		"select id2, substring(extend_1, 1, 7) as extend_fx " +
+		"from BG00DSCB00.src " +
+		"where length(extend_1) > 8 and BG00DSCB00.instr_n(extend_1, 'FX', 1, 1) > 0")
+	tk.MustQuery("select * from t_sf_q").Check(testkit.Rows("row1 ABCDEFG"))
+}
+
 func TestCreateTableAsSelectPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

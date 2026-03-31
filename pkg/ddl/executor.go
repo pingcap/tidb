@@ -1002,7 +1002,7 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 	return nil
 }
 
-func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTableStmt, tempTableName string, originTableName string, useImportInto bool) error {
+func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model.DBInfo, s *ast.CreateTableStmt, tempTableName string, originTableName string, useImportInto bool) error {
 	intest.Assert(s.Select != nil, "s.Select must be not nil")
 	sctx, err := e.sessPool.Get()
 	if err != nil {
@@ -1016,7 +1016,52 @@ func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTa
 		return err
 	}
 	// insert data into temporary table
-	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL); err != nil {
+	if err = func() error {
+		callerVars := ctx.GetSessionVars()
+		internalVars := sctx.GetSessionVars()
+		callerPrivilegeManager := privilege.GetPrivilegeManager(ctx)
+
+		oldDB := internalVars.CurrentDB
+		oldDBCI := internalVars.CurrentDBCI
+		oldUser := internalVars.User
+		oldActiveRoles := internalVars.ActiveRoles
+		oldPrivilegeManager := privilege.GetPrivilegeManager(sctx)
+		oldSQLMode, hadOldSQLMode := internalVars.GetSystemVar(vardef.SQLModeVar)
+		restoreSQLMode := oldSQLMode
+		if !hadOldSQLMode {
+			restoreSQLMode = mysql.DefaultSQLMode
+		}
+		defer func() {
+			internalVars.CurrentDB = oldDB
+			internalVars.CurrentDBCI = oldDBCI
+			internalVars.User = oldUser
+			internalVars.ActiveRoles = oldActiveRoles
+			privilege.BindPrivilegeManager(sctx, oldPrivilegeManager)
+			if restoreErr := internalVars.SetSystemVar(vardef.SQLModeVar, restoreSQLMode); restoreErr != nil {
+				logutil.DDLLogger().Warn("restore sql_mode for CTAS internal session failed", zap.Error(restoreErr))
+			}
+		}()
+
+		internalVars.CurrentDB = callerVars.CurrentDB
+		if callerVars.CurrentDBCI.L != "" {
+			internalVars.CurrentDBCI = callerVars.CurrentDBCI
+		} else {
+			internalVars.CurrentDBCI = ast.NewCIStr(callerVars.CurrentDB)
+		}
+		sqlMode, ok := callerVars.GetSystemVar(vardef.SQLModeVar)
+		if !ok {
+			return errors.New("unknown system var " + vardef.SQLModeVar)
+		}
+		if err := internalVars.SetSystemVar(vardef.SQLModeVar, sqlMode); err != nil {
+			return err
+		}
+		internalVars.User = callerVars.User
+		internalVars.ActiveRoles = callerVars.ActiveRoles
+		privilege.BindPrivilegeManager(sctx, callerPrivilegeManager)
+
+		_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL)
+		return err
+	}(); err != nil {
 		// if insert data into temporary table failed, drop the temporary table (like rollback)
 		dropSQL := buildDropSQL(schema.Name.L, tempTableName)
 		if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSQL); dropErr != nil {
@@ -1116,7 +1161,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.Select != nil {
 		// if the TiKV node, and tidb_create_from_select_using_import is true, use import into instead of insert into
 		useImportInto := strings.ToLower(e.store.Name()) == kv.TiKV.Name() && ctx.GetSessionVars().CreateFromSelectUsingImport
-		if err = e.handleCreateTableSelect(schema, s, tempTableName, originTableName, useImportInto); err != nil {
+		if err = e.handleCreateTableSelect(ctx, schema, s, tempTableName, originTableName, useImportInto); err != nil {
 			return err
 		}
 	}
