@@ -2,13 +2,13 @@ DROP TABLE IF EXISTS privilege__column_masking_policy.t_lifecycle;
 CREATE TABLE privilege__column_masking_policy.t_lifecycle(id INT PRIMARY KEY, c VARCHAR(20));
 INSERT INTO privilege__column_masking_policy.t_lifecycle VALUES (1, 'alpha'), (2, 'bravo');
 CREATE MASKING POLICY p_lifecycle ON privilege__column_masking_policy.t_lifecycle(c)
-AS CASE WHEN current_user() IN ('root@%', 'cmp_allowed@%') THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_user() IN ('root@%', 'cmp_allowed@%') THEN c ELSE MASK_FULL(c) END ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`, _UTF8MB4'*') END	ENABLED	CUSTOM	NONE
+p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`) END	ENABLED	CUSTOM	NONE
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle WHERE column_name = 'c';
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`, _UTF8MB4'*') END	ENABLED	CUSTOM	NONE
+p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`) END	ENABLED	CUSTOM	NONE
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle WHERE column_name = 'missing';
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
 SHOW CREATE TABLE privilege__column_masking_policy.t_lifecycle;
@@ -27,11 +27,11 @@ Error 8268 (HY000): Masking policy 'p_lifecycle' already exists
 ALTER TABLE privilege__column_masking_policy.t_lifecycle DISABLE MASKING POLICY p_lifecycle;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`, _UTF8MB4'*') END	DISABLED	CUSTOM	NONE
+p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`) END	DISABLED	CUSTOM	NONE
 ALTER TABLE privilege__column_masking_policy.t_lifecycle ENABLE MASKING POLICY p_lifecycle;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`, _UTF8MB4'*') END	ENABLED	CUSTOM	NONE
+p_lifecycle	c	CASE WHEN CURRENT_USER() IN (_UTF8MB4'root@%',_UTF8MB4'cmp_allowed@%') THEN `c` ELSE MASK_FULL(`c`) END	ENABLED	CUSTOM	NONE
 CREATE OR REPLACE MASKING POLICY p_lifecycle ON privilege__column_masking_policy.t_lifecycle(c)
 AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_PARTIAL(c, 1, 2, '*') END ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
@@ -65,18 +65,18 @@ CREATE ROLE cmp_unmask_role;
 GRANT SELECT ON privilege__column_masking_policy.t_role TO cmp_role_user;
 GRANT cmp_unmask_role TO cmp_role_user;
 CREATE MASKING POLICY p_role ON privilege__column_masking_policy.t_role(c)
-AS CASE WHEN current_role() != 'NONE' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_role() != 'NONE' THEN c ELSE MASK_FULL(c) END ENABLE;
 SELECT c FROM privilege__column_masking_policy.t_role;
 c
-*****
+XXXXX
 SET ROLE cmp_unmask_role;
 SELECT c FROM privilege__column_masking_policy.t_role;
 c
-*****
+delta
 SET ROLE NONE;
 SELECT c FROM privilege__column_masking_policy.t_role;
 c
-*****
+XXXXX
 DROP TABLE IF EXISTS privilege__column_masking_policy.src_restrict;
 DROP TABLE IF EXISTS privilege__column_masking_policy.dst_restrict;
 DROP USER IF EXISTS cmp_runtime;
@@ -86,7 +86,7 @@ INSERT INTO privilege__column_masking_policy.src_restrict VALUES ('secret');
 CREATE USER cmp_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON privilege__column_masking_policy.* TO cmp_runtime;
 CREATE MASKING POLICY p_restrict ON privilege__column_masking_policy.src_restrict(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
 RESTRICT ON (INSERT_INTO_SELECT, UPDATE_SELECT, DELETE_SELECT) ENABLE;
 INSERT INTO privilege__column_masking_policy.dst_restrict SELECT c FROM privilege__column_masking_policy.src_restrict;
 Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
@@ -97,28 +97,28 @@ DELETE FROM privilege__column_masking_policy.dst_restrict WHERE c = (SELECT c FR
 Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
 SELECT c FROM privilege__column_masking_policy.src_restrict;
 c
-******
+XXXXXX
 ALTER TABLE privilege__column_masking_policy.src_restrict MODIFY MASKING POLICY p_restrict SET RESTRICT ON NONE;
 INSERT INTO privilege__column_masking_policy.dst_restrict SELECT c FROM privilege__column_masking_policy.src_restrict;
 SELECT c FROM privilege__column_masking_policy.dst_restrict ORDER BY c;
 c
-******
+XXXXXX
 plain
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_rename_new;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_rename;
 CREATE TABLE privilege__column_masking_policy.t_rename(id INT PRIMARY KEY, c VARCHAR(20));
 INSERT INTO privilege__column_masking_policy.t_rename VALUES (1, 'echo');
-CREATE MASKING POLICY p_rename ON privilege__column_masking_policy.t_rename(c) AS MASK_FULL(c, '*') ENABLE;
+CREATE MASKING POLICY p_rename ON privilege__column_masking_policy.t_rename(c) AS MASK_FULL(c) ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_rename	c	MASK_FULL(`c`, _UTF8MB4'*')	ENABLED	MASK_FULL	NONE
+p_rename	c	MASK_FULL(`c`)	ENABLED	MASK_FULL	NONE
 ALTER TABLE privilege__column_masking_policy.t_rename RENAME TO privilege__column_masking_policy.t_rename_new;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename_new;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_rename	c	MASK_FULL(`c`, _UTF8MB4'*')	ENABLED	MASK_FULL	NONE
+p_rename	c	MASK_FULL(`c`)	ENABLED	MASK_FULL	NONE
 SELECT c FROM privilege__column_masking_policy.t_rename_new;
 c
-****
+XXXX
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_cascade;
 CREATE TABLE privilege__column_masking_policy.t_cascade(id INT PRIMARY KEY, c VARCHAR(20));
 CREATE MASKING POLICY p_cascade ON privilege__column_masking_policy.t_cascade(c) AS c ENABLE;
@@ -131,11 +131,11 @@ Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
 DROP TABLE privilege__column_masking_policy.t_cascade;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_ifne;
 CREATE TABLE privilege__column_masking_policy.t_ifne(c VARCHAR(20));
-CREATE MASKING POLICY p_ifne ON privilege__column_masking_policy.t_ifne(c) AS MASK_FULL(c, '*') ENABLE;
+CREATE MASKING POLICY p_ifne ON privilege__column_masking_policy.t_ifne(c) AS MASK_FULL(c) ENABLE;
 CREATE MASKING POLICY IF NOT EXISTS p_ifne ON privilege__column_masking_policy.t_ifne(c) AS c DISABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_ifne;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_ifne	c	MASK_FULL(`c`, _UTF8MB4'*')	ENABLED	MASK_FULL	NONE
+p_ifne	c	MASK_FULL(`c`)	ENABLED	MASK_FULL	NONE
 ALTER TABLE privilege__column_masking_policy.t_ifne DROP MASKING POLICY p_ifne;
 DROP TABLE privilege__column_masking_policy.t_ifne;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_query;
@@ -162,12 +162,12 @@ a***a
 a***a
 b***o
 ALTER TABLE privilege__column_masking_policy.t_query MODIFY MASKING POLICY p_query
-SET EXPRESSION = CASE WHEN current_user() NOT IN ('cmp_query@%') THEN c ELSE MASK_FULL(c, '*') END;
+SET EXPRESSION = CASE WHEN current_user() NOT IN ('cmp_query@%') THEN c ELSE MASK_FULL(c) END;
 SELECT c FROM privilege__column_masking_policy.t_query ORDER BY id;
 c
-*****
-*****
-*****
+XXXXX
+XXXXX
+XXXXX
 DROP VIEW IF EXISTS privilege__column_masking_policy.v_mask;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_gen;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_unsup;
@@ -199,14 +199,14 @@ COUNT(*)
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_rename_col;
 CREATE TABLE privilege__column_masking_policy.t_rename_col(id INT PRIMARY KEY, c VARCHAR(20));
 INSERT INTO privilege__column_masking_policy.t_rename_col VALUES (1, 'foxtrot');
-CREATE MASKING POLICY p_rename_col ON privilege__column_masking_policy.t_rename_col(c) AS MASK_FULL(c, '*') ENABLE;
+CREATE MASKING POLICY p_rename_col ON privilege__column_masking_policy.t_rename_col(c) AS MASK_FULL(c) ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename_col;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_rename_col	c	MASK_FULL(`c`, _UTF8MB4'*')	ENABLED	MASK_FULL	NONE
+p_rename_col	c	MASK_FULL(`c`)	ENABLED	MASK_FULL	NONE
 ALTER TABLE privilege__column_masking_policy.t_rename_col RENAME COLUMN c TO c_new;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename_col;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_rename_col	c_new	MASK_FULL(`c_new`, _UTF8MB4'*')	ENABLED	MASK_FULL	NONE
+p_rename_col	c_new	MASK_FULL(`c_new`)	ENABLED	MASK_FULL	NONE
 SHOW CREATE TABLE privilege__column_masking_policy.t_rename_col;
 Table	Create Table
 t_rename_col	CREATE TABLE `t_rename_col` (
@@ -216,10 +216,10 @@ t_rename_col	CREATE TABLE `t_rename_col` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT c_new FROM privilege__column_masking_policy.t_rename_col;
 c_new
-*******
+XXXXXXX
 SELECT column_name, expression FROM mysql.tidb_masking_policy WHERE policy_name = 'p_rename_col';
 column_name	expression
-c_new	MASK_FULL(`c_new`, _UTF8MB4'*')
+c_new	MASK_FULL(`c_new`)
 ALTER TABLE privilege__column_masking_policy.t_rename_col DROP MASKING POLICY p_rename_col;
 DROP TABLE privilege__column_masking_policy.t_rename_col;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_modify_guard;
@@ -271,22 +271,22 @@ CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or CREATE MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
-ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');
+ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
-CREATE OR REPLACE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS MASK_FULL(c, '*');
+CREATE OR REPLACE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS MASK_FULL(c);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
-ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');
+ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 ALTER TABLE t_auth_priv ENABLE MASKING POLICY p_auth_priv;
-ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');
+ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT, UPDATE_SELECT);
 ALTER TABLE t_auth_priv DROP MASKING POLICY p_auth_priv;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or DROP MASKING POLICY privilege(s) for this operation
@@ -298,13 +298,13 @@ INSERT INTO privilege__column_masking_policy.t_prepare_invalidate VALUES (1, 'si
 CREATE USER cmp_prepare;
 GRANT SELECT ON privilege__column_masking_policy.t_prepare_invalidate TO cmp_prepare;
 CREATE MASKING POLICY p_prepare_invalidate ON privilege__column_masking_policy.t_prepare_invalidate(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 PREPARE stmt_prepare_invalidate FROM
 'SELECT c FROM privilege__column_masking_policy.t_prepare_invalidate WHERE c = ? ORDER BY id';
 SET @pval = 'sierra';
 EXECUTE stmt_prepare_invalidate USING @pval;
 c
-******
+XXXXXX
 ALTER TABLE privilege__column_masking_policy.t_prepare_invalidate
 MODIFY MASKING POLICY p_prepare_invalidate SET EXPRESSION = c;
 EXECUTE stmt_prepare_invalidate USING @pval;
@@ -318,17 +318,17 @@ INSERT INTO privilege__column_masking_policy.t_cross_session_rename VALUES (1, '
 CREATE USER cmp_rename;
 GRANT SELECT ON privilege__column_masking_policy.t_cross_session_rename TO cmp_rename;
 CREATE MASKING POLICY p_cross_session_rename ON privilege__column_masking_policy.t_cross_session_rename(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 SELECT c FROM privilege__column_masking_policy.t_cross_session_rename;
 c
-*******
+XXXXXXX
 ALTER TABLE privilege__column_masking_policy.t_cross_session_rename RENAME COLUMN c TO c_new;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_cross_session_rename;
 Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
-p_cross_session_rename	c_new	CASE WHEN CURRENT_USER()=_UTF8MB4'root@%' THEN `c_new` ELSE MASK_FULL(`c_new`, _UTF8MB4'*') END	ENABLED	CUSTOM	NONE
+p_cross_session_rename	c_new	CASE WHEN CURRENT_USER()=_UTF8MB4'root@%' THEN `c_new` ELSE MASK_FULL(`c_new`) END	ENABLED	CUSTOM	NONE
 SELECT c_new FROM privilege__column_masking_policy.t_cross_session_rename;
 c_new
-*******
+XXXXXXX
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_part_mask;
 DROP USER IF EXISTS cmp_part;
 CREATE TABLE privilege__column_masking_policy.t_part_mask(
@@ -361,18 +361,18 @@ INSERT INTO privilege__column_masking_policy.t_txn_mask VALUES (1, 'victor'), (2
 CREATE USER cmp_txn;
 GRANT SELECT ON privilege__column_masking_policy.t_txn_mask TO cmp_txn;
 CREATE MASKING POLICY p_txn_mask ON privilege__column_masking_policy.t_txn_mask(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 SET @@tidb_txn_mode = 'optimistic';
 BEGIN;
 SELECT c FROM privilege__column_masking_policy.t_txn_mask WHERE c = 'victor';
 c
-******
+XXXXXX
 COMMIT;
 SET @@tidb_txn_mode = 'pessimistic';
 BEGIN;
 SELECT c FROM privilege__column_masking_policy.t_txn_mask WHERE c = 'victor';
 c
-******
+XXXXXX
 COMMIT;
 DROP TABLE IF EXISTS privilege__column_masking_policy.src_prepare_restrict;
 DROP TABLE IF EXISTS privilege__column_masking_policy.dst_prepare_restrict;
@@ -383,7 +383,7 @@ INSERT INTO privilege__column_masking_policy.src_prepare_restrict VALUES ('secre
 CREATE USER cmp_prepare_dml;
 GRANT SELECT, INSERT ON privilege__column_masking_policy.* TO cmp_prepare_dml;
 CREATE MASKING POLICY p_prepare_restrict ON privilege__column_masking_policy.src_prepare_restrict(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
 RESTRICT ON (INSERT_INTO_SELECT) ENABLE;
 PREPARE stmt_prepare_restrict FROM
 'INSERT INTO privilege__column_masking_policy.dst_prepare_restrict SELECT c FROM privilege__column_masking_policy.src_prepare_restrict';
@@ -395,7 +395,7 @@ PREPARE stmt_prepare_restrict FROM
 EXECUTE stmt_prepare_restrict;
 SELECT c FROM privilege__column_masking_policy.dst_prepare_restrict ORDER BY c;
 c
-******
+XXXXXX
 DEALLOCATE PREPARE stmt_prepare_restrict;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_toggle;
 DROP USER IF EXISTS cmp_prepare_toggle;
@@ -404,13 +404,13 @@ INSERT INTO privilege__column_masking_policy.t_prepare_toggle VALUES (1, 'xray')
 CREATE USER cmp_prepare_toggle;
 GRANT SELECT ON privilege__column_masking_policy.t_prepare_toggle TO cmp_prepare_toggle;
 CREATE MASKING POLICY p_prepare_toggle ON privilege__column_masking_policy.t_prepare_toggle(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 PREPARE stmt_prepare_toggle FROM
 'SELECT c FROM privilege__column_masking_policy.t_prepare_toggle WHERE id = ?';
 SET @toggle_id = 1;
 EXECUTE stmt_prepare_toggle USING @toggle_id;
 c
-****
+XXXX
 ALTER TABLE privilege__column_masking_policy.t_prepare_toggle DISABLE MASKING POLICY p_prepare_toggle;
 EXECUTE stmt_prepare_toggle USING @toggle_id;
 c
@@ -418,7 +418,7 @@ xray
 ALTER TABLE privilege__column_masking_policy.t_prepare_toggle ENABLE MASKING POLICY p_prepare_toggle;
 EXECUTE stmt_prepare_toggle USING @toggle_id;
 c
-****
+XXXX
 DEALLOCATE PREPARE stmt_prepare_toggle;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_recreate;
 DROP USER IF EXISTS cmp_prepare_recreate;
@@ -427,12 +427,12 @@ INSERT INTO privilege__column_masking_policy.t_prepare_recreate VALUES (1, 'yank
 CREATE USER cmp_prepare_recreate;
 GRANT SELECT ON privilege__column_masking_policy.t_prepare_recreate TO cmp_prepare_recreate;
 CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_prepare_recreate(c)
-AS MASK_FULL(c, '*') ENABLE;
+AS MASK_FULL(c) ENABLE;
 PREPARE stmt_prepare_recreate FROM
 'SELECT c FROM privilege__column_masking_policy.t_prepare_recreate WHERE id = 1';
 EXECUTE stmt_prepare_recreate;
 c
-******
+XXXXXX
 ALTER TABLE privilege__column_masking_policy.t_prepare_recreate DROP MASKING POLICY p_prepare_recreate;
 EXECUTE stmt_prepare_recreate;
 c
@@ -454,17 +454,17 @@ CREATE USER cmp_view;
 GRANT SELECT ON privilege__column_masking_policy.t_view_mask TO cmp_view;
 GRANT SELECT ON privilege__column_masking_policy.v_view_mask TO cmp_view;
 CREATE MASKING POLICY p_view_mask ON privilege__column_masking_policy.t_view_mask(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 SELECT c FROM privilege__column_masking_policy.t_view_mask ORDER BY id;
 c
-*****
-*****
-****
+XXXXX
+XXXXX
+XXXX
 SELECT c FROM privilege__column_masking_policy.v_view_mask ORDER BY id;
 c
-*****
-*****
-****
+XXXXX
+XXXXX
+XXXX
 SELECT COUNT(*) FROM privilege__column_masking_policy.v_view_mask WHERE c = 'alpha';
 COUNT(*)
 0
@@ -478,7 +478,7 @@ INSERT INTO privilege__column_masking_policy.dst_prepare_ud VALUES ('plain');
 CREATE USER cmp_prepare_ud;
 GRANT SELECT, UPDATE, DELETE ON privilege__column_masking_policy.* TO cmp_prepare_ud;
 CREATE MASKING POLICY p_prepare_ud ON privilege__column_masking_policy.src_prepare_ud(c)
-AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
 RESTRICT ON (UPDATE_SELECT, DELETE_SELECT) ENABLE;
 PREPARE stmt_prepare_ud_upd FROM
 'UPDATE privilege__column_masking_policy.dst_prepare_ud

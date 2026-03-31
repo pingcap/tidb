@@ -250,11 +250,10 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - `mask_char`: Single character used for masking (e.g., '*', 'X')
   - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
-- `MASK_FULL(col, mask_char)` - Masks the entire column value by repeating the specified character
+- `MASK_FULL(col)` - Masks the entire column value by repeating the specified character
   - `col`: The column to mask (string, datetime, or numeric types)
-  - `mask_char`: Single character used for masking (e.g., '*', 'X')
   - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
-  - Example: `MASK_FULL(ssn, 'X')` returns 'XXXXXXXXX' for a 9-digit SSN
+  - Example: `MASK_FULL(ssn)` returns 'XXXXXXXXX' for a 9-digit SSN
 
 - `MASK_NULL(col)` - Returns NULL for the column value
   - `col`: The column to mask (any supported type)
