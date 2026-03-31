@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -58,6 +59,10 @@ var (
 )
 
 var reuseIntermChkLogCount atomic.Uint64
+
+func shouldLogReadIndexChunkPath(r *selectResult) bool {
+	return strings.HasPrefix(r.ctx.RequestSourceType, kv.InternalTxnBackfillDDLPrefix+"add_index")
+}
 
 var (
 	_ SelectResult = (*selectResult)(nil)
@@ -569,17 +574,31 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 			if chk.NumRows() > 0 {
 				return nil
 			}
-			if cnt := reuseIntermChkLogCount.Add(1); cnt <= 20 || cnt%1000 == 0 {
-				logutil.BgLogger().Info("selectResult reuse intermediate chunk",
+			if shouldLogReadIndexChunkPath(r) {
+				cnt := reuseIntermChkLogCount.Add(1)
+				logutil.BgLogger().Info("selectResult chunk path",
 					zap.Uint64("count", cnt),
+					zap.String("mode", "reuse-interm"),
 					zap.Int("remainedRows", r.respChunkDecoder.RemainedRows()),
 					zap.Int("requiredRows", chk.RequiredRows()),
+					zap.Int("chkNumRows", chk.NumRows()),
 					zap.Int("respChkIdx", r.respChkIdx),
 					zap.Int("selectRespChunks", len(r.selectResp.Chunks)))
 			}
 			r.respChunkDecoder.ReuseIntermChk(chk)
 			r.respChkIdx++
 			return nil
+		}
+		if shouldLogReadIndexChunkPath(r) {
+			cnt := reuseIntermChkLogCount.Add(1)
+			logutil.BgLogger().Info("selectResult chunk path",
+				zap.Uint64("count", cnt),
+				zap.String("mode", "decode-into-chk"),
+				zap.Int("remainedRows", r.respChunkDecoder.RemainedRows()),
+				zap.Int("requiredRows", chk.RequiredRows()),
+				zap.Int("chkNumRows", chk.NumRows()),
+				zap.Int("respChkIdx", r.respChkIdx),
+				zap.Int("selectRespChunks", len(r.selectResp.Chunks)))
 		}
 		r.respChunkDecoder.Decode(chk)
 		if r.respChunkDecoder.IsFinished() {
