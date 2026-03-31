@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -513,4 +514,14 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
+}
+
+func init() {
+	if kerneltype.IsNextGen() {
+		// For now, we don't need to detect job version and global index v1 support for NextGen
+		// as they are always V2 and support global index v1.
+		// To keep align with the logic of `JobVersion`, we set it in the init function of model
+		// package. The `JobVersion` is set in the init function of `job.go`.
+		SetGlobalIndexV1Supported(true)
+	}
 }

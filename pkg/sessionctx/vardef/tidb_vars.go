@@ -956,6 +956,10 @@ const (
 	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
+	// TiDBPlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when
+	// a SQL binding is matched. Since a binding pins the plan via hints, stats changes cannot alter
+	// the chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	TiDBPlanCacheSkipStatsOnBinding = "tidb_plan_cache_skip_stats_on_binding"
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
@@ -1469,7 +1473,7 @@ const (
 	DefCurretTS                             = 0
 	DefInitChunkSize                        = 32
 	DefMinPagingSize                        = int(paging.MinPagingSize)
-	DefMaxPagingSize                        = int(paging.MaxPagingSize)
+	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1733,6 +1737,7 @@ const (
 	DefTiDBOptOrderingIdxSelRatio                     = 0.01
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBPlanCacheSkipStatsOnBinding                = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
 	DefAuthenticationLDAPSASLServerPort               = 389

@@ -338,6 +338,41 @@ set rowid_a._tidb_rowid = rowid_a._tidb_rowid`)
 		}()
 	}
 
+	// index-join-derived-projection-needs-table-column
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("set @@tidb_opt_index_join_build_v2 = on")
+		tk.MustExec("create table a (u varchar(20), q varchar(20), index iu(u))")
+		tk.MustExec("create table b (u varchar(20), index iu2(u))")
+		tk.MustExec("create table c (g varchar(20), index ig(g))")
+		tk.MustExec(`insert into a values ('u1', '{"g":"g1"}')`)
+		tk.MustExec(`insert into b values ('u1')`)
+		tk.MustExec(`insert into c values ('g1')`)
+
+		plan := fmt.Sprint(tk.MustQuery(`explain format='brief'
+select /* issue:65938 */ 1
+from
+  (select u, json_unquote(json_extract(cast(q as json), '$.g')) as g
+  from a) x
+join
+  (select u from b where u = 'u1') b1
+on x.u = b1.u
+left join c on c.g = x.g`).Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		require.Contains(t, plan, "table:a")
+		require.Contains(t, plan, "test.a.q")
+		require.Contains(t, plan, "TableRowIDScan")
+
+		tk.MustQuery(`select /* issue:65938 */ 1
+from
+  (select u, json_unquote(json_extract(cast(q as json), '$.g')) as g
+  from a) x
+join
+  (select u from b where u = 'u1') b1
+on x.u = b1.u
+left join c on c.g = x.g`).Check(testkit.Rows("1"))
+	}
+
 	// right-outer-join-view-rollup-runtime-panic
 	{
 		tk := prepareSharedTestKit(t)
@@ -508,6 +543,37 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk.MustExec("CREATE TABLE t1(id int default 1, c0 char(10) , c1 char(10) AS (c0) VIRTUAL NOT NULL UNIQUE);")
 		tk.MustExec("insert ignore into t1(c0) values (null);")
 		tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
+	}
+
+	// abs-max-binary-literal-group-by-unique-key
+	{
+		tk := prepareSharedTestKit(t)
+		expectedRows := testkit.Rows("0")
+		expectedWarnings := testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: '*'")
+		runQuery := func(createTableSQL, query string) (rows, warnings [][]any) {
+			t.Helper()
+			tk.MustExec("drop table if exists t0")
+			tk.MustExec(createTableSQL)
+			tk.MustExec("insert ignore into t0 values (1)")
+			rows = tk.MustQuery(query).Rows()
+			warnings = tk.MustQuery("show warnings").Rows()
+			return
+		}
+
+		for _, aggFunc := range []string{"max", "min"} {
+			query := fmt.Sprintf("select abs(%s(b'101010')) as c3 from t0 as tom8 group by tom8.c0", aggFunc)
+			uniqueRows, uniqueWarnings := runQuery("create table t0(c0 numeric zerofill not null unique)", query)
+			plainRows, plainWarnings := runQuery("create table t0(c0 numeric)", query)
+
+			require.Equalf(t, expectedRows, uniqueRows,
+				"aggFunc=%s uniqueWarnings=%v", aggFunc, uniqueWarnings)
+			require.Equalf(t, expectedRows, plainRows,
+				"aggFunc=%s plainWarnings=%v", aggFunc, plainWarnings)
+			require.Equalf(t, expectedWarnings, uniqueWarnings,
+				"aggFunc=%s uniqueRows=%v", aggFunc, uniqueRows)
+			require.Equalf(t, expectedWarnings, plainWarnings,
+				"aggFunc=%s plainRows=%v", aggFunc, plainRows)
+		}
 	}
 
 	// join-reorder-adds-selection

@@ -1631,6 +1631,11 @@ type SessionVars struct {
 	// related stats are analyzed after the plan cache is generated.
 	PlanCacheInvalidationOnFreshStats bool
 
+	// PlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when a SQL
+	// binding is matched. Since a binding pins the plan via hints, stats changes cannot alter the
+	// chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	PlanCacheSkipStatsOnBinding bool
+
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
 

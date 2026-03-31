@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
+        "//pkg/metrics",
         "@com_github_influxdata_tdigest//:tdigest",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",

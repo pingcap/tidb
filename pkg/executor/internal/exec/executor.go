@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -128,14 +127,6 @@ var ruv2ExecutorMetricByType = map[string]ruv2ExecutorMetric{
 func addRUV2ExecutorMetricWithInfo(ctx context.Context, info ruv2ExecutorMetric, useCells bool, delta int64) {
 	if delta == 0 || info.useCells != useCells {
 		return
-	}
-	switch info.level {
-	case 1:
-		metrics.RUV2ExecutorL1.WithLabelValues(info.label).Add(float64(delta))
-	case 2:
-		metrics.RUV2ExecutorL2.WithLabelValues(info.label).Add(float64(delta))
-	case 3:
-		metrics.RUV2ExecutorL3.WithLabelValues(info.label).Add(float64(delta))
 	}
 	if ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx); ruv2Metrics != nil {
 		ruv2Metrics.AddExecutorMetric(info.level, info.label, delta)
