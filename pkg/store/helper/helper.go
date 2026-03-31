@@ -114,6 +114,17 @@ func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
 	return h.pdHTTPCli, nil
 }
 
+// GetRegions fetches regions for the current store. In keyspace-aware mode, it
+// restricts the scan to the current keyspace to avoid mixing regions from other keyspaces.
+func (h *Helper) GetRegions(ctx context.Context) (*pd.RegionsInfo, error) {
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	startKey, endKey := h.Store.GetCodec().EncodeRegionRange(nil, nil)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), -1)
+}
+
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
 const MaxBackoffTimeoutForMvccGet = 5000
 

@@ -2079,11 +2079,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		pdCli, err := tikvHelper.TryGetPDHTTPClient()
-		if err != nil {
-			return err
-		}
-		allRegionsInfo, err = pdCli.GetRegions(ctx)
+		allRegionsInfo, err = tikvHelper.GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -2123,16 +2119,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helpe
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
-	pt := tbl.Meta().GetPartitionInfo()
-	if pt == nil {
-		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
-		if err != nil {
-			return nil, err
-		}
-		return regionsInfo, nil
+	allRegionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
+	if err != nil {
+		return nil, err
 	}
 
-	var allRegionsInfo *pd.RegionsInfo
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		return allRegionsInfo, nil
+	}
+
 	for _, def := range pt.Definitions {
 		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, def.ID)
 		if err != nil {
@@ -2148,7 +2144,9 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	// Query the whole table prefix so both record and index regions are covered.
+	sk := tablecodec.EncodeTablePrefix(tableID)
+	ek := kv.Key(sk).PrefixNext()
 	start, end := helper.Store.GetCodec().EncodeRegionRange(sk, ek)
 	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), -1)
 }
