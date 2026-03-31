@@ -177,7 +177,7 @@ FROM t0
 		tk.MustExec("drop table if exists t0, t1")
 		tk.MustExec("CREATE TABLE t0(c0 NUMERIC UNSIGNED ZEROFILL, c1 BLOB(18), c2 NUMERIC UNSIGNED)")
 		tk.MustExec("CREATE TABLE t1 LIKE t0")
-		tk.MustExec("INSERT IGNORE INTO t0 VALUES (-1757822699, 'wj', NULL)")
+		tk.MustExec("INSERT INTO t0 VALUES (0, 'wj', NULL)")
 		tk.MustQuery("SELECT TRUE FROM t1 RIGHT OUTER JOIN t0 ON NULL WHERE FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT))").
 			Check(testkit.Rows("1"))
 		tk.MustQuery("SELECT FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT)) FROM t1 RIGHT OUTER JOIN t0 ON NULL").
