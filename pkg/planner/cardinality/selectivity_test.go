@@ -2065,8 +2065,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	testKit.MustExec("insert into t select a, b + 10, c from t")
 	testKit.MustExec("flush stats_delta")
 	testKit.MustExec(`analyze table t`)
-	// Ensure stats are fully loaded into cache to avoid nondeterminism from stale cache.
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	h := dom.StatsHandle()
 
 	var (
 		input  []string
@@ -2077,6 +2076,9 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
+	// Trigger async stats loading for the subset-index columns before checking the recorded plans.
+	testKit.MustExec("explain format = 'brief' select distinct a, b, c from t")
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]

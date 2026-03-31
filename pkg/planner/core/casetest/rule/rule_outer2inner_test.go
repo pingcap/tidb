@@ -100,7 +100,7 @@ where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
 			`  ├─TableDual(Build) root  rows:1`,
 			`  └─HashAgg(Probe) root  group by:Column, Column, funcs:firstrow(1)->Column`,
 			`    └─Selection root  eq(Column, "1"), eq(Column, 1)`,
-			`      └─Window root  row_number()->Column#14 over(rows between current row and current row)`,
+			`      └─Window root  row_number()->Column over(rows between current row and current row)`,
 			`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
 			`          ├─TableReader(Build) root  data:TableFullScan`,
 			`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
@@ -172,6 +172,42 @@ FROM t0
 		tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
 		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
 			Check(testkit.Rows())
+	})
+}
+
+// TestOuter2InnerLateralSelection verifies LATERAL join decorrelation behavior:
+//
+//   - Cases 1–2 (simple correlated Selection): DecorrelateSolver pulls the
+//     correlated predicate (e.g. t2.b2 = t1.a1) up as a join condition, which
+//     empties CorCols and converts Apply→HashJoin. This is semantically correct
+//     and is NOT the outer2inner rule — the outer2inner IsLateral guard is a
+//     separate code path (pruneRedundantApply).
+//
+//   - Case 3 (aggregate): after the Selection is pulled up, correlated columns
+//     remain inside the aggregate, so DecorrelateSolver cannot proceed and the
+//     Apply is preserved.
+func TestOuter2InnerLateralSelection(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a1 int, b1 int)")
+		tk.MustExec("create table t2(a2 int, b2 int)")
+
+		var input Input
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		suiteData := GetOuter2InnerSuiteData()
+		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(output[i].Plan...))
+		}
 	})
 }
 

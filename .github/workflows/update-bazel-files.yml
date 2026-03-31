@@ -52,4 +52,8 @@ jobs:
         with:
           branch: ${{ github.event.pull_request.head.ref }}
           commit_message: "chore: update bazel file"
-          file_pattern: "DEPS.bzl *.bazel *.bzl"
+          disable_globbing: true
+          file_pattern: >-
+            DEPS.bzl
+            :(top,glob)**/*.bazel
+            :(top,glob)**/*.bzl

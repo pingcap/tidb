@@ -100,6 +100,11 @@ type LogicalJoin struct {
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
+	// first logical round. It is only used to decide whether an equivalent same-order
+	// PhysicalIndexJoin candidate has already been generated.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes LogicalJoin.
@@ -705,9 +710,10 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	leftProperties := childrenProperties[0]
-	rightProperties := childrenProperties[1]
+func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	leftProperties := childrenProperties[0].Orders
+	rightProperties := childrenProperties[1].Orders
+	p.hasTiFlash = childrenProperties[0].HasTiFlash && childrenProperties[1].HasTiFlash
 	// TODO: We should consider properties propagation.
 	p.LeftProperties = leftProperties
 	p.RightProperties = rightProperties
@@ -726,7 +732,10 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
 		copy(resultProperties[leftLen+i], cols)
 	}
-	return resultProperties
+	return &base.PossiblePropertiesInfo{
+		Orders:     resultProperties,
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
@@ -1283,30 +1292,40 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	for _, naeqCond := range p.NAEQConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
 	}
-	lChild := p.Children()[0]
-	rChild := p.Children()[1]
-	lSchema := lChild.Schema()
-	rSchema := rChild.Schema()
-	var lFullSchema, rFullSchema *expression.Schema
-	// parentused col = t2.a
-	// leftChild schema = t1.a(t2.a) + and others
-	// rightChild schema = t3 related + and others
-	if join, ok := lChild.(*LogicalJoin); ok {
-		lFullSchema = join.FullSchema
-	}
-	if join, ok := rChild.(*LogicalJoin); ok {
-		rFullSchema = join.FullSchema
-	}
 	for _, col := range parentUsedCols {
-		if (lSchema != nil && lSchema.Contains(col)) ||
-			(lFullSchema != nil && lFullSchema.Contains(col)) {
+		if planCanResolveUsedCol(p.Children()[0], col) {
 			leftCols = append(leftCols, col)
-		} else if (rSchema != nil && rSchema.Contains(col)) ||
-			(rFullSchema != nil && rFullSchema.Contains(col)) {
+		} else if planCanResolveUsedCol(p.Children()[1], col) {
 			rightCols = append(rightCols, col)
 		}
 	}
 	return leftCols, rightCols
+}
+
+// planCanResolveUsedCol walks through unary wrappers and join FullSchema so
+// pruning keeps redundant USING/NATURAL JOIN columns needed by upper filters.
+func planCanResolveUsedCol(p base.LogicalPlan, col *expression.Column) bool {
+	if p == nil || col == nil {
+		return false
+	}
+	if schema := p.Schema(); schema != nil && schema.Contains(col) {
+		return true
+	}
+	switch x := p.(type) {
+	case *LogicalSelection, *LogicalLimit, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return planCanResolveUsedCol(x.Children()[0], col)
+	case *LogicalApply:
+		for _, child := range x.Children() {
+			if planCanResolveUsedCol(child, col) {
+				return true
+			}
+		}
+	case *LogicalJoin:
+		if x.FullSchema != nil && x.FullSchema.Contains(col) {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeSchema merge the schema of left and right child of join.

@@ -21,6 +21,7 @@ import (
 
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/pingcap/tidb/pkg/util/topsql/state"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/atomic"
 )
 
@@ -37,14 +38,16 @@ var globalAggregator = newAggregator()
 // It is responsible for collecting data from all StatementStats, aggregating
 // them together, uploading them and regularly cleaning up the closed StatementStats.
 type aggregator struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	running      *atomic.Bool
-	statsSet     sync.Map // map[*StatementStats]struct{}
-	collectors   sync.Map // map[Collector]struct{}
-	ruCollectors sync.Map // map[RUCollector]struct{}
-	wg           sync.WaitGroup
-	statsLen     atomic.Uint32
+	ctx               context.Context
+	ruVersionProvider RUVersionProvider
+	cancel            context.CancelFunc
+	running           *atomic.Bool
+	statsSet          sync.Map
+	collectors        sync.Map
+	ruCollectors      sync.Map
+	wg                sync.WaitGroup
+	statsLen          atomic.Uint32
+	lastRUVersion     rmclient.RUVersion
 }
 
 // newAggregator creates an empty aggregator.
@@ -52,10 +55,22 @@ func newAggregator() *aggregator {
 	return &aggregator{running: atomic.NewBool(false)}
 }
 
+func (m *aggregator) setRUVersionProvider(provider RUVersionProvider) {
+	m.ruVersionProvider = provider
+}
+
+func (m *aggregator) currentRUVersion() rmclient.RUVersion {
+	if m.ruVersionProvider != nil {
+		return NormalizeRUVersion(m.ruVersionProvider.GetRUVersion())
+	}
+	return DefaultRUVersion()
+}
+
 func (m *aggregator) start() {
 	if m.running.Load() {
 		return
 	}
+	m.lastRUVersion = m.currentRUVersion()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.running.Store(true)
 	m.wg.Add(1)
@@ -111,6 +126,20 @@ func (m *aggregator) drainAndPushStmtStats() {
 // drainAndPushRU drains RU increments from all sessions, applies key caps, and
 // pushes merged data to RUCollectors when TopRU is enabled.
 func (m *aggregator) drainAndPushRU() {
+	currentRUVersion := m.currentRUVersion()
+	if currentRUVersion != m.lastRUVersion {
+		m.statsSet.Range(func(statsAny, _ any) bool {
+			statsAny.(*StatementStats).ResetRUStateOnVersionChange(currentRUVersion)
+			return true
+		})
+		m.ruCollectors.Range(func(c, _ any) bool {
+			c.(RUCollector).OnRUVersionChange(currentRUVersion)
+			return true
+		})
+		m.lastRUVersion = currentRUVersion
+		return
+	}
+
 	total := make(RUIncrementMap, maxRUKeysPerAggregate)
 	var droppedKeys int64
 	var droppedRU float64
@@ -139,7 +168,7 @@ func (m *aggregator) drainAndPushRU() {
 
 	if state.TopRUEnabled() && len(total) > 0 {
 		m.ruCollectors.Range(func(c, _ any) bool {
-			c.(RUCollector).CollectRUIncrements(total)
+			c.(RUCollector).CollectRUIncrements(total, currentRUVersion)
 			return true
 		})
 	}
@@ -209,6 +238,11 @@ func SetupAggregator() {
 	globalAggregator.start()
 }
 
+// BindRUVersionProvider updates the global TopRU RU-version provider.
+func BindRUVersionProvider(provider RUVersionProvider) {
+	globalAggregator.setRUVersionProvider(provider)
+}
+
 // CloseAggregator is used to stop the background aggregator goroutine of the stmtstats module.
 // SetupAggregator is **not** thread-safe.
 func CloseAggregator() {
@@ -250,5 +284,7 @@ type Collector interface {
 type RUCollector interface {
 	// CollectRUIncrements is called by aggregator every 1s with merged RU deltas
 	// from all sessions, aggregated by (user, sql_digest, plan_digest).
-	CollectRUIncrements(RUIncrementMap)
+	CollectRUIncrements(RUIncrementMap, rmclient.RUVersion)
+	// OnRUVersionChange clears version-sensitive RU state when aggregator detects a version handover.
+	OnRUVersionChange(rmclient.RUVersion)
 }

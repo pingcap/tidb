@@ -643,5 +643,48 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestOuter2InnerLateralSelection",
+    "Cases": [
+      {
+        "SQL": "select * from t1, lateral (select * from t2 where t2.b2 = t1.a1) as dt where dt.a2 is not null -- LATERAL with null-filtering Selection",
+        "Plan": [
+          "HashJoin root  inner join, equal:[eq(test.t1.a1, test.t2.b2)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.t2.a2)), not(isnull(test.t2.b2))",
+          "│   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a1))",
+          "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1, lateral (select * from t2 where t2.b2 = t1.a1) as dt where dt.b2 > 0 -- LATERAL with range-filtering Selection",
+        "Plan": [
+          "HashJoin root  inner join, equal:[eq(test.t1.a1, test.t2.b2)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  gt(test.t2.b2, 0), not(isnull(test.t2.b2))",
+          "│   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  gt(test.t1.a1, 0), not(isnull(test.t1.a1))",
+          "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1, lateral (select t2.a2, count(*) as cnt from t2 where t2.b2 = t1.a1 group by t2.a2) as dt where dt.cnt > 0 -- LATERAL with aggregate: Apply must not be converted to Join",
+        "Plan": [
+          "Projection root  test.t1.a1, test.t1.b1, test.t2.a2, Column",
+          "└─Apply root  CARTESIAN inner join",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Selection(Probe) root  gt(Column, 0)",
+          "    └─HashAgg root  group by:test.t2.a2, funcs:count(1)->Column, funcs:firstrow(test.t2.a2)->test.t2.a2",
+          "      └─TableReader root  data:Selection",
+          "        └─Selection cop[tikv]  eq(test.t2.b2, test.t1.a1)",
+          "          └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
