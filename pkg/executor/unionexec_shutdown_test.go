@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -43,15 +42,6 @@ func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
 func (e *unionPanicExec) Close() error { return nil }
 
 func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
-	fp := "github.com/pingcap/tidb/pkg/executor/pauseUnionExecResultPuller"
-	require.NoError(t, failpoint.Enable(fp, "pause"))
-	fpEnabled := true
-	t.Cleanup(func() {
-		if fpEnabled {
-			require.NoError(t, failpoint.Disable(fp))
-		}
-	})
-
 	ctx := mock.NewContext()
 	schema := expression.NewSchema()
 	closeCh := make(chan struct{})
@@ -88,8 +78,6 @@ func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	require.NoError(t, failpoint.Disable(fp))
-	fpEnabled = false
 	close(closeCh)
 
 	select {
