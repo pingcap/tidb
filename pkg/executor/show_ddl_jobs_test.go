@@ -50,14 +50,14 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "txn-merge", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:     model.ReorgTypeLitMerge,
+		ReorgTp:     model.ReorgTypeIngest,
 		IsDistReorg: true,
 	}
 	res = showCommentsFromJob(job)
 	require.Equal(t, "ingest, DXF", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
@@ -65,7 +65,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
@@ -76,7 +76,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud, thread=8, batch_size=1024, max_write_speed=1048576", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
@@ -87,7 +87,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 		TargetScope:     "background",
@@ -107,7 +107,7 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	res := showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "", res)
 
-	subJob.ReorgTp = model.ReorgTypeLitMerge
+	subJob.ReorgTp = model.ReorgTypeIngest
 	res = showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "ingest", res)
 

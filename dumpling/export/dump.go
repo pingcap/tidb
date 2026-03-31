@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -1205,6 +1205,33 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		hasImplicitRowID, err = SelectTiDBRowID(tctx, conn, db, tbl)
 		if err != nil {
 			tctx.L().Info("check implicit rowID failed", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
+		}
+
+		var extraField string
+		switch conf.ExportTiDBRowIDMode {
+		case ExportTiDBRowIDModeIntPKAutoInc:
+			pkCol, ok, err := getIntAutoIncPrimaryKeyColumn(tctx, conn, db, tbl)
+			if err != nil {
+				tctx.L().Info("check int auto-inc primary key failed", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
+				return nil, err
+			}
+			if ok {
+				if hasImplicitRowID {
+					extraField = "_tidb_rowid"
+				} else {
+					extraField = fmt.Sprintf("%s AS %s", wrapBackTicks(escapeString(pkCol)), wrapBackTicks("_tidb_rowid"))
+				}
+
+			}
+		}
+
+		if extraField != "" {
+			if selectField == "" {
+				selectField = extraField
+			} else {
+				selectField = selectField + "," + extraField
+			}
+			selectLen++
 		}
 	}
 

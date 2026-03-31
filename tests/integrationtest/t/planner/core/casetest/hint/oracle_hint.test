@@ -1,0 +1,46 @@
+# TestIndexHint
+use test;
+drop table if exists t;
+create table t (a int, b int, c int, key(b), key(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ index(t b c) */ * from t where a = 1;
+--enable_warnings
+explain select /*+ index(t b xxxx) */ * from t where a = 1;
+--disable_warnings
+--enable_warnings
+explain select /*+ index(t xxx) */ * from t where a = 1;
+--disable_warnings
+drop table if exists t;
+
+# TestIndexHintNoSpecificIndex
+use test;
+drop table if exists t;
+create table t (a int, b int, c int, key(b), key(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ index(t) */ * from t where a = 1;
+drop table if exists t;
+
+# TestNoIndexHint
+use test;
+drop table if exists t;
+create table t (a int primary key, b int, c int, key idx_b(b), key idx_c(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ no_index(t) */ * from t where b = 2;
+explain select /*+ no_index(t idx_b) */ * from t where b = 2 and c = 2;
+explain select /*+ no_index(t idx_c) */ * from t where c = 2;
+explain select /*+ no_index(t idx_b, idx_c) */ * from t where b = 2 and c = 2;
+explain select /*+ no_index(t idx_b idx_c) */ * from t where b = 2 and c = 2;
+drop table if exists t;
+
+# TestFullHint
+set tidb_cost_model_version=2;
+drop table if exists t_full1, t_full2, t_full3;
+create table t_full1 (a int, b int, key(a));
+create table t_full2 (a int, b int, key(a));
+create table t_full3 (a int, b int, key(a));
+explain select /*+ FULL(t_full1) */ * from t_full1 where a = 1;
+explain select /*+ FULL(t_full1) */ * from t_full1 join t_full2 on t_full1.a = t_full2.a where t_full1.a = 1;
+explain select /*+ FULL(t_full1, t_full2) */ * from t_full1 join t_full2 on t_full1.a = t_full2.a where t_full1.a = 1;
+explain select /*+ FULL(t_full1, t_full2, t_full3) */ * from t_full1 join t_full2 on t_full1.a = t_full2.a join t_full3 on t_full2.a = t_full3.a where t_full1.a = 1;
+explain select /*+ INDEX(t_full1) */ * from t_full1 where a in (select /*+ FULL(t_full2) */ a from t_full2 where a > 1);
+drop table if exists t_full1, t_full2, t_full3;

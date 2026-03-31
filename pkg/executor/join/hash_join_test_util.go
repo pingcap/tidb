@@ -48,6 +48,7 @@ type hashJoinInfo struct {
 	lUsedInOtherCondition []int
 	rUsedInOtherCondition []int
 	equalConditions       []*expression.ScalarFunction
+	fileNamePrefixForTest string
 }
 
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
@@ -61,6 +62,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 			OtherCondition:  info.otherCondition,
 			partitionNumber: 4,
 		},
+		FileNamePrefixForTest: info.fileNamePrefixForTest,
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx
 	e.HashJoinCtxV2.JoinType = info.joinType

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -223,9 +224,9 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	indexPlan           base.PhysicalPlan
-	tablePlan           base.PhysicalPlan
-	indexLookUpPushDown bool
+	indexPlan             base.PhysicalPlan
+	tablePlan             base.PhysicalPlan
+	indexLookUpPushDownBy util.IndexLookUpPushDownByType
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
@@ -406,6 +407,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		}.Init(ctx, t.tablePlan.QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
 		p.SetStats(t.tablePlan.StatsInfo())
+		p.TableSplit = ts.TableSplit
 
 		// If agg was pushed down in Attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
 		// placed above the PhysicalTableReader, and the schema should have been set correctly for them, the schema of

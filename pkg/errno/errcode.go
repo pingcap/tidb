@@ -1141,6 +1141,8 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
+	ErrProtectedTableMode                 = 8258
+	ErrInvalidTableModeSet                = 8259
 
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
@@ -1150,6 +1152,8 @@ const (
 	ErrGlobalIndexNotExplicitlySet = 8264
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+
+	ErrInvalidAffinityOption = 8266
 
 	// TableGroup errors.
 	ErrTableGroupExists               = 8280

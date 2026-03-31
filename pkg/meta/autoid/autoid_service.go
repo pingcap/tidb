@@ -227,8 +227,13 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	}
 }
 
-func (*singlePointAlloc) Transfer(_, _ int64) error {
-	return nil
+func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
+	if sp.dbID == databaseID && sp.tblID == tableID {
+		return nil
+	}
+	sp.dbID = databaseID
+	sp.tblID = tableID
+	return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering

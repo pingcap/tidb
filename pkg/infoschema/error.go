@@ -109,6 +109,11 @@ var (
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
 
+	// ErrProtectedTableMode returns for accessing table in import/restore mode.
+	ErrProtectedTableMode = dbterror.ClassSchema.NewStd(mysql.ErrProtectedTableMode)
+	// ErrInvalidTableModeSet returns for invalid TableMode conversion.
+	ErrInvalidTableModeSet = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeSet)
+
 	// ErrTableGroupExists returns when tablegroup already exists
 	ErrTableGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupExists)
 	// ErrTableGroupNotExists returns for unknown tablegroup

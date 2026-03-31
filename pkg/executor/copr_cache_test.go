@@ -33,7 +33,9 @@ import (
 
 func TestIntegrationCopCache(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
-	config.StoreGlobalConfig(config.NewConfig())
+	newCfg := config.NewConfig()
+	newCfg.TiKVClient.CoprCache.CapacityMB = 1000
+	config.StoreGlobalConfig(newCfg)
 	defer config.StoreGlobalConfig(originConfig)
 
 	cli := &testkit.RegionProperityClient{}

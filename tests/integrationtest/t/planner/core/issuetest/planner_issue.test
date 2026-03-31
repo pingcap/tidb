@@ -601,3 +601,16 @@ drop view if exists v0;
 CREATE  TABLE  t0(c0 INTEGER);
 CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
 SELECT t0.c0 FROM v0, t0 WHERE RAND();
+
+# TestIssue63353
+drop table if exists t1,t2,t3,t4;
+create table t1(a int, b int);
+create table t2 like t1;
+create table t3 like t1;
+create table t4 like t1;
+
+# enable reorder by dp
+set @@tidb_opt_join_reorder_threshold=5;
+
+explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
+set @@tidb_opt_join_reorder_threshold=default;

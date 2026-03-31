@@ -19,8 +19,14 @@ import (
 
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+)
+
+// For compatibility during cherry-picking.
+var (
+	NewFakePDClient = split.NewFakePDClient
 )
 
 type TestRestoreSchemaSuite struct {

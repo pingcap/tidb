@@ -234,6 +234,8 @@ const (
 
 	// TableTableGroupStatus is the name of the TABLEGROUP_STATUS table.
 	TableTableGroupStatus = "TABLEGROUP_STATUS"
+	// TableRegions is the string constant of table regions.
+	TableRegions = "TABLE_REGIONS"
 )
 
 const (
@@ -360,6 +362,8 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
 	TableTableGroups:                     autoid.InformationSchemaDBID + 98,
 	TableTableGroupStatus:                autoid.InformationSchemaDBID + 99,
+	// PingKaiDB tables.
+	TableRegions: autoid.InformationSchemaDBID + 5003,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -382,7 +386,7 @@ type columnInfo struct {
 	enumElems []string
 }
 
-func buildColumnInfo(col columnInfo) *model.ColumnInfo {
+func buildColumnInfo(colID int64, col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
@@ -398,6 +402,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
 	return &model.ColumnInfo{
+		ID:           colID,
 		Name:         pmodel.NewCIStr(col.name),
 		FieldType:    fieldType,
 		State:        model.StatePublic,
@@ -436,7 +441,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.Indices = primaryIndices
 			}
 		}
-		cols = append(cols, buildColumnInfo(c))
+		cols = append(cols, buildColumnInfo(int64(offset), c))
 	}
 	for i, col := range cols {
 		col.Offset = i
@@ -480,6 +485,8 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
+	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -653,6 +660,7 @@ var partitionsCols = []columnInfo{
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -977,6 +985,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogWaitRUDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogTidbCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogTikvCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogStorageFromKV, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogStorageFromMPP, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1121,6 +1131,20 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
 	{name: "REPLICATIONSTATUS_STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "REPLICATIONSTATUS_STATEID", tp: mysql.TypeLonglong, size: 21},
+}
+
+// TableRegionsCols is table regions mem table columns.
+var TableRegionsCols = []columnInfo{
+	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "APPROXIMATE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
 }
 
 // TableTiKVRegionPeersCols is TiKV region peers mem table columns.
@@ -1454,6 +1478,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
+	{name: stmtsummary.StorageKVStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiKV"},
+	{name: stmtsummary.StorageMPPStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiFlash"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -2494,6 +2520,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableUserLoginHistory:                   tableUserLoginHistoryCols,
 	TableTableGroups:                        tablegroupsCols,
 	TableTableGroupStatus:                   tablegroupStatusCols,
+	TableRegions:                            TableRegionsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

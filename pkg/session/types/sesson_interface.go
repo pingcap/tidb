@@ -46,6 +46,8 @@ type PlanCacheVersionInfo struct {
 	LatestSchemaVersion int64
 	// HasSubquery indicates whether the SQL contains subquery
 	HasSubquery bool
+	// HasLimit indicates whether the SQL contains LIMIT clause
+	HasLimit bool
 	// IsReadOnly indicates whether the statement is read-only. Nil means unknown.
 	IsReadOnly *bool
 	// ParamTypes are the types of the parameters (optional, can be derived from params)

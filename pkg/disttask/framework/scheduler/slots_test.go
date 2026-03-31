@@ -69,13 +69,13 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.Equal(t, 8, sm.reservedStripes[1].stripes)
 	require.Equal(t, map[int64]int{10: 0, 20: 1}, sm.task2Index)
 	require.Empty(t, sm.reservedSlots)
-	// higher rank task can preempt lower rank task
+	// high ranking task can preempt lower rank task
 	task9 := task
 	task9.ID = 9
 	task9.Concurrency = 16
 	_, ok = sm.canReserve(&task9)
 	require.True(t, ok)
-	// 4 slots are reserved for high rank tasks, so cannot reserve.
+	// 4 slots are reserved for high ranking tasks, so cannot reserve.
 	task11 := task
 	task11.ID = 11
 	_, ok = sm.canReserve(&task11)
@@ -107,7 +107,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.Equal(t, 8, sm.reservedStripes[2].stripes)
 	require.Equal(t, map[int64]int{10: 0, 20: 1, 40: 2}, sm.task2Index)
 	require.Equal(t, map[string]int{"tidb-2": 8}, sm.reservedSlots)
-	// higher rank task stop task 15 to run
+	// high ranking task stop task 15 to run
 	task15 := task
 	task15.ID = 15
 	task15.Concurrency = 16

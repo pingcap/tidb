@@ -385,6 +385,12 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 				require.Equal(t, "rg1", stmtHint.ResourceGroup)
 			},
 		},
+		{
+			hint: "TIDBX_REMOTE_PLAN_FORCE()",
+			check: func(stmtHint *hint.StmtHints) {
+				require.True(t, stmtHint.ForceRemotePlan)
+			},
+		},
 	}
 
 	for i, check := range hintChecks {
@@ -401,4 +407,11 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 	}
+}
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, variable.AdvancerCheckPointLagLimit.Load())
 }

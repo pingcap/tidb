@@ -34,16 +34,19 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -135,7 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:       paramStmt,
-		StmtType:   ast.GetStmtLabel(paramStmt),
+		StmtType:   stmtctx.GetStmtLabel(ctx, paramStmt),
 		IsReadOnly: ast.IsReadOnly(paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
@@ -192,10 +195,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
+	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
@@ -280,32 +283,333 @@ func extractEarlyLocationInfo(ctx context.Context, is infoschema.InfoSchema, stm
 	}
 
 	info := &EarlyLocationInfo{
-		TableIDs:          tableIDs,
-		HasPartitionTable: hasPartitionTable,
+		TableIDs:            tableIDs,
+		HasPartitionTable:   hasPartitionTable,
+		ForceRemotePlanHint: hasForceRemotePlanHint(stmt),
 	}
 
 	// Check if this is a DML statement
-	switch stmt.(type) {
+	switch s := stmt.(type) {
 	case *ast.SelectStmt:
-		info.IsDML = false
+		info.StatementTraits.IsDML = false
+		hasPointGet, hasIndexLookup := extractEarlySelectTraits(s, tbls)
+		info.StatementTraits.HasPointGet = hasPointGet
+		info.StatementTraits.HasIndexLookup = hasIndexLookup
 	case *ast.UpdateStmt:
-		info.IsDML = true
-		info.DMLType = DMLTypeUpdate
+		info.StatementTraits.IsDML = true
+		info.StatementTraits.DMLType = DMLTypeUpdate
 	case *ast.DeleteStmt:
-		info.IsDML = true
-		info.DMLType = DMLTypeDelete
+		info.StatementTraits.IsDML = true
+		info.StatementTraits.DMLType = DMLTypeDelete
 	case *ast.InsertStmt:
-		info.IsDML = true
-		info.DMLType = DMLTypeInsert
+		info.StatementTraits.IsDML = true
+		info.StatementTraits.DMLType = DMLTypeInsert
 	}
 
 	return info
+}
+
+func hasForceRemotePlanHint(stmt ast.StmtNode) bool {
+	if stmt == nil {
+		return false
+	}
+	for _, tableHint := range hint.ExtractTableHintsFromStmtNode(stmt, nil) {
+		if tableHint == nil {
+			continue
+		}
+		if tableHint.HintName.L == hint.HintTiDBXRemotePlanForce {
+			return true
+		}
+	}
+	return false
 }
 
 // tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
 var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
 	return make([]int64, 0, 8)
 })
+
+type earlySelectAnalysis struct {
+	where          ast.ExprNode
+	tblInfo        *metamodel.TableInfo
+	hasWhere       bool
+	isSimpleSelect bool
+	isSimpleKind   bool
+	noOrderLimit   bool
+	noLock         bool
+	noSetOrWith    bool
+	simpleFields   bool
+}
+
+// extractEarlySelectTraits evaluates a SELECT once to derive early location hints.
+func extractEarlySelectTraits(sel *ast.SelectStmt, tbls []table.Table) (bool, bool) {
+	analysis, ok := buildEarlySelectAnalysis(sel, tbls)
+	if !ok {
+		return false, false
+	}
+
+	hasPointGet := analysis.isSimpleSelect && analysis.hasWhere &&
+		isPointGetPredicateForTable(analysis.where, analysis.tblInfo)
+	hasIndexLookup := analysis.isSimpleSelect && analysis.hasWhere && analysis.isSimpleKind &&
+		analysis.noOrderLimit && analysis.noLock && analysis.noSetOrWith && analysis.simpleFields
+	return hasPointGet, hasIndexLookup
+}
+
+func buildEarlySelectAnalysis(sel *ast.SelectStmt, tbls []table.Table) (earlySelectAnalysis, bool) {
+	var analysis earlySelectAnalysis
+	if sel == nil || !isSingleTableFromClause(sel.From) {
+		return analysis, false
+	}
+	tblInfo := singleTableInfoFromTbls(tbls)
+	if tblInfo == nil {
+		return analysis, false
+	}
+
+	analysis.where = sel.Where
+	analysis.tblInfo = tblInfo
+	analysis.hasWhere = sel.Where != nil
+	analysis.isSimpleSelect = !sel.Distinct && sel.GroupBy == nil &&
+		sel.Having == nil && len(sel.WindowSpecs) == 0
+	analysis.isSimpleKind = sel.Kind == ast.SelectStmtKindSelect
+	analysis.noOrderLimit = sel.OrderBy == nil && sel.Limit == nil
+	analysis.noLock = sel.LockInfo == nil || sel.LockInfo.LockType == ast.SelectLockNone
+	analysis.noSetOrWith = sel.SelectIntoOpt == nil && sel.AfterSetOperator == nil && sel.With == nil
+	analysis.simpleFields = isSimpleSelectFields(sel.Fields)
+	return analysis, true
+}
+
+func isPointGetPredicateForTable(where ast.ExprNode, tblInfo *metamodel.TableInfo) bool {
+	if where == nil || tblInfo == nil {
+		return false
+	}
+	// Common handle primary key point-get: all primary key columns have equality predicates.
+	if tblInfo.IsCommonHandle {
+		if pk := tblInfo.GetPrimaryKey(); pk != nil && len(pk.Columns) > 0 {
+			pkCols := make([]string, 0, len(pk.Columns))
+			for _, ic := range pk.Columns {
+				pkCols = append(pkCols, ic.Name.L)
+			}
+			if isConjunctivePointPredicate(where, pkCols) {
+				return true
+			}
+		}
+	}
+
+	candidates := make(map[string]struct{}, 4)
+	if tblInfo.PKIsHandle {
+		if pk := tblInfo.GetPkColInfo(); pk != nil {
+			candidates[pk.Name.L] = struct{}{}
+		}
+	}
+	// Also consider single-column unique indexes (simple point-get by unique key).
+	for _, idx := range tblInfo.Indices {
+		if idx == nil || !idx.Unique || len(idx.Columns) != 1 {
+			continue
+		}
+		candidates[idx.Columns[0].Name.L] = struct{}{}
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	for col := range candidates {
+		if isSimplePointPredicate(where, col) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSimpleSelectFields(fields *ast.FieldList) bool {
+	if fields == nil || len(fields.Fields) == 0 {
+		return false
+	}
+	for _, field := range fields.Fields {
+		if field == nil {
+			return false
+		}
+		if field.WildCard != nil {
+			continue
+		}
+		if field.Expr == nil {
+			return false
+		}
+		if _, ok := columnName(field.Expr); ok {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func singleTableInfoFromTbls(tbls []table.Table) *metamodel.TableInfo {
+	var info *metamodel.TableInfo
+	for _, tbl := range tbls {
+		if tbl == nil {
+			return nil
+		}
+		tblInfo := tbl.Meta()
+		if tblInfo == nil {
+			return nil
+		}
+		if info == nil {
+			info = tblInfo
+			continue
+		}
+		if info.ID != tblInfo.ID {
+			return nil
+		}
+	}
+	return info
+}
+
+func isSingleTableFromClause(from *ast.TableRefsClause) bool {
+	if from == nil || from.TableRefs == nil {
+		return false
+	}
+	join := from.TableRefs
+	if join.Right != nil || join.On != nil || len(join.Using) > 0 || join.NaturalJoin {
+		return false
+	}
+	ts, ok := join.Left.(*ast.TableSource)
+	if !ok || ts == nil {
+		return false
+	}
+	_, ok = ts.Source.(*ast.TableName)
+	return ok
+}
+
+func isConjunctivePointPredicate(where ast.ExprNode, columns []string) bool {
+	if where == nil || len(columns) == 0 {
+		return false
+	}
+	conds := make([]ast.ExprNode, 0, len(columns))
+	collectAndConditions(where, &conds)
+	if len(conds) != len(columns) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(columns))
+	for _, cond := range conds {
+		for {
+			if p, ok := cond.(*ast.ParenthesesExpr); ok && p != nil {
+				cond = p.Expr
+				continue
+			}
+			break
+		}
+		expr, ok := cond.(*ast.BinaryOperationExpr)
+		if !ok || expr == nil || expr.Op != opcode.EQ {
+			return false
+		}
+
+		var name string
+		if n, ok := columnName(expr.L); ok && isParamOrValue(expr.R) {
+			name = n
+		} else if n, ok := columnName(expr.R); ok && isParamOrValue(expr.L) {
+			name = n
+		} else {
+			return false
+		}
+
+		if _, ok := seen[name]; ok {
+			return false
+		}
+		seen[name] = struct{}{}
+	}
+	for _, col := range columns {
+		if _, ok := seen[col]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func collectAndConditions(expr ast.ExprNode, conds *[]ast.ExprNode) {
+	if expr == nil {
+		return
+	}
+	for {
+		if p, ok := expr.(*ast.ParenthesesExpr); ok && p != nil {
+			expr = p.Expr
+			continue
+		}
+		break
+	}
+	if bo, ok := expr.(*ast.BinaryOperationExpr); ok && bo != nil && bo.Op == opcode.LogicAnd {
+		collectAndConditions(bo.L, conds)
+		collectAndConditions(bo.R, conds)
+		return
+	}
+	*conds = append(*conds, expr)
+}
+
+func isSimplePointPredicate(where ast.ExprNode, column string) bool {
+	if where == nil {
+		return false
+	}
+	for {
+		if p, ok := where.(*ast.ParenthesesExpr); ok && p != nil {
+			where = p.Expr
+			continue
+		}
+		break
+	}
+	switch expr := where.(type) {
+	case *ast.BinaryOperationExpr:
+		if expr.Op != opcode.EQ {
+			return false
+		}
+		if name, ok := columnName(expr.L); ok && name == column && isParamOrValue(expr.R) {
+			return true
+		}
+		if name, ok := columnName(expr.R); ok && name == column && isParamOrValue(expr.L) {
+			return true
+		}
+		return false
+	case *ast.PatternInExpr:
+		if expr.Not || expr.Sel != nil || len(expr.List) == 0 {
+			return false
+		}
+		name, ok := columnName(expr.Expr)
+		if !ok || name != column {
+			return false
+		}
+		for _, item := range expr.List {
+			if !isParamOrValue(item) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func columnName(expr ast.ExprNode) (string, bool) {
+	if expr == nil {
+		return "", false
+	}
+	for {
+		if p, ok := expr.(*ast.ParenthesesExpr); ok && p != nil {
+			expr = p.Expr
+			continue
+		}
+		break
+	}
+	col, ok := expr.(*ast.ColumnNameExpr)
+	if !ok || col == nil || col.Name == nil {
+		return "", false
+	}
+	return col.Name.Name.L, true
+}
+
+func isParamOrValue(expr ast.ExprNode) bool {
+	switch expr.(type) {
+	case *driver.ParamMarkerExpr, *driver.ValueExpr:
+		return true
+	default:
+		return false
+	}
+}
 
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	n := len(m)
@@ -477,6 +781,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 
 	// this variable might affect the plan
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
+	hash = append(hash, bool2Byte(vars.EnablePlanCacheGenericRewrite))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
@@ -841,6 +1146,11 @@ func (stmt *PlanCacheStmt) HasSubquery() bool {
 	return stmt.hasSubquery
 }
 
+// HasLimit returns whether the statement contains a LIMIT clause.
+func (stmt *PlanCacheStmt) HasLimit() bool {
+	return len(stmt.limits) > 0
+}
+
 // GetLimitValues extracts limit values (count, offset) from the statement's LIMIT clauses.
 // This is used for plan cache key generation in remote execution scenarios.
 func (stmt *PlanCacheStmt) GetLimitValues() []uint64 {
@@ -1072,6 +1382,8 @@ type PlanCacheLookupParams struct {
 	IsReadOnly *bool
 	// HasSubquery indicates whether the SQL contains subquery
 	HasSubquery bool
+	// HasLimit indicates whether the SQL contains LIMIT clause
+	HasLimit bool
 	// LimitValues contains the limit values (count, offset) for LIMIT clause
 	LimitValues []uint64
 	// StatsVerHash is the hash of stats versions for PlanCacheInvalidationOnFreshStats
@@ -1166,9 +1478,10 @@ func NewPlanCacheKeyBySQLWithParams(sctx sessionctx.Context, params *PlanCacheLo
 
 	// foreign key checks
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
+	hash = append(hash, bool2Byte(vars.EnablePlanCacheGenericRewrite))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
-	if len(params.LimitValues) > 0 {
+	if params.HasLimit || len(params.LimitValues) > 0 {
 		if !vars.EnablePlanCacheForParamLimit {
 			return "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
 		}

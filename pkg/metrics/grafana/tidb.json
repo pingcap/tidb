@@ -4205,116 +4205,116 @@
             "alignLevel": null
           }
         },
-	{
-	  "aliasColors": {},
-	  "dashLength": 10,
+        {
+          "aliasColors": {},
+          "dashLength": 10,
           "datasource": "${DS_TEST-CLUSTER}",
-	  "description": "The total count of internal sessions.",
-	  "editable": true,
-	  "fieldConfig": {
-	    "defaults": {},
-	    "overrides": []
-	  },
-	  "grid": {},
-	  "gridPos": {
-	    "h": 7,
-	    "w": 12,
-	    "x": 12,
-	    "y": 66
-	  },
-	  "id": 23763572016,
-	  "legend": {
-	    "alignAsTable": true,
-	    "avg": false,
-	    "current": true,
-	    "hideEmpty": true,
-	    "hideZero": false,
-	    "max": true,
-	    "min": false,
-	    "rightSide": true,
-	    "show": true,
-	    "sideWidth": null,
-	    "total": false,
-	    "values": true
-	  },
-	  "lines": true,
-	  "linewidth": 1,
-	  "links": [],
-	  "nullPointMode": "null as zero",
-	  "options": {
-	    "alertThreshold": true
-	  },
-	  "pluginVersion": "7.5.11",
-	  "pointradius": 5,
-	  "renderer": "flot",
-	  "seriesOverrides": [],
-	  "spaceLength": 10,
-	  "targets": [
-	    {
-	      "expr": "tidb_server_internal_sessions{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
-	      "legendFormat": "{{instance}}",
-	      "interval": "",
-	      "exemplar": true,
-	      "format": "time_series",
-	      "hide": false,
-	      "intervalFactor": 1,
-	      "refId": "H"
-	    }
-	  ],
-	  "thresholds": [],
-	  "timeRegions": [],
-	  "title": "Internal Sessions",
-	  "tooltip": {
-	    "msResolution": true,
-	    "shared": true,
-	    "sort": 0,
-	    "value_type": "cumulative"
-	  },
-	  "type": "graph",
-	  "xaxis": {
-	    "buckets": null,
-	    "mode": "time",
-	    "name": null,
-	    "show": true,
-	    "values": []
-	  },
-	  "yaxes": [
-	    {
-	      "format": "short",
-	      "label": "",
-	      "logBase": 1,
-	      "max": null,
-	      "min": "0",
-	      "show": true,
-	      "$$hashKey": "object:264"
-	    },
-	    {
-	      "format": "short",
-	      "label": "",
-	      "logBase": 1,
-	      "max": null,
-	      "min": null,
-	      "show": false,
-	      "$$hashKey": "object:265"
-	    }
-	  ],
-	  "yaxis": {
-	    "align": false,
-	    "alignLevel": null
-	  },
-	  "timeFrom": null,
-	  "timeShift": null,
-	  "bars": false,
-	  "dashes": false,
-	  "error": false,
-	  "fill": 0,
-	  "fillGradient": 0,
-	  "hiddenSeries": false,
-	  "percentage": false,
-	  "points": false,
-	  "stack": false,
-	  "steppedLine": false
-	}
+          "description": "The total count of internal sessions.",
+          "editable": true,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 66
+          },
+          "id": 23763572016,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sideWidth": null,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "tidb_server_internal_sessions{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "legendFormat": "{{instance}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 1,
+              "refId": "H"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Internal Sessions",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": "",
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true,
+              "$$hashKey": "object:264"
+            },
+            {
+              "format": "short",
+              "label": "",
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false,
+              "$$hashKey": "object:265"
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "timeFrom": null,
+          "timeShift": null,
+          "bars": false,
+          "dashes": false,
+          "error": false,
+          "fill": 0,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false
+        }
       ],
       "repeat": null,
       "title": "Server",
@@ -9603,7 +9603,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_executor_index_lookup_row_number_bucket{instance=~\"$instance\", type=~\"enable_index_lookup_push_down\"}[1m])) by (le)",
+              "expr": "sum(increase(tidb_executor_index_lookup_row_number_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=~\"enable_index_lookup_push_down\"}[1m])) by (le)",
               "format": "heatmap",
               "interval": "",
               "intervalFactor": 2,
@@ -12618,6 +12618,110 @@
           "yaxis": {
             "align": false
           }
+        },
+        {
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "TiDB read requests traffic statistic",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 78
+          },
+          "id": 23763573006,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_tikvclient_read_request_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, result)",
+              "legendFormat": "{{type}}-{{result}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 2,
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Read Req Traffic",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:327",
+              "format": "Bps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:328",
+              "format": "Bps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "bars": false,
+          "dashes": false,
+          "fill": 0,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
         }
       ],
       "repeat": null,
@@ -14026,6 +14130,108 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 37
+          },
+          "hiddenSeries": false,
+          "id": 23763572019,
+          "legend": {
+            "alignAsTable": true,
+            "hideEmpty": true,
+            "hideZero": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(pd_client_request_circuit_breaker_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (name, event)",
+              "format": "time_series",
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "{{name}}-{{event}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Circuit Breaker Event",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "How long tidb side wait for tso future",
           "editable": true,
           "error": false,
@@ -15152,7 +15358,7 @@
             "alignLevel": null
           }
         },
-	{
+        {
           "aliasColors": {},
           "bars": false,
           "dashLength": 10,
@@ -15288,7 +15494,7 @@
             "align": false,
             "alignLevel": null
           }
-	}
+        }
       ],
       "repeat": null,
       "title": "Schema Load",
@@ -16736,6 +16942,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
+          "decimals": 0,
           "title": "Task Status",
           "tooltip": {
             "shared": true,
@@ -16757,7 +16964,8 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
+              "show": true,
+              "decimals": 0
             },
             {
               "format": "short",
@@ -25561,6 +25769,2631 @@
         }
       ],
       "title": "Global Sort",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "datasource": null,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 88880001,
+      "panels": [
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Remote Plan forward requests per second by type and result",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "hiddenSeries": false,
+          "id": 88880002,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_remote_plan_forward_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, result)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-{{result}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Forward QPS",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Remote Plan forward error rate",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "hiddenSeries": false,
+          "id": 88880003,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_remote_plan_forward_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"err\"}[1m])) / sum(rate(tidb_remote_plan_forward_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "error_rate",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Error Rate",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "percentunit",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Remote Plan cache hit rate",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "hiddenSeries": false,
+          "id": 88880004,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_remote_plan_plan_cache_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"hit\"}[1m])) / sum(rate(tidb_remote_plan_plan_cache_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "hit_rate",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Plan Cache Hit Rate",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "percentunit",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "send=control side end-to-end (includes client read), recv=remote side total (exec+stream). send-recv diff ≈ network + client read time",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 7
+          },
+          "hiddenSeries": false,
+          "id": 88880005,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_forward_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"send\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "send-p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_forward_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"send\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "send-p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_forward_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"send\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "send-p99",
+              "refId": "C"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_forward_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"recv\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "recv-p50",
+              "refId": "D"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_forward_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"recv\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "recv-p95",
+              "refId": "E"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_forward_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"recv\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "recv-p99",
+              "refId": "F"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Forward Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Remote SQL execution time (compile+execute), excludes streaming. recv-exec diff = streaming time",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 7
+          },
+          "hiddenSeries": false,
+          "id": 88880006,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_exec_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_exec_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_exec_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Exec Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Worker pool task submit wait duration. p95 > 10ms indicates resource pressure",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 7
+          },
+          "hiddenSeries": false,
+          "id": 88880007,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_worker_pool_submit_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_worker_pool_submit_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_worker_pool_submit_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Submit Wait Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Number of pending requests waiting for response",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 13
+          },
+          "hiddenSeries": false,
+          "id": 88880008,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "tidb_remote_plan_batch_client_pending_requests{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Pending Requests",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Batch size distribution. Ideal median > 10, max batch = 128",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 13
+          },
+          "hiddenSeries": false,
+          "id": 88880009,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum(rate(tidb_remote_plan_batch_client_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "median",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(tidb_remote_plan_batch_client_batch_size_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_remote_plan_batch_client_batch_size_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "avg",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Batch Size",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Channel full rate. send_ch full indicates remote processing slow, resp_ch full indicates client consuming slow",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 13
+          },
+          "hiddenSeries": false,
+          "id": 88880010,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_remote_plan_batch_client_send_ch_full_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "send_ch_full",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(tidb_remote_plan_batch_client_resp_ch_full_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "resp_ch_full",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Channel Full Rate",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Worker pool status: current workers, soft max, hard max",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 19
+          },
+          "hiddenSeries": false,
+          "id": 88880011,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(tidb_remote_plan_worker_pool_workers{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "workers",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(tidb_remote_plan_worker_pool_soft_max{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "soft_max",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(tidb_remote_plan_worker_pool_hard_max{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "hard_max",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Worker Pool",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Worker pool queue full rate. Growth indicates all workers busy",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 19
+          },
+          "hiddenSeries": false,
+          "id": 88880012,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_remote_plan_worker_pool_queue_full_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "queue_full",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Queue Full Rate",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Session pool size and in-use count. Utilization > 80% consider increase",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 19
+          },
+          "hiddenSeries": false,
+          "id": 88880013,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(tidb_remote_plan_session_pool_size{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "pool_size",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(tidb_remote_plan_session_pool_in_use{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "in_use",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Session Pool",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time from request submit to first response (excludes client data read time). Used for network latency analysis",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 25
+          },
+          "hiddenSeries": false,
+          "id": 88880014,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_first_resp_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_first_resp_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_first_resp_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "First Response Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time for client to consume all data after receiving first response. High values indicate slow client processing",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 25
+          },
+          "hiddenSeries": false,
+          "id": 88880015,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_client_consume_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_client_consume_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_client_consume_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"ok\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Client Consume Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time from first response (column info) to first data row/chunk or EOF on control side.",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 25
+          },
+          "hiddenSeries": false,
+          "id": 88880027,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_first_result_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_first_result_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_first_result_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "First Result Wait Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time waiting for data from remote channel. High values indicate remote side is slow at streaming",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 31
+          },
+          "hiddenSeries": false,
+          "id": 88880016,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_channel_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_channel_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_channel_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Channel Wait Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time spent decoding chunks from remote. Includes buffer allocation and copy",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 31
+          },
+          "hiddenSeries": false,
+          "id": 88880017,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_chunk_decode_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_chunk_decode_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_chunk_decode_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Chunk Decode Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time spent copying rows to output chunk (row-by-row). High values indicate inefficient data transfer",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 31
+          },
+          "hiddenSeries": false,
+          "id": 88880018,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_row_copy_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_row_copy_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_row_copy_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Row Copy Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time spent encoding chunks on remote side before sending via gRPC",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 37
+          },
+          "hiddenSeries": false,
+          "id": 88880019,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_chunk_encode_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_chunk_encode_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_chunk_encode_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Chunk Encode Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time to write chunk to response channel buffer (NOT actual gRPC send). See gRPC Send Duration for network time",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 37
+          },
+          "hiddenSeries": false,
+          "id": 88880020,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_stream_send_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_stream_send_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_stream_send_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Stream Send Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Number of rows and bytes per chunk sent from remote side",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 37
+          },
+          "hiddenSeries": false,
+          "id": 88880021,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_chunk_rows_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "rows-p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_chunk_rows_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "rows-p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_chunk_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "bytes-p50",
+              "refId": "C"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_chunk_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "bytes-p95",
+              "refId": "D"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Chunk Size",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "decbytes",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Actual gRPC stream.Send() time in response sender goroutine. High values indicate network blocking or flow control",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 43
+          },
+          "hiddenSeries": false,
+          "id": 88880022,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_grpc_send_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_grpc_send_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_grpc_send_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "gRPC Send Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Number of responses batched in one gRPC Send. Higher values mean better batching, reducing HOL blocking",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 43
+          },
+          "hiddenSeries": false,
+          "id": 88880023,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_resp_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_resp_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(rate(tidb_remote_plan_resp_batch_size_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_remote_plan_resp_batch_size_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "avg",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Response Batch Size",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time spent blocked in gRPC stream.Recv() on the control side recv loop. High values indicate slow arrival of responses",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 43
+          },
+          "hiddenSeries": false,
+          "id": 88880024,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_grpc_recv_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_grpc_recv_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_grpc_recv_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "gRPC Recv Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time spent in RecordSet.Next() while streaming results on remote side. High values indicate slow/variable row fetch",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 49
+          },
+          "hiddenSeries": false,
+          "id": 88880025,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_rs_next_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_rs_next_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_rs_next_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "RS Next Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time spent in the first RecordSet.Next() call on remote side while streaming results.",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 49
+          },
+          "hiddenSeries": false,
+          "id": 88880028,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_rs_first_next_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_rs_first_next_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_rs_first_next_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "RS First Next Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Time from first response buffered to stream.Send() call in response sender goroutine. Captures batching wait before Send",
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 49
+          },
+          "hiddenSeries": false,
+          "id": 88880026,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_remote_plan_resp_batch_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_remote_plan_resp_batch_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_remote_plan_resp_batch_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Response Batch Wait Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        }
+      ],
+      "title": "Remote Plan",
       "type": "row"
     }
   ],

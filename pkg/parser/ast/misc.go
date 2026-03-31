@@ -561,8 +561,9 @@ type ExecuteStmt struct {
 
 	Name       string
 	UsingVars  []ExprNode
-	BinaryArgs interface{}
-	PrepStmt   interface{} // the corresponding prepared statement
+	BinaryArgs any
+	PrepStmt   any // the corresponding prepared statement
+	PrepStmtId uint32
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
@@ -796,6 +797,9 @@ const (
 	SetCharset = "SetCharset"
 	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// CloudStorageURI is similar to above tidb var, but it's used in import into
+	// to set a separate param for a single import job.
+	CloudStorageURI = "cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
@@ -2812,8 +2816,8 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 
 // RoleOrPriv is a temporary structure to be further processed into auth.RoleIdentity or PrivElem
 type RoleOrPriv struct {
-	Symbols string      // hold undecided symbols
-	Node    interface{} // hold auth.RoleIdentity or PrivElem that can be sure when parsing
+	Symbols string // hold undecided symbols
+	Node    any    // hold auth.RoleIdentity or PrivElem that can be sure when parsing
 }
 
 func (n *RoleOrPriv) ToRole() (*auth.RoleIdentity, error) {
@@ -3730,17 +3734,32 @@ func RedactURL(str string) string {
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
 	})
+
+	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
 	case "s3", "ks3":
+		redactKeys = map[string]struct{}{
+			"access-key":        {},
+			"secret-access-key": {},
+			"session-token":     {},
+		}
+	case "azure", "azblob":
+		redactKeys = map[string]struct{}{
+			"sas-token": {},
+		}
+	}
+
+	if len(redactKeys) > 0 {
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
+			if _, ok := redactKeys[normalizedKey]; ok {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
+		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
 	}
 	return u.String()
@@ -3786,6 +3805,23 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// CancelDistributionJobStmt represent CANCEL DISTRIBUTION JOB statement.
+type CancelDistributionJobStmt struct {
+	stmtNode
+	JobID int64
+}
+
+func (n *CancelDistributionJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelDistributionJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL DISTRIBUTION JOB ")
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }
@@ -3840,7 +3876,7 @@ type TableOptimizerHint struct {
 	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
-	HintData interface{}
+	HintData any
 	// QBName is the default effective query block of this hint.
 	QBName  model.CIStr
 	Tables  []HintTable
@@ -3925,14 +3961,14 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
 		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
-		"no_index_join", "no_index_hash_join", "no_index_merge_join":
+		"no_index_join", "no_index_hash_join", "no_index_merge_join", "full":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {
@@ -4010,13 +4046,13 @@ type BinaryLiteral interface {
 }
 
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
-var NewDecimal func(string) (interface{}, error)
+var NewDecimal func(string) (any, error)
 
 // NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
-var NewHexLiteral func(string) (interface{}, error)
+var NewHexLiteral func(string) (any, error)
 
 // NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
-var NewBitLiteral func(string) (interface{}, error)
+var NewBitLiteral func(string) (any, error)
 
 // SetResourceGroupStmt is a statement to set the resource group name for current session.
 type SetResourceGroupStmt struct {

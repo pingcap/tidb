@@ -12,12 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build fusion
+
 package executor_test
 
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSetVarForPKDB(t *testing.T) {
@@ -36,4 +40,33 @@ func TestSetVarForPKDB(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_create_from_select_using_import;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@session.tidb_create_from_select_using_import=1;`)
 	tk.MustQuery(`select @@session.tidb_create_from_select_using_import;`).Check(testkit.Rows("1"))
+}
+
+func TestPingKaiDBSetVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// test tidbx_fast_path
+	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidbx_fast_path = 1")
+	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("1"))
+	require.True(t, variable.EnableFastPath.Load())
+	tk.MustExec("set global tidbx_fast_path = 0")
+	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("0"))
+	require.False(t, variable.EnableFastPath.Load())
+
+	// test tidbx_enable_index_lookup_push_down
+	// global scope
+	tk.MustQuery("select @@global.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidbx_enable_index_lookup_push_down = 1")
+	tk.MustQuery("select @@global.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidbx_enable_index_lookup_push_down = 0")
+	tk.MustQuery("select @@global.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0"))
+	// session scope
+	tk.MustQuery("select @@session.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set session tidbx_enable_index_lookup_push_down = 1")
+	tk.MustQuery("select @@session.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().EnableIndexLookUpPushDown)
+	tk.MustExec("set session tidbx_enable_index_lookup_push_down = 0")
+	tk.MustQuery("select @@session.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0"))
 }

@@ -142,15 +142,15 @@ func (la *LogicalAggregation) ExplainInfo() string {
 // ReplaceExprColumns implements base.Plan.<5th> interface.
 func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ruleutil.ResolveExprAndReplace(aggExpr, replace)
+		for i, aggExpr := range agg.Args {
+			agg.Args[i] = ruleutil.ResolveExprAndReplace(aggExpr, replace)
 		}
-		for _, orderExpr := range agg.OrderByItems {
-			ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
+		for i, orderExpr := range agg.OrderByItems {
+			agg.OrderByItems[i].Expr = ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
 		}
 	}
-	for _, gbyItem := range la.GroupByItems {
-		ruleutil.ResolveExprAndReplace(gbyItem, replace)
+	for i, gbyItem := range la.GroupByItems {
+		la.GroupByItems[i] = ruleutil.ResolveExprAndReplace(gbyItem, replace)
 	}
 }
 

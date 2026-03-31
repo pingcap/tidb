@@ -399,13 +399,21 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	if len(cols) == 0 {
 		return
 	}
-	if len(cols) < len(e.tableInfo.Columns) {
+
+	filteredCols := make([]*model.ColumnInfo, 0, len(cols))
+	for _, col := range cols {
+		if !col.IsChanging() && !col.IsRemoving() {
+			filteredCols = append(filteredCols, col)
+		}
+	}
+
+	if len(filteredCols) < len(e.tableInfo.GetNonTempColumns()) {
 		if len(cols) > 1 {
 			b.WriteString(" columns ")
 		} else {
 			b.WriteString(" column ")
 		}
-		for i, col := range cols {
+		for i, col := range filteredCols {
 			if i > 0 {
 				b.WriteString(", ")
 			}

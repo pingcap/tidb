@@ -81,6 +81,33 @@ func TestFuzzyBindingCache(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestDuplicatedBinding(t *testing.T) {
+	// 3 bindings with the same noDBDigest
+	bindingDB1 := []Binding{{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "db1"}}
+	bindingDB2 := []Binding{{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "db2"}}
+	bindingDB3 := []Binding{{BindSQL: "SELECT * FROM db3.t1", SQLDigest: "db3"}}
+	c := newFuzzyBindingCache(nil).(*fuzzyBindingCache)
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+
+	var noDBDigest string
+	for digest := range c.fuzzy2SQLDigests {
+		noDBDigest = digest
+	}
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(c.fuzzy2SQLDigests[noDBDigest]))
+	require.Equal(t, 3, len(c.sql2FuzzyDigest))
+
+	// put 3 duplicated bindings again
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(c.fuzzy2SQLDigests[noDBDigest]))
+	require.Equal(t, 3, len(c.sql2FuzzyDigest))
+}
+
 func TestBindCache(t *testing.T) {
 	variable.MemQuotaBindingCache.Store(250)
 	bindCache := newBindCache().(*bindingCache)

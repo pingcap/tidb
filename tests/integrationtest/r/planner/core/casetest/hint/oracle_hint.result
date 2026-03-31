@@ -1,0 +1,122 @@
+use test;
+drop table if exists t;
+create table t (a int, b int, c int, key(b), key(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ index(t b c) */ * from t where a = 1;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select /*+ index(t b xxxx) */ * from t where a = 1;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1176	Key 'xxxx' doesn't exist in table 't'
+explain select /*+ index(t xxx) */ * from t where a = 1;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1176	Key 'xxx' doesn't exist in table 't'
+drop table if exists t;
+use test;
+drop table if exists t;
+create table t (a int, b int, c int, key(b), key(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ index(t) */ * from t where a = 1;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+use test;
+drop table if exists t;
+create table t (a int primary key, b int, c int, key idx_b(b), key idx_c(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ no_index(t) */ * from t where b = 2;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.t.b, 2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select /*+ no_index(t idx_b) */ * from t where b = 2 and c = 2;
+id	estRows	task	access object	operator info
+IndexLookUp_8	0.01	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[2,2], keep order:false, stats:pseudo
+└─Selection_7(Probe)	0.01	cop[tikv]		eq(test.t.b, 2)
+  └─TableRowIDScan_6	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select /*+ no_index(t idx_c) */ * from t where c = 2;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.t.c, 2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select /*+ no_index(t idx_b, idx_c) */ * from t where b = 2 and c = 2;
+id	estRows	task	access object	operator info
+TableReader_7	0.01	root		data:Selection_6
+└─Selection_6	0.01	cop[tikv]		eq(test.t.b, 2), eq(test.t.c, 2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select /*+ no_index(t idx_b idx_c) */ * from t where b = 2 and c = 2;
+id	estRows	task	access object	operator info
+TableReader_7	0.01	root		data:Selection_6
+└─Selection_6	0.01	cop[tikv]		eq(test.t.b, 2), eq(test.t.c, 2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+set tidb_cost_model_version=2;
+drop table if exists t_full1, t_full2, t_full3;
+create table t_full1 (a int, b int, key(a));
+create table t_full2 (a int, b int, key(a));
+create table t_full3 (a int, b int, key(a));
+explain select /*+ FULL(t_full1) */ * from t_full1 where a = 1;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.t_full1.a, 1)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t_full1	keep order:false, stats:pseudo
+explain select /*+ FULL(t_full1) */ * from t_full1 join t_full2 on t_full1.a = t_full2.a where t_full1.a = 1;
+id	estRows	task	access object	operator info
+HashJoin_9	100.00	root		CARTESIAN inner join
+├─IndexLookUp_16(Build)	10.00	root		
+│ ├─IndexRangeScan_14(Build)	10.00	cop[tikv]	table:t_full2, index:a(a)	range:[1,1], keep order:false, stats:pseudo
+│ └─TableRowIDScan_15(Probe)	10.00	cop[tikv]	table:t_full2	keep order:false, stats:pseudo
+└─TableReader_13(Probe)	10.00	root		data:Selection_12
+  └─Selection_12	10.00	cop[tikv]		eq(test.t_full1.a, 1)
+    └─TableFullScan_11	10000.00	cop[tikv]	table:t_full1	keep order:false, stats:pseudo
+explain select /*+ FULL(t_full1, t_full2) */ * from t_full1 join t_full2 on t_full1.a = t_full2.a where t_full1.a = 1;
+id	estRows	task	access object	operator info
+HashJoin_9	100.00	root		CARTESIAN inner join
+├─TableReader_16(Build)	10.00	root		data:Selection_15
+│ └─Selection_15	10.00	cop[tikv]		eq(1, test.t_full2.a)
+│   └─TableFullScan_14	10000.00	cop[tikv]	table:t_full2	keep order:false, stats:pseudo
+└─TableReader_13(Probe)	10.00	root		data:Selection_12
+  └─Selection_12	10.00	cop[tikv]		eq(test.t_full1.a, 1)
+    └─TableFullScan_11	10000.00	cop[tikv]	table:t_full1	keep order:false, stats:pseudo
+explain select /*+ FULL(t_full1, t_full2, t_full3) */ * from t_full1 join t_full2 on t_full1.a = t_full2.a join t_full3 on t_full2.a = t_full3.a where t_full1.a = 1;
+id	estRows	task	access object	operator info
+HashJoin_14	125.00	root		CARTESIAN inner join
+├─TableReader_17(Build)	10.00	root		data:Selection_16
+│ └─Selection_16	10.00	cop[tikv]		eq(test.t_full1.a, 1)
+│   └─TableFullScan_15	10000.00	cop[tikv]	table:t_full1	keep order:false, stats:pseudo
+└─HashJoin_19(Probe)	12.50	root		inner join, equal:[eq(test.t_full2.a, test.t_full3.a)]
+  ├─TableReader_22(Build)	10.00	root		data:Selection_21
+  │ └─Selection_21	10.00	cop[tikv]		eq(1, test.t_full2.a)
+  │   └─TableFullScan_20	10000.00	cop[tikv]	table:t_full2	keep order:false, stats:pseudo
+  └─TableReader_25(Probe)	9990.00	root		data:Selection_24
+    └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t_full3.a))
+      └─TableFullScan_23	10000.00	cop[tikv]	table:t_full3	keep order:false, stats:pseudo
+explain select /*+ INDEX(t_full1) */ * from t_full1 where a in (select /*+ FULL(t_full2) */ a from t_full2 where a > 1);
+id	estRows	task	access object	operator info
+IndexHashJoin_19	3333.33	root		inner join, inner:IndexLookUp_16, outer key:test.t_full2.a, inner key:test.t_full1.a, equal cond:eq(test.t_full2.a, test.t_full1.a)
+├─HashAgg_34(Build)	2666.67	root		group by:test.t_full2.a, funcs:firstrow(test.t_full2.a)->test.t_full2.a
+│ └─TableReader_35	2666.67	root		data:HashAgg_29
+│   └─HashAgg_29	2666.67	cop[tikv]		group by:test.t_full2.a, 
+│     └─Selection_33	3333.33	cop[tikv]		gt(test.t_full2.a, 1), not(isnull(test.t_full2.a))
+│       └─TableFullScan_32	10000.00	cop[tikv]	table:t_full2	keep order:false, stats:pseudo
+└─IndexLookUp_16(Probe)	3333.33	root		
+  ├─Selection_15(Build)	3333.33	cop[tikv]		not(isnull(test.t_full1.a))
+  │ └─IndexRangeScan_13	3336.67	cop[tikv]	table:t_full1, index:a(a)	range: decided by [eq(test.t_full1.a, test.t_full2.a)], keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	3333.33	cop[tikv]	table:t_full1	keep order:false, stats:pseudo
+drop table if exists t_full1, t_full2, t_full3;

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -48,13 +48,6 @@ func TestCheckClusterVersion(t *testing.T) {
 
 	mock := mockPDClient{
 		Client: nil,
-	}
-	{
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v5.4.2`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
 	}
 
 	{
@@ -155,26 +148,6 @@ func TestCheckClusterVersion(t *testing.T) {
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.Error(t, err)
 		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.1.0, please `, err.Error())
-	}
-
-	{
-		build.ReleaseVersion = "v8.4.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v6.2.0`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.Error(t, err)
-		require.Regexp(t, `^TiKV .* is too old because the PITR id map is written into`, err.Error())
-	}
-
-	{
-		build.ReleaseVersion = "v8.5.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v6.2.0`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.Error(t, err)
-		require.Regexp(t, `^TiKV .* is too old because the PITR id map is written into`, err.Error())
 	}
 
 	{
@@ -337,15 +310,6 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.NoError(t, err)
-	}
-
-	{
-		build.ReleaseVersion = "v6.0.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: "v4.4.0"}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
-		require.Error(t, err)
 	}
 
 	{

@@ -162,7 +162,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		select {
 		case <-ctx.Done():
 			taskManager, err := storage.GetTaskManager()

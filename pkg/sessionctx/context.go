@@ -257,6 +257,20 @@ func (ForwardedForRemoteExecKey) String() string {
 	return "forwarded_for_remote_exec"
 }
 
+// ForwardedSQLDigest carries normalized SQL and digest from the control side.
+// It is used to seed StmtCtx on the remote execution side.
+type ForwardedSQLDigest struct {
+	Normalized string
+	Digest     string
+}
+
+// ForwardedSQLDigestKey is a session ValueStore key for ForwardedSQLDigest.
+type ForwardedSQLDigestKey struct{}
+
+func (ForwardedSQLDigestKey) String() string {
+	return "forwarded_sql_digest"
+}
+
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp.
 // For read requests to the storage, the check can be implicitly performed when sending the RPC request. So this
 // function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`

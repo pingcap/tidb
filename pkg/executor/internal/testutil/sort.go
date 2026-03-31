@@ -27,10 +27,11 @@ import (
 
 // SortCase is the sort case
 type SortCase struct {
-	Ctx        sessionctx.Context
-	OrderByIdx []int
-	Ndvs       []int
-	Rows       int
+	Ctx                   sessionctx.Context
+	FileNamePrefixForTest string
+	OrderByIdx            []int
+	Ndvs                  []int
+	Rows                  int
 }
 
 // Columns creates column

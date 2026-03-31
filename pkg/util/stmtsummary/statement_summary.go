@@ -228,6 +228,9 @@ type stmtSummaryByDigestElement struct {
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
+	storageKV  bool // query read from TiKV
+	storageMPP bool // query read from TiFlash
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -754,8 +757,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	if sei.CopTasks != nil {
-		numCopTasks := int64(sei.CopTasks.NumCopTasks)
-		ssElement.sumNumCopTasks += numCopTasks
+		ssElement.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
 		if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
 			ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
 			ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
@@ -929,6 +931,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)
+
+	ssElement.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssElement.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
 // Truncate SQL to maxSQLLength.

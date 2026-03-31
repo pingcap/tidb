@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
@@ -238,6 +239,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
+	batchGetCtx := ctx
+	if e.txn != nil && e.txn.Valid() && tableHasDirtyContentInTxn(e.Ctx(), e.tblInfo) {
+		batchGetCtx = tikvutil.WithDisableStoreBatchGet(ctx)
+	}
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
@@ -292,7 +297,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
+		handleVals, err = batchGetter.BatchGet(batchGetCtx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
@@ -418,7 +423,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
-	values, err = batchGetter.BatchGet(ctx, keys)
+	values, err = batchGetter.BatchGet(batchGetCtx, keys)
 	if err != nil {
 		return err
 	}
@@ -476,9 +481,28 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
+func tableHasDirtyContentInTxn(sctx sessionctx.Context, tableInfo *model.TableInfo) bool {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return sctx.HasDirtyContent(tableInfo.ID)
+	}
+	for _, partition := range pi.Definitions {
+		if sctx.HasDirtyContent(partition.ID) {
+			return true
+		}
+	}
+	return false
+}
+
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := sctx.GetSessionVars().TxnCtx
+	sessVars := sctx.GetSessionVars()
+
+	if err := checkMaxExecutionTimeExceeded(sctx); err != nil {
+		return err
+	}
+
+	txnCtx := sessVars.TxnCtx
 	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
 	if err != nil {
 		return err

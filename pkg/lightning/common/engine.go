@@ -36,6 +36,11 @@ type Engine interface {
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
 	ImportedStatistics() (importedKVSize int64, importedKVCount int64)
+	// ConflictInfo returns the conflict information of the engine.
+	// TODO only external engine have this method, we should't make part of the
+	// 	Engine interface, but right now we have to consider backend pkg which need
+	// to consider the lightning tidb backend.
+	ConflictInfo() ConflictInfo
 	// GetKeyRange returns the key range [startKey, endKey) of the engine. If the
 	// duplicate detection is enabled, the keys in engine are encoded by duplicate
 	// detection but the returned keys should not be encoded.
@@ -51,6 +56,31 @@ type Engine interface {
 	Close() error
 }
 
+// ConflictInfo records the KV conflict information.
+// to help describe how we do conflict resolution, we separate 'conflict KV' out
+// from 'duplicate KV':
+//   - 'duplicate KV' means the KV pairs that have the same key, including keys
+//     come from PK/UK/non-UK.
+//   - 'conflict KV' means the KV pairs that have the same key, and they can cause
+//     conflict ROWS in the table, including keys come from PK/UK. non-UK keys may
+//     became duplicate when PK keys are duplicated, but we don't need to consider
+//     them when resolving conflicts.
+//
+// we put it here to avoid import cycle due to common.Engine
+type ConflictInfo struct {
+	// Count is the recorded count of conflict KV pairs, either PK or UK.
+	Count uint64 `json:"count,omitempty"`
+	// Files is the list of files that contain conflict KV pairs.
+	// it's in the same format as normal KV files.
+	Files []string `json:"files,omitempty"`
+}
+
+// Merge merges the other ConflictInfo into this one.
+func (c *ConflictInfo) Merge(other *ConflictInfo) {
+	c.Count += other.Count
+	c.Files = append(c.Files, other.Files...)
+}
+
 // OnDuplicateKey is the action when a duplicate key is found during global sort.
 // Note: lightning also have similar concept call OnDup, they have different semantic.
 // we put it here to avoid import cycle.
@@ -58,9 +88,16 @@ type OnDuplicateKey int
 
 const (
 	// OnDuplicateKeyIgnore means ignore the duplicate key.
+	// this is the old behavior as add-index check dup by using DupDetectKeyAdapter.
 	OnDuplicateKeyIgnore OnDuplicateKey = iota
+	// OnDuplicateKeyRecord means record all the duplicate keys to external store.
+	// we use this for PK and UK in import-into.
+	OnDuplicateKeyRecord
+	// OnDuplicateKeyRemove means remove the duplicate key silently.
+	// we use this action for non-unique secondary indexes in import-into.
+	OnDuplicateKeyRemove
 	// OnDuplicateKeyError return an error when a duplicate key is found.
-	// We use this for add unique index.
+	// may use this for add unique index.
 	OnDuplicateKeyError
 )
 
@@ -69,6 +106,10 @@ func (o OnDuplicateKey) String() string {
 	switch o {
 	case OnDuplicateKeyIgnore:
 		return "ignore"
+	case OnDuplicateKeyRecord:
+		return "record"
+	case OnDuplicateKeyRemove:
+		return "remove"
 	case OnDuplicateKeyError:
 		return "error"
 	}

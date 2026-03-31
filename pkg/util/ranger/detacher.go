@@ -339,13 +339,12 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
-		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+		if len(res.AccessConds) == 0 {
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}
-
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}
@@ -691,6 +690,18 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 	return nil
 }
 
+// canSurviveAsStandaloneEqOrInAccess reports whether cond is an original Eq/In-style
+// predicate that the existing finalize rules in this function would still keep as a
+// standalone access by itself. Generic-rewrite mode may fall back only to such
+// original holders when a same-slot merge turns out to be bind-sensitive.
+func canSurviveAsStandaloneEqOrInAccess(cond expression.Expression) bool {
+	if !allEqOrIn(cond) {
+		return false
+	}
+	valInfo := extractValueInfo(cond)
+	return valInfo == nil || valInfo.value == nil || !valInfo.value.IsNull()
+}
+
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
 // filters: filters is the part that some access conditions need to be evaluated again since it's only the prefix part of char column.
@@ -707,18 +718,70 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
-	newConditions := make([]expression.Expression, 0, len(conditions))
+	newConditions := make([]expression.Expression, 0, len(conditions)+len(cols))
+	// newConditionOriginOffsets parallels newConditions. It records which original
+	// conditions[i] produced each entry in newConditions; synthesized entries that
+	// do not come directly from the input use -1. This lets the final cleanup
+	// distinguish "ordinary duplicate access conds" from "fallback residuals we
+	// intentionally preserved from the original input".
+	newConditionOriginOffsets := make([]int, 0, len(conditions)+len(cols))
+	appendNewConditionWithOrigin := func(cond expression.Expression, originOffset int) {
+		newConditions = append(newConditions, cond)
+		newConditionOriginOffsets = append(newConditionOriginOffsets, originOffset)
+	}
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
+	// Generic-rewrite mode still runs the normal same-slot intersection so we can
+	// detect contradiction and classify the slot as point-like vs range-like. What
+	// it must not do is cache a new Eq/In expression synthesized from a merge whose
+	// shape depends on current bind values.
+	genericForPlanCache := expression.PlanCacheGenericRewriteEnabled(sctx.ExprCtx) &&
+		expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions)
+	// The following slices are only meaningful in generic-rewrite mode.
+	// mergedHasMutable[i] records that slot i has such a bind-sensitive merge.
+	mergedHasMutable := make([]bool, len(cols))
+	// standaloneHolderOffsets[i] stores the chosen original standalone holder for
+	// slot i. The offset is enough: if generic-rewrite mode rejects the merged
+	// result, we can recover the holder as conditions[offset] and return the other
+	// same-slot predicates as residual filters. There is no need to keep a second
+	// parallel slice of expressions.
+	standaloneHolderOffsets := make([]int, len(cols))
+	for i := range standaloneHolderOffsets {
+		standaloneHolderOffsets[i] = -1
+	}
+	// protectedFallbackResidualOffsets marks original conditions that generic
+	// fallback intentionally keeps as residual filters. They must survive the
+	// final "remove access conditions from newConditions" step even when the
+	// current bind values make them compare equal to the chosen access holder.
+	protectedFallbackResidualOffsets := make([]bool, len(conditions))
+	// Phase 1: classify same-slot Eq/In-style predicates, remember whether their
+	// merge is bind-sensitive, and pick the best original holder if generic
+	// fallback later needs to keep one stable access predicate.
 	for i, cond := range conditions {
 		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue
 		}
+		if genericForPlanCache && canSurviveAsStandaloneEqOrInAccess(cond) {
+			// If this slot later proves to be bind-sensitive, generic-rewrite mode
+			// can only fall back to one original standalone holder. Prefer an
+			// immutable holder over a mutable one, but only when that immutable
+			// predicate can still survive standalone finalize by itself.
+			holderOffset := standaloneHolderOffsets[offset]
+			if holderOffset == -1 ||
+				(expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, []expression.Expression{conditions[holderOffset]}) &&
+					!expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, []expression.Expression{cond})) {
+				standaloneHolderOffsets[offset] = i
+			}
+		}
 		if accesses[offset] == nil {
 			accesses[offset] = cond
 			continue
+		}
+		if genericForPlanCache {
+			mergedHasMutable[offset] = mergedHasMutable[offset] ||
+				expression.MaybeOverOptimized4PlanCacheForMultiExpression(sctx.ExprCtx, accesses[offset], cond)
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
@@ -740,6 +803,9 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			return nil, nil, nil, nil, true
 		}
 	}
+	// Phase 2: finalize one access expression per slot. In generic fallback
+	// mode, bind-sensitive merged results are not materialized back into a new
+	// access condition; instead we keep one original holder in accesses[i].
 	for i, ma := range mergedAccesses {
 		if ma == nil {
 			if accesses[i] != nil {
@@ -748,7 +814,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 					if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
 						accesses[i] = nil
 					} else {
-						newConditions = append(newConditions, accesses[i])
+						appendNewConditionWithOrigin(accesses[i], -1)
 					}
 				} else {
 					accesses[i] = nil
@@ -759,6 +825,20 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		points[i] = allSinglePoints(sctx.TypeCtx, points[i])
 		if points[i] == nil {
 			// There exists an interval whose length is larger than 0
+			if genericForPlanCache && mergedHasMutable[i] {
+				// The merge result is still useful for shape detection, but
+				// generic-rewrite mode may keep only an original standalone holder
+				// here; it must not materialize a bind-sensitive merge into a new
+				// cached Eq/In access.
+				holderOffset := standaloneHolderOffsets[i]
+				if holderOffset != -1 {
+					accesses[i] = conditions[holderOffset]
+					columnValues[i] = extractValueInfo(accesses[i])
+				} else {
+					accesses[i] = nil
+				}
+				continue
+			}
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
@@ -768,9 +848,22 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			return nil, nil, nil, nil, true
 		} else {
 			// All Intervals are single points
+			if genericForPlanCache && mergedHasMutable[i] {
+				// The merged single-point shape depends on current bind values, so
+				// generic-rewrite mode must not rewrite it into a new synthetic Eq/In
+				// access for the cached template.
+				holderOffset := standaloneHolderOffsets[i]
+				if holderOffset != -1 {
+					accesses[i] = conditions[holderOffset]
+					columnValues[i] = extractValueInfo(accesses[i])
+				} else {
+					accesses[i] = nil
+				}
+				continue
+			}
 
 			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
-			newConditions = append(newConditions, accesses[i])
+			appendNewConditionWithOrigin(accesses[i], -1)
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
 				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
 				// Maybe we can improve it later.
@@ -782,9 +875,21 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			}
 		}
 	}
+	// Phase 3: rebuild the remaining predicates. Most access conditions are
+	// removed from newConditions later, but generic fallback may explicitly keep
+	// a same-slot original predicate as a residual filter for execution-time
+	// recheck.
 	for i, offset := range offsets {
 		if offset == -1 || accesses[offset] == nil {
-			newConditions = append(newConditions, conditions[i])
+			appendNewConditionWithOrigin(conditions[i], i)
+			continue
+		}
+		if genericForPlanCache && mergedHasMutable[offset] && i != standaloneHolderOffsets[offset] {
+			// We kept only the original holder as access for this slot. The other
+			// same-slot predicates still need to be enforced as residual filters for
+			// the current execution.
+			protectedFallbackResidualOffsets[i] = true
+			appendNewConditionWithOrigin(conditions[i], i)
 		}
 	}
 	for i, cond := range accesses {
@@ -805,8 +910,23 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			filters = append(filters, cond)
 		}
 	}
-	// We should remove all accessConds, so that they will not be added to filter conditions.
-	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
+	// Phase 4: drop access conditions from newConditions, except for fallback
+	// residuals that were intentionally preserved from the original input.
+	filteredConditions := newConditions[:0]
+	for i, cond := range newConditions {
+		originOffset := newConditionOriginOffsets[i]
+		// Same-slot fallback may deliberately keep an original predicate as a
+		// residual filter even when it currently evaluates equal to the chosen
+		// access holder.
+		if originOffset >= 0 && protectedFallbackResidualOffsets[originOffset] {
+			filteredConditions = append(filteredConditions, cond)
+			continue
+		}
+		if !expression.Contains(sctx.ExprCtx.GetEvalCtx(), accesses, cond) {
+			filteredConditions = append(filteredConditions, cond)
+		}
+	}
+	newConditions = filteredConditions
 	return accesses, filters, newConditions, columnValues, false
 }
 

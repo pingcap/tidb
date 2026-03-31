@@ -57,6 +57,24 @@ func (local *Backend) splitAndScatterRegionInBatches(
 		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
 		batchCnt = min(batchCnt, burstPerSec)
 	}
+
+	if len(splitKeys) > 100 {
+		// first split&scatter coarse grained regions for every sqrtCnt regions
+		sqrtCnt := int(math.Sqrt(float64(len(splitKeys))))
+		coarseGrainedSplitKeys := make([][]byte, 0, sqrtCnt+1)
+		i := 0
+		for ; i < len(splitKeys); i += sqrtCnt {
+			coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[i])
+		}
+		if i != len(splitKeys) {
+			coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[len(splitKeys)-1])
+		}
+		if err := local.splitAndScatterRegionByRanges(ctx, coarseGrainedSplitKeys); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// then split&scatter fine-grained regions for all regions
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -320,6 +321,27 @@ func TestSelectIntoUDVErrorMessage(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustGetErrMsg("select a into @c from t", "ERROR 1172 (42000): Result consisted of more than one row")
+}
+
+func TestSelectIntoVarsPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create user u1@localhost")
+	tk.MustExec("grant select on test.* to u1@localhost")
+
+	userTK := testkit.NewTestKit(t, store)
+	require.NoError(t, userTK.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	userTK.MustExec("use test")
+	userTK.MustExec("select 1 into @a")
+	userTK.MustQuery("select @a").Check(testkit.Rows("1"))
+	userTK.MustExec("select 2 into @b from dual")
+	userTK.MustQuery("select @b").Check(testkit.Rows("2"))
+
+	outfile := randomSelectFilePath("TestSelectIntoVarsPrivilege")
+	err := userTK.ExecToErr(fmt.Sprintf("select 1 into outfile %q", outfile))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FILE")
 }
 
 func TestSelectIntoType(t *testing.T) {

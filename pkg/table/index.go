@@ -98,7 +98,7 @@ type Index interface {
 	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.
 	GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
 	// GenIndexValue generates an index value.
-	GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
+	GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
 	// FetchValues fetched index column values in a row.
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
@@ -176,7 +176,7 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 	if err != nil {
 		return nil, nil, false, err
 	}
-	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, val, iter.handle, iter.handleRestoreData, valBuf)
+	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, false, val, iter.handle, iter.handleRestoreData, valBuf)
 	if err != nil {
 		return nil, nil, false, err
 	}

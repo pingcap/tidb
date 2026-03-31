@@ -47,6 +47,22 @@ func (c *Codec) Encode(chk *Chunk) []byte {
 	return buffer
 }
 
+// EncodeToBuffer encodes a Chunk into the provided buffer, returning the result.
+// If the buffer capacity is insufficient, a new buffer will be allocated.
+// This method helps reduce memory allocations when encoding multiple chunks.
+func (c *Codec) EncodeToBuffer(chk *Chunk, buffer []byte) []byte {
+	needed := chk.MemoryUsage()
+	if int64(cap(buffer)) < needed {
+		buffer = make([]byte, 0, needed)
+	} else {
+		buffer = buffer[:0]
+	}
+	for _, col := range chk.columns {
+		buffer = c.encodeColumn(buffer, col)
+	}
+	return buffer
+}
+
 func (*Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	var lenBuffer [4]byte
 	// encode length.

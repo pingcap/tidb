@@ -48,10 +48,10 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 				batchSize)
 		},
 	}
-	opCtx, cancel := ddl.NewLocalOperatorCtx(context.Background(), 1)
-	defer cancel()
+	wctx := ddl.NewLocalWorkerCtx(context.Background(), 1)
+	defer wctx.Cancel()
 	src := testutil.NewOperatorTestSource(ddl.TableScanTask{ID: 1, Start: startKey, End: endKey})
-	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil, 0, nil)
+	scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, srcChkPool, 1, 0, nil, nil)
 	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 	operator.Compose[ddl.TableScanTask](src, scanOp)

@@ -22,6 +22,7 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -117,6 +118,12 @@ func IsNonBinaryStr(ft *FieldType) bool {
 		return true
 	}
 	return false
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return NeedRestoredData(model.GetIdxChangingFieldType(idxCol, col))
 }
 
 // NeedRestoredData returns if a type needs restored data.

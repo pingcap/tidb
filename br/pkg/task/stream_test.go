@@ -15,6 +15,7 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -192,7 +193,7 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	_, err = getLogRange(context.TODO(), &cfg)
+	_, err = getLogInfo(context.TODO(), &cfg)
 	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
 		"the storage has been used for full backup"))
 }
@@ -215,7 +216,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	logInfo, err := getLogRange(context.TODO(), &cfg)
+	logInfo, err := getLogInfo(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
 }
@@ -226,9 +227,105 @@ func TestGetExternalStorageOptions(t *testing.T) {
 	require.NoError(t, err)
 	options := getExternalStorageOptions(&cfg, u)
 	require.NotNil(t, options.HTTPClient)
+}
 
-	u, err = storage.ParseBackend("gs://bucket/path", nil)
-	require.NoError(t, err)
-	options = getExternalStorageOptions(&cfg, u)
-	require.Nil(t, options.HTTPClient)
+func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
+	testCases := []struct {
+		name                  string
+		schemasReplace        *stream.SchemasReplace
+		snapshotRange         [2]int64
+		expectedRangeCount    int
+		expectedLogMessage    string
+		hasValidSnapshotRange bool
+	}{
+		{
+			name: "with valid snapshot range and log restore tables",
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+					1: {
+						Name:        "test_db",
+						FilteredOut: false,
+						TableMap: map[int64]*stream.TableReplace{
+							// snapshot tables (within range [100, 200))
+							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							// log restore tables (outside range)
+							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{301: 301, 302: 302}},
+						},
+					},
+				},
+			},
+			snapshotRange:         [2]int64{100, 200},
+			expectedRangeCount:    2, // snapshot range + log restore range
+			hasValidSnapshotRange: true,
+		},
+		{
+			name: "with valid snapshot range, no log restore tables",
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+					2: {
+						Name:        "test_db",
+						FilteredOut: false,
+						TableMap: map[int64]*stream.TableReplace{
+							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
+						},
+					},
+				},
+			},
+			snapshotRange:         [2]int64{100, 200},
+			expectedRangeCount:    1, // only snapshot range
+			hasValidSnapshotRange: true,
+		},
+		{
+			name: "without valid snapshot range",
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+					3: {
+						Name:        "test_db",
+						FilteredOut: false,
+						TableMap: map[int64]*stream.TableReplace{
+							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{}},
+						},
+					},
+				},
+			},
+			snapshotRange:         [2]int64{},
+			expectedRangeCount:    1, // fallback range covering all tables
+			hasValidSnapshotRange: false,
+		},
+		{
+			name: "empty schemas replace",
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{},
+			},
+			snapshotRange:         [2]int64{100, 200},
+			expectedRangeCount:    1, // only snapshot range
+			hasValidSnapshotRange: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a mock LogRestoreConfig
+			cfg := &LogRestoreConfig{
+				RestoreConfig: &RestoreConfig{}, // Initialize the embedded RestoreConfig
+				tableMappingManager: &stream.TableMappingManager{
+					PreallocatedRange: tc.snapshotRange,
+				},
+			}
+
+			keyRanges := buildKeyRangesFromSchemasReplace(tc.schemasReplace, cfg)
+			require.Equal(t, tc.expectedRangeCount, len(keyRanges))
+
+			// Verify that all ranges are properly formed (start < end)
+			for i, keyRange := range keyRanges {
+				require.True(t, len(keyRange[0]) > 0, "start key should not be empty for range %d", i)
+				require.True(t, len(keyRange[1]) > 0, "end key should not be empty for range %d", i)
+				require.True(t, bytes.Compare(keyRange[0], keyRange[1]) < 0, "start key should be less than end key for range %d", i)
+			}
+		})
+	}
 }

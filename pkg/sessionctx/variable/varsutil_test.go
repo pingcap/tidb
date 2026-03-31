@@ -372,19 +372,19 @@ func TestVarsutil(t *testing.T) {
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "follower", val)
-	require.Equal(t, kv.ReplicaReadFollower, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
 	err = v.SetSystemVar(TiDBReplicaRead, "leader")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader", val)
-	require.Equal(t, kv.ReplicaReadLeader, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadLeader, v.replicaRead)
 	err = v.SetSystemVar(TiDBReplicaRead, "leader-and-follower")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader-and-follower", val)
-	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
 
 	for _, c := range []struct {
 		a string

@@ -53,8 +53,8 @@ func (ls *LogicalSort) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range ls.ByItems {
-		ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
+	for i, byItem := range ls.ByItems {
+		ls.ByItems[i].Expr = ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 

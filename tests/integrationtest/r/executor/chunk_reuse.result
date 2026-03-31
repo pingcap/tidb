@@ -169,9 +169,6 @@ select @@last_sql_use_alloc;
 select t1.id1,t1.id7 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
 id1	id7
 1	NULL
-select @@last_sql_use_alloc;
-@@last_sql_use_alloc
-0
 explain format='brief' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2' ;
 id	estRows	task	access object	operator info
 HashJoin	100.00	root		CARTESIAN inner join

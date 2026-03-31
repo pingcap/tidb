@@ -221,6 +221,13 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			return ver, errors.Trace(err)
 		}
 
+		// Best-effort cleanup - log errors but continue with DROP DATABASE
+		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
+			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
+				zap.Error(err),
+				zap.Int64("databaseID", dbInfo.ID))
+		}
+
 		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)

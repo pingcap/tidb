@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -223,7 +224,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = util2.GetRecoverError(r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
+		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
@@ -398,7 +399,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
 	}
 
@@ -532,7 +533,15 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(a.StmtNode)
-	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	opts := []plannercore.PreprocessOpt{
+		plannercore.InTxnRetry,
+		plannercore.InitTxnContextProvider,
+		plannercore.WithPreprocessorReturn(ret),
+	}
+	if a.isPreparedStmt || a.PsStmt != nil {
+		opts = append(opts, plannercore.InPrepare)
+	}
+	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, opts...); err != nil {
 		return 0, err
 	}
 
@@ -622,7 +631,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			panic(r)
 		}
 		err = recoverdErr
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
+		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
@@ -708,10 +717,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
-		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
@@ -1436,8 +1445,17 @@ func (a *ExecStmt) logAudit() {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
-			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			cmdBin := byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))
+			cmd := mysql.Command2Str[cmdBin]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
+			}
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
+			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
+				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
+				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
+			}
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
@@ -1661,6 +1679,14 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 		case "Update":
 			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		case "NTDML-Delete":
+			metrics.AffectedRowsCounterNTDMLDelete.Add(float64(affectedRows))
+		case "NTDML-Update":
+			metrics.AffectedRowsCounterNTDMLUpdate.Add(float64(affectedRows))
+		case "NTDML-Insert":
+			metrics.AffectedRowsCounterNTDMLInsert.Add(float64(affectedRows))
+		case "NTDML-Replace":
+			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		}
 	}
 }
@@ -1875,6 +1901,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
+		StorageKV:         stmtCtx.IsTiKV.Load(),
+		StorageMPP:        stmtCtx.IsTiFlash.Load(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -2084,7 +2112,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := sessVars.GetTotalCostDuration()
@@ -2292,6 +2320,9 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
 		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+	if (ctx.Value(plannercore.InRemoteExec{}) != nil) {
 		return ctx
 	}
 
