@@ -17,7 +17,6 @@ package rule
 import (
 	"context"
 	"maps"
-	"slices"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
@@ -40,6 +38,8 @@ import (
 
 // CollectPredicateColumnsPoint collects the columns that are used in the predicates.
 type CollectPredicateColumnsPoint struct{}
+
+const skipPlanCacheReasonSyncLoadFallback = "sync-load timed out and fell back to pseudo stats"
 
 // Optimize implements LogicalOptRule.<0th> interface.
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
@@ -347,12 +347,11 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	})
 	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	stmtCtx.StatsLoad.FallbackItems = nil
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
-			recordSyncLoadFallbackItems(stmtCtx, neededHistItems)
+			stmtCtx.SetSkipPlanCache(skipPlanCacheReasonSyncLoadFallback)
 			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
@@ -369,7 +368,6 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
-	neededItems := slices.Clone(stmtCtx.StatsLoad.NeededItems)
 	defer func(begin time.Time) {
 		// track the time spent in sync wait stats load, which might take a long time.
 		plan.SCtx().GetSessionVars().DurationOptimizer.StatsSyncWait = time.Since(begin)
@@ -378,7 +376,7 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
-			recordSyncLoadFallbackItems(stmtCtx, neededItems)
+			stmtCtx.SetSkipPlanCache(skipPlanCacheReasonSyncLoadFallback)
 			logutil.ErrVerboseLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
@@ -387,35 +385,6 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 		return err
 	}
 	return nil
-}
-
-// recordSyncLoadFallbackItems records distinct full-load stats items that were still
-// unavailable when sync-load timed out. The deduplicated TableItemIDs are stored in
-// stmtCtx.StatsLoad.FallbackItems and later used to invalidate cached plans after
-// the missing stats become fully loaded.
-func recordSyncLoadFallbackItems(stmtCtx *stmtctx.StatementContext, neededItems []model.StatsLoadItem) {
-	if len(neededItems) == 0 {
-		stmtCtx.StatsLoad.FallbackItems = nil
-		return
-	}
-	fallbackItems := make([]model.TableItemID, 0, len(neededItems))
-	seen := make(map[model.TableItemID]struct{}, len(neededItems))
-	for _, item := range neededItems {
-		if !item.FullLoad {
-			continue
-		}
-		itemID := model.TableItemID{
-			TableID: item.TableID,
-			ID:      item.ID,
-			IsIndex: item.IsIndex,
-		}
-		if _, ok := seen[itemID]; ok {
-			continue
-		}
-		seen[itemID] = struct{}{}
-		fallbackItems = append(fallbackItems, itemID)
-	}
-	stmtCtx.StatsLoad.FallbackItems = fallbackItems
 }
 
 // CollectDependingVirtualCols collects the virtual columns that depend on the needed columns, and returns them in a new slice.

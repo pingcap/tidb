@@ -467,7 +467,8 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	}, 5*time.Second, 100*time.Millisecond)
 
 	tk.MustExec("execute st using @p")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 
 	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -477,21 +478,7 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 
 	tk.MustExec("execute st using @p")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustExec("execute st using @p")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	evictedStatsTbl := statsTbl.CopyAs(statistics.ColumnMapWritable)
-	evictedColBStats := *colBStats
-	evictedColBStats.DropUnnecessaryData()
-	evictedStatsTbl.SetCol(colBID, &evictedColBStats)
-	dom.StatsHandle().UpdateStatsCache(types.CacheUpdate{
-		Updated: []*statistics.Table{evictedStatsTbl},
-	})
-	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	colBStats = statsTbl.GetCol(colBID)
-	require.NotNil(t, colBStats)
-	require.True(t, colBStats.IsAllEvicted())
+	require.Equal(t, 1, tk.Session().GetSessionPlanCache().Size())
 
 	tk.MustExec("execute st using @p")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))

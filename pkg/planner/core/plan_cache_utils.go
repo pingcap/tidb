@@ -25,7 +25,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -517,22 +515,21 @@ func bool2Byte(flag bool) byte {
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
 	// Meta Info, all are READ-ONLY once initialized.
-	SQLDigest             string
-	SQLText               string
-	StmtType              string              // select, update, insert, delete, etc.
-	ParseUser             string              // the user who parses/compiles this plan.
-	Binding               string              // the binding of this plan.
-	OptimizerEnvHash      string              // other environment information that might affect the plan like "time_zone", "sql_mode".
-	ParseValues           string              // the actual values used when parsing/compiling this plan.
-	PlanDigest            string              // digest of the plan, used to identify the plan in the cache.
-	BinaryPlan            string              // binary of this Plan, use tidb_decode_binary_plan to decode this.
-	Memory                int64               // the memory usage of this plan, in bytes.
-	LoadTime              time.Time           // the time when this plan is loaded into the cache.
-	Plan                  base.Plan           // READ-ONLY for Instance Cache, READ-WRITE for Session Cache.
-	OutputColumns         types.NameSlice     // output column names of this plan
-	ParamTypes            []*types.FieldType  // all parameters' types, different parameters may share same plan
-	StmtHints             *hint.StmtHints     // related hints of this plan, like 'max_execution_time'.
-	SyncLoadFallbackItems []model.TableItemID // full-load stats items that were unavailable when this plan was built.
+	SQLDigest        string
+	SQLText          string
+	StmtType         string             // select, update, insert, delete, etc.
+	ParseUser        string             // the user who parses/compiles this plan.
+	Binding          string             // the binding of this plan.
+	OptimizerEnvHash string             // other environment information that might affect the plan like "time_zone", "sql_mode".
+	ParseValues      string             // the actual values used when parsing/compiling this plan.
+	PlanDigest       string             // digest of the plan, used to identify the plan in the cache.
+	BinaryPlan       string             // binary of this Plan, use tidb_decode_binary_plan to decode this.
+	Memory           int64              // the memory usage of this plan, in bytes.
+	LoadTime         time.Time          // the time when this plan is loaded into the cache.
+	Plan             base.Plan          // READ-ONLY for Instance Cache, READ-WRITE for Session Cache.
+	OutputColumns    types.NameSlice    // output column names of this plan
+	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
+	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
@@ -591,7 +588,6 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
-	sum += size.SizeOfSlice + int64(cap(v.SyncLoadFallbackItems))*int64(unsafe.Sizeof(model.TableItemID{}))
 	if v.ParamTypes != nil {
 		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.ParamTypes {
@@ -669,53 +665,14 @@ func NewPlanCacheValue(
 		PlanDigest:       stmt.PlanDigest.String(),
 		BinaryPlan:       binaryPlan,
 
-		LoadTime:              time.Now(),
-		Plan:                  plan,
-		OutputColumns:         names,
-		ParamTypes:            userParamTypes,
-		StmtHints:             stmtHints.Clone(),
-		SyncLoadFallbackItems: cloneSyncLoadFallbackItemsForPlanCache(sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats, sctx.GetSessionVars().StmtCtx.StatsLoad.FallbackItems),
+		LoadTime:      time.Now(),
+		Plan:          plan,
+		OutputColumns: names,
+		ParamTypes:    userParamTypes,
+		StmtHints:     stmtHints.Clone(),
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
-}
-
-func cloneSyncLoadFallbackItemsForPlanCache(enabled bool, items []model.TableItemID) []model.TableItemID {
-	if !enabled || len(items) == 0 {
-		return nil
-	}
-	return slices.Clone(items)
-}
-
-func shouldInvalidatePlanCacheForFreshStats(sctx sessionctx.Context, pcv *PlanCacheValue) bool {
-	vars := sctx.GetSessionVars()
-	if pcv == nil || !vars.PlanCacheInvalidationOnFreshStats || len(pcv.SyncLoadFallbackItems) == 0 {
-		return false
-	}
-	if pcv.Binding != "" && vars.PlanCacheSkipStatsOnBinding {
-		return false
-	}
-	dom := domain.GetDomain(sctx)
-	if dom == nil || dom.StatsHandle() == nil {
-		return false
-	}
-	statsHandle := dom.StatsHandle()
-	for _, item := range pcv.SyncLoadFallbackItems {
-		statsTbl, ok := statsHandle.Get(item.TableID)
-		if !ok || statsTbl == nil {
-			continue
-		}
-		if item.IsIndex {
-			if idx := statsTbl.GetIdx(item.ID); idx != nil && idx.IsFullLoad() {
-				return true
-			}
-			continue
-		}
-		if col := statsTbl.GetCol(item.ID); col != nil && col.IsFullLoad() {
-			return true
-		}
-	}
-	return false
 }
 
 // planCacheStmtProcessor records all query features which may affect plan selection.

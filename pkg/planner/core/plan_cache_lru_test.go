@@ -18,10 +18,8 @@ import (
 	"math/rand"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -412,12 +410,4 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	// delete all
 	lru.DeleteAll()
 	require.Equal(t, lru.MemoryUsage(), int64(0))
-
-	t.Run("sync load fallback items", func(t *testing.T) {
-		base := (&PlanCacheValue{}).MemoryUsage()
-		withFallbackItems := (&PlanCacheValue{
-			SyncLoadFallbackItems: make([]model.TableItemID, 0, 2),
-		}).MemoryUsage()
-		require.Equal(t, int64(unsafe.Sizeof(model.TableItemID{}))*2, withFallbackItems-base)
-	})
 }
