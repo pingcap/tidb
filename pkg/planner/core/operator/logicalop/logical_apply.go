@@ -214,11 +214,10 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		if la.JoinType == base.LeftOuterJoin {
 			rowCount = max(rowCount, leftProfile.RowCount)
 		}
-	} else if la.IsLateral && (la.JoinType == base.SemiJoin || la.JoinType == base.AntiSemiJoin) {
-		// For LATERAL SemiJoin/AntiSemiJoin Apply operators, apply SelectionFactor
-		// to the row count estimate, consistent with LogicalJoin.DeriveStats.
-		// Non-lateral Apply (correlated subqueries) keeps the original left row count
-		// to avoid changing existing plan estimates.
+	} else if la.JoinType == base.SemiJoin || la.JoinType == base.AntiSemiJoin {
+		// For SemiJoin and AntiSemiJoin Apply operators (EXISTS / NOT EXISTS
+		// subqueries that cannot be decorrelated), apply SelectionFactor to
+		// the row count estimate, consistent with LogicalJoin.DeriveStats.
 		rowCount *= cost.SelectionFactor
 	}
 	la.SetStats(&property.StatsInfo{
