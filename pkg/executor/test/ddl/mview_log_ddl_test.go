@@ -930,6 +930,59 @@ func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
 		Check(testkit.Rows("failed 0 1 1"))
 }
 
+func TestPurgeMaterializedViewLogEarlyFailureWritesHist(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_early_fail (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_early_fail (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_early_fail values (1, 10), (2, 20), (3, 30)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_early_fail"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	histCountBeforeRows := tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d",
+		mlogID,
+	)).Rows()
+	require.Len(t, histCountBeforeRows, 1)
+	require.Len(t, histCountBeforeRows[0], 1)
+	histCountBefore, err := strconv.Atoi(fmt.Sprintf("%v", histCountBeforeRows[0][0]))
+	require.NoError(t, err)
+
+	const failpointName = "github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogErrorBeforeInsertHist"
+	require.NoError(t, failpoint.Enable(failpointName, `return("mock early purge failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	err = tk.ExecToErr("purge materialized view log on t_purge_early_fail")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "mock early purge failure")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows(fmt.Sprintf("%d", histCountBefore+1)))
+	tk.MustQuery(fmt.Sprintf(
+		"select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		mlogID,
+	)).Check(testkit.Rows("failed manual 0 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running'",
+		mlogID,
+	)).Check(testkit.Rows("0"))
+	reasonRow := tk.MustQuery(fmt.Sprintf(
+		"select PURGE_FAILED_REASON from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		mlogID,
+	)).Rows()
+	require.Len(t, reasonRow, 1)
+	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "mock early purge failure")
+}
+
 func TestPurgeMaterializedViewLogFinalizeFailureAfterCommitIsWarning(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

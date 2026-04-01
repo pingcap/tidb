@@ -1208,6 +1208,44 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaterializedViewRefreshFinalizeSuccessFailureWithCleanupErrorDoesNotRewriteFailedHist(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+
+	const finalizeFailpoint = "github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError"
+	require.NoError(t, failpoint.Enable(finalizeFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(finalizeFailpoint))
+	}()
+	const releaseLockFailpoint = "github.com/pingcap/tidb/pkg/executor/mockReleaseMVRefreshAdvisoryLockFullyCount"
+	require.NoError(t, failpoint.Enable(releaseLockFailpoint, "return(0)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(releaseLockFailpoint))
+	}()
+
+	err = tk.ExecToErr("refresh materialized view mv complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "advisory lock cleanup invariant violated")
+
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_ENDTIME is null, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
+		Check(testkit.Rows("running 1 1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'failed'", mviewID)).
+		Check(testkit.Rows("0"))
+}
+
 func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1834,6 +1872,59 @@ func TestMaterializedViewRefreshCompleteDeltaApplyRollbackOnError(t *testing.T) 
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
 	require.Len(t, reasonRow, 1)
 	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "Duplicate")
+}
+
+func TestMaterializedViewRefreshEarlyFailureWritesHist(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	histCountBefore := tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mviewID,
+	)).Rows()
+	require.Len(t, histCountBefore, 1)
+	require.Len(t, histCountBefore[0], 1)
+	histCountBeforeVal, err := strconv.Atoi(fmt.Sprintf("%v", histCountBefore[0][0]))
+	require.NoError(t, err)
+
+	const failpointName = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist"
+	require.NoError(t, failpoint.Enable(failpointName, `return("mock early refresh failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	err = tk.ExecToErr("refresh materialized view mv complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "mock early refresh failure")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows(fmt.Sprintf("%d", histCountBeforeVal+1)))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("failed complete delta apply manual 1 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'",
+		mviewID,
+	)).Check(testkit.Rows("0"))
+	reasonRow := tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Rows()
+	require.Len(t, reasonRow, 1)
+	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "mock early refresh failure")
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
