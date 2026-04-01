@@ -1767,7 +1767,7 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 	b.optFlag = b.optFlag | rule.FlagBuildKeyInfo
 	b.optFlag = b.optFlag | rule.FlagPushDownAgg
 	// flag it if cte contain distinct
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	// Defensive check: ensure length is within valid bounds
@@ -2407,7 +2407,7 @@ func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (cou
 func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var (
@@ -4069,7 +4069,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// or an external non-CTE query), we will give a warning.
 		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
-			if b.isCTE {
+			if b.isCTE && len(b.outerCTEs) > 0 {
 				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
 			} else if !b.buildingRecursivePartForCTE {
 				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
@@ -4297,7 +4297,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	if sel.OrderBy != nil {
 		// flag it if cte contain order by
-		if b.buildingCTE {
+		if b.buildingCTE && len(b.outerCTEs) > 0 {
 			b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 		}
 		// We need to keep the ORDER BY clause for the following cases:
@@ -4620,20 +4620,22 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
 			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
-			if b.buildingCTE {
+			if b.buildingCTE && len(b.outerCTEs) > 0 {
 				b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = cte.containRecursiveForbiddenOperator || b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator
 			}
 			// Compute cte inline
 			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
-				// Save b.buildingCTE state and set to false to prevent infinite recursion
-				// Note: We do NOT truncate b.outerCTEs here because buildDataSourceFromCTEMerge
-				// needs access to it when setting b.buildingCTE = true for the masking fix
+				// Save and truncate b.outerCTEs to maintain correct CTE scope during inline
+				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
+				copy(saveCte, b.outerCTEs[i:])
+				b.outerCTEs = b.outerCTEs[:i]
 				o := b.buildingCTE
 				b.buildingCTE = false
 				//nolint:all_revive,revive
 				defer func() {
+					b.outerCTEs = append(b.outerCTEs, saveCte...)
 					b.buildingCTE = o
 				}()
 				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
@@ -6863,7 +6865,7 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 }
 
 func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	args := make([]ast.ExprNode, 0, 4)
