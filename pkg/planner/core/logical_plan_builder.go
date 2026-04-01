@@ -495,35 +495,46 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		// Clone output names before modifying to avoid mutating shared structs
 		if x.AsName.L != "" {
-			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
-			for i, name := range p.OutputNames() {
-				if name.Hidden {
-					clonedNames[i] = name
-					continue
+			if x.Lateral {
+				// LATERAL derived tables: clone output names to avoid mutating shared
+				// structs that may be referenced by the outer scope's schema.
+				clonedNames := make([]*types.FieldName, len(p.OutputNames()))
+				for i, name := range p.OutputNames() {
+					if name.Hidden {
+						clonedNames[i] = name
+						continue
+					}
+					// Clone the field name and update table name.
+					// For derived tables, clear DBName so that error messages (e.g. only_full_group_by)
+					// show "alias.col" not "db.alias.col".  The current-database qualifier needed for
+					// hint generation (leading()) is set separately on plannerSelectBlockAsName below.
+					// For base-table aliases (isTableName), inherit DBName for DEFAULT() resolution.
+					dbName := ast.NewCIStr("")
+					if isTableName {
+						dbName = name.DBName
+					}
+					clonedNames[i] = &types.FieldName{
+						DBName:            dbName,
+						OrigTblName:       name.OrigTblName,
+						OrigColName:       name.OrigColName,
+						TblName:           x.AsName,
+						ColName:           name.ColName,
+						NotExplicitUsable: name.NotExplicitUsable,
+						Redundant:         name.Redundant,
+						Hidden:            name.Hidden,
+					}
 				}
-				// Clone the field name and update table name.
-				// For derived tables, clear DBName so that error messages (e.g. only_full_group_by)
-				// show "alias.col" not "db.alias.col".  The current-database qualifier needed for
-				// hint generation (leading()) is set separately on plannerSelectBlockAsName below.
-				// For base-table aliases (isTableName), inherit DBName for DEFAULT() resolution.
-				dbName := ast.NewCIStr("")
-				if isTableName {
-					dbName = name.DBName
-				}
-				clonedNames[i] = &types.FieldName{
-					DBName:            dbName,
-					OrigTblName:       name.OrigTblName,
-					OrigColName:       name.OrigColName,
-					TblName:           x.AsName,
-					ColName:           name.ColName,
-					NotExplicitUsable: name.NotExplicitUsable,
-					Redundant:         name.Redundant,
-					Hidden:            name.Hidden,
+				p.SetOutputNames(clonedNames)
+			} else {
+				// Non-LATERAL: update TblName in place (original behavior).
+				for _, name := range p.OutputNames() {
+					if name.Hidden {
+						continue
+					}
+					name.TblName = x.AsName
 				}
 			}
-			p.SetOutputNames(clonedNames)
 		}
 		// Apply column alias list from AS dt(c1, c2, ...) syntax.
 		// Only valid for derived tables (not table names); parser enforces this.
@@ -674,7 +685,15 @@ func findJoinFullSchema(p base.LogicalPlan) (*expression.Schema, types.NameSlice
 func containsLateralTableSource(node ast.ResultSetNode) bool {
 	switch n := node.(type) {
 	case *ast.TableSource:
-		return n.Lateral
+		if n.Lateral {
+			return true
+		}
+		// Descend into the inner source (derived table / set-op) so nested
+		// LATERAL inside a subquery or set-op used as a table source is detected.
+		if inner, ok := n.Source.(ast.ResultSetNode); ok {
+			return containsLateralTableSource(inner)
+		}
+		return false
 	case *ast.Join:
 		// For parenthesized single table refs, the parser creates Join{Left: TableSource, Right: nil}
 		if n.Right == nil {
@@ -982,7 +1001,6 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	ap.SetChildren(leftPlan, rightPlan)
 	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
-	setIsInApplyForCTE(rightPlan, ap.Schema())
 
 	// Note: nullability adjustment is not needed for InnerJoin (the only type supported currently).
 	// When LEFT/RIGHT JOIN support is added, ResetNotNullFlag must be called here.
@@ -1039,6 +1057,10 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		name := *rName
 		ap.FullNames = append(ap.FullNames, &name)
 	}
+
+	// Mark inner CTEs against FullSchema so correlations via USING/NATURAL
+	// merged columns are detected and the CTE storage is reset per outer row.
+	setIsInApplyForCTE(rightPlan, ap.FullSchema)
 
 	// Handle ON conditions if present
 	if joinNode.On != nil {
