@@ -456,9 +456,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, '|')
 	}
 
-		// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
-		// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
-		if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
+	// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
