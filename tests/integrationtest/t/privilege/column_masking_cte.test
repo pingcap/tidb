@@ -1,0 +1,201 @@
+# IT-MASK-P0-CTE-001 TestColumnMaskingPolicyWithCTE
+--echo # Test basic CTE with masking policy
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_src;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_join;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_dst;
+CREATE TABLE privilege__column_masking_cte.t_src(id INT PRIMARY KEY, c VARCHAR(20));
+CREATE TABLE privilege__column_masking_cte.t_join(id INT PRIMARY KEY, name VARCHAR(20));
+CREATE TABLE privilege__column_masking_cte.t_dst(c VARCHAR(20));
+INSERT INTO privilege__column_masking_cte.t_src VALUES (1, 'secret'), (2, 'public');
+INSERT INTO privilege__column_masking_cte.t_join VALUES (1, 'alice'), (2, 'bob');
+
+# Create masking policy
+CREATE MASKING POLICY p_cte ON privilege__column_masking_cte.t_src(c)
+  AS MASK_FULL(c, '*') ENABLE;
+
+--echo # Test 1: Basic CTE SELECT - should show masked values
+WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
+SELECT c FROM cte ORDER BY c;
+
+--echo # Test 2: CTE with COUNT(*) - WHERE clause uses masked values (current limitation)
+--echo # Note: Currently WHERE uses masked values because CTE materializes with masking applied
+--echo # This is a known limitation that needs to be fixed in future iterations
+WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
+SELECT COUNT(*) FROM cte WHERE c = '******';
+
+--echo # Test 3: CTE with JOIN - should show masked values in CTE columns
+WITH cte AS (SELECT id, c FROM privilege__column_masking_cte.t_src)
+SELECT j.name, cte.c FROM privilege__column_masking_cte.t_join j JOIN cte ON j.id = cte.id ORDER BY j.id;
+
+--echo # Test 4: Nested CTE - inner CTE masking should propagate to outer CTE
+WITH cte1 AS (SELECT c FROM privilege__column_masking_cte.t_src),
+     cte2 AS (SELECT c FROM cte1)
+SELECT COUNT(*) FROM cte2 WHERE c = '******';
+
+--echo # Test 5: CTE with GROUP BY in subquery
+WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
+SELECT COUNT(*) FROM (SELECT c FROM cte GROUP BY c) g;
+
+# IT-MASK-P0-CTE-002 TestColumnMaskingPolicyCTEWithRestrict
+--echo # Test CTE with RESTRICT ON (INSERT_INTO_SELECT)
+DROP MASKING POLICY p_cte ON privilege__column_masking_cte.t_src(c);
+CREATE MASKING POLICY p_cte_restrict ON privilege__column_masking_cte.t_src(c)
+  AS MASK_FULL(c, '*') RESTRICT ON (INSERT_INTO_SELECT) ENABLE;
+
+# Should work: regular SELECT
+WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
+SELECT c FROM cte ORDER BY c;
+
+# Should fail: INSERT ... SELECT with masked source
+--error 8274
+WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
+INSERT INTO privilege__column_masking_cte.t_dst SELECT c FROM cte;
+
+# IT-MASK-P0-CTE-003 TestColumnMaskingPolicyCTEAtResultSemantics
+--echo # Test that HAVING, ORDER BY use original values while output is masked
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_having;
+CREATE TABLE privilege__column_masking_cte.t_having(category VARCHAR(50), amount INT);
+INSERT INTO privilege__column_masking_cte.t_having VALUES ('A', 100), ('B', 200), ('C', 300);
+
+CREATE MASKING POLICY p_having ON privilege__column_masking_cte.t_having(category)
+  AS MASK_FULL(category, '*') ENABLE;
+
+--echo # Test: HAVING clause should use original values for comparison
+WITH cte AS (SELECT category, amount FROM privilege__column_masking_cte.t_having)
+SELECT category, SUM(amount) FROM cte GROUP BY category HAVING category > 'A';
+
+--echo # Test: ORDER BY should use original values for sorting
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_orderby;
+CREATE TABLE privilege__column_masking_cte.t_orderby(id INT, val VARCHAR(20));
+INSERT INTO privilege__column_masking_cte.t_orderby VALUES (1, 'apple'), (2, 'banana'), (3, 'cherry');
+
+CREATE MASKING POLICY p_orderby ON privilege__column_masking_cte.t_orderby(val)
+  AS MASK_FULL(val, '*') ENABLE;
+
+WITH cte AS (SELECT id, val FROM privilege__column_masking_cte.t_orderby)
+SELECT id FROM cte ORDER BY val;
+
+# IT-MASK-P0-CTE-004 TestColumnMaskingPolicyCTEMultipleReferences
+--echo # Test CTE referenced multiple times - should work consistently
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_multi;
+CREATE TABLE privilege__column_masking_cte.t_multi(id INT, value VARCHAR(20));
+INSERT INTO privilege__column_masking_cte.t_multi VALUES (1, 'data1'), (2, 'data2');
+
+CREATE MASKING POLICY p_multi ON privilege__column_masking_cte.t_multi(value)
+  AS MASK_FULL(value, '*') ENABLE;
+
+--echo # Reference CTE twice in same query
+WITH cte AS (SELECT value FROM privilege__column_masking_cte.t_multi)
+SELECT a.value, b.value FROM cte a JOIN cte b ON a.value = b.value ORDER BY a.value;
+
+# IT-MASK-P0-CTE-005 TestColumnMaskingPolicyCTEWithCurrentRole
+--echo # Test CTE with current_role() in masking expression
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_role;
+DROP USER IF EXISTS cte_role_user;
+DROP ROLE IF EXISTS cte_unmask_role;
+CREATE TABLE privilege__column_masking_cte.t_role(id INT, data VARCHAR(20));
+INSERT INTO privilege__column_masking_cte.t_role VALUES (1, 'sensitive'), (2, 'public');
+
+CREATE USER cte_role_user;
+CREATE ROLE cte_unmask_role;
+GRANT SELECT ON privilege__column_masking_cte.t_role TO cte_role_user;
+GRANT cte_unmask_role TO cte_role_user;
+
+CREATE MASKING POLICY p_role_cte ON privilege__column_masking_cte.t_role(data)
+  AS CASE WHEN current_role() != 'NONE' THEN data ELSE MASK_FULL(data, '*') END ENABLE;
+
+connect (cte_role_conn, localhost, cte_role_user,, privilege__column_masking_cte);
+connection cte_role_conn;
+
+--echo # Test 1: Default role (NONE) - should show masked
+WITH cte AS (SELECT data FROM privilege__column_masking_cte.t_role)
+SELECT data FROM cte ORDER BY id;
+
+--echo # Test 2: After SET ROLE - should show unmasked
+SET ROLE cte_unmask_role;
+WITH cte AS (SELECT data FROM privilege__column_masking_cte.t_role)
+SELECT data FROM cte ORDER BY id;
+
+--echo # Test 3: Back to NONE - should show masked again
+SET ROLE NONE;
+WITH cte AS (SELECT data FROM privilege__column_masking_cte.t_role)
+SELECT data FROM cte ORDER BY id;
+
+disconnect cte_role_conn;
+connection default;
+
+# IT-MASK-P0-CTE-006 TestColumnMaskingPolicyCTEWithPartialMasking
+--echo # Test CTE with MASK_PARTIAL function
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_partial;
+CREATE TABLE privilege__column_masking_cte.t_partial(id INT, email VARCHAR(100));
+INSERT INTO privilege__column_masking_cte.t_partial
+VALUES (1, 'alice@example.com'), (2, 'bob@example.com'), (3, 'charlie@example.com');
+
+CREATE MASKING POLICY p_partial ON privilege__column_masking_cte.t_partial(email)
+  AS MASK_PARTIAL(email, '*', 1, 2) ENABLE;
+
+--echo # MASK_PARTIAL keeps first 2 characters, masks rest with '*'
+WITH cte AS (SELECT email FROM privilege__column_masking_cte.t_partial)
+SELECT email FROM cte ORDER BY id;
+
+--echo # ORDER BY should use original email for sorting
+WITH cte AS (SELECT id, email FROM privilege__column_masking_cte.t_partial)
+SELECT id FROM cte ORDER BY email;
+
+# IT-MASK-P0-CTE-007 TestColumnMaskingPolicyCTEWithConcat
+--echo # Test CTE with CONCAT masking expression
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_concat;
+CREATE TABLE privilege__column_masking_cte.t_concat(id INT, val VARCHAR(20));
+INSERT INTO privilege__column_masking_cte.t_concat VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+CREATE MASKING POLICY p_concat ON privilege__column_masking_cte.t_concat(val)
+  AS CONCAT('***', val) ENABLE;
+
+WITH cte AS (SELECT val FROM privilege__column_masking_cte.t_concat)
+SELECT val FROM cte ORDER BY id;
+
+--echo # ORDER BY should use original val for sorting
+WITH cte AS (SELECT id FROM privilege__column_masking_cte.t_concat)
+SELECT id FROM cte ORDER BY val DESC;
+
+# IT-MASK-P0-CTE-008 TestColumnMaskingPolicyRecursiveCTE
+--echo # Test that masking works with recursive CTE
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_tree;
+CREATE TABLE privilege__column_masking_cte.t_tree(id INT, parent_id INT, name VARCHAR(20), is_active BOOLEAN);
+INSERT INTO privilege__column_masking_cte.t_tree VALUES
+  (1, NULL, 'root', true),
+  (2, 1, 'child1', true),
+  (3, 1, 'child2', false),
+  (4, 2, 'grandchild1', true),
+  (5, 2, 'grandchild2', true);
+
+CREATE MASKING POLICY p_tree ON privilege__column_masking_cte.t_tree(name)
+  AS CASE WHEN is_active THEN name ELSE MASK_FULL(name, '*') END ENABLE;
+
+--echo # Recursive CTE with masking - should mask names in output
+WITH RECURSIVE tree_cte AS (
+  SELECT id, parent_id, name, is_active
+  FROM privilege__column_masking_cte.t_tree
+  WHERE parent_id IS NULL
+
+  UNION ALL
+
+  SELECT t.id, t.parent_id, t.name, t.is_active
+  FROM privilege__column_masking_cte.t_tree t
+  INNER JOIN tree_cte tc ON t.parent_id = tc.id
+)
+SELECT id, name FROM tree_cte ORDER BY id;
+
+# Cleanup
+DROP USER IF EXISTS cte_role_user;
+DROP ROLE IF EXISTS cte_unmask_role;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_src;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_join;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_dst;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_having;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_orderby;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_multi;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_role;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_partial;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_concat;
+DROP TABLE IF EXISTS privilege__column_masking_cte.t_tree;
