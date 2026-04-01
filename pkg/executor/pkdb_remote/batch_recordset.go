@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/pkdb_remote/pb"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -38,6 +39,10 @@ var batchColumnInfoPool = sync.Pool{
 
 var batchTableInfoPool = sync.Pool{
 	New: func() any { return &model.TableInfo{} },
+}
+
+var batchStreamingRecordSetPool = sync.Pool{
+	New: func() any { return &batchStreamingRecordSet{} },
 }
 
 const maxBatchChunkDecodeBufCap = 4 << 20 // 4MiB
@@ -76,45 +81,55 @@ func releaseBatchChunkDecodeBuf(buf *[]byte) {
 
 // batchStreamingRecordSet reads results from a batch stream
 type batchStreamingRecordSet struct {
-	requestID     uint64
-	pbColumnInfos []*pb.ColumnInfo
-	fields        []*resolve.ResultField
-	fieldTypes    []*types.FieldType
-	respCh        <-chan *pb.StreamResponse
-	pr            *pendingRequest
-	sw            *streamWrapper
-	sctx          sessionctx.Context
-	codec         *chunk.Codec
-	rowBuffer     []*pb.Row
-	bufferIdx     int
-	chunkBuffer   *chunk.Chunk
-	chunkRowIdx   int
-	chunkDataBuf  *[]byte
-	streamDone    bool
-	streamErr     error
-	closed        int32
-	feedbackOnce  sync.Once
-	feedback      *core.RemotePlanFeedback
-	feedbackCfg   remotePlanFeedbackConfig
-	remoteBytes   int64
-	remoteRows    int64
-	kvRequestCnt  uint64
-	kvLocalFFICnt uint64
-	tikvScanBytes int64
-	mu            sync.Mutex
+	requestID       uint64
+	pbColumnInfos   []*pb.ColumnInfo
+	fields          []*resolve.ResultField
+	fieldTypes      []*types.FieldType
+	respCh          chan *pb.StreamResponse
+	pr              *pendingRequest
+	sw              *streamWrapper
+	sctx            sessionctx.Context
+	codec           *chunk.Codec
+	rowBuffer       []*pb.Row
+	bufferIdx       int
+	chunkBuffer     *chunk.Chunk
+	chunkRowIdx     int
+	chunkDataBuf    *[]byte
+	streamDone      bool
+	streamErr       error
+	forwardStart    time.Time
+	firstRespTime   time.Time // Time when first response was received, used to calculate client consume duration
+	firstResultTime time.Time
+	closed          int32
+	feedbackOnce    sync.Once
+	feedback        *core.RemotePlanFeedback
+	feedbackCfg     remotePlanFeedbackConfig
+	remoteBytes     int64
+	remoteRows      int64
+	kvRequestCnt    uint64
+	kvLocalFFICnt   uint64
+	tikvScanBytes   int64
+	mu              sync.Mutex
 }
 
-func newBatchStreamingRecordSet(requestID uint64, pbColumnInfos []*pb.ColumnInfo, respCh <-chan *pb.StreamResponse, pr *pendingRequest, sw *streamWrapper, sctx sessionctx.Context) *batchStreamingRecordSet {
-	rs := &batchStreamingRecordSet{
-		requestID:     requestID,
-		pbColumnInfos: pbColumnInfos,
-		respCh:        respCh,
-		pr:            pr,
-		sw:            sw,
-		sctx:          sctx,
+func newBatchStreamingRecordSet(requestID uint64, pbColumnInfos []*pb.ColumnInfo, respCh chan *pb.StreamResponse, pr *pendingRequest, sw *streamWrapper, sctx sessionctx.Context) *batchStreamingRecordSet {
+	rs := acquireBatchStreamingRecordSet()
+	rs.requestID = requestID
+	rs.pbColumnInfos = pbColumnInfos
+	rs.respCh = respCh
+	rs.pr = pr
+	rs.sw = sw
+	rs.sctx = sctx
+	if cap(rs.fieldTypes) < len(pbColumnInfos) {
+		rs.fieldTypes = make([]*types.FieldType, len(pbColumnInfos))
+	} else {
+		rs.fieldTypes = rs.fieldTypes[:len(pbColumnInfos)]
 	}
-	rs.fieldTypes = make([]*types.FieldType, len(pbColumnInfos))
-	rs.fields = make([]*resolve.ResultField, len(pbColumnInfos))
+	if cap(rs.fields) < len(pbColumnInfos) {
+		rs.fields = make([]*resolve.ResultField, len(pbColumnInfos))
+	} else {
+		rs.fields = rs.fields[:len(pbColumnInfos)]
+	}
 	for i, pbInfo := range pbColumnInfos {
 		ft := acquireBatchFieldType(pbInfo)
 		rs.fieldTypes[i] = ft
@@ -122,6 +137,74 @@ func newBatchStreamingRecordSet(requestID uint64, pbColumnInfos []*pb.ColumnInfo
 	}
 	rs.codec = chunk.NewCodec(rs.fieldTypes)
 	return rs
+}
+
+func acquireBatchStreamingRecordSet() *batchStreamingRecordSet {
+	rs, _ := batchStreamingRecordSetPool.Get().(*batchStreamingRecordSet)
+	if rs == nil {
+		rs = &batchStreamingRecordSet{}
+	}
+	rs.pbColumnInfos = nil
+	rs.respCh = nil
+	rs.pr = nil
+	rs.sw = nil
+	rs.sctx = nil
+	rs.codec = nil
+	rs.rowBuffer = rs.rowBuffer[:0]
+	rs.bufferIdx = 0
+	rs.chunkBuffer = nil
+	rs.chunkRowIdx = 0
+	rs.chunkDataBuf = nil
+	rs.streamDone = false
+	rs.streamErr = nil
+	rs.forwardStart = time.Time{}
+	rs.firstRespTime = time.Time{}
+	rs.firstResultTime = time.Time{}
+	rs.closed = 0
+	rs.feedbackOnce = sync.Once{}
+	rs.feedback = nil
+	rs.feedbackCfg = remotePlanFeedbackConfig{}
+	rs.remoteBytes = 0
+	rs.remoteRows = 0
+	rs.kvRequestCnt = 0
+	rs.kvLocalFFICnt = 0
+	rs.tikvScanBytes = 0
+	rs.mu = sync.Mutex{}
+	return rs
+}
+
+func releaseBatchStreamingRecordSet(rs *batchStreamingRecordSet) {
+	if rs == nil {
+		return
+	}
+	rs.requestID = 0
+	rs.pbColumnInfos = nil
+	rs.respCh = nil
+	rs.pr = nil
+	rs.sw = nil
+	rs.sctx = nil
+	rs.codec = nil
+	rs.rowBuffer = nil
+	rs.bufferIdx = 0
+	rs.chunkBuffer = nil
+	rs.chunkRowIdx = 0
+	rs.chunkDataBuf = nil
+	rs.streamDone = false
+	rs.streamErr = nil
+	rs.forwardStart = time.Time{}
+	rs.firstRespTime = time.Time{}
+	rs.firstResultTime = time.Time{}
+	rs.closed = 0
+	rs.feedbackOnce = sync.Once{}
+	rs.feedback = nil
+	rs.feedbackCfg = remotePlanFeedbackConfig{}
+	rs.remoteBytes = 0
+	rs.remoteRows = 0
+	rs.kvRequestCnt = 0
+	rs.kvLocalFFICnt = 0
+	rs.tikvScanBytes = 0
+	rs.mu = sync.Mutex{}
+	batchStreamingRecordSetPool.Put(rs)
 }
 
 func (s *batchStreamingRecordSet) attachRemotePlanFeedback(feedback *core.RemotePlanFeedback, cfg remotePlanFeedbackConfig) {
@@ -256,10 +339,12 @@ func (s *batchStreamingRecordSet) Next(ctx context.Context, req *chunk.Chunk) er
 	defer s.mu.Unlock()
 	for req.NumRows() < req.Capacity() {
 		if s.chunkBuffer != nil && s.chunkRowIdx < s.chunkBuffer.NumRows() {
+			rowCopyStart := time.Now()
 			for s.chunkRowIdx < s.chunkBuffer.NumRows() && req.NumRows() < req.Capacity() {
 				req.AppendRow(s.chunkBuffer.GetRow(s.chunkRowIdx))
 				s.chunkRowIdx++
 			}
+			metrics.RemotePlanRowCopyDuration.Observe(time.Since(rowCopyStart).Seconds())
 			continue
 		}
 		if s.chunkBuffer != nil {
@@ -276,10 +361,12 @@ func (s *batchStreamingRecordSet) Next(ctx context.Context, req *chunk.Chunk) er
 		if s.streamDone {
 			return s.streamErr
 		}
+		channelWaitStart := time.Now()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case resp, ok := <-s.respCh:
+			metrics.RemotePlanChannelWaitDuration.Observe(time.Since(channelWaitStart).Seconds())
 			if !ok {
 				// Channel was closed, stream ended
 				// Check if there was an error that caused the stream to close
@@ -314,10 +401,16 @@ func (s *batchStreamingRecordSet) Next(ctx context.Context, req *chunk.Chunk) er
 					s.remoteRows += int64(chunkData.NumRows)
 				}
 				if s.codec != nil {
+					decodeStart := time.Now()
 					buf := acquireBatchChunkDecodeBuf(len(chunkData.Data))
 					copy(*buf, chunkData.Data)
 					decodedChunk, _ := s.codec.Decode((*buf)[:len(chunkData.Data)])
+					metrics.RemotePlanChunkDecodeDuration.Observe(time.Since(decodeStart).Seconds())
 					if decodedChunk != nil && decodedChunk.NumRows() > 0 {
+						if s.firstResultTime.IsZero() && !s.firstRespTime.IsZero() {
+							s.firstResultTime = time.Now()
+							metrics.RemotePlanFirstResultWaitDuration.Observe(time.Since(s.firstRespTime).Seconds())
+						}
 						s.setChunkBuffer(decodedChunk, buf)
 						if !resp.HasMore {
 							s.streamDone = true
@@ -329,6 +422,10 @@ func (s *batchStreamingRecordSet) Next(ctx context.Context, req *chunk.Chunk) er
 				}
 			}
 			if rows := resp.Rows; len(rows) > 0 {
+				if s.firstResultTime.IsZero() && !s.firstRespTime.IsZero() {
+					s.firstResultTime = time.Now()
+					metrics.RemotePlanFirstResultWaitDuration.Observe(time.Since(s.firstRespTime).Seconds())
+				}
 				s.remoteRows += int64(len(rows))
 				for _, row := range rows {
 					if row == nil {
@@ -346,6 +443,10 @@ func (s *batchStreamingRecordSet) Next(ctx context.Context, req *chunk.Chunk) er
 				s.rowBuffer = append(s.rowBuffer, rows...)
 			}
 			if !resp.HasMore {
+				if s.firstResultTime.IsZero() && !s.firstRespTime.IsZero() && len(resp.Rows) == 0 && (resp.Chunk == nil || len(resp.Chunk.Data) == 0) {
+					s.firstResultTime = time.Now()
+					metrics.RemotePlanFirstResultWaitDuration.Observe(time.Since(s.firstRespTime).Seconds())
+				}
 				s.streamDone = true
 				s.maybeRecordRemotePlanFeedback(ctx)
 				if len(resp.Rows) == 0 && (resp.Chunk == nil || len(resp.Chunk.Data) == 0) {
@@ -404,11 +505,37 @@ func (s *batchStreamingRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return chunk.New(s.fieldTypes, initCap, maxChunkSize)
 }
 
+func (s *batchStreamingRecordSet) recordForwardMetrics() {
+	if s.forwardStart.IsZero() {
+		return
+	}
+	err := s.streamErr
+	if err == nil && !s.streamDone {
+		err = errors.New("remote stream not completed")
+	}
+	if err == nil {
+		metrics.RemotePlanForwardSendOKDuration.Observe(time.Since(s.forwardStart).Seconds())
+		metrics.RemotePlanForwardSendOKCounter.Inc()
+		// Record client consume duration (time from first response to Close)
+		if !s.firstRespTime.IsZero() {
+			metrics.RemotePlanClientConsumeOKDuration.Observe(time.Since(s.firstRespTime).Seconds())
+		}
+		return
+	}
+	metrics.RemotePlanForwardSendErrDuration.Observe(time.Since(s.forwardStart).Seconds())
+	metrics.RemotePlanForwardSendErrCounter.Inc()
+	// Record client consume duration even on error
+	if !s.firstRespTime.IsZero() {
+		metrics.RemotePlanClientConsumeErrDuration.Observe(time.Since(s.firstRespTime).Seconds())
+	}
+}
+
 func (s *batchStreamingRecordSet) Close() error {
 	if !atomic.CompareAndSwapInt32(&s.closed, 0, 1) {
 		return nil
 	}
 
+	s.recordForwardMetrics()
 	s.maybeRecordRemotePlanFeedback(context.Background())
 	s.releaseChunkBuffer()
 
@@ -423,12 +550,19 @@ func (s *batchStreamingRecordSet) Close() error {
 	// This also prevents recvLoop from sending more responses to respCh
 	if s.sw != nil && s.pr != nil {
 		s.sw.pendingMu.Lock()
+		_, existed := s.sw.pending[s.requestID]
 		delete(s.sw.pending, s.requestID)
 		s.sw.pendingMu.Unlock()
 
 		// Close the done channel to signal completion
 		// Use atomic operation to ensure it's only closed once
 		s.pr.closeDone()
+
+		// Decrement pending requests counter only if we actually removed it
+		// (it might have already been removed by recvLoop when HasMore=false)
+		if existed {
+			metrics.RemotePlanBatchClientPendingRequests.Dec()
+		}
 	}
 
 	// Drain remaining responses synchronously
@@ -438,14 +572,25 @@ func (s *batchStreamingRecordSet) Close() error {
 		select {
 		case _, ok := <-s.respCh:
 			if !ok {
-				return s.releaseResources()
+				return s.finalize()
 			}
 			// Continue draining
 		default:
 			// Channel is empty, we're done
-			return s.releaseResources()
+			return s.finalize()
 		}
 	}
+}
+
+func (s *batchStreamingRecordSet) finalize() error {
+	if s.streamDone && s.streamErr == nil {
+		releaseRespCh(s.respCh)
+	}
+	if err := s.releaseResources(); err != nil {
+		return err
+	}
+	releaseBatchStreamingRecordSet(s)
+	return nil
 }
 
 func (s *batchStreamingRecordSet) releaseResources() error {
@@ -461,8 +606,8 @@ func (s *batchStreamingRecordSet) releaseResources() error {
 			s.fields[i] = nil
 		}
 	}
-	s.fieldTypes = nil
-	s.fields = nil
+	s.fieldTypes = s.fieldTypes[:0]
+	s.fields = s.fields[:0]
 	return nil
 }
 

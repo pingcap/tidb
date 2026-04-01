@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -32,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	txnkvtxn "github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
 
@@ -53,6 +56,10 @@ var fieldTypePool = sync.Pool{
 
 var tableVersionPool = sync.Pool{
 	New: func() any { return &pb.TableVersion{} },
+}
+
+var dmlRecordSetPool = sync.Pool{
+	New: func() any { return &DMLRecordSet{} },
 }
 
 func acquireRemoteRequest() *pb.RemoteRequest {
@@ -100,6 +107,7 @@ func resetRemoteRequest(req *pb.RemoteRequest) {
 	req.SqlText = ""
 	req.NormalizedSql = ""
 	req.PlanDigest = ""
+	req.SqlDigest = ""
 	req.PlanCacheInfo = nil
 	req.Params = nil
 	if req.Session != nil {
@@ -149,10 +157,11 @@ func releasePlanCacheInfo(info *pb.PlanCacheInfo) {
 	info.SchemaVersion = 0
 	info.LatestSchemaVersion = 0
 	info.HasSubquery = false
+	info.HasLimit = false
 	info.LimitValues = nil
 	info.StatsVerHash = 0
 	info.PlanCacheEnabled = false
-	info.IsReadOnly = nil
+	info.IsReadOnlyOpt = nil
 	if len(info.RelateVersions) > 0 {
 		for i := range info.RelateVersions {
 			tv := info.RelateVersions[i]
@@ -213,6 +222,13 @@ func resetSessionSnapshot(snap *pb.SessionSnapshot) {
 	snap.EnableAsyncCommit = false
 	snap.Enable_1Pc = false
 	snap.RowFormatVersion = 0
+	snap.EnablePlanCacheForParamLimit = false
+	snap.InstancePlanCacheMaxSize = 0
+	snap.MaxChunkSize = 0
+	snap.TidbxEnableIndexLookupPushDown = false
+	snap.TidbxEnableSingleStoreTxn_1Pc = false
+	snap.TidbxStoreBatchGet = false
+	snap.TidbxFastPath = false
 	if snap.Txn == nil {
 		snap.Txn = &pb.TxnContext{}
 	} else {
@@ -234,6 +250,37 @@ type DMLRecordSet struct {
 	info         string
 	warnings     []contextutil.SQLWarn
 	sctx         sessionctx.Context
+	closed       int32
+}
+
+func acquireDMLRecordSet() *DMLRecordSet {
+	rs, _ := dmlRecordSetPool.Get().(*DMLRecordSet)
+	if rs == nil {
+		rs = &DMLRecordSet{}
+	}
+	rs.affectedRows = 0
+	rs.lastInsertID = 0
+	rs.statusFlags = 0
+	rs.warningCount = 0
+	rs.info = ""
+	rs.warnings = nil
+	rs.sctx = nil
+	atomic.StoreInt32(&rs.closed, 0)
+	return rs
+}
+
+func releaseDMLRecordSet(rs *DMLRecordSet) {
+	if rs == nil {
+		return
+	}
+	rs.affectedRows = 0
+	rs.lastInsertID = 0
+	rs.statusFlags = 0
+	rs.warningCount = 0
+	rs.info = ""
+	rs.warnings = nil
+	rs.sctx = nil
+	dmlRecordSetPool.Put(rs)
 }
 
 // AffectedRows returns the number of rows affected by the DML statement.
@@ -282,11 +329,15 @@ func (d *DMLRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return chunk.New(nil, 0, 0)
 }
 
-// Close detaches the memory tracker to prevent memory leaks.
+// Close detaches the memory tracker and recycles the record set.
 func (d *DMLRecordSet) Close() error {
+	if !atomic.CompareAndSwapInt32(&d.closed, 0, 1) {
+		return nil
+	}
 	if d.sctx != nil {
 		d.sctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 	}
+	releaseDMLRecordSet(d)
 	return nil
 }
 
@@ -366,11 +417,6 @@ func GetDefaultClient() Client {
 func TryEarlyForwardExecute(ctx context.Context, sctx sessionctx.Context, execStmt *ast.ExecuteStmt) (sqlexec.RecordSet, bool, error) {
 	vars := sctx.GetSessionVars()
 
-	// Check if remote plan forwarding is enabled
-	if !vars.EnableRemotePlan {
-		return nil, false, nil
-	}
-
 	// Get the prepared statement
 	prepStmt, ok := execStmt.PrepStmt.(*core.PlanCacheStmt)
 	if !ok {
@@ -380,6 +426,13 @@ func TryEarlyForwardExecute(ctx context.Context, sctx sessionctx.Context, execSt
 	// Check if we have EarlyLocationInfo
 	earlyLocInfo := prepStmt.EarlyLocationInfo
 	if earlyLocInfo == nil {
+		return nil, false, nil
+	}
+
+	forceRemotePlan := !vars.ForwardedForRemoteExec && earlyLocInfo.ForceRemotePlanHint
+
+	// Check if remote plan forwarding is enabled
+	if !vars.EnableRemotePlan && !forceRemotePlan {
 		return nil, false, nil
 	}
 
@@ -402,29 +455,54 @@ func TryEarlyForwardExecute(ctx context.Context, sctx sessionctx.Context, execSt
 		return nil, false, nil
 	}
 
-	// Extract params for partition pruning
-	var params []expression.Expression
+	// Do not forward SELECT statements that acquire row locks (FOR UPDATE / FOR SHARE / SKIP LOCKED, etc.).
+	// These statements must run on the local session/transaction to preserve locking semantics.
+	if hasSelectLock(prepStmt) {
+		GlobalForwardingStats.RecordSkipped()
+		logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: skipped - select lock not supported")
+		return nil, false, nil
+	}
+
 	planCtx := sctx.GetPlanCtx()
-	if execStmt.BinaryArgs != nil {
-		params, _ = execStmt.BinaryArgs.([]expression.Expression)
-	} else if len(execStmt.UsingVars) > 0 {
+	resolveParams := func() ([]expression.Expression, error) {
+		if execStmt.BinaryArgs != nil {
+			params, _ := execStmt.BinaryArgs.([]expression.Expression)
+			return params, nil
+		}
+		if len(execStmt.UsingVars) == 0 {
+			return nil, nil
+		}
 		convertedParams := make([]expression.Expression, 0, len(execStmt.UsingVars))
 		for _, astExpr := range execStmt.UsingVars {
 			expr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, astExpr, nil, nil, false)
 			if err != nil {
-				GlobalForwardingStats.RecordSkipped()
-				logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: failed to rewrite UsingVars",
-					zap.Error(err))
-				return nil, false, nil
+				return nil, err
 			}
 			convertedParams = append(convertedParams, expr)
 		}
-		params = convertedParams
+		return convertedParams, nil
+	}
+
+	// Extract params only when needed for partition pruning to avoid redundant work.
+	var params []expression.Expression
+	needParamsForLocation := earlyLocInfo.HasPartitionTable
+	if !needParamsForLocation && earlyLocInfo.CachedLocationInfo != nil && earlyLocInfo.CachedLocationInfo.HasPartitionTable {
+		needParamsForLocation = true
+	}
+	if needParamsForLocation {
+		var err error
+		params, err = resolveParams()
+		if err != nil {
+			GlobalForwardingStats.RecordSkipped()
+			logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: failed to rewrite UsingVars",
+				zap.Error(err))
+			return nil, false, nil
+		}
 	}
 
 	// Determine plan location using EarlyLocationInfo
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	planLocation := earlyLocInfo.DetermineLocation(planCtx, is, params)
+	planLocation := earlyLocInfo.DetermineLocationWithOptions(planCtx, is, params, forceRemotePlan)
 
 	// If DetermineLocation returns nil, it means we need full planning
 	// (e.g., partitioned table without CachedLocationInfo)
@@ -444,66 +522,88 @@ func TryEarlyForwardExecute(ctx context.Context, sctx sessionctx.Context, execSt
 		return nil, false, nil
 	}
 
-	// By default we skip forwarding inside transactions to avoid correctness issues (e.g. read-your-writes).
-	// When enabled, we only allow forwarding for read-only prepared statements and only when the referenced
-	// tables are clean (no dirty writes in the current txn).
-	inTxn := !vars.IsAutocommit() || vars.InTxn()
-	if inTxn {
-		if !vars.EnableRemotePlanInTxnRead {
-			GlobalForwardingStats.RecordSkipped()
-			return nil, false, nil
-		}
-		// READ-COMMITTED uses statement-level snapshot timestamps. Remote execution currently only
-		// forwards the transaction StartTS, so it may read from a stale snapshot.
-		if vars.IsIsolation(ast.ReadCommitted) {
-			GlobalForwardingStats.RecordSkipped()
-			return nil, false, nil
-		}
-		if prepStmt.PreparedAst == nil || !prepStmt.PreparedAst.IsReadOnly {
-			GlobalForwardingStats.RecordSkipped()
-			return nil, false, nil
-		}
-
-		// Ensure the local transaction has a stable StartTS so remote reads share the same snapshot.
-		if _, err := sctx.Txn(true); err != nil {
-			GlobalForwardingStats.RecordSkipped()
-			logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: failed to activate txn",
-				zap.Error(err))
-			return nil, false, nil
-		}
-		// Avoid forwarding when any referenced table has dirty data in the current txn.
-		for _, tableID := range earlyLocInfo.TableIDs {
-			tbl, ok := is.TableByID(ctx, tableID)
-			if !ok || tbl == nil {
-				GlobalForwardingStats.RecordSkipped()
-				return nil, false, nil
-			}
-			tblInfo := tbl.Meta()
-			pi := tblInfo.GetPartitionInfo()
-			if pi == nil {
-				if planCtx.HasDirtyContent(tableID) {
-					GlobalForwardingStats.RecordSkipped()
-					return nil, false, nil
-				}
-				continue
-			}
-			for _, part := range pi.Definitions {
-				if planCtx.HasDirtyContent(part.ID) {
-					GlobalForwardingStats.RecordSkipped()
-					return nil, false, nil
-				}
-			}
-		}
-	}
-
 	feedbackCfg := remotePlanFeedbackConfigFromVars(vars)
-	if feedbackCfg.enabled() && earlyLocInfo.RemotePlanFeedback.ForwardingDisabled(time.Time{}) {
+	if !forceRemotePlan && feedbackCfg.enabled() && earlyLocInfo.RemotePlanFeedback.ForwardingDisabled(time.Time{}) {
 		GlobalForwardingStats.RecordSkipped()
 		disabledUntil := time.Unix(0, earlyLocInfo.RemotePlanFeedback.DisabledUntilUnixNano())
 		logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: skipped - feedback disabled",
 			zap.Time("disabledUntil", disabledUntil),
 			zap.Duration("remaining", time.Until(disabledUntil)))
 		return nil, false, nil
+	}
+
+	// By default we skip forwarding inside transactions to avoid correctness issues (e.g. read-your-writes).
+	// When enabled, we only allow forwarding for read-only prepared statements and only when the referenced
+	// tables are clean (no dirty writes in the current txn).
+	inTxn := !vars.IsAutocommit() || vars.InTxn()
+	if inTxn {
+		if !forceRemotePlan {
+			if !vars.EnableRemotePlanInTxnRead {
+				GlobalForwardingStats.RecordSkipped()
+				return nil, false, nil
+			}
+			// READ-COMMITTED uses statement-level snapshot timestamps. Remote execution currently only
+			// forwards the transaction StartTS, so it may read from a stale snapshot.
+			if vars.IsIsolation(ast.ReadCommitted) {
+				GlobalForwardingStats.RecordSkipped()
+				return nil, false, nil
+			}
+			if prepStmt.PreparedAst == nil || !prepStmt.PreparedAst.IsReadOnly {
+				GlobalForwardingStats.RecordSkipped()
+				return nil, false, nil
+			}
+
+			// Ensure the local transaction has a stable StartTS so remote reads share the same snapshot.
+			if _, err := sctx.Txn(true); err != nil {
+				GlobalForwardingStats.RecordSkipped()
+				logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: failed to activate txn",
+					zap.Error(err))
+				return nil, false, nil
+			}
+			// Avoid forwarding when any referenced table has dirty data in the current txn.
+			for _, tableID := range earlyLocInfo.TableIDs {
+				tbl, ok := is.TableByID(ctx, tableID)
+				if !ok || tbl == nil {
+					GlobalForwardingStats.RecordSkipped()
+					return nil, false, nil
+				}
+				tblInfo := tbl.Meta()
+				pi := tblInfo.GetPartitionInfo()
+				if pi == nil {
+					if planCtx.HasDirtyContent(tableID) {
+						GlobalForwardingStats.RecordSkipped()
+						return nil, false, nil
+					}
+					continue
+				}
+				for _, part := range pi.Definitions {
+					if planCtx.HasDirtyContent(part.ID) {
+						GlobalForwardingStats.RecordSkipped()
+						return nil, false, nil
+					}
+				}
+			}
+		} else {
+			// Ensure the local transaction has a stable StartTS so remote reads share the same snapshot.
+			if _, err := sctx.Txn(true); err != nil {
+				GlobalForwardingStats.RecordSkipped()
+				logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: failed to activate txn",
+					zap.Error(err))
+				return nil, false, nil
+			}
+		}
+	}
+
+	// Resolve params for request payload if we haven't done it yet.
+	if params == nil && (execStmt.BinaryArgs != nil || len(execStmt.UsingVars) > 0) {
+		var err error
+		params, err = resolveParams()
+		if err != nil {
+			GlobalForwardingStats.RecordSkipped()
+			logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: failed to rewrite UsingVars",
+				zap.Error(err))
+			return nil, false, nil
+		}
 	}
 
 	logutil.Logger(ctx).Debug("[remote] TryEarlyForwardExecute: forwarding to remote (early path)",
@@ -516,10 +616,23 @@ func TryEarlyForwardExecute(ctx context.Context, sctx sessionctx.Context, execSt
 		GlobalForwardingStats.RecordError()
 		return nil, true, err
 	}
+	start := time.Now()
 	rs, err := GetDefaultClient().Execute(ctx, req, sctx)
 	if err != nil {
+		metrics.RemotePlanForwardSendErrDuration.Observe(time.Since(start).Seconds())
+		metrics.RemotePlanForwardSendErrCounter.Inc()
 		GlobalForwardingStats.RecordError()
 		return nil, true, err
+	}
+
+	if _, ok := IsDMLRecordSet(rs); ok {
+		metrics.RemotePlanForwardSendOKDuration.Observe(time.Since(start).Seconds())
+		metrics.RemotePlanForwardSendOKCounter.Inc()
+	} else if streamRS, ok := rs.(*batchStreamingRecordSet); ok {
+		streamRS.forwardStart = start
+	} else {
+		metrics.RemotePlanForwardSendOKDuration.Observe(time.Since(start).Seconds())
+		metrics.RemotePlanForwardSendOKCounter.Inc()
 	}
 
 	if feedbackCfg.enabled() && rs != nil {
@@ -533,6 +646,17 @@ func TryEarlyForwardExecute(ctx context.Context, sctx sessionctx.Context, execSt
 	return rs, true, nil
 }
 
+func hasSelectLock(prepStmt *core.PlanCacheStmt) bool {
+	if prepStmt == nil || prepStmt.PreparedAst == nil {
+		return false
+	}
+	sel, ok := prepStmt.PreparedAst.Stmt.(*ast.SelectStmt)
+	if !ok || sel == nil || sel.LockInfo == nil {
+		return false
+	}
+	return sel.LockInfo.LockType != ast.SelectLockNone
+}
+
 // buildRequestPayload builds the request payload for forwarding.
 func buildRequestPayload(sctx sessionctx.Context, prepStmt *core.PlanCacheStmt, planLocation *core.PlanLocationInfo, params []expression.Expression) (*pb.RemoteRequest, error) {
 	target := planLocation.TargetStore
@@ -540,14 +664,32 @@ func buildRequestPayload(sctx sessionctx.Context, prepStmt *core.PlanCacheStmt, 
 	payload := acquireRemoteRequest()
 	payload.Target = target
 	payload.SqlText = prepStmt.StmtText
-	payload.NormalizedSql = prepStmt.NormalizedSQL
+	normalizedSQL := prepStmt.NormalizedSQL
+	sqlDigest := prepStmt.SQLDigest
+	if vars := sctx.GetSessionVars(); vars != nil && vars.StmtCtx != nil {
+		if normalized, digest := vars.StmtCtx.SQLDigest(); normalized != "" {
+			normalizedSQL = normalized
+			sqlDigest = digest
+		}
+	}
+	payload.NormalizedSql = normalizedSQL
 	payload.PlanDigest = digestString(prepStmt.PlanDigest)
+	payload.SqlDigest = digestString(sqlDigest)
 	payload.Session = snapshotSession(sctx)
 
 	// Snapshot params for remote execution
 	if len(params) > 0 {
 		evalCtx := sctx.GetExprCtx().GetEvalCtx()
 		payload.Params = snapshotParams(params, evalCtx)
+
+		// Populate parameter markers so limit-related plan cache key parts can be computed
+		// without parsing SQL on the remote side.
+		if prepStmt.HasLimit() && sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+			if err := core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), false, prepStmt.Params, params); err != nil {
+				releaseRemoteRequest(payload)
+				return nil, err
+			}
+		}
 	}
 
 	// Build PlanCacheInfo from prepStmt for direct plan cache lookup on remote side
@@ -584,7 +726,8 @@ func buildPlanCacheInfo(sctx sessionctx.Context, prepStmt *core.PlanCacheStmt) *
 		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 	}
 
-	// Get limit values from the statement
+	// Get limit information from the statement
+	hasLimit := prepStmt.HasLimit()
 	limitValues := prepStmt.GetLimitValues()
 
 	// Get stats version hash if PlanCacheInvalidationOnFreshStats is enabled
@@ -601,8 +744,9 @@ func buildPlanCacheInfo(sctx sessionctx.Context, prepStmt *core.PlanCacheStmt) *
 		SchemaVersion:       prepStmt.SchemaVersion,
 		RelateVersions:      relateVersions,
 		LatestSchemaVersion: latestSchemaVersion,
-		IsReadOnly:          &isReadOnly,
+		IsReadOnlyOpt:       &pb.PlanCacheInfo_IsReadOnly{IsReadOnly: isReadOnly},
 		HasSubquery:         prepStmt.HasSubquery(),
+		HasLimit:            hasLimit,
 		LimitValues:         limitValues,
 		StatsVerHash:        statsVerHash,
 		PlanCacheEnabled:    planCacheEnabled,
@@ -790,18 +934,7 @@ func snapshotSession(sctx sessionctx.Context) *pb.SessionSnapshot {
 	// Get charset and collation
 	connCharset, connCollation := vars.GetCharsetInfo()
 
-	// Get isolation read engines as comma-separated string
-	var engines []string
-	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
-		engines = append(engines, kv.TiDB.Name())
-	}
-	if _, ok := vars.IsolationReadEngines[kv.TiKV]; ok {
-		engines = append(engines, kv.TiKV.Name())
-	}
-	if _, ok := vars.IsolationReadEngines[kv.TiFlash]; ok {
-		engines = append(engines, kv.TiFlash.Name())
-	}
-	isolationReadEngines := strings.Join(engines, ",")
+	isolationReadEngines := isolationReadEnginesString(vars)
 
 	startTS := uint64(0)
 	if vars.InTxn() {
@@ -820,6 +953,7 @@ func snapshotSession(sctx sessionctx.Context) *pb.SessionSnapshot {
 	snap.AuthUsername = authUsername
 	snap.AuthHostname = authHostname
 	snap.PartitionPruneMode = vars.PartitionPruneMode.Load()
+	snap.SkipMissingPartitionStats = vars.SkipMissingPartitionStats
 	snap.IsolationReadEngines = isolationReadEngines
 	snap.SelectLimit = vars.SelectLimit
 	snap.ConnCharset = connCharset
@@ -831,6 +965,7 @@ func snapshotSession(sctx sessionctx.Context) *pb.SessionSnapshot {
 	snap.EnablePrepPlanCache = vars.EnablePreparedPlanCache
 	snap.EnableNonPrepPlanCache = vars.EnableNonPreparedPlanCache
 	snap.EnableInstancePlanCache = variable.EnableInstancePlanCache.Load()
+	snap.EnablePlanCacheForParamLimit = vars.EnablePlanCacheForParamLimit
 	snap.EnableAsyncCommit = vars.EnableAsyncCommit
 	snap.Enable_1Pc = vars.Enable1PC
 	if vars.RowEncoder.Enable {
@@ -838,6 +973,12 @@ func snapshotSession(sctx sessionctx.Context) *pb.SessionSnapshot {
 	} else {
 		snap.RowFormatVersion = variable.DefTiDBRowFormatV1
 	}
+	snap.InstancePlanCacheMaxSize = uint64(variable.InstancePlanCacheMaxMemSize.Load())
+	snap.MaxChunkSize = uint32(vars.MaxChunkSize)
+	snap.TidbxEnableIndexLookupPushDown = vars.EnableIndexLookUpPushDown
+	snap.TidbxEnableSingleStoreTxn_1Pc = txnkvtxn.SingleStoreTxnCommitEnabled
+	snap.TidbxStoreBatchGet = tikvrpc.TiDBXStoreBatchGet.Load()
+	snap.TidbxFastPath = variable.EnableFastPath.Load()
 
 	if snap.Txn == nil {
 		snap.Txn = &pb.TxnContext{}
@@ -848,6 +989,63 @@ func snapshotSession(sctx sessionctx.Context) *pb.SessionSnapshot {
 	snap.Txn.ForUpdateTs = vars.TxnCtx.GetForUpdateTS()
 
 	return snap
+}
+
+func isolationReadEnginesString(vars *variable.SessionVars) string {
+	if vars == nil || len(vars.IsolationReadEngines) == 0 {
+		return ""
+	}
+	hasTiDB := false
+	hasTiKV := false
+	hasTiFlash := false
+	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
+		hasTiDB = true
+	}
+	if _, ok := vars.IsolationReadEngines[kv.TiKV]; ok {
+		hasTiKV = true
+	}
+	if _, ok := vars.IsolationReadEngines[kv.TiFlash]; ok {
+		hasTiFlash = true
+	}
+	count := 0
+	totalLen := 0
+	if hasTiDB {
+		count++
+		totalLen += len(kv.TiDB.Name())
+	}
+	if hasTiKV {
+		count++
+		totalLen += len(kv.TiKV.Name())
+	}
+	if hasTiFlash {
+		count++
+		totalLen += len(kv.TiFlash.Name())
+	}
+	if count == 0 {
+		return ""
+	}
+	totalLen += count - 1
+	var b strings.Builder
+	b.Grow(totalLen)
+	first := true
+	if hasTiDB {
+		b.WriteString(kv.TiDB.Name())
+		first = false
+	}
+	if hasTiKV {
+		if !first {
+			b.WriteByte(',')
+		}
+		b.WriteString(kv.TiKV.Name())
+		first = false
+	}
+	if hasTiFlash {
+		if !first {
+			b.WriteByte(',')
+		}
+		b.WriteString(kv.TiFlash.Name())
+	}
+	return b.String()
 }
 
 // getReadTSFromOracle fetches a timestamp directly from Oracle without creating a full transaction.

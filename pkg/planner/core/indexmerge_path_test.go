@@ -470,13 +470,11 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -61,21 +62,22 @@ type GcSafePoints struct {
 	} `json:"service_gc_safe_points"`
 }
 
-func verifyGCStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
+func verifyTargetGCSafePointExist(t *require.Assertions, cfg operator.PauseGcConfig) {
 	var result GcSafePoints
 	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
 	for _, sp := range result.SPs {
-		if sp.ServiceID != "gc_worker" {
-			t.Equal(int64(cfg.SafePoint)-1, sp.SafePoint, result.SPs)
+		if sp.ServiceID == cfg.SafePointID {
+			return
 		}
 	}
+	t.FailNowf("the service gc safepoint does not exist", "it is %#v", result)
 }
 
-func verifyGCNotStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
+func verifyTargetGCSafePointNotExist(t *require.Assertions, cfg operator.PauseGcConfig) {
 	var result GcSafePoints
 	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
 	for _, sp := range result.SPs {
-		if sp.ServiceID != "gc_worker" {
+		if sp.ServiceID == cfg.SafePointID {
 			t.FailNowf("the service gc safepoint exists", "it is %#v", sp)
 		}
 	}
@@ -181,8 +183,9 @@ func TestOperator(t *testing.T) {
 		Config: task.Config{
 			PD: []string{"127.0.0.1:2379"},
 		},
-		TTL:       5 * time.Minute,
-		SafePoint: oracle.GoTimeToTS(time.Now()),
+		TTL:         5 * time.Minute,
+		SafePoint:   oracle.GoTimeToTS(time.Now()),
+		SafePointID: utils.MakeSafePointID(),
 		OnAllReady: func() {
 			close(rd)
 		},
@@ -191,7 +194,7 @@ func TestOperator(t *testing.T) {
 		},
 	}
 
-	verifyGCNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg)
 	verifySchedulerNotStopped(req, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -208,7 +211,7 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
-	verifyGCStopped(req, cfg)
+	verifyTargetGCSafePointExist(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
 	cancel()
@@ -223,7 +226,7 @@ func TestOperator(t *testing.T) {
 	}, 10*time.Second, time.Second)
 
 	verifySchedulerNotStopped(req, cfg)
-	verifyGCNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg)
 }
 
 func TestFailure(t *testing.T) {
@@ -240,11 +243,12 @@ func TestFailure(t *testing.T) {
 		Config: task.Config{
 			PD: []string{"127.0.0.1:2379"},
 		},
-		TTL:       5 * time.Minute,
-		SafePoint: oracle.GoTimeToTS(time.Now()),
+		TTL:         5 * time.Minute,
+		SafePoint:   oracle.GoTimeToTS(time.Now()),
+		SafePointID: utils.MakeSafePointID(),
 	}
 
-	verifyGCNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg)
 	verifySchedulerNotStopped(req, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -252,6 +256,6 @@ func TestFailure(t *testing.T) {
 	err := operator.AdaptEnvForSnapshotBackup(ctx, &cfg)
 	require.Error(t, err)
 
-	verifyGCNotStopped(req, cfg)
 	verifySchedulerNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg)
 }

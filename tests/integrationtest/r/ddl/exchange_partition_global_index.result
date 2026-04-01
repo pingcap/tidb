@@ -1,0 +1,54 @@
+drop table if exists t,tp;
+CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);
+CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED)
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (5),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (20)
+);
+insert into tp (a,b) values (2,2),(4,4),(6,6);
+insert into t (a,b) values (12,2),(14,4),(16,6);
+select a, b, _tidb_rowid from tp;
+a	b	_tidb_rowid
+2	2	1
+4	4	2
+6	6	3
+select a, b, _tidb_rowid from t;
+a	b	_tidb_rowid
+12	2	1
+14	4	2
+16	6	3
+ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t;
+select a, b, _tidb_rowid from tp;
+a	b	_tidb_rowid
+12	2	1
+14	4	2
+16	6	3
+2	2	1
+4	4	2
+6	6	3
+create index idx_b on tp(b) global;
+select count(*) from tp use index(idx_b);
+count(*)
+6
+select count(*) from tp ignore index(idx_b);
+count(*)
+6
+select a, b, _tidb_rowid from tp use index(idx_b);
+a	b	_tidb_rowid
+12	2	1
+14	4	2
+16	6	3
+2	2	1
+4	4	2
+6	6	3
+select a, b, _tidb_rowid from tp ignore index(idx_b);
+a	b	_tidb_rowid
+12	2	1
+14	4	2
+16	6	3
+2	2	1
+4	4	2
+6	6	3
+admin check table tp;
+drop table t, tp;

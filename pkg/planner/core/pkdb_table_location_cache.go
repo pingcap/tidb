@@ -48,6 +48,23 @@ func (t DMLType) String() string {
 	}
 }
 
+// StatementTraits summarizes statement access patterns used for location decisions.
+// For EarlyLocationInfo, these are extracted from AST and are conservative hints.
+// For CachedPlanLocationInfo, these are derived from the physical plan.
+type StatementTraits struct {
+	// HasPointGet indicates if the statement/plan contains PointGet or BatchPointGet.
+	// For read-only queries, these plans are usually executed locally because KV access is already efficient.
+	// For DML statements, PointGet can still be beneficial to forward (e.g. reducing commit RPCs).
+	HasPointGet bool
+
+	// HasIndexLookup indicates if the statement/plan is a simple index-lookup pushdown candidate.
+	HasIndexLookup bool
+
+	// DML related fields.
+	IsDML   bool
+	DMLType DMLType
+}
+
 // TableLocationInfo uses PhysPlanPartInfo and PartitionPruning for partition calculation.
 type TableLocationInfo struct {
 	TableID       int64
@@ -61,6 +78,8 @@ type TableLocationInfo struct {
 	// For read-only queries, these plans are usually executed locally because KV access is already efficient.
 	// For DML statements, PointGet can still be beneficial to forward (e.g. reducing commit RPCs).
 	IsPointGet bool
+
+	IsIndexLookupPushDown bool
 
 	// PartitionByRowInfo provides enough information to locate the target partition IDs for
 	// some plans on partitioned tables using execution parameters (e.g. PointGet/BatchPointGet,
@@ -100,14 +119,8 @@ type PartitionByRowInfo struct {
 type CachedPlanLocationInfo struct {
 	TableLocations    []*TableLocationInfo
 	HasPartitionTable bool
-	// HasPointGet indicates if the plan contains PointGet or BatchPointGet
-	// For read-only queries, these plans are usually executed locally because KV access is already efficient.
-	// For DML statements, PointGet can still be beneficial to forward (e.g. reducing commit RPCs).
-	HasPointGet bool
-
-	// DML related fields
-	IsDML   bool
-	DMLType DMLType
+	// StatementTraits summarizes access patterns derived from the physical plan.
+	StatementTraits StatementTraits
 }
 
 // EarlyLocationInfo stores location info extracted during PREPARE phase.
@@ -126,9 +139,11 @@ type EarlyLocationInfo struct {
 	// HasPartitionTable indicates whether this statement references any partitioned table.
 	HasPartitionTable bool
 
-	// DML related fields
-	IsDML   bool
-	DMLType DMLType
+	// StatementTraits summarizes access patterns for this statement.
+	StatementTraits StatementTraits
+
+	// ForceRemotePlanHint indicates this statement has the TIDBX_REMOTE_PLAN_FORCE hint.
+	ForceRemotePlanHint bool
 
 	// CachedLocationInfo is set after the first plan generation for partitioned tables.
 	// This allows subsequent executions to use partition pruning without full planning.
@@ -155,6 +170,19 @@ func (e *EarlyLocationInfo) HasCachedLocationInfo() bool {
 func (e *EarlyLocationInfo) DetermineLocation(
 	ctx base.PlanContext, is infoschema.InfoSchema, params []expression.Expression,
 ) *PlanLocationInfo {
+	return e.determineLocation(ctx, is, params, false)
+}
+
+// DetermineLocationWithOptions determines the location while allowing callers to ignore local preferences.
+func (e *EarlyLocationInfo) DetermineLocationWithOptions(
+	ctx base.PlanContext, is infoschema.InfoSchema, params []expression.Expression, ignoreLocalPreference bool,
+) *PlanLocationInfo {
+	return e.determineLocation(ctx, is, params, ignoreLocalPreference)
+}
+
+func (e *EarlyLocationInfo) determineLocation(
+	ctx base.PlanContext, is infoschema.InfoSchema, params []expression.Expression, ignoreLocalPreference bool,
+) *PlanLocationInfo {
 	if e == nil {
 		return nil
 	}
@@ -164,9 +192,16 @@ func (e *EarlyLocationInfo) DetermineLocation(
 		return &PlanLocationInfo{PlanType: PhyPlanLocal, Reason: "no location resolver"}
 	}
 
+	// For read-only point-get/batch-point-get and simple index-lookup pushdown, prefer local execution.
+	if !ignoreLocalPreference && !e.StatementTraits.IsDML &&
+		(e.StatementTraits.HasPointGet || e.StatementTraits.HasIndexLookup) &&
+		len(e.TableIDs) == 1 {
+		return &PlanLocationInfo{PlanType: PhyPlanLocal, Reason: "point get/index lookup - KV access is efficient"}
+	}
+
 	// Prefer CachedLocationInfo (extracted from the compiled plan) when available.
 	if e.CachedLocationInfo != nil {
-		return e.CachedLocationInfo.DetermineLocationWithParams(ctx, is, params)
+		return e.CachedLocationInfo.determineLocationWithParams(ctx, is, params, ignoreLocalPreference)
 	}
 
 	// For statements that reference partitioned tables, we need CachedLocationInfo for
@@ -531,6 +566,12 @@ func tryEvalGetVarToConstant(sf *expression.ScalarFunction, evalCtx expression.E
 func (c *CachedPlanLocationInfo) DetermineLocationWithParams(
 	ctx base.PlanContext, is infoschema.InfoSchema, params []expression.Expression,
 ) *PlanLocationInfo {
+	return c.determineLocationWithParams(ctx, is, params, false)
+}
+
+func (c *CachedPlanLocationInfo) determineLocationWithParams(
+	ctx base.PlanContext, is infoschema.InfoSchema, params []expression.Expression, ignoreLocalPreference bool,
+) *PlanLocationInfo {
 	if c == nil || len(c.TableLocations) == 0 {
 		return &PlanLocationInfo{PlanType: PhyPlanLocal, Reason: "no table location info"}
 	}
@@ -539,10 +580,13 @@ func (c *CachedPlanLocationInfo) DetermineLocationWithParams(
 		return &PlanLocationInfo{PlanType: PhyPlanLocal, Reason: "no location resolver"}
 	}
 
-	// For read-only queries, PointGet/BatchPointGet are usually executed locally because KV access is already efficient.
-	// For DML statements, PointGet can still be beneficial to forward (e.g. reducing commit RPCs).
-	if c.HasPointGet && !c.IsDML {
-		return &PlanLocationInfo{PlanType: PhyPlanLocal, Reason: "point get - KV access is efficient"}
+	// For read-only queries, PointGet/BatchPointGet and simple index-lookup pushdown are usually executed locally
+	// because KV access is already efficient. For DML statements, PointGet can still be beneficial to forward
+	// (e.g. reducing commit RPCs).
+	if !ignoreLocalPreference && !c.StatementTraits.IsDML &&
+		(c.StatementTraits.HasPointGet || c.StatementTraits.HasIndexLookup) &&
+		len(c.TableLocations) == 1 {
+		return &PlanLocationInfo{PlanType: PhyPlanLocal, Reason: "point get/index lookup - KV access is efficient"}
 	}
 
 	storeAddrs := make(map[string]bool)
@@ -558,7 +602,7 @@ func (c *CachedPlanLocationInfo) DetermineLocationWithParams(
 		if err != nil {
 			return &PlanLocationInfo{PlanType: PhyPlanUncertain, Reason: "error: " + err.Error()}
 		}
-		logutil.BgLogger().Info("DetermineLocationWithParams",
+		logutil.BgLogger().Debug("DetermineLocationWithParams",
 			zap.Int64("tableID", loc.TableID),
 			zap.Bool("isPartitioned", loc.IsPartitioned),
 			zap.Int64s("partIDs", partIDs),
@@ -623,6 +667,9 @@ func extractLocFromPlanTree(plan base.Plan, info *CachedPlanLocationInfo) {
 			if loc.IsPartitioned {
 				info.HasPartitionTable = true
 			}
+			if loc.IsIndexLookupPushDown {
+				info.StatementTraits.HasIndexLookup = true
+			}
 		}
 	case *PhysicalIndexMergeReader:
 		if loc := buildLocFromIndexMergeReader(p); loc != nil {
@@ -634,7 +681,7 @@ func extractLocFromPlanTree(plan base.Plan, info *CachedPlanLocationInfo) {
 	case *PointGetPlan:
 		if loc := buildLocFromPointGet(p); loc != nil {
 			info.TableLocations = append(info.TableLocations, loc)
-			info.HasPointGet = true // Mark that this plan has PointGet/BatchPointGet
+			info.StatementTraits.HasPointGet = true // Mark that this plan has PointGet/BatchPointGet
 			if loc.IsPartitioned {
 				info.HasPartitionTable = true
 			}
@@ -642,15 +689,15 @@ func extractLocFromPlanTree(plan base.Plan, info *CachedPlanLocationInfo) {
 	case *BatchPointGetPlan:
 		if loc := buildLocFromBatchPointGet(p); loc != nil {
 			info.TableLocations = append(info.TableLocations, loc)
-			info.HasPointGet = true // Mark that this plan has PointGet/BatchPointGet
+			info.StatementTraits.HasPointGet = true // Mark that this plan has PointGet/BatchPointGet
 			if loc.IsPartitioned {
 				info.HasPartitionTable = true
 			}
 		}
 	// Handle DML statements: Update and Delete
 	case *Update:
-		info.IsDML = true
-		info.DMLType = DMLTypeUpdate
+		info.StatementTraits.IsDML = true
+		info.StatementTraits.DMLType = DMLTypeUpdate
 		// Extract location info from the SelectPlan (the read part of UPDATE)
 		// UPDATE's SelectPlan contains the TableReader/IndexReader that reads the rows to be updated
 		// The partition pruning conditions are in the SelectPlan's TableScan/IndexScan
@@ -659,8 +706,8 @@ func extractLocFromPlanTree(plan base.Plan, info *CachedPlanLocationInfo) {
 		}
 		return // Don't recurse into children again
 	case *Delete:
-		info.IsDML = true
-		info.DMLType = DMLTypeDelete
+		info.StatementTraits.IsDML = true
+		info.StatementTraits.DMLType = DMLTypeDelete
 		// Extract location info from the SelectPlan (the read part of DELETE)
 		// DELETE's SelectPlan contains the TableReader/IndexReader that reads the rows to be deleted
 		// The partition pruning conditions are in the SelectPlan's TableScan/IndexScan
@@ -669,8 +716,8 @@ func extractLocFromPlanTree(plan base.Plan, info *CachedPlanLocationInfo) {
 		}
 		return // Don't recurse into children again
 	case *Insert:
-		info.IsDML = true
-		info.DMLType = DMLTypeInsert
+		info.StatementTraits.IsDML = true
+		info.StatementTraits.DMLType = DMLTypeInsert
 		// For INSERT ... SELECT, extract from SelectPlan
 		if p.SelectPlan != nil {
 			extractLocFromPlanTree(p.SelectPlan, info)
@@ -751,7 +798,9 @@ func buildLocFromIndexLookUpReader(p *PhysicalIndexLookUpReader) *TableLocationI
 	if !ok {
 		return nil
 	}
-	return buildLocFromTableInfo(ts.Table, ts.DBName.L, p.PlanPartInfo)
+	loc := buildLocFromTableInfo(ts.Table, ts.DBName.L, p.PlanPartInfo)
+	loc.IsIndexLookupPushDown = p.IndexLookUpPushDown
+	return loc
 }
 
 func buildLocFromIndexMergeReader(p *PhysicalIndexMergeReader) *TableLocationInfo {

@@ -89,12 +89,12 @@ func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brCo
 func BRIECreateTable(
 	sctx sessionctx.Context,
 	dbName pmodel.CIStr,
-	table *model.TableInfo,
+	clonedTable *model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
 	d := domain.GetDomain(sctx).DDLExecutor()
-	query, err := showRestoredCreateTable(sctx, table, brComment)
+	query, err := showRestoredCreateTable(sctx, clonedTable, brComment)
 	if err != nil {
 		return err
 	}
@@ -108,15 +108,13 @@ func BRIECreateTable(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 
-	table = table.Clone()
-
-	return d.CreateTableWithInfo(sctx, dbName, table, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
+	return d.CreateTableWithInfo(sctx, dbName, clonedTable, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
 }
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch
 func BRIECreateTables(
 	sctx sessionctx.Context,
-	tables map[string][]*model.TableInfo,
+	clonedTables map[string][]*model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
@@ -128,10 +126,9 @@ func BRIECreateTables(
 		sctx.SetValue(sessionctx.QueryString, originQuery)
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
-	for db, tablesInDB := range tables {
+	for db, tablesInDB := range clonedTables {
 		dbName := pmodel.NewCIStr(db)
 		queryBuilder := strings.Builder{}
-		cloneTables := make([]*model.TableInfo, 0, len(tablesInDB))
 		for _, table := range tablesInDB {
 			query, err := showRestoredCreateTable(sctx, table, brComment)
 			if err != nil {
@@ -140,11 +137,9 @@ func BRIECreateTables(
 
 			queryBuilder.WriteString(query)
 			queryBuilder.WriteString(";")
-
-			cloneTables = append(cloneTables, table.Clone())
 		}
 		sctx.SetValue(sessionctx.QueryString, queryBuilder.String())
-		if err := splitBatchCreateTable(sctx, dbName, cloneTables, cs...); err != nil {
+		if err := splitBatchCreateTable(sctx, dbName, tablesInDB, cs...); err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one

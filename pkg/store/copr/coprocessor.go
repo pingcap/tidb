@@ -1099,8 +1099,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
-		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
-		it.liteWorker.tryCopLiteWorker.CompareAndSwap(1, 0)
 		if resp == nil {
 			it.actionOnExceed.close()
 			return nil, nil
@@ -1195,6 +1193,10 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		} else {
 			it.tasks = it.tasks[1:]
 		}
+		if len(it.tasks) == 0 {
+			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
+			w.tryCopLiteWorker.Store(0)
+		}
 		if result != nil {
 			if result.resp != nil {
 				w.batchCopRespList = result.batchRespList
@@ -1211,6 +1213,10 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 }
 
 func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
+	if w.tryCopLiteWorker != nil {
+		// Switch from lite worker to normal workers; release the lite-worker token so other iterators may reuse it.
+		w.tryCopLiteWorker.Store(0)
+	}
 	taskCh := make(chan *copTask, 1)
 	worker := w.worker
 	worker.taskCh = taskCh
@@ -1278,7 +1284,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.BgLogger().Error("copIteratorWork meet panic",
+			logutil.BgLogger().Warn("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: util2.GetRecoverError(r)}
@@ -1440,7 +1446,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 
 	var result *copTaskResult
-	if worker.req.Paging.Enable {
+	if worker.req.Paging.Enable || copResp.GetRange() != nil {
 		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
@@ -1948,36 +1954,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	if resp == nil {
 		return nil
 	}
-	sd := &util.ScanDetail{}
-	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if pbDetails.TimeDetail != nil || pbDetails.TimeDetailV2 != nil {
-			td.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
+			copStats.ScanDetail.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(nil, timeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(nil, timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
+				copStats.ScanDetail.ProcessedKeys = scanDetail.Write.Processed
+				copStats.ScanDetail.TotalKeys = scanDetail.Write.Total
 			}
 		}
 	}
-	copStats.ScanDetail = sd
-	copStats.TimeDetail = td
 
 	if worker.req.RunawayChecker != nil {
 		var ruDetail *util.RUDetails
 		if ruDetailRaw := bo.GetCtx().Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			ruDetail = ruDetailRaw.(*util.RUDetails)
 		}
-		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, sd.ProcessedKeys, nil); err != nil {
+		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, copStats.ScanDetail.ProcessedKeys, nil); err != nil {
 			return err
 		}
 	}
@@ -1985,6 +1987,9 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	if rpcCtx != nil {
+		copStats.CalleeAddress = rpcCtx.Addr
+	}
 	if worker.kvclient.Stats == nil {
 		return
 	}
@@ -1993,15 +1998,14 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}()
 	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
-	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
-		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		copStats.CalleeAddress = rpcCtx.Addr
+	if len(backoffTimes) > 0 {
+		copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+		copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+		copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
+		for backoff := range backoffTimes {
+			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
+			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+		}
 	}
 }
 
@@ -2017,7 +2021,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
-	execdetails.ExecDetails
+	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
 	CoprCacheHit bool

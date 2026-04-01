@@ -1639,3 +1639,50 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 	}
 	return charsetAndDefaultCollation, err
 }
+
+func isMySQLIntegerType(colType string) bool {
+	s := strings.TrimSpace(strings.ToLower(colType))
+	// strip attributes like "unsigned" and length like "(11)"
+	s = strings.SplitN(s, " ", 2)[0]
+	if idx := strings.IndexByte(s, '('); idx >= 0 {
+		s = s[:idx]
+	}
+	switch s {
+	case "tinyint", "smallint", "mediumint", "int", "integer", "bigint":
+		return true
+	default:
+		return false
+	}
+}
+
+// getIntAutoIncPrimaryKeyColumn returns the column name when the table has a
+// single-column INT-family PRIMARY KEY with AUTO_INCREMENT.
+func getIntAutoIncPrimaryKeyColumn(tctx *tcontext.Context, db *BaseConn, database, table string) (string, bool, error) {
+	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(database), escapeString(table))
+	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "TYPE", "KEY", "EXTRA"}, query)
+	if err != nil {
+		return "", false, err
+	}
+
+	var pkCol string
+	for _, oneRow := range results {
+		fieldName, fieldType, key, extra := oneRow[0], oneRow[1], oneRow[2], oneRow[3]
+		if strings.EqualFold(key, "PRI") {
+			// composite primary key
+			if pkCol != "" {
+				return "", false, nil
+			}
+			if !strings.Contains(strings.ToLower(extra), "auto_increment") {
+				return "", false, nil
+			}
+			if !isMySQLIntegerType(fieldType) {
+				return "", false, nil
+			}
+			pkCol = fieldName
+		}
+	}
+	if pkCol == "" {
+		return "", false, nil
+	}
+	return pkCol, true, nil
+}

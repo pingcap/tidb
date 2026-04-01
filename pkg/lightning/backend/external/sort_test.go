@@ -28,6 +28,7 @@ import (
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -134,7 +135,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. merge step
-	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	datas, stats, err := getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 
 	dataGroup, _ := splitDataAndStatFiles(datas, stats)
@@ -161,18 +162,19 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	mergeMemSize := (rand.Intn(10) + 1) * 100
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
-	bufSizeBak := defaultReadBufferSize
+	bufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = bufSizeBak
+		DefaultReadBufferSize = bufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
+
 	for _, group := range dataGroup {
-		require.NoError(t, MergeOverlappingFiles(
-			ctx,
-			group,
+		wctx := workerpool.NewContext(ctx)
+		op := NewMergeOperator(
+			wctx,
 			memStore,
 			int64(5*size.MB),
 			"/test2",
@@ -181,6 +183,13 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			1,
 			true,
 			common.OnDuplicateKeyIgnore,
+		)
+
+		require.NoError(t, MergeOverlappingFiles(
+			wctx,
+			group,
+			1,
+			op,
 		))
 	}
 

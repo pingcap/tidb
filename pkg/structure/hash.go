@@ -267,6 +267,10 @@ func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey 
 	for it.Valid() {
 		key, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
+			err = it.Next()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		if err = fn(key, field, it.Value()); err != nil {

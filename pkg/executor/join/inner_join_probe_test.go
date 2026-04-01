@@ -322,7 +322,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.SetupPartitionInfo()
 	// update the partition number
 	partitionNumber = int(hashJoinCtx.partitionNumber)
-	hashJoinCtx.spillHelper = newHashJoinSpillHelper(nil, partitionNumber, nil)
+	hashJoinCtx.spillHelper = newHashJoinSpillHelper(nil, partitionNumber, nil, "")
 	hashJoinCtx.initHashTableContext()
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}

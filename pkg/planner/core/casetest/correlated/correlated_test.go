@@ -70,3 +70,17 @@ WHERE NOT (tlc07c2a51.col_1>=
               group by tlc07c2a51.col_6
               HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows("1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
 }
+
+func TestWrongDecorrelate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (amount decimal(65,20),segment1 varchar(50));")
+	tk.MustExec("INSERT INTO t1 (amount, segment1) VALUES (6.23000000000000000000, '60021022342');")
+	tk.MustExec("INSERT INTO t1 (amount, segment1) VALUES (30025.20000000000000000000, '60121022342');")
+	tk.MustExec("INSERT INTO t1 (amount, segment1) VALUES (0.00000000000000000000, '60021022342');")
+	tk.MustQuery("SELECT (SELECT IF(substr(dd.segment1,1,3)='600','X','') FROM dual WHERE dd.amount<>0) c1,dd.amount,dd.segment1 FROM t1 dd order by 1, 2, 3;").Check(testkit.Rows(
+		"<nil> 0.00000000000000000000 60021022342",
+		" 30025.20000000000000000000 60121022342",
+		"X 6.23000000000000000000 60021022342"))
+}

@@ -703,3 +703,15 @@ select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
 select @@max_execution_time;
 set @@global.max_execution_time=default;
 disconnect conn1;
+
+# TestSetGlobalEnableProcedureUpdatesSPParamSubstitute
+set @@global.tidb_enable_sp_param_substitute = off;
+set @@global.tidb_enable_procedure = off;
+set @@tidb_enable_sp_param_substitute = off;
+show global variables like 'tidb_enable_sp_param_substitute';
+select @@tidb_enable_sp_param_substitute;
+set @@global.tidb_enable_procedure = on;
+show global variables like 'tidb_enable_sp_param_substitute';
+select @@tidb_enable_sp_param_substitute;
+set @@global.tidb_enable_procedure = default;
+set @@global.tidb_enable_sp_param_substitute = default;

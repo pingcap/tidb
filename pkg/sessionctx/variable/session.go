@@ -34,6 +34,7 @@ import (
 
 	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
@@ -864,6 +865,9 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
+	// ForwardedForRemoteExec indicates the session is executing forwarded SQL from another TiDB node.
+	ForwardedForRemoteExec bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
@@ -1113,6 +1117,12 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -1156,6 +1166,10 @@ type SessionVars struct {
 	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
+
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel bool
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
@@ -1464,6 +1478,13 @@ type SessionVars struct {
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
 
+	// EnableDDLAnalyze is a sysVar to indicate create index or reorg index with embedded analyze.
+	EnableDDLAnalyze bool
+
+	// EnableDDLAnalyzeExecOpt is a internal flag to notify internal session whether we do ddl analyze.
+	// It is not controlled by user behavior, and is always default off.
+	EnableDDLAnalyzeExecOpt bool
+
 	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
@@ -1489,6 +1510,13 @@ type SessionVars struct {
 
 	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
 	EnablePlanCacheForSubquery bool
+
+	// EnablePlanCacheGenericRewrite enables the current narrow rewrite policy
+	// for plan cache. It currently covers non-outer-join constant propagation,
+	// predicate simplification, and ranger same-slot Eq/In fallback. It does not
+	// cover broader join reasoning such as outer-join derivation or null-reject
+	// inference.
+	EnablePlanCacheGenericRewrite bool
 
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
@@ -1730,6 +1758,15 @@ type SessionVars struct {
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
+
 	// database name +"."+procedure_name as key , *RoutineCacahe as value.
 	ProcedurePlanCache map[string]any
 	// LastProcedureErrorStr is used to save last handler command.
@@ -1746,8 +1783,11 @@ type SessionVars struct {
 	EnableSPParamSubstitute bool
 	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	CreateFromSelectUsingImport bool
-	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
-	CacheStmtExecInfo         *stmtsummary.StmtExecInfo
+
+	// PlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	PlanCacheMaxDecimalParamNums int
+
+	// EnableIndexLookUpPushDown indicates whether to enable index lookup push down optimization for TiDBX.
 	EnableIndexLookUpPushDown bool
 }
 
@@ -1873,8 +1913,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		sc.Reset()
+		succ := sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
+		if !succ {
+			sc = stmtctx.NewStmtCtx()
+		}
 	} else {
 		sc = stmtctx.NewStmtCtx()
 	}
@@ -2062,6 +2105,14 @@ func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
 	p.forNonPrepCache = flag
 }
 
+// IsForNonPrepCache returns whether the params are for non-prepared plan cache.
+func (p *PlanCacheParamList) IsForNonPrepCache() bool {
+	if p == nil {
+		return false
+	}
+	return p.forNonPrepCache
+}
+
 // GetParamValue returns the value of the parameter at the specified index.
 func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
 	return p.paramValues[idx]
@@ -2177,6 +2228,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdCount:            DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:              DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:                 DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:            DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                             DefTiDBRetryLimit,
 		DisableTxnAutoRetry:                    DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:                       kv.PriorityLow,
@@ -2217,6 +2269,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		IndexJoinCostFactor:                    DefOptIndexJoinCostFactor,
 		CommandValue:                           uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:            DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughSel:           DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                          config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:                  DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:                 DefWaitSplitRegionTimeout,
@@ -2264,6 +2317,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashFastScan:                        DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt:          true,
 		ForeignKeyChecks:                       DefTiDBForeignKeyChecks,
+		EnablePlanCacheGenericRewrite:          DefTiDBOptEnablePlanCacheGenericRewrite,
 		HookContext:                            hctx,
 		EnableReuseChunk:                       DefTiDBEnableReusechunk,
 		preUseChunkAlloc:                       DefTiDBUseAlloc,
@@ -2275,12 +2329,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:                      resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:             mysql.DefaultCollationName,
 		GroupConcatMaxLen:                      DefGroupConcatMaxLen,
-		EnableRemotePlan:                       DefTiDBEnableRemotePlan,
-		EnableRemotePlanInTxnRead:              DefTiDBEnableRemotePlanInTxnRead,
-		RemotePlanFeedbackDisableAfter:         DefTiDBRemotePlanFeedbackDisableAfter,
-		RemotePlanFeedbackCooldown:             DefTiDBRemotePlanFeedbackCooldown,
-		RemotePlanFeedbackNoShrinkRatio:        DefTiDBRemotePlanFeedbackNoShrinkRatio,
-		RemotePlanFeedbackMinLocalCallRequests: DefTiDBRemotePlanFeedbackMinLocalCallRequests,
+		EnableRemotePlan:                       DefTiDBXRemotePlanEnable,
+		EnableRemotePlanInTxnRead:              DefTiDBXRemotePlanEnableInTxnRead,
+		RemotePlanFeedbackDisableAfter:         DefTiDBXRemotePlanFeedbackDisableAfter,
+		RemotePlanFeedbackCooldown:             DefTiDBXRemotePlanFeedbackCooldown,
+		RemotePlanFeedbackNoShrinkRatio:        DefTiDBXRemotePlanFeedbackNoShrinkRatio,
+		RemotePlanFeedbackMinLocalCallRequests: DefTiDBXRemotePlanFeedbackMinLocalCallRequests,
 		EnableRedactLog:                        DefTiDBRedactLog,
 		EnableWindowFunction:                   DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:                 DefTiDBOptOrderingIdxSelRatio,
@@ -2288,6 +2342,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:                    DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:                      DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:                DefOptEnableProjectionPushDown,
+		IndexLookUpPushDownPolicy:              DefTiDBIndexLookUpPushDownPolicy,
 		inCallProcedure: struct {
 			inCall bool
 			num    int
@@ -2421,8 +2476,33 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
-// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	// For test purpose, you can enable this failpoint to get the unadjusted replica read.
+	failpoint.Inject("GetReplicaReadUnadjusted", func(_ failpoint.Value) {
+		failpoint.Return(s.replicaRead)
+	})
+	// Replica read only works for read-only statements.
+	if !s.StmtCtx.IsReadOnly {
+		if s.StmtCtx.HasReplicaReadHint {
+			const warnMsg = "Ignore replica read hint for non-read-only statement"
+			existWarnings := s.StmtCtx.GetWarnings()
+			hasWarning := false
+			for _, warn := range existWarnings {
+				if warn.Err.Error() == warnMsg {
+					hasWarning = true
+					break
+				}
+			}
+			if !hasWarning {
+				s.StmtCtx.AppendWarning(errors.New(warnMsg))
+			}
+		}
+		return kv.ReplicaReadLeader
+	}
+	if s.StmtCtx.RCCheckTS || s.RcWriteCheckTS {
+		return kv.ReplicaReadLeader
+	}
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
@@ -3408,6 +3488,10 @@ const (
 	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
 	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
+	// SlowLogStorageFromKV is used to indicate whether the statement read data from TiKV.
+	SlowLogStorageFromKV = "Storage_from_kv"
+	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
+	SlowLogStorageFromMPP = "Storage_from_mpp"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3468,6 +3552,8 @@ type SlowQueryLogItems struct {
 	WRU               float64
 	WaitRUDuration    time.Duration
 	CPUUsages         ppcpuusage.CPUUsages
+	StorageKV         bool // query read from TiKV
+	StorageMPP        bool // query read from TiFlash
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3684,6 +3770,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.CPUUsages.TikvCPUTime > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogTikvCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TikvCPUTime.Seconds(), 'f', -1, 64))
 	}
+	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
+	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

@@ -15,6 +15,9 @@
 package model
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -35,7 +38,44 @@ const (
 	// reminding what's the desired naming convension (UPPER_UNDER_SCORE) if this
 	// is going to be implemented.
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
+
+	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
+	// The new name will be like "_Idx$_<old_index_name>_n".
+	changingIndexPrefix = "_Idx$_"
+	// GlobalIndexVersion constants define the key format versions for global indexes.
+	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
+	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
+	// See https://github.com/pingcap/tidb/issues/65289
+	GlobalIndexVersionLegacy uint8 = 0
+	// GlobalIndexVersionV1 is the current format (version 1) where partition ID is encoded in the key
+	// for non-unique global indexes on non-clustered tables to prevent key collisions
+	// after EXCHANGE PARTITION.
+	// For unique global indexes, the partition ID is not needed in the key since uniqueness is
+	// already enforced.
+	// For clustered tables, common handles already include partition-specific data.
+	// Notice that for V1 the partition id is still in the value part as well,
+	// for decreasing the risk of issues changing the read code path for various index reads.
+	GlobalIndexVersionV1 uint8 = 1
+	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
+	// is encoded in the key ONLY!
+	GlobalIndexVersionV2 uint8 = 2
 )
+
+// GenUniqueChangingIndexName generates a unique index name for the changing index.
+func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
+	// Check whether the new index name is used.
+	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		indexNameMap[idx.Name.L] = true
+	}
+	suffix := 0
+	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	for indexNameMap[strings.ToLower(newIndexName)] {
+		suffix++
+		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	}
+	return newIndexName
+}
 
 // IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
 // Only indexable distance functions should be listed here!
@@ -76,6 +116,11 @@ type IndexInfo struct {
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+	// Version of global index key format, only used for non-clustered, non-unique global indexes.
+	// 0=legacy/unique/clustered,
+	// 1=v1 non-unique non-clustered with partition ID in key and value.
+	// 2=v2 non-unique non-clustered with partition ID in key only (TODO).
+	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 
 // Clone clones IndexInfo.
@@ -89,6 +134,32 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
 	return &ni
+}
+
+// IsChanging checks if the index is a new index added in modify column.
+func (index *IndexInfo) IsChanging() bool {
+	return strings.HasPrefix(index.Name.O, changingIndexPrefix)
+}
+
+// IsRemoving checks if the index is a index to be removed in modify column.
+func (index *IndexInfo) IsRemoving() bool {
+	return strings.HasPrefix(index.Name.O, removingObjPrefix)
+}
+
+// GetRemovingOriginName gets the origin name of the removing index.
+func (index *IndexInfo) GetRemovingOriginName() string {
+	return strings.TrimPrefix(index.Name.O, removingObjPrefix)
+}
+
+// GetChangingOriginName gets the origin index name from the changing index.
+func (index *IndexInfo) GetChangingOriginName() string {
+	idxName := strings.TrimPrefix(index.Name.O, changingIndexPrefix)
+	// Since the unique idxName may contain the suffix number (indexName_num), better trim the suffix.
+	var pos int
+	if pos = strings.LastIndex(idxName, "_"); pos == -1 {
+		return idxName
+	}
+	return idxName[:pos]
 }
 
 // HasPrefixIndex returns whether any columns of this index uses prefix length.
@@ -174,6 +245,8 @@ type IndexColumn struct {
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
 	Length int `json:"length"`
+	// Whether this index column use changing type
+	UseChangingType bool `json:"using_changing_type,omitempty"`
 }
 
 // Clone clones IndexColumn.
@@ -190,4 +263,14 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
 }

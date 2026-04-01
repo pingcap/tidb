@@ -607,7 +607,7 @@ resolve-lock-lite-threshold = 16
 
 [tikv-client.copr-cache]
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
-capacity-mb = 1000.0
+capacity-mb = 0.0
 
 # If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
 # but still provide service.
@@ -1183,6 +1183,25 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefTableColumnCountLimit-1, false)
 	checkValid(DefMaxOfTableColumnCountLimit, true)
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
+}
+func TestPluginAuditLog(t *testing.T) {
+	conf := NewConfig()
+	checkValid := func(bufferSize int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogBufferSize = bufferSize
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogBufferSize, true)
+	checkValid(MaxPluginAuditLogBufferSize+1, false)
+
+	conf = NewConfig()
+	checkValid = func(flushInterval int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogFlushInterval = flushInterval
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogFlushInterval, true)
+	checkValid(MaxPluginAuditLogFlushInterval+1, false)
 }
 
 func TestTokenLimit(t *testing.T) {

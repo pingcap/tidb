@@ -141,7 +141,7 @@ func TestTableRange(t *testing.T) {
 		},
 		{
 			exprStr:     `a IN (8,8,81,45)`,
-			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
+			accessConds: "[in(test.t.a, 8, 81, 45)]",
 			filterConds: "[]",
 			resultStr:   `[[8,8] [45,45] [81,81]]`,
 		},
@@ -225,7 +225,7 @@ func TestTableRange(t *testing.T) {
 		},
 		{
 			exprStr:     "a in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
-			accessConds: "[in(test.t.a, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			accessConds: "[in(test.t.a, 1, 2, 3, 4)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
 		},
@@ -663,7 +663,7 @@ func TestColumnRange(t *testing.T) {
 		{
 			colPos:      0,
 			exprStr:     `a IN (8,8,81,45)`,
-			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
+			accessConds: "[in(test.t.a, 8, 81, 45)]",
 			filterConds: "[]",
 			resultStr:   `[[8,8] [45,45] [81,81]]`,
 			length:      types.UnspecifiedLength,
@@ -1223,14 +1223,14 @@ create table t(
 		{
 			indexPos:    1,
 			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
-			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
+			accessConds: "[in(test.t.c, 1.1, 1) in(test.t.a, 1, a, <nil>)]",
 			filterConds: "[]",
 			resultStr:   "[[1 \"1\",1 \"1\"] [1 \"a\",1 \"a\"] [1.1 \"1\",1.1 \"1\"] [1.1 \"a\",1.1 \"a\"]]",
 		},
 		{
 			indexPos:    1,
 			exprStr:     "c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
-			accessConds: "[in(test.t.c, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			accessConds: "[in(test.t.c, 1, 2, 3, 4)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
 		},
@@ -1861,6 +1861,76 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 }
 
+func TestExtractEqAndInConditionKeepsStableGenericRewriteAccess(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	longlongType := types.NewFieldType(mysql.TypeLonglong)
+	col0 := &expression.Column{UniqueID: 0, ID: 0, RetType: longlongType}
+	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
+	cols := []*expression.Column{col0, col1}
+	lengths := []int{types.UnspecifiedLength, types.UnspecifiedLength}
+
+	constExpr := func(v int64) *expression.Constant {
+		return &expression.Constant{Value: types.NewIntDatum(v), RetType: longlongType}
+	}
+	mutableExpr := func(v int64) *expression.Constant {
+		return &expression.Constant{
+			Value:        types.NewIntDatum(v),
+			RetType:      longlongType,
+			DeferredExpr: &expression.Constant{Value: types.NewIntDatum(v), RetType: longlongType},
+		}
+	}
+
+	origGenericRewrite := sctx.GetSessionVars().EnablePlanCacheGenericRewrite
+	sctx.GetSessionVars().StmtCtx.EnablePlanCache()
+	sctx.GetSessionVars().EnablePlanCacheGenericRewrite = true
+	defer func() {
+		sctx.GetSessionVars().EnablePlanCacheGenericRewrite = origGenericRewrite
+	}()
+
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	t.Run("do not synthesize derived point access from mutable merge", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GE, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LE, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[eq(Column#1, 1) ge(Column#0, 5) le(Column#0, 5)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+
+	t.Run("keep mutable standalone holder when immutable replacement cannot survive", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LT, longlongType, col0, constExpr(10)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[eq(Column#0, 5) eq(Column#1, 1)]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[lt(Column#0, 10)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+
+	t.Run("prefer immutable standalone holder over mutable one", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col0, mutableExpr(1)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, longlongType, col0, constExpr(1), constExpr(2)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[in(Column#0, 1, 2) eq(Column#1, 1)]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[eq(Column#0, 1)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+}
+
 func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
 	ctx := context.Background()
 	stmts, err := session.Parse(sctx, sql)
@@ -2126,17 +2196,17 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
-		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb" "ee","aa" "bb" "ee"] ["cc" "dd" "ee","cc" "dd" "ee"]]`)
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[[NULL,+inf]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb","aa" "bb"] ["cc" "dd","cc" "dd"]]`)
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 

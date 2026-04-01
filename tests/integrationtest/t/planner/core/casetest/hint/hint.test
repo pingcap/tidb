@@ -191,6 +191,9 @@ select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1;
 select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1;
 select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1;
 select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1;
+drop table if exists t_conflict;
+create table t_conflict(a int, index idx_a(a));
+explain  select /*+ FULL(t_conflict) USE_INDEX(t_conflict, idx_a) */ * from t_conflict;
 --disable_warnings
 drop table if exists t1;
 drop view if exists v1;
@@ -239,41 +242,6 @@ create table tt(a int, key(a));
 --enable_warnings
 explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;
 explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);
---disable_warnings
-
-# TestIndexHint
-use test;
-drop table if exists t;
-create table t (a int, b int, c int, key(b), key(c));
-insert into t values (1,1,1),(2,2,2),(3,3,3);
-explain select /*+ index(t b c) */ * from t where a = 1;
---enable_warnings
-explain select /*+ index(t b xxxx) */ * from t where a = 1;
---disable_warnings
---enable_warnings
-explain select /*+ index(t xxx) */ * from t where a = 1;
---disable_warnings
-drop table if exists t;
-
-# TestIndexHintNoSpecificIndex
-use test;
-drop table if exists t;
-create table t (a int, b int, c int, key(b), key(c));
-insert into t values (1,1,1),(2,2,2),(3,3,3);
-explain select /*+ index(t) */ * from t where a = 1;
-drop table if exists t;
-
-# TestNoIndexHint
-use test;
-drop table if exists t;
-create table t (a int primary key, b int, c int, key idx_b(b), key idx_c(c));
-insert into t values (1,1,1),(2,2,2),(3,3,3);
-explain select /*+ no_index(t) */ * from t where b = 2;
-explain select /*+ no_index(t idx_b) */ * from t where b = 2 and c = 2;
-explain select /*+ no_index(t idx_c) */ * from t where c = 2;
-explain select /*+ no_index(t idx_b, idx_c) */ * from t where b = 2 and c = 2;
-explain select /*+ no_index(t idx_b idx_c) */ * from t where b = 2 and c = 2;
-drop table if exists t;
 --disable_warnings
 
 # INDEX_LOOKUP_PUSH_DOWN is in developing, it should be disabled currently

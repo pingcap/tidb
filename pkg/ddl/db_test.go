@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
 	"strconv"
 	"strings"
@@ -503,6 +504,49 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 	// Error: Table exist
 	_, _ = tk.Exec("create table show_errors (a int)")
 	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
+}
+
+func TestIssue60047(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+		a INT,
+		b INT,
+		c VARCHAR(10),
+		unique key idx(a, c)
+	) partition by range columns(c) (
+	partition p0 values less than ('30'),
+	partition p1 values less than ('60'),
+	partition p2 values less than ('90'));`)
+
+	// initialize the data.
+	for i := 0; i < 90; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+
+	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
+	var err error
+	hookFunc := func(job *model.Job) {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		val := 30 + rand.Intn(60)
+		insertSQL := fmt.Sprintf("insert into t(a, b, c) values(%v, %v, %v) on duplicate key update a=values(a), b=values(b), c=values(c)",
+			val, rand.Intn(90), strconv.FormatInt(int64(val), 10))
+		err2 := tk1.ExecToErr(insertSQL)
+		if err2 != nil {
+			err = err2
+		}
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	ddlSQL := "alter table t add column `d` decimal(20,4) not null default '0'"
+	tk2.MustExec(ddlSQL)
+
+	require.NoError(t, err)
 }
 
 // Close issue #24172.
@@ -1162,27 +1206,31 @@ func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
 
-	job := model.Job{
-		ID:        1,
-		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{},
+	for _, useCloudStorage := range []bool{true, false} {
+		job := model.Job{
+			ID:   1,
+			Type: model.ActionAddIndex,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+		job.ReorgMeta.Concurrency.Store(4)
+		job.ReorgMeta.BatchSize.Store(128)
+		insertMockJob2Table(tk, &job)
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+		j := getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 8, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 256, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 16, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
+		require.Equal(t, 512, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		deleteJobMetaByID(tk, job.ID)
 	}
-	job.ReorgMeta.Concurrency.Store(4)
-	job.ReorgMeta.BatchSize.Store(128)
-	insertMockJob2Table(tk, &job)
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
-	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 8)
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 256)
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 16)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 512)
-	deleteJobMetaByID(tk, job.ID)
 }
 
 func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
@@ -1233,20 +1281,7 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
-	deleteJobMetaByID(tk, 1)
-
-	job = model.Job{
-		ID:   1,
-		Type: model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{
-			IsDistReorg: true,
-		},
-	}
-	insertMockJob2Table(tk, &job)
-	// unsupported job type
-	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 }
 
@@ -1315,4 +1350,18 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
+}
+
+func TestGetVersionFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	// Simulate the failure of getting the current version twice.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
+
+	tk.MustExec("alter table t add column b int")
 }

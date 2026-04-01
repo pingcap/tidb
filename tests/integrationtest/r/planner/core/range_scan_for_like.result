@@ -445,7 +445,7 @@ id	estRows	task	access object	operator info
 Sort	0.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─TableReader	0.25	root		data:Selection
   └─Selection	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试1", 92), like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
-    └─TableRangeScan	10.00	cop[tikv]	table:t	range:["\xfb@\xedK","\xfb@\xedK"], keep order:false, stats:pseudo
+    └─TableRangeScan	2.50	cop[tikv]	table:t	range:["\xfb@\xedK" "asdfgh","\xfb@\xedK" "asdfgh!"), keep order:false, stats:pseudo
 select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 a	b	c
 explain format = brief select * from t use index (primary) where a like 'こんにち_' and b like 'zxc%' order by a,b;
@@ -545,12 +545,12 @@ a	b	c
 测试1	asdfgh	345346
 explain format = brief select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 id	estRows	task	access object	operator info
-Sort	0.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─IndexLookUp	0.25	root		
-  ├─Selection(Build)	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试1", 92)
-  │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["\x89\a\xba%1","\x89\a\xba%1"], keep order:false, stats:pseudo
-  └─Selection(Probe)	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
-    └─TableRowIDScan	0.25	cop[tikv]	table:t	keep order:false, stats:pseudo
+Sort	2.50	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─IndexLookUp	2.50	root		
+  ├─Selection(Build)	2.50	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试1", 92)
+  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["\x89\a\xba%1" "asdfg","\x89\a\xba%1" "asdfh"), keep order:false, stats:pseudo
+  └─Selection(Probe)	2.50	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
+    └─TableRowIDScan	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 a	b	c
 set names latin1;
@@ -589,12 +589,12 @@ a	b	c
 Ciao5	  asdfgh	444400
 explain format = brief select * from t use index (primary) where b like 'HoLa%' and a like '  asdfgh' order by a,b;
 id	estRows	task	access object	operator info
-Sort	0.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─IndexLookUp	0.25	root		
-  ├─Selection(Build)	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  asdfgh", 92)
-  │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["  ASDFGH","  ASDFGH"], keep order:false, stats:pseudo
-  └─Selection(Probe)	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "HoLa%", 92)
-    └─TableRowIDScan	0.25	cop[tikv]	table:t	keep order:false, stats:pseudo
+Sort	2.50	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─IndexLookUp	2.50	root		
+  ├─Selection(Build)	2.50	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  asdfgh", 92)
+  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["  ASDFGH" "HoLa","  ASDFGH" "HoLb"), keep order:false, stats:pseudo
+  └─Selection(Probe)	2.50	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "HoLa%", 92)
+    └─TableRowIDScan	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (primary) where b like 'HoLa%' and a like '  asdfgh' order by a,b;
 a	b	c
 explain format = brief select * from t use index (primary) where a like 'bonjour _%' and b like '' order by a,b;

@@ -6085,19 +6085,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_planetscale_vtprotobuf",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/planetscale/vtprotobuf",
-        sha256 = "6fdbac53c6ace58d732be8ec29c1aae928639eb12960cc4c52a9f7a25395ca05",
-        strip_prefix = "github.com/planetscale/vtprotobuf@v0.6.1-0.20240319094008-0393e58bdf10",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
-            "http://ats.apps.svc/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_pmezard_go_difflib",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pmezard/go-difflib",
@@ -7154,13 +7141,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "01b29b28a826407d91b11f51ce0d8e7ab3fcfc5acef932f8e8c05f6b1a5eeb02",
-        strip_prefix = "git.pingcap.net/pingkai/client-go/v2@v2.0.8-0.20251219064713-3a66d7f848ac",
+        sha256 = "15ad00809f1b40fda5db85ff8a955cb2a6c1ee8bf4f173d7c71934134aa9a642",
+        strip_prefix = "git.pingcap.net/pingkai/client-go/v2@v2.0.8-0.20251223180446-ca59944fa30b",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251219064713-3a66d7f848ac.zip",
-            "http://ats.apps.svc/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251219064713-3a66d7f848ac.zip",
-            "https://cache.hawkingrei.com/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251219064713-3a66d7f848ac.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251219064713-3a66d7f848ac.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251223180446-ca59944fa30b.zip",
+            "http://ats.apps.svc/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251223180446-ca59944fa30b.zip",
+            "https://cache.hawkingrei.com/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251223180446-ca59944fa30b.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/git.pingcap.net/pingkai/client-go/v2/net_pingcap_git_pingkai_client_go_v2-v2.0.8-0.20251223180446-ca59944fa30b.zip",
         ],
     )
     go_repository(

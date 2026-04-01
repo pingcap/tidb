@@ -64,8 +64,8 @@ func TestTickGCSysTable(t *testing.T) {
 	setEnableLogHistoryStatus(true)
 	err = gw.TickGCSysTable(context.TODO())
 	require.NoError(t, err)
-	tk.MustQuery("SELECT * FROM mysql.login_history").Check(testkit.Rows(
-		loginTimes[1].Format("2006-01-02 15:04:05.999999") + " 10.244.4.0 root 127.0.0.100 mydb 7602485189326930323 success 127.0.0.100 ",
+	tk.MustQuery("SELECT DATE_FORMAT(time, '%Y-%m-%d %H:%i:%s') AS time, Server_host, User, User_host, DB, Connection_id, Result, Client_host, Detail FROM mysql.login_history").Check(testkit.Rows(
+		loginTimes[1].Format("2006-01-02 15:04:05") + " 10.244.4.0 root 127.0.0.100 mydb 7602485189326930323 success 127.0.0.100 ",
 	))
 }
 

@@ -22,6 +22,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -30,47 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
-
-func TestMapTableToFiles(t *testing.T) {
-	filesOfTable1 := []*backuppb.File{
-		{
-			Name:     "table1-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table1-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table1-3.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-	}
-	filesOfTable2 := []*backuppb.File{
-		{
-			Name:     "table2-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table2-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-		},
-	}
-
-	result, hintSplitKeyCount := snapclient.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
-
-	require.Equal(t, filesOfTable1, result[1])
-	require.Equal(t, filesOfTable2, result[2])
-	require.Equal(t, 3, hintSplitKeyCount)
-}
 
 func newPartitionID(ids []int64) *model.PartitionInfo {
 	definitions := make([]model.PartitionDefinition, 0, len(ids))
@@ -83,8 +43,8 @@ func newPartitionID(ids []int64) *model.PartitionInfo {
 	return &model.PartitionInfo{Definitions: definitions}
 }
 
-func newCreatedTable(oldTableID, newTableID int64, oldPartitionIDs, newPartitionIDs []int64) *snapclient.CreatedTable {
-	return &snapclient.CreatedTable{
+func newCreatedTable(oldTableID, newTableID int64, oldPartitionIDs, newPartitionIDs []int64) *restoreutils.CreatedTable {
+	return &restoreutils.CreatedTable{
 		Table: &model.TableInfo{
 			ID:        newTableID,
 			Partition: newPartitionID(newPartitionIDs),
@@ -110,7 +70,7 @@ func physicalIDs(physicalTables []*snapclient.PhysicalTable) (oldIDs, newIDs []i
 }
 
 func TestGetSortedPhysicalTables(t *testing.T) {
-	createdTables := []*snapclient.CreatedTable{
+	createdTables := []*restoreutils.CreatedTable{
 		newCreatedTable(100, 200, []int64{32, 145, 324}, []int64{900, 23, 54}),
 		newCreatedTable(300, 400, []int64{322, 11245, 343224}, []int64{9030, 22353, 5354}),
 	}
@@ -126,12 +86,16 @@ type MockUpdateCh struct {
 
 func (m MockUpdateCh) IncBy(cnt int64) {}
 
-func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
-	createdTables := make([]*snapclient.CreatedTable, 0, len(upstreamTableIDs))
+func (m MockUpdateCh) Inc() {}
+
+func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64,
+	filesmap map[int64]map[int64][]*backuppb.File, downstreamID func(upstream int64) int64) []*restoreutils.CreatedTable {
+	createdTables := make([]*restoreutils.CreatedTable, 0, len(upstreamTableIDs))
 	triggerID := 0
 	for _, upstreamTableID := range upstreamTableIDs {
+		files := filesmap[upstreamTableID]
 		downstreamTableID := downstreamID(upstreamTableID)
-		createdTable := &snapclient.CreatedTable{
+		createdTable := &restoreutils.CreatedTable{
 			Table: &model.TableInfo{
 				ID:   downstreamTableID,
 				Name: pmodel.NewCIStr(fmt.Sprintf("tbl-%d", upstreamTableID)),
@@ -151,6 +115,7 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 						{Name: pmodel.NewCIStr("idx3"), ID: 3},
 					},
 				},
+				FilesOfPhysicals: files,
 			},
 		}
 		partitionIDs, exists := upstreamPartitionIDs[upstreamTableID]
@@ -185,7 +150,7 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 	return createdTables
 }
 
-func disorderTables(createdTables []*snapclient.CreatedTable) {
+func disorderTables(createdTables []*restoreutils.CreatedTable) {
 	// Each position will be replaced by a random table
 	rand.Shuffle(len(createdTables), func(i, j int) {
 		createdTables[i], createdTables[j] = createdTables[j], createdTables[i]
@@ -207,14 +172,14 @@ func key(tableID int64, row int) []byte {
 	return tablecodec.EncodeRowKeyWithHandle(downstreamID(tableID), kv.IntHandle(row))
 }
 
-func files(physicalTableID int64, startRows []int, cfs []string) snapclient.TableIDWithFiles {
+func files(physicalTableID int64, startRows []int, cfs []string) restore.BackupFileSet {
 	files := make([]*backuppb.File, 0, len(startRows))
 	for i, startRow := range startRows {
 		files = append(files, &backuppb.File{Name: fmt.Sprintf("file_%d_%d_%s.sst", physicalTableID, startRow, cfs[i])})
 	}
-	return snapclient.TableIDWithFiles{
-		TableID: downstreamID(physicalTableID),
-		Files:   files,
+	return restore.BackupFileSet{
+		TableID:  downstreamID(physicalTableID),
+		SSTFiles: files,
 	}
 }
 
@@ -225,8 +190,6 @@ func cptKey(tableID int64, startRow int, cf string) string {
 }
 
 func TestSortAndValidateFileRanges(t *testing.T) {
-	updateCh := MockUpdateCh{}
-
 	d := restoreutils.DefaultCFName
 	w := restoreutils.WriteCFName
 	cases := []struct {
@@ -235,7 +198,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		upstreamPartitionIDs map[int64][]int64
 
 		// files
-		files []*backuppb.File
+		files map[int64]map[int64][]*backuppb.File
 
 		// checkpoint set
 		checkpointSetWithTableID map[int64]map[string]struct{}
@@ -247,7 +210,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 
 		// expected result
 		splitKeys              [][]byte
-		tableIDWithFilesGroups [][]snapclient.TableIDWithFiles
+		tableIDWithFilesGroups [][]restore.BackupFileSet
 	}{
 		{ // large sst, split-on-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -256,12 +219,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			// downstream id: [200:10200] [201:9201] [202:8202] [203:7203]
 			// downstream id: [300:10300] [301:9301] [302:8302] [303:7303]
 			// sorted physical: [103, 203, 303, (102), (202), (302), 101, 201, 301, (100), 200, 300]
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           80,
@@ -270,7 +233,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				/*split table key*/ key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -281,12 +244,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // large sst, split-on-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -298,7 +261,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				/*split table key*/ key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				//{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -309,12 +272,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // large sst, no split-on-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           80,
@@ -323,7 +286,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 2), key(202, 3), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -334,12 +297,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // large sst, no split-on-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -351,7 +314,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 2), key(202, 3), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				//{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -362,12 +325,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 1, split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           350,
@@ -376,7 +339,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -387,12 +350,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 1, split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -404,7 +367,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				// {files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -415,12 +378,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 1, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           350,
@@ -429,7 +392,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
@@ -438,12 +401,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 1, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -455,7 +418,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 			},
@@ -463,19 +426,19 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 2, split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           450,
 			splitKeyCount:            450,
 			splitOnTable:             true,
 			splitKeys:                [][]byte{},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w})},
@@ -485,12 +448,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 2, split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -500,7 +463,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeyCount:  450,
 			splitOnTable:   true,
 			splitKeys:      [][]byte{},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d})},
 				{files(302, []int{1}, []string{w})},
@@ -509,12 +472,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 2, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           450,
@@ -523,7 +486,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w}), files(100, []int{1, 1}, []string{w, d})},
@@ -532,12 +495,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 2, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -549,7 +512,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d})},
 				{files(302, []int{1}, []string{w})},
@@ -558,12 +521,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 3, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           501,
@@ -572,7 +535,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w}), files(100, []int{1, 1}, []string{w, d})},
 			},
@@ -580,12 +543,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 3, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
-				file(302, 1, 2, 100, 100, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d)}},
+				300: {302: {file(302, 1, 2, 100, 100, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -597,7 +560,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w})},
 			},
@@ -605,12 +568,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 4, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 400, 400, w), file(202, 2, 3, 80, 80, d),
-				file(302, 1, 2, 10, 10, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 400, 400, w), file(202, 2, 3, 80, 80, d)}},
+				300: {302: {file(302, 1, 2, 10, 10, w)}},
 			},
 			checkpointSetWithTableID: nil,
 			splitSizeBytes:           501,
@@ -619,7 +582,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
@@ -628,12 +591,12 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		{ // small sst 4, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
 			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
-			files: []*backuppb.File{
-				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
-				file(102, 1, 2, 100, 100, w),
-				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
-				file(202, 2, 3, 400, 400, w), file(202, 2, 3, 80, 80, d),
-				file(302, 1, 2, 10, 10, w),
+			files: map[int64]map[int64][]*backuppb.File{
+				100: {100: {file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d)},
+					102: {file(102, 1, 2, 100, 100, w)}},
+				200: {202: {file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+					file(202, 2, 3, 400, 400, w), file(202, 2, 3, 80, 80, d)}},
+				300: {302: {file(302, 1, 2, 10, 10, w)}},
 			},
 			checkpointSetWithTableID: map[int64]map[string]struct{}{
 				downstreamID(100): {cptKey(100, 1, w): struct{}{}},
@@ -645,7 +608,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 			},
@@ -654,8 +617,8 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 
 	for i, cs := range cases {
 		t.Log(i)
-		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, updateCh)
+		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, cs.files, downstreamID)
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
@@ -665,8 +628,8 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			for j, expectFiles := range expectFilesGroup {
 				actualFiles := actualFilesGroup[j]
 				require.Equal(t, expectFiles.TableID, actualFiles.TableID)
-				for k, expectFile := range expectFiles.Files {
-					actualFile := actualFiles.Files[k]
+				for k, expectFile := range expectFiles.SSTFiles {
+					actualFile := actualFiles.SSTFiles[k]
 					require.Equal(t, expectFile.Name, actualFile.Name)
 				}
 			}

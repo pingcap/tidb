@@ -89,6 +89,7 @@ import (
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
 	hintIgnoreIndex           "IGNORE_INDEX"
+	hintFull                  "FULL"
 	hintNoIndex               "NO_INDEX"
 	hintIndexJoin             "INDEX_JOIN"
 	hintNoIndexJoin           "NO_INDEX_JOIN"
@@ -116,6 +117,7 @@ import (
 	hintOrderIndex            "ORDER_INDEX"
 	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintIndexLookUpPushDown   "INDEX_LOOKUP_PUSHDOWN"
+	hintNoIndexLookUpPushDown "NO_INDEX_LOOKUP_PUSHDOWN"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -127,6 +129,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
+	hintTiDBXRemotePlanForce  "TIDBX_REMOTE_PLAN_FORCE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -651,6 +654,7 @@ SupportedTableLevelOptimizerHintName:
 |	"HASH_JOIN_PROBE"
 |	"LEADING"
 |	"HYPO_INDEX"
+|	"FULL"
 
 UnsupportedIndexLevelOptimizerHintName:
 	"INDEX_MERGE"
@@ -672,6 +676,7 @@ SupportedIndexLevelOptimizerHintName:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -701,6 +706,7 @@ NullaryHintName:
 |	"STRAIGHT_JOIN"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIDBX_REMOTE_PLAN_FORCE"
 
 HintQueryType:
 	"OLAP"
@@ -775,6 +781,7 @@ Identifier:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"
@@ -785,6 +792,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIDBX_REMOTE_PLAN_FORCE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"
@@ -801,4 +809,5 @@ Identifier:
 /* Oracle hint names */
 |	"INDEX"
 |	"NO_INDEX"
+|	"FULL"
 %%

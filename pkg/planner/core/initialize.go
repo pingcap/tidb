@@ -21,13 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"go.uber.org/zap"
 )
 
 // Init initializes PhysicalSelection.
@@ -254,55 +251,15 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 }
 
 // Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPushDownIndexLookUp bool) *PhysicalIndexLookUpReader {
+func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, indexLookUpPushDownBy util.IndexLookUpPushDownByType) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.schema = p.tablePlan.Schema()
-	setTableScanToTableRowIDScan(p.tablePlan)
 	p.SetStats(p.tablePlan.StatsInfo())
-	if tryPushDownIndexLookUp {
-		p.tryPushDownLookUp(ctx)
-	}
+	p.tryPushDownLookUp(ctx, indexLookUpPushDownBy)
 	p.TablePlans = FlattenListPushDownPlan(p.tablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(p.indexPlan)
+	setTableScanToTableRowIDScan(p.tablePlan)
 	return &p
-}
-
-// tryPushDownLookUp tries to push down the index lookup to TiKV.
-func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
-	intest.Assert(!p.IndexLookUpPushDown)
-	if p.keepOrder {
-		// Though most of the index-lookup push-down constraints should be checked in
-		// `checkIndexLookUpPushDownSupported` if possible,
-		// however, the keep order cannot be determined until the final plan is constructed.
-		// So we have to check the keep order here, and if it is required, we should not push down it and use
-		// the normal index-lookup instead.
-		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
-		return
-	}
-
-	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan, len(p.CommonHandleCols) > 0)
-	if err != nil {
-		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
-		intest.AssertNoError(err)
-		logutil.BgLogger().Warn("try to push down index lookup failed", zap.Error(err))
-		return
-	}
-	p.indexPlan = indexLookUpPlan
-	// Currently, it's hard to estimate how many rows can be looked up locally when push-down.
-	// So we just use the row count as 0 of tablePlan in TiDB side which displays all lookup
-	// can be performed in the TiKV side.
-	resetRowCountAsZeroRecursively(ctx.GetSessionVars(), p.tablePlan)
-	// The status info of IndexLookupReader should be the same as indexPlan in the push-down mode if
-	// all lookup can be performed in the TiKV side.
-	p.SetStats(p.indexPlan.StatsInfo())
-	p.IndexLookUpPushDown = true
-}
-
-func resetRowCountAsZeroRecursively(vars *variable.SessionVars, p base.PhysicalPlan) {
-	p.SetStats(p.StatsInfo().Scale(0))
-	for _, child := range p.Children() {
-		resetRowCountAsZeroRecursively(vars, child)
-	}
 }
 
 // Init initializes PhysicalIndexMergeReader.

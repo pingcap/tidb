@@ -564,6 +564,10 @@ func TestTablesTable(t *testing.T) {
 		}
 	}
 
+	// test table mode
+	tk.MustQuery(`select tidb_table_mode from information_schema.tables where table_schema = 'db1' and
+		table_name = 't1'`).Check(testkit.Rows("Normal"))
+
 	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
 
 	// predicate covers one disjunction
@@ -709,7 +713,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "95"))
+		testkit.RowsWithSep("|", "96"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -914,22 +918,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"151|add index|public|144|149|t1|synced",
-		"150|create table|public|144|149|t1|synced",
-		"137|add index|public|130|135|t1|synced",
-		"136|create table|public|130|135|t1|synced",
+		"153|add index|public|146|151|t1|synced",
+		"152|create table|public|146|151|t1|synced",
+		"139|add index|public|132|137|t1|synced",
+		"138|create table|public|132|137|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"157|add index|public|144|155|t3|synced",
-		"154|add index|public|144|152|t2|synced",
-		"151|add index|public|144|149|t1|synced",
-		"148|add index|public|144|146|t0|synced",
+		"159|add index|public|146|157|t3|synced",
+		"156|add index|public|146|154|t2|synced",
+		"153|add index|public|146|151|t1|synced",
+		"150|add index|public|146|148|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"143|add index|public|130|141|t3|synced",
-		"142|create table|public|130|141|t3|synced",
+		"145|add index|public|132|143|t3|synced",
+		"144|create table|public|132|143|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -940,15 +944,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"158 add index write only 130 132 t0 running",
+				"160 add index write only 132 134 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"158 add index write only 130 132 t0 running",
+				"160 add index write only 132 134 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"158 add index write only 130 132 t0 running",
+				"160 add index write only 132 134 t0 running",
 			))
 		}
 	})
@@ -964,8 +968,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"167|create table|public|164|166|t1|synced",
-		"162|create table|public|159|161|t1|synced",
+		"169|create table|public|166|168|t1|synced",
+		"164|create table|public|161|163|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.

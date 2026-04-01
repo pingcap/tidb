@@ -14,13 +14,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/pkdb_remote/pb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	rmutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -67,8 +66,8 @@ type Server struct {
 
 	// Worker pool for batch remote execution to reduce goroutine creation overhead
 	// and potential morestack issues in FFI scenarios.
-	// Uses resourcemanager/pool/workerpool which truly reuses goroutines.
-	workerPool *workerpool.WorkerPool[*remoteExecTask, workerpool.None]
+	// The pool is elastic: it can grow under burst load and shrink after idle.
+	workerPool *remoteExecWorkerPool
 
 	closeOnce     sync.Once
 	closeCh       chan struct{}
@@ -82,9 +81,16 @@ type Server struct {
 }
 
 const (
-	// defaultWorkerPoolSize is the default size of the worker pool for batch remote execution.
+	// defaultWorkerPoolMinSize is the baseline size of the worker pool for batch remote execution.
 	// Using a pool helps reduce goroutine creation overhead and potential morestack issues in FFI scenarios.
-	defaultWorkerPoolSize = 48
+	defaultWorkerPoolMinSize = 256
+	// defaultWorkerPoolSoftMaxSize is the initial soft cap for the elastic worker pool.
+	// Under sustained load (e.g. slow requests), the pool can raise the soft cap up to hard max.
+	defaultWorkerPoolSoftMaxSize = defaultWorkerPoolMinSize * 4
+	// defaultWorkerPoolHardMaxSize is the absolute cap to prevent unbounded growth.
+	defaultWorkerPoolHardMaxSize = defaultWorkerPoolSoftMaxSize * 10
+	// defaultWorkerPoolIdleTimeout controls how long extra workers stay alive when idle.
+	defaultWorkerPoolIdleTimeout = 30 * time.Second
 )
 
 // remoteExecTask represents a task for the worker pool
@@ -100,7 +106,7 @@ type remoteExecTask struct {
 	wg               *sync.WaitGroup
 }
 
-// RecoverArgs implements workerpool.TaskMayPanic interface
+// RecoverArgs provides arguments for util.Recover.
 func (t *remoteExecTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return "remote-exec", "processRequest", func() {
 		logutil.BgLogger().Error("panic in batch remote execute", zap.Stack("stack"))
@@ -118,37 +124,9 @@ func (t *remoteExecTask) RecoverArgs() (metricsLabel string, funcInfo string, re
 	}, false
 }
 
-// remoteExecWorker implements workerpool.Worker interface
-type remoteExecWorker struct{}
-
-// HandleTask implements workerpool.Worker interface
-func (w *remoteExecWorker) HandleTask(task *remoteExecTask, _ func(workerpool.None)) {
-	defer task.wg.Done()
-	task.server.processRequest(
-		task.ctx,
-		task.requestID,
-		task.request,
-		task.responseChan,
-		task.activeRequests,
-		task.activeRequestsMu,
-		task.responsesClosed,
-	)
-}
-
-// Close implements workerpool.Worker interface
-func (w *remoteExecWorker) Close() {}
-
 // NewServer creates a RemoteExecService gRPC server.
 func NewServer(sm util.SessionManager, dom *domain.Domain) *Server {
-	pool := workerpool.NewWorkerPool[*remoteExecTask, workerpool.None](
-		"remote-exec",
-		rmutil.DDL, // Use DDL component type for resource management
-		defaultWorkerPoolSize,
-		func() workerpool.Worker[*remoteExecTask, workerpool.None] {
-			return &remoteExecWorker{}
-		},
-	)
-	pool.Start(context.Background())
+	pool := newRemoteExecWorkerPool(defaultWorkerPoolMinSize, defaultWorkerPoolSoftMaxSize, defaultWorkerPoolHardMaxSize, defaultWorkerPoolIdleTimeout)
 
 	s := &Server{
 		sm:                 sm,
@@ -180,7 +158,7 @@ func (s *Server) Close() {
 		s.activeStreams.Wait()
 
 		if s.workerPool != nil {
-			s.workerPool.ReleaseAndWait()
+			s.workerPool.Close()
 			s.workerPool = nil
 		}
 
@@ -226,6 +204,7 @@ func (s *Server) getOrCreateSession(ctx context.Context, req *pb.RemoteRequest) 
 		if !sw.inUse {
 			sw.inUse = true
 			sw.lastUsed = time.Now()
+			metrics.RemotePlanSessionPoolInUse.Inc()
 			s.sessionPoolMu.Unlock()
 			if err := s.restoreSessionContext(ctx, sw.session, req); err != nil {
 				// Failed to restore context, remove from pool and close this session
@@ -237,7 +216,10 @@ func (s *Server) getOrCreateSession(ctx context.Context, req *pb.RemoteRequest) 
 						break
 					}
 				}
+				poolSize := len(s.sessionPool)
 				s.sessionPoolMu.Unlock()
+				metrics.RemotePlanSessionPoolSize.Set(float64(poolSize))
+				metrics.RemotePlanSessionPoolInUse.Dec()
 				s.closeSessionWithCache(sw)
 				return s.createNewSession(ctx, req)
 			}
@@ -273,8 +255,10 @@ func (s *Server) createNewSession(ctx context.Context, req *pb.RemoteRequest) (*
 	s.sessionPoolMu.Lock()
 	if len(s.sessionPool) < s.maxPoolSize {
 		s.sessionPool = append(s.sessionPool, sw)
+		metrics.RemotePlanSessionPoolSize.Set(float64(len(s.sessionPool)))
 	}
 	s.sessionPoolMu.Unlock()
+	metrics.RemotePlanSessionPoolInUse.Inc()
 
 	return sw, nil
 }
@@ -283,6 +267,9 @@ func (s *Server) returnSession(req *pb.RemoteRequest, sw *sessionWithStmtCache) 
 	if sw == nil {
 		return
 	}
+
+	// Decrement in-use counter
+	metrics.RemotePlanSessionPoolInUse.Dec()
 
 	// Ensure no leftover transaction state leaks across pooled sessions.
 	// Without this, an old StartTS can survive reuse and eventually fall behind GC safepoint.
@@ -329,6 +316,7 @@ func (s *Server) returnSession(req *pb.RemoteRequest, sw *sessionWithStmtCache) 
 	if !inPool {
 		if len(s.sessionPool) < s.maxPoolSize {
 			s.sessionPool = append(s.sessionPool, sw)
+			metrics.RemotePlanSessionPoolSize.Set(float64(len(s.sessionPool)))
 		} else {
 			// Pool is full, close this session
 			s.closeSessionWithCache(sw)
@@ -368,6 +356,9 @@ func (s *Server) restoreSessionContext(ctx context.Context, se sessiontypes.Sess
 
 	// Mark this session as executing forwarded SQL, so lower layers can gate behaviors that are only
 	se.SetValue(sessionctx.ForwardedForRemoteExecKey{}, true)
+	if sessVars != nil {
+		sessVars.ForwardedForRemoteExec = true
+	}
 
 	if snapshot == nil {
 		return nil
@@ -426,7 +417,12 @@ func (s *Server) restoreSessionContext(ctx context.Context, se sessiontypes.Sess
 	}
 
 	if snapshot.PartitionPruneMode != "" {
-		sessVars.PartitionPruneMode.Store(snapshot.PartitionPruneMode)
+		if err := sessVars.SetSystemVarWithoutValidation(variable.TiDBPartitionPruneMode, snapshot.PartitionPruneMode); err != nil {
+			logutil.Logger(ctx).Warn("failed to set partition prune mode", zap.String("mode", snapshot.PartitionPruneMode), zap.Error(err))
+		}
+	}
+	if err := sessVars.SetSystemVarWithoutValidation(variable.TiDBSkipMissingPartitionStats, variable.BoolToOnOff(snapshot.SkipMissingPartitionStats)); err != nil {
+		logutil.Logger(ctx).Warn("failed to set skip missing partition stats", zap.Bool("skip", snapshot.SkipMissingPartitionStats), zap.Error(err))
 	}
 
 	// Restore isolation read engines
@@ -459,8 +455,9 @@ func (s *Server) restoreSessionContext(ctx context.Context, se sessiontypes.Sess
 	sessVars.ForeignKeyChecks = snapshot.ForeignKeyChecks
 	sessVars.StmtCtx.ForShareLockEnabledByNoop = snapshot.ForShareLockEnabledByNoop
 	sessVars.SharedLockPromotion = snapshot.SharedLockPromotion
-	sessVars.EnableChunkRPC = true // TODO:..
 
+	sessVars.EnableChunkRPC = true
+	sessVars.EnablePlanCacheForSubquery = true
 	sessVars.EnableRemotePlan = false
 
 	// Restore plan cache settings from control side
@@ -479,6 +476,11 @@ func (s *Server) restoreSessionContext(ctx context.Context, se sessiontypes.Sess
 		sessVars.SetSystemVarWithoutValidation(variable.TiDBEnableNonPreparedPlanCache, variable.On)
 	} else {
 		sessVars.SetSystemVarWithoutValidation(variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+	}
+	if snapshot.EnablePlanCacheForParamLimit {
+		sessVars.SetSystemVarWithoutValidation(variable.TiDBEnablePlanCacheForParamLimit, variable.On)
+	} else {
+		sessVars.SetSystemVarWithoutValidation(variable.TiDBEnablePlanCacheForParamLimit, variable.Off)
 	}
 
 	// Restore instance plan cache setting from control side
@@ -505,6 +507,26 @@ func (s *Server) restoreSessionContext(ctx context.Context, se sessiontypes.Sess
 		}
 	}
 
+	if snapshot.MaxChunkSize > 0 {
+		val := strconv.FormatUint(uint64(snapshot.MaxChunkSize), 10)
+		if err := sessVars.SetSystemVarWithoutValidation(variable.TiDBMaxChunkSize, val); err != nil {
+			logutil.Logger(ctx).Warn("failed to set max chunk size", zap.String("value", val), zap.Error(err))
+		}
+	}
+	if err := sessVars.SetSystemVarWithoutValidation(variable.TiDBXEnableIndexLookUpPushDown, variable.BoolToOnOff(snapshot.TidbxEnableIndexLookupPushDown)); err != nil {
+		logutil.Logger(ctx).Warn("failed to set index lookup push down", zap.Error(err))
+	}
+	if variable.EnableFastPath.Load() != snapshot.TidbxFastPath {
+		val := variable.BoolToOnOff(snapshot.TidbxFastPath)
+		if sv := variable.GetSysVar(variable.TiDBXEnableFastPath); sv != nil {
+			if err := sv.SetGlobalFromHook(ctx, sessVars, val, false); err != nil {
+				logutil.Logger(ctx).Warn("failed to set tidbx_fast_path", zap.String("value", val), zap.Error(err))
+			}
+		} else {
+			variable.EnableFastPath.Store(snapshot.TidbxFastPath)
+		}
+	}
+
 	return nil
 }
 
@@ -512,6 +534,13 @@ func (s *Server) executeSQLWithCache(ctx context.Context, sw *sessionWithStmtCac
 	sql := req.SqlText
 	if sql == "" {
 		return nil, errors.New("empty SQL text")
+	}
+	if sw != nil && sw.session != nil && (req.NormalizedSql != "" || req.SqlDigest != "") {
+		sw.session.SetValue(sessionctx.ForwardedSQLDigestKey{}, sessionctx.ForwardedSQLDigest{
+			Normalized: req.NormalizedSql,
+			Digest:     req.SqlDigest,
+		})
+		defer sw.session.ClearValue(sessionctx.ForwardedSQLDigestKey{})
 	}
 
 	// Convert parameters to expressions (may be empty for statements without placeholders)
@@ -552,12 +581,20 @@ func convertPlanCacheInfo(info *pb.PlanCacheInfo) *sessiontypes.PlanCacheVersion
 		relateVersion[tv.TableId] = tv.Revision
 	}
 
+	var isReadOnly *bool
+	switch v := info.IsReadOnlyOpt.(type) {
+	case *pb.PlanCacheInfo_IsReadOnly:
+		b := v.IsReadOnly
+		isReadOnly = &b
+	}
+
 	return &sessiontypes.PlanCacheVersionInfo{
 		SchemaVersion:       info.SchemaVersion,
 		RelateVersion:       relateVersion,
 		LatestSchemaVersion: info.LatestSchemaVersion,
-		IsReadOnly:          info.IsReadOnly,
+		IsReadOnly:          isReadOnly,
 		HasSubquery:         info.HasSubquery,
+		HasLimit:            info.HasLimit,
 		LimitValues:         info.LimitValues,
 		StatsVerHash:        info.StatsVerHash,
 		PlanCacheEnabled:    info.PlanCacheEnabled,
@@ -775,9 +812,14 @@ func (s *Server) BatchRemoteExecute(stream pb.RemoteExecService_BatchRemoteExecu
 	// Flag to indicate if responseChan is closed
 	var responsesClosed int32
 
-	// Start response sender goroutine
+	// Start response sender goroutine with batching to reduce HOL blocking
+	// Simple strategy: after collecting first response, wait up to 500μs for more
 	go func() {
+		batch := make([]*pb.StreamResponse, 0, 64)
+		var batchFirstTime time.Time
+
 		for {
+			// Wait for at least one response
 			select {
 			case <-ctx.Done():
 				return
@@ -785,15 +827,66 @@ func (s *Server) BatchRemoteExecute(stream pb.RemoteExecService_BatchRemoteExecu
 				if !ok {
 					return
 				}
-				if err := stream.Send(&pb.BatchRemoteResponse{
-					Responses: []*pb.StreamResponse{resp},
-				}); err != nil {
+				if len(batch) == 0 {
+					batchFirstTime = time.Now()
+				}
+				batch = append(batch, resp)
+			}
+
+			// Non-blocking: collect any responses already waiting
+		collectMore:
+			for len(batch) < 64 {
+				select {
+				case resp, ok := <-responseChan:
+					if !ok {
+						if len(batch) > 0 {
+							if !batchFirstTime.IsZero() {
+								metrics.RemotePlanRespBatchWaitDuration.Observe(time.Since(batchFirstTime).Seconds())
+							}
+							sendStart := time.Now()
+							stream.Send(&pb.BatchRemoteResponse{Responses: batch})
+							metrics.RemotePlanGrpcSendDuration.Observe(time.Since(sendStart).Seconds())
+							metrics.RemotePlanRespBatchSize.Observe(float64(len(batch)))
+						}
+						return
+					}
+					batch = append(batch, resp)
+				default:
+					break collectMore
+				}
+			}
+
+			if len(batch) < 4 {
+				select {
+				case resp, ok := <-responseChan:
+					if !ok {
+						break
+					}
+					batch = append(batch, resp)
+				case <-time.After(500 * time.Microsecond):
+					// Timeout, send what we have
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// Send the batch
+			if len(batch) > 0 {
+				if !batchFirstTime.IsZero() {
+					metrics.RemotePlanRespBatchWaitDuration.Observe(time.Since(batchFirstTime).Seconds())
+				}
+				sendStart := time.Now()
+				if err := stream.Send(&pb.BatchRemoteResponse{Responses: batch}); err != nil {
 					select {
 					case errChan <- err:
 					default:
 					}
 					return
 				}
+				metrics.RemotePlanGrpcSendDuration.Observe(time.Since(sendStart).Seconds())
+				metrics.RemotePlanRespBatchSize.Observe(float64(len(batch)))
+				batch = batch[:0]
+				batchFirstTime = time.Time{}
 			}
 		}
 	}()
@@ -846,9 +939,9 @@ func (s *Server) BatchRemoteExecute(stream pb.RemoteExecService_BatchRemoteExecu
 			}
 
 			wg.Add(1)
-			// Use worker pool instead of creating new goroutine each time.
-			// This truly reuses goroutines and helps reduce FFI morestack overhead.
-			s.workerPool.AddTask(&remoteExecTask{
+			// Use an elastic worker pool instead of creating a new goroutine each time.
+			// This reuses goroutines and helps reduce potential morestack overhead in FFI scenarios.
+			task := &remoteExecTask{
 				ctx:              ctx,
 				server:           s,
 				requestID:        requestID,
@@ -858,7 +951,11 @@ func (s *Server) BatchRemoteExecute(stream pb.RemoteExecService_BatchRemoteExecu
 				activeRequestsMu: &activeRequestsMu,
 				responsesClosed:  &responsesClosed,
 				wg:               &wg,
-			})
+			}
+			if !s.workerPool.Submit(ctx, task) {
+				// If the stream is already canceled or server is closing, avoid leaking the WaitGroup counter.
+				wg.Done()
+			}
 		}
 	}
 }
@@ -873,10 +970,27 @@ func (s *Server) processRequest(
 	activeRequestsMu *sync.Mutex,
 	responsesClosed *int32,
 ) {
-	logutil.BgLogger().Info("batch remote execute: processing request",
+	logutil.BgLogger().Debug("batch remote execute: processing request",
 		zap.Uint64("requestID", requestID),
 		zap.String("sql", req.SqlText),
 		zap.String("db", req.GetSession().GetCurrentDb()))
+
+	processStart := time.Now()
+	defer func() {
+		metrics.RemotePlanProcessRequestDuration.Observe(time.Since(processStart).Seconds())
+	}()
+
+	start := time.Now()
+	var handleErr error
+	defer func() {
+		if handleErr == nil {
+			metrics.RemotePlanForwardRecvOKCounter.Inc()
+			metrics.RemotePlanForwardRecvOKDuration.Observe(time.Since(start).Seconds())
+			return
+		}
+		metrics.RemotePlanForwardRecvErrCounter.Inc()
+		metrics.RemotePlanForwardRecvErrDuration.Observe(time.Since(start).Seconds())
+	}()
 
 	// Create request context
 	reqCtx := &requestContext{
@@ -918,25 +1032,32 @@ func (s *Server) processRequest(
 	}()
 
 	// Get or create session
+	sessionAcquireStart := time.Now()
 	sw, err := s.getOrCreateSession(ctx, req)
+	metrics.RemotePlanSessionAcquireDuration.Observe(time.Since(sessionAcquireStart).Seconds())
 	if err != nil {
+		handleErr = err
 		s.sendStreamError(ctx, responseChan, requestID, errors.Annotate(err, "failed to create session"), responsesClosed)
 		return
 	}
 	reqCtx.sw = sw
 
-	ctx = context.WithValue(ctx, core.PlanCacheKeyEnableRemoteInstancePlanCache{}, true)
+	ctx = context.WithValue(ctx, core.InRemoteExec{}, true)
 
 	sw.session.GetSessionVars().CommonGlobalLoaded = true
 
 	// Execute SQL
 	localCallStats := &tikvrpc.LocalCallStats{}
 	ctx = tikvrpc.WithLocalCallStats(ctx, localCallStats)
+	execStart := time.Now()
 	rs, err := s.executeSQLWithCache(ctx, sw, req)
 	if err != nil {
+		metrics.RemotePlanExecErrDuration.Observe(time.Since(execStart).Seconds())
+		handleErr = err
 		s.sendStreamError(ctx, responseChan, requestID, errors.Annotate(err, "failed to execute SQL"), responsesClosed)
 		return
 	}
+	metrics.RemotePlanExecOKDuration.Observe(time.Since(execStart).Seconds())
 
 	// Handle DML result (no result set)
 	if rs == nil {
@@ -947,7 +1068,10 @@ func (s *Server) processRequest(
 	reqCtx.rs = rs
 
 	// Stream results
-	s.streamResultsToChannel(ctx, requestID, rs, sw, localCallStats, responseChan, responsesClosed)
+	if err := s.streamResultsToChannel(ctx, requestID, rs, sw, localCallStats, responseChan, responsesClosed); err != nil {
+		handleErr = err
+		return
+	}
 }
 
 // sendStreamError sends an error response through the channel
@@ -956,7 +1080,8 @@ func (s *Server) processRequest(
 func (s *Server) sendStreamError(ctx context.Context, responseChan chan<- *pb.StreamResponse, requestID uint64, err error, responsesClosed *int32) {
 	logutil.BgLogger().Warn("batch remote execute error",
 		zap.Uint64("requestID", requestID),
-		zap.Error(err))
+		zap.Error(err),
+		zap.String("errStack", errors.ErrorStack(err)))
 
 	// Check if channel is closed before sending
 	if atomic.LoadInt32(responsesClosed) == 1 {
@@ -1032,10 +1157,10 @@ func (s *Server) sendStreamDMLResult(ctx context.Context, responseChan chan<- *p
 }
 
 // streamResultsToChannel streams query results through the response channel
-func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, rs sqlexec.RecordSet, sw *sessionWithStmtCache, localCallStats *tikvrpc.LocalCallStats, responseChan chan<- *pb.StreamResponse, responsesClosed *int32) {
+func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, rs sqlexec.RecordSet, sw *sessionWithStmtCache, localCallStats *tikvrpc.LocalCallStats, responseChan chan<- *pb.StreamResponse, responsesClosed *int32) error {
 	// Check if channel is closed before sending
 	if atomic.LoadInt32(responsesClosed) == 1 {
-		return
+		return errors.New("responses channel closed")
 	}
 
 	fields := rs.Fields()
@@ -1051,11 +1176,11 @@ func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, r
 
 	// Send column info (sequence 0)
 	if atomic.LoadInt32(responsesClosed) == 1 {
-		return
+		return errors.New("responses channel closed")
 	}
 	select {
 	case <-ctx.Done():
-		return
+		return ctx.Err()
 	case responseChan <- &pb.StreamResponse{
 		RequestId:   requestID,
 		ColumnInfos: columnInfos,
@@ -1068,44 +1193,94 @@ func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, r
 	codec := chunk.NewCodec(fieldTypes)
 	chk := rs.NewChunk(nil)
 	sequence := uint32(1)
+	firstNext := true
 	var resultBytes uint64
 	var resultRows uint64
+	var encodeBuffer []byte // Reusable buffer for chunk encoding
+
+	getStmtCtxRequestCount := func() int {
+		if sw == nil || sw.session == nil {
+			return 0
+		}
+		sessVars := sw.session.GetSessionVars()
+		if sessVars == nil || sessVars.StmtCtx == nil {
+			return 0
+		}
+		return sessVars.StmtCtx.GetExecDetails().RequestCount
+	}
+	getLocalCallRequestCount := func() uint64 {
+		if localCallStats == nil {
+			return 0
+		}
+		return localCallStats.RequestCount.Load()
+	}
 
 	// Stream data chunks
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
 		}
 
 		// Check if channel is closed
 		if atomic.LoadInt32(responsesClosed) == 1 {
-			return
+			return errors.New("responses channel closed")
 		}
 
-		if err := rs.Next(ctx, chk); err != nil {
-			s.sendStreamError(ctx, responseChan, requestID, errors.Annotate(err, "failed to fetch next chunk"), responsesClosed)
-			return
+		stmtReqBefore := getStmtCtxRequestCount()
+		localReqBefore := getLocalCallRequestCount()
+		nextStart := time.Now()
+		nextErr := rs.Next(ctx, chk)
+		nextDur := time.Since(nextStart)
+		metrics.RemotePlanRSNextDuration.Observe(nextDur.Seconds())
+		if firstNext {
+			metrics.RemotePlanRSFirstNextDuration.Observe(nextDur.Seconds())
+			firstNext = false
+		}
+		stmtReqAfter := getStmtCtxRequestCount()
+		localReqAfter := getLocalCallRequestCount()
+
+		localDelta := uint64(0)
+		if localReqAfter >= localReqBefore {
+			localDelta = localReqAfter - localReqBefore
+		}
+		if localDelta > 0 {
+			metrics.RemotePlanRSNextCopCount.Observe(float64(localDelta))
+		} else if stmtDelta := stmtReqAfter - stmtReqBefore; stmtDelta >= 0 {
+			metrics.RemotePlanRSNextCopCount.Observe(float64(stmtDelta))
+		}
+		if nextErr != nil {
+			s.sendStreamError(ctx, responseChan, requestID, errors.Annotate(nextErr, "failed to fetch next chunk"), responsesClosed)
+			return nextErr
 		}
 
 		if chk.NumRows() == 0 {
 			break
 		}
 
-		encodedData := codec.Encode(chk)
+		encodeStart := time.Now()
+		encodeBuffer = codec.EncodeToBuffer(chk, encodeBuffer)
+		encodedData := encodeBuffer
+		metrics.RemotePlanChunkEncodeDuration.Observe(time.Since(encodeStart).Seconds())
+
 		numRows := chk.NumRows()
 		resultBytes += uint64(len(encodedData))
 		resultRows += uint64(numRows)
 
+		// Record chunk size metrics
+		metrics.RemotePlanChunkRows.Observe(float64(numRows))
+		metrics.RemotePlanChunkBytes.Observe(float64(len(encodedData)))
+
 		// Check if channel is closed before sending
 		if atomic.LoadInt32(responsesClosed) == 1 {
-			return
+			return errors.New("responses channel closed")
 		}
 
+		sendStart := time.Now()
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case responseChan <- &pb.StreamResponse{
 			RequestId: requestID,
 			Chunk: &pb.ChunkData{
@@ -1116,6 +1291,7 @@ func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, r
 			Sequence: sequence,
 		}:
 		}
+		metrics.RemotePlanStreamSendDuration.Observe(time.Since(sendStart).Seconds())
 
 		sequence++
 		chk.Reset()
@@ -1123,12 +1299,12 @@ func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, r
 
 	// Send final response (no more data)
 	if atomic.LoadInt32(responsesClosed) == 1 {
-		return
+		return errors.New("responses channel closed")
 	}
 	feedback := s.buildRemoteExecFeedback(sw, resultRows, resultBytes, localCallStats)
 	select {
 	case <-ctx.Done():
-		return
+		return ctx.Err()
 	case responseChan <- &pb.StreamResponse{
 		RequestId: requestID,
 		HasMore:   false,
@@ -1136,6 +1312,7 @@ func (s *Server) streamResultsToChannel(ctx context.Context, requestID uint64, r
 		Feedback:  feedback,
 	}:
 	}
+	return nil
 }
 
 func (s *Server) buildRemoteExecFeedback(sw *sessionWithStmtCache, resultRows, resultBytes uint64, localCallStats *tikvrpc.LocalCallStats) *pb.RemoteExecFeedback {

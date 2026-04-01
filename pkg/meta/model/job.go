@@ -111,9 +111,13 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
-	ActionCreateTableGroup       ActionType = 74
-	ActionDropTableGroup         ActionType = 75
-	ActionAlterTableGroup        ActionType = 76
+	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
+	_                            ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity     ActionType = 78
+	ActionCreateTableGroup       ActionType = 79
+	ActionDropTableGroup         ActionType = 80
+	ActionAlterTableGroup        ActionType = 81
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -186,6 +190,9 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
+	ActionAlterTableMode:                "alter table mode",
+	ActionRefreshMeta:                   "refresh meta",
+	ActionAlterTableAffinity:            "alter table affinity",
 	ActionCreateTableGroup:              "create tablegroup",
 	ActionDropTableGroup:                "drop tablegroup",
 	ActionAlterTableGroup:               "alter tablegroup",
@@ -201,6 +208,47 @@ func (action ActionType) String() string {
 		return v
 	}
 	return "none"
+}
+
+// ModifyColumnType is used to indicate what type of modify column job it is.
+// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
+// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
+const (
+	ModifyTypeNone byte = iota
+	// modify column that guarantees no reorganization or check is needed.
+	ModifyTypeNoReorg
+
+	// modify column that don't need to reorg the data, but need to check the existing data.
+	ModifyTypeNoReorgWithCheck
+
+	// modify column that only needs to reorg the index
+	ModifyTypeIndexReorg
+
+	// modify column that needs to reorg both the row and index data.
+	ModifyTypeReorg
+
+	// A special type for varchar->char conversion with data precheck.
+	ModifyTypePrecheck
+)
+
+// ModifyTypeToString converts ModifyColumnType to string.
+func ModifyTypeToString(tp byte) string {
+	switch tp {
+	case ModifyTypeNone:
+		return "none"
+	case ModifyTypeNoReorg:
+		return "modify meta only"
+	case ModifyTypeNoReorgWithCheck:
+		return "modify meta only with range check"
+	case ModifyTypeIndexReorg:
+		return "reorg index only"
+	case ModifyTypeReorg:
+		return "reorg row and index"
+	case ModifyTypePrecheck:
+		return "prechecking"
+	}
+
+	return ""
 }
 
 // SchemaState is the state for schema elements.
@@ -310,10 +358,10 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
-	// CtxVars are variables attached to the job. It is for internal usage.
-	// E.g. passing arguments between functions by one single *Job pointer.
-	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
-	CtxVars []any `json:"-"`
+	// NeedReorg indicates whether the job needs reorg.
+	// It's only used by modify column and not the accurate value.
+	NeedReorg bool `json:"-"`
+
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -518,6 +566,13 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	return rawArgs, errors.Trace(err)
 }
 
+// UpdateJobArgsForTest updates job.args with the given update function.
+func UpdateJobArgsForTest(job *Job, update func(args []any) []any) {
+	if intest.InTest {
+		job.args = update(job.args)
+	}
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
@@ -590,6 +645,10 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
+		if job.Type == ActionModifyColumn {
+			ret += fmt.Sprintf(", analyze_state:%d", job.ReorgMeta.AnalyzeState)
+			ret += fmt.Sprintf(", stage:%d", job.ReorgMeta.Stage)
+		}
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
@@ -745,7 +804,7 @@ func (job *Job) IsPausable() bool {
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
 	// Currently, only non-distributed add index reorg task can be altered
-	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+	return job.Type == ActionAddIndex ||
 		job.Type == ActionModifyColumn ||
 		job.Type == ActionReorganizePartition
 }
@@ -811,15 +870,10 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		// TODO(joechenrh): remove CtxVars here
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
+		return job.NeedReorg
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			proxyJob := Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
@@ -843,6 +897,10 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StateDeleteOnly ||
 			job.SchemaState == StateDeleteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionModifyColumn:
+		if job.SchemaState == StatePublic {
 			return false
 		}
 	case ActionAddTablePartition:
@@ -898,20 +956,22 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType `json:"type"`
-	JobArgs     JobArgs    `json:"-"`
-	args        []any
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
+	Type         ActionType `json:"type"`
+	JobArgs      JobArgs    `json:"-"`
+	args         []any
+	RawArgs      json.RawMessage `json:"raw_args"`
+	SchemaState  SchemaState     `json:"schema_state"`
+	SnapshotVer  uint64          `json:"snapshot_ver"`
+	RealStartTS  uint64          `json:"real_start_ts"`
+	Revertible   bool            `json:"revertible"`
+	State        JobState        `json:"state"`
+	RowCount     int64           `json:"row_count"`
+	Warning      *terror.Error   `json:"warning"`
+	NeedReorg    bool            `json:"-"`
+	SchemaVer    int64           `json:"schema_version"`
+	ReorgTp      ReorgType       `json:"reorg_tp"`
+	ReorgStage   ReorgStage      `json:"reorg_stage"`
+	AnalyzeState int8            `json:"analyze_state"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -934,6 +994,13 @@ func (sub *SubJob) IsFinished() bool {
 
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
+	var reorgMeta *DDLReorgMeta
+	if parentJob.ReorgMeta != nil {
+		reorgMeta = parentJob.ReorgMeta.ShallowCopy()
+		reorgMeta.ReorgTp = sub.ReorgTp
+		reorgMeta.Stage = sub.ReorgStage
+		reorgMeta.AnalyzeState = sub.AnalyzeState
+	}
 	return Job{
 		Version:         parentJob.Version,
 		ID:              parentJob.ID,
@@ -947,7 +1014,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		ErrorCount:      0,
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
-		CtxVars:         sub.CtxVars,
+		NeedReorg:       sub.NeedReorg,
 		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
@@ -957,7 +1024,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       parentJob.ReorgMeta,
+		ReorgMeta:       reorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
@@ -965,6 +1032,8 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		SQLMode:         parentJob.SQLMode,
+		SessionVars:     parentJob.SessionVars,
 	}
 }
 
@@ -981,6 +1050,8 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+		sub.ReorgStage = proxyJob.ReorgMeta.Stage
+		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
 	}
 }
 
@@ -1226,6 +1297,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }
@@ -1280,13 +1353,24 @@ func (h *HistoryInfo) Clean() {
 
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
-	Name     string `json:"name"`
-	Offset   int    `json:"offset"` // seconds east of UTC
+	Name   string `json:"name"`
+	Offset int    `json:"offset"` // seconds east of UTC
+	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
+	mu       sync.RWMutex
 }
 
 // GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	tz.mu.RLock()
+	if tz.location != nil {
+		tz.mu.RUnlock()
+		return tz.location, nil
+	}
+	tz.mu.RUnlock()
+
+	tz.mu.Lock()
+	defer tz.mu.Unlock()
 	if tz.location != nil {
 		return tz.location, nil
 	}

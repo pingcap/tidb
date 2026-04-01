@@ -25,7 +25,7 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "init", Step2Str(Backfill, StepInit))
 	require.Equal(t, "read-index", Step2Str(Backfill, BackfillStepReadIndex))
 	require.Equal(t, "merge-sort", Step2Str(Backfill, BackfillStepMergeSort))
-	require.Equal(t, "write&ingest", Step2Str(Backfill, BackfillStepWriteAndIngest))
+	require.Equal(t, "ingest", Step2Str(Backfill, BackfillStepWriteAndIngest))
 	require.Equal(t, "done", Step2Str(Backfill, StepDone))
 	require.Equal(t, "unknown step 111", Step2Str(Backfill, 111))
 
@@ -34,8 +34,10 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "import", Step2Str(ImportInto, ImportStepImport))
 	require.Equal(t, "post-process", Step2Str(ImportInto, ImportStepPostProcess))
 	require.Equal(t, "merge-sort", Step2Str(ImportInto, ImportStepMergeSort))
-	require.Equal(t, "encode&sort", Step2Str(ImportInto, ImportStepEncodeAndSort))
-	require.Equal(t, "write&ingest", Step2Str(ImportInto, ImportStepWriteAndIngest))
+	require.Equal(t, "encode", Step2Str(ImportInto, ImportStepEncodeAndSort))
+	require.Equal(t, "ingest", Step2Str(ImportInto, ImportStepWriteAndIngest))
+	require.Equal(t, "collect-conflicts", Step2Str(ImportInto, ImportStepCollectConflicts))
+	require.Equal(t, "conflict-resolution", Step2Str(ImportInto, ImportStepConflictResolution))
 	require.Equal(t, "done", Step2Str(ImportInto, StepDone))
 	require.Equal(t, "unknown step 123", Step2Str(ImportInto, 123))
 

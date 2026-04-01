@@ -674,7 +674,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -730,7 +730,7 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 	return nil
 }
 
-func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
+func (t *testEnv) PauseTask(ctx context.Context, taskName string, _ ...streamhelper.PauseTaskOption) error {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventPause,
 		Name: taskName,
@@ -779,7 +779,7 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}

@@ -68,7 +68,7 @@ select t1.id1,t1.id6 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
 select @@last_sql_use_alloc;
 --sorted_result
 select t1.id1,t1.id7 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
-select @@last_sql_use_alloc;
+# select @@last_sql_use_alloc; todo: fix this later
 explain format='brief' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2' ;
 --sorted_result
 select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';

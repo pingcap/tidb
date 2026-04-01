@@ -204,8 +204,12 @@ func (t IndexType) String() string {
 		return "RTREE"
 	case IndexTypeHypo:
 		return "HYPO"
+	case IndexTypeVector:
+		return "VECTOR"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeFulltext:
+		return "FULLTEXT"
 	default:
 		return ""
 	}
@@ -218,8 +222,38 @@ const (
 	IndexTypeHash
 	IndexTypeRtree
 	IndexTypeHypo
+	IndexTypeVector
+	// IndexTypeHNSW is only used in AST.
+	// It will be rewritten into IndexTypeVector after preprocessor phase.
 	IndexTypeHNSW
+	IndexTypeFulltext
 )
+
+// ColumnarIndexType is the type of columnar index.
+type ColumnarIndexType uint8
+
+const (
+	// ColumnarIndexTypeNA means this is not a columnar index.
+	ColumnarIndexTypeNA ColumnarIndexType = iota
+	// ColumnarIndexTypeInverted is the inverted index type.
+	ColumnarIndexTypeInverted
+	// ColumnarIndexTypeVector is the vector index type.
+	ColumnarIndexTypeVector
+	// ColumnarIndexTypeFulltext is the fulltext index type.
+	ColumnarIndexTypeFulltext
+)
+
+// SQLName returns the SQL keyword name of the columnar index. Used in log messages or error messages.
+func (c ColumnarIndexType) SQLName() string {
+	switch c {
+	case ColumnarIndexTypeVector:
+		return "vector index"
+	case ColumnarIndexTypeFulltext:
+		return "fulltext index"
+	default:
+		return "columnar index"
+	}
+}
 
 // ReferOptionType is the type for refer options.
 type ReferOptionType int

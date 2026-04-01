@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -59,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -608,8 +606,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateGlobalTaskHistory is a table about history global task.
@@ -629,8 +628,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
@@ -721,13 +721,39 @@ const (
 		KEY (status));`
 
 	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	// set restore id default to 0 to make it compatible for old BR tool to restore to a new TiDB, such case should be
+	// rare though.
 	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restore_id BIGINT NOT NULL DEFAULT 0,
 		restored_ts BIGINT NOT NULL,
 		upstream_cluster_id BIGINT NOT NULL,
 		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
+		PRIMARY KEY (restore_id, restored_ts, upstream_cluster_id, segment_id));`
+
+	// CreateRestoreRegistryTable is a table that tracks active restore tasks to prevent conflicts.
+	CreateRestoreRegistryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_restore_registry (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		filter_strings TEXT NOT NULL,
+		filter_hash VARCHAR(64) NOT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
+		restored_ts BIGINT UNSIGNED NOT NULL,
+		upstream_cluster_id BIGINT UNSIGNED,
+		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
+		status VARCHAR(20) NOT NULL DEFAULT 'running',
+		cmd TEXT,
+		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		UNIQUE KEY unique_registration_params (
+			filter_hash,
+			start_ts,
+			restored_ts,
+			upstream_cluster_id,
+			with_sys_table,
+			cmd(256)
+		)
+	) AUTO_INCREMENT = 1;`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -885,8 +911,7 @@ func bootstrap(s sessiontypes.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock error",
-			zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
 	for {
@@ -1340,20 +1365,31 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version219 = 219
 
-	// ...
-	// [version220, version238] is the version range reserved for patches of 8.5.x
-	// ...
-
 	// version 220
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version220 = 220
+
+	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
+	version221 = 221
+
+	// version 222
+	//   create `mysql.tidb_restore_registry` table
+	version222 = 222
+
+	// version 223
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version223 = 223
+
+	// ...
+	// [version223, version238] is the version range reserved for patches of 8.5.x
+	// ...
 
 	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version220
+var currentBootstrapVersion int64 = version223
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
@@ -1533,6 +1569,9 @@ var (
 		upgradeToVer218,
 		upgradeToVer219,
 		upgradeToVer220,
+		upgradeToVer221,
+		upgradeToVer222,
+		upgradeToVer223,
 	}
 )
 
@@ -1644,7 +1683,7 @@ func upgrade(s sessiontypes.Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
 	}
 
 	var ver, verEE int64
@@ -1722,31 +1761,6 @@ func upgrade(s sessiontypes.Session) {
 			zap.Int64("from", verEE),
 			zap.Int64("to", currentEEBootstrapVersion),
 			zap.Error(err))
-	}
-}
-
-// checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
-func checkOwnerVersion(ctx context.Context, dom *domain.Domain) (bool, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
-	for {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-ticker.C:
-			ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-			if err == concurrency.ErrElectionNoLeader {
-				continue
-			}
-			info, err := infosync.GetAllServerInfo(ctx)
-			if err != nil {
-				return false, err
-			}
-			if s, ok := info[ownerID]; ok {
-				return s.Version == mysql.ServerVersion, nil
-			}
-		}
 	}
 }
 
@@ -3451,6 +3465,31 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer221(s sessiontypes.Session, ver int64) {
+	if ver >= version221 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
+}
+
+func upgradeToVer222(s sessiontypes.Session, ver int64) {
+	if ver >= version222 {
+		return
+	}
+	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
+func upgradeToVer223(s sessiontypes.Session, ver int64) {
+	if ver >= version223 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion2 {
 		return
@@ -3711,6 +3750,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateRequestUnitByGroupTable)
 	// create tidb_pitr_id_map
 	mustExecute(s, CreatePITRIDMap)
+	// create tidb_restore_registry
+	mustExecute(s, CreateRestoreRegistryTable)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view

@@ -46,12 +46,14 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
@@ -157,6 +159,9 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // LoadTableStats loads the stats of the table read by this plan.
@@ -286,6 +291,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 		Columns:        sg.Source.TblCols,
 		ColumnNames:    sg.Source.OutputNames(),
 	}
+	reader.TableSplit = sg.Source.TableSplit
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
@@ -626,146 +632,50 @@ func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }
 
-// PhysicalLocalIndexLookUp represents an index lookup locally.
-// It contains two parts: indexPlan and tablePlan
-// IndexPlan maybe hierarchical, e.g. IndexScan -> Selection -> Limit
-// TablePlan contains only TableScan executor
-type PhysicalLocalIndexLookUp struct {
-	physicalSchemaProducer
-	// handle offsets in the indexPlan's output schema
-	IndexHandleOffsets []uint32
-}
-
-func resetPlanIDRecursively(ctx base.PlanContext, p base.PhysicalPlan) {
-	p.SetID(int(ctx.GetSessionVars().PlanID.Add(1)))
-	for _, child := range p.Children() {
-		resetPlanIDRecursively(ctx, child)
-	}
-}
-
-func buildPushDownIndexLookUpPlan(
-	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan, isCommonHandle bool,
-) (indexLookUpPlan base.PhysicalPlan, err error) {
-	tablePlan, err = tablePlan.Clone(ctx)
-	if err != nil {
-		return nil, err
-	}
-	resetPlanIDRecursively(ctx, tablePlan)
-
-	var indexHandleOffsets []uint32
-	if !isCommonHandle {
-		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
-		// which can be read from the index value directly.
-		// - If int handle, it is the last column in the index schema.
-		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
-		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
-		//     For example, when a partition table needs to append ExtraPhysTblID
-		//     to the end for the upper UnionScanExec.
-		offset := indexPlan.Schema().Len() - 1
-		for offset >= 0 {
-			col := indexPlan.Schema().Columns[offset]
-			if col.ID >= 0 || col.ID == model.ExtraHandleID {
-				break
-			}
-			offset--
-			intest.Assert(offset >= 0, "cannot find handle column in index schema")
-		}
-
-		if offset < 0 {
-			return nil, errors.New("cannot find handle column in index schema")
-		}
-		indexHandleOffsets = []uint32{uint32(offset)}
-	}
-
-	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
-	indexLookUpPlan = PhysicalLocalIndexLookUp{
-		IndexHandleOffsets: indexHandleOffsets,
-	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
-
-	if parentOfTableScan != nil {
-		parentOfTableScan.SetChildren(indexLookUpPlan)
-		indexLookUpPlan = tablePlan
-	}
-	return
-}
-
-// Init initializes PhysicalLocalIndexLookUp.
-func (p PhysicalLocalIndexLookUp) Init(ctx base.PlanContext, indexPlan base.PhysicalPlan, tableScan *PhysicalTableScan, offset int) *PhysicalLocalIndexLookUp {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLocalIndexLookUp, &p, offset)
-	p.SetChildren(indexPlan, tableScan)
-	tableScan.SetIsChildOfIndexLookUp(true)
-	p.SetStats(tableScan.StatsInfo())
-	p.SetSchema(tableScan.Schema())
-	return &p
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalLocalIndexLookUp) ToPB(_ *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	if storeType != kv.TiKV {
-		return nil, errors.Errorf("unsupported store type %v for LocalIndexLookUp", storeType)
-	}
-	return &tipb.Executor{
-		Tp: tipb.ExecType_TypeIndexLookUp,
-		IndexLookup: &tipb.IndexLookUp{
-			IndexHandleOffsets: p.IndexHandleOffsets,
-		},
-	}, nil
-}
-
-// ExplainInfo implements PhysicalPlan ExplainInfo interface.
-func (p *PhysicalLocalIndexLookUp) ExplainInfo() string {
-	return fmt.Sprintf("index handle offsets:%v", p.IndexHandleOffsets)
-}
-
-// MemoryUsage return the memory usage of PhysicalLocalIndexLookUp
-func (p *PhysicalLocalIndexLookUp) MemoryUsage() (sum int64) {
-	if p == nil {
+// tryPushDownLookUp tries to push down the index lookup to TiKV.
+func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext, tp util.IndexLookUpPushDownByType) {
+	intest.Assert(!p.IndexLookUpPushDown)
+	if tp == util.IndexLookUpPushDownNone {
+		// util.IndexLookUpPushDownNone indicates no index lookup push-down.
 		return
 	}
-	const physicalIndexLookUpStructSize = int64(unsafe.Sizeof(PhysicalLocalIndexLookUp{}) - unsafe.Sizeof(physicalSchemaProducer{}))
-	return p.physicalSchemaProducer.MemoryUsage() +
-		physicalIndexLookUpStructSize +
-		size.SizeOfInt32*int64(len(p.IndexHandleOffsets))
-}
 
-// Clone implements the base.PhysicalPlan.<14th> interface.
-func (p *PhysicalLocalIndexLookUp) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalLocalIndexLookUp)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.physicalSchemaProducer = *base
-	cloned.IndexHandleOffsets = make([]uint32, len(p.IndexHandleOffsets))
-	copy(cloned.IndexHandleOffsets, p.IndexHandleOffsets)
-	return cloned, nil
-}
-
-func detachRootTableScanPlan(p base.PhysicalPlan) (root *PhysicalTableScan, rootParent base.PhysicalPlan) {
-	var currentParent base.PhysicalPlan
-	for {
-		children := p.Children()
-		l := len(children)
-		if l == 0 {
-			var ok bool
-			root, ok = p.(*PhysicalTableScan)
-			intest.Assert(ok && root != nil)
-			rootParent = currentParent
-			break
+	if p.keepOrder {
+		// Though most of the index-lookup push-down constraints should be checked in
+		// `checkIndexLookUpPushDownSupported` if possible,
+		// however, the keep order cannot be determined until the final plan is constructed.
+		// So we have to check the keep order here, and if it is required, we should not push down it and use
+		// the normal index-lookup instead.
+		if tp == util.IndexLookUpPushDownByHint {
+			// only append warning when the push-down is forced by hint.
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
 		}
-		intest.Assert(l == 1)
-		currentParent = p
-		p = children[0]
+		return
 	}
 
-	if rootParent != nil {
-		// set children to empty because root is detached
-		rootParent.SetChildren()
+	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan, len(p.CommonHandleCols) > 0)
+	if err != nil {
+		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
+		intest.AssertNoError(err)
+		logutil.BgLogger().Warn("try to push down index lookup failed", zap.Error(err))
+		return
 	}
-	return
+	p.indexPlan = indexLookUpPlan
+	// Currently, it's hard to estimate how many rows can be looked up locally when push-down.
+	// So we just use the row count as 0 of tablePlan in TiDB side which displays all lookup
+	// can be performed in the TiKV side.
+	resetRowCountAsZeroRecursively(p.tablePlan)
+	// The status info of IndexLookupReader should be the same as indexPlan in the push-down mode if
+	// all lookup can be performed in the TiKV side.
+	p.SetStats(p.indexPlan.StatsInfo())
+	p.IndexLookUpPushDown = true
+}
+
+func resetRowCountAsZeroRecursively(p base.PhysicalPlan) {
+	p.SetStats(p.StatsInfo().Scale(0))
+	for _, child := range p.Children() {
+		resetRowCountAsZeroRecursively(child)
+	}
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -1114,6 +1024,9 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -1148,10 +1061,10 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.TableAsName = ts.TableAsName
 	clonedScan.rangeInfo = ts.rangeInfo
 	if ts.runtimeFilterList != nil {
-		clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(ts.runtimeFilterList))
-		for _, rf := range ts.runtimeFilterList {
+		clonedScan.runtimeFilterList = make([]*RuntimeFilter, len(ts.runtimeFilterList))
+		for i, rf := range ts.runtimeFilterList {
 			clonedRF := rf.Clone()
-			clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+			clonedScan.runtimeFilterList[i] = clonedRF
 		}
 	}
 	return clonedScan, nil
@@ -1773,6 +1686,7 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.
+// NOTICE: When adding any member variables, remember to modify the Clone method.
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
@@ -1796,6 +1710,30 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexJoin)
+	cloned.SetSCtx(newCtx)
+	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	if err != nil {
+		return nil, err
+	}
+	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
+	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
+	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexJoin
@@ -1856,6 +1794,26 @@ type PhysicalIndexHashJoin struct {
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexHashJoin)
+	cloned.SetSCtx(newCtx)
+	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	physicalIndexJoin, err := p.PhysicalIndexJoin.Clone(newCtx)
+	if err != nil {
+		return nil, err
+	}
+	indexJoin, ok := physicalIndexJoin.(*PhysicalIndexJoin)
+	intest.Assert(ok)
+	cloned.PhysicalIndexJoin = *indexJoin
+	cloned.KeepOuterOrder = p.KeepOuterOrder
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexHashJoin
@@ -3145,4 +3103,146 @@ func (p *PhysicalSequence) Clone(newCtx base.PlanContext) (base.PhysicalPlan, er
 // Schema returns its last child(which is the main query tree)'s schema.
 func (p *PhysicalSequence) Schema() *expression.Schema {
 	return p.Children()[len(p.Children())-1].Schema()
+}
+
+// PhysicalLocalIndexLookUp represents an index lookup locally.
+// It contains two parts: indexPlan and tablePlan
+// IndexPlan maybe hierarchical, e.g. IndexScan -> Selection -> Limit
+// TablePlan contains only TableScan executor
+type PhysicalLocalIndexLookUp struct {
+	physicalSchemaProducer
+	// handle offsets in the indexPlan's output schema
+	IndexHandleOffsets []uint32
+}
+
+func resetPlanIDRecursively(ctx base.PlanContext, p base.PhysicalPlan) {
+	p.SetID(int(ctx.GetSessionVars().PlanID.Add(1)))
+	for _, child := range p.Children() {
+		resetPlanIDRecursively(ctx, child)
+	}
+}
+
+func buildPushDownIndexLookUpPlan(
+	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan, isCommonHandle bool,
+) (indexLookUpPlan base.PhysicalPlan, err error) {
+	tablePlan, err = tablePlan.Clone(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resetPlanIDRecursively(ctx, tablePlan)
+
+	var indexHandleOffsets []uint32
+	if !isCommonHandle {
+		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
+		// which can be read from the index value directly.
+		// - If int handle, it is the last column in the index schema.
+		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
+		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
+		//     For example, when a partition table needs to append ExtraPhysTblID
+		//     to the end for the upper UnionScanExec.
+		offset := indexPlan.Schema().Len() - 1
+		for offset >= 0 {
+			col := indexPlan.Schema().Columns[offset]
+			if col.ID >= 0 || col.ID == model.ExtraHandleID {
+				break
+			}
+			offset--
+			intest.Assert(offset >= 0, "cannot find handle column in index schema")
+		}
+
+		if offset < 0 {
+			return nil, errors.New("cannot find handle column in index schema")
+		}
+		indexHandleOffsets = []uint32{uint32(offset)}
+	}
+
+	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
+	indexLookUpPlan = PhysicalLocalIndexLookUp{
+		// Only int handle is supported now, so the handle is always the last column of index schema.
+		IndexHandleOffsets: indexHandleOffsets,
+	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
+
+	if parentOfTableScan != nil {
+		parentOfTableScan.SetChildren(indexLookUpPlan)
+		indexLookUpPlan = tablePlan
+	}
+	return
+}
+
+// Init initializes PhysicalLocalIndexLookUp.
+func (p PhysicalLocalIndexLookUp) Init(ctx base.PlanContext, indexPlan base.PhysicalPlan, tableScan *PhysicalTableScan, offset int) *PhysicalLocalIndexLookUp {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLocalIndexLookUp, &p, offset)
+	setTableScanToTableRowIDScan(tableScan)
+	p.SetChildren(indexPlan, tableScan)
+	p.SetStats(tableScan.StatsInfo())
+	p.SetSchema(tableScan.Schema())
+	return &p
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalLocalIndexLookUp) ToPB(_ *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	if storeType != kv.TiKV {
+		return nil, errors.Errorf("unsupported store type %v for LocalIndexLookUp", storeType)
+	}
+	return &tipb.Executor{
+		Tp: tipb.ExecType_TypeIndexLookUp,
+		IndexLookup: &tipb.IndexLookUp{
+			IndexHandleOffsets: p.IndexHandleOffsets,
+		},
+	}, nil
+}
+
+// ExplainInfo implements PhysicalPlan ExplainInfo interface.
+func (p *PhysicalLocalIndexLookUp) ExplainInfo() string {
+	return fmt.Sprintf("index handle offsets:%v", p.IndexHandleOffsets)
+}
+
+// MemoryUsage return the memory usage of PhysicalLocalIndexLookUp
+func (p *PhysicalLocalIndexLookUp) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	const physicalIndexLookUpStructSize = int64(unsafe.Sizeof(PhysicalLocalIndexLookUp{}) - unsafe.Sizeof(physicalSchemaProducer{}))
+	return p.physicalSchemaProducer.MemoryUsage() +
+		physicalIndexLookUpStructSize +
+		size.SizeOfInt32*int64(len(p.IndexHandleOffsets))
+}
+
+// Clone implements the base.PhysicalPlan.<14th> interface.
+func (p *PhysicalLocalIndexLookUp) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalLocalIndexLookUp)
+	*cloned = *p
+	cloned.SetSCtx(newCtx)
+	basePlan, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *basePlan
+	cloned.IndexHandleOffsets = make([]uint32, len(p.IndexHandleOffsets))
+	copy(cloned.IndexHandleOffsets, p.IndexHandleOffsets)
+	return cloned, nil
+}
+
+func detachRootTableScanPlan(p base.PhysicalPlan) (root *PhysicalTableScan, rootParent base.PhysicalPlan) {
+	var currentParent base.PhysicalPlan
+	for {
+		children := p.Children()
+		l := len(children)
+		if l == 0 {
+			var ok bool
+			root, ok = p.(*PhysicalTableScan)
+			intest.Assert(ok && root != nil)
+			rootParent = currentParent
+			break
+		}
+		intest.Assert(l == 1)
+		currentParent = p
+		p = children[0]
+	}
+
+	if rootParent != nil {
+		// set children to empty because root is detached
+		rootParent.SetChildren()
+	}
+	return
 }

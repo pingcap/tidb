@@ -221,6 +221,13 @@ type propConstSolver struct {
 func (s *propConstSolver) propagateConstantEQ() {
 	s.eqList = make([]*Constant, len(s.columns))
 	visited := make([]bool, len(s.conditions))
+	if PlanCacheGenericRewriteEnabled(s.ctx) {
+		for i := range s.conditions {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{s.conditions[i]}) {
+				visited[i] = true
+			}
+		}
+	}
 	for i := 0; i < MaxPropagateColsCnt; i++ {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -261,7 +268,17 @@ func (s *propConstSolver) propagateConstantEQ() {
 func (s *propConstSolver) propagateColumnEQ() {
 	visited := make([]bool, len(s.conditions))
 	s.unionSet = disjointset.NewIntSet(len(s.columns))
+	if PlanCacheGenericRewriteEnabled(s.ctx) {
+		for i := range s.conditions {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{s.conditions[i]}) {
+				visited[i] = true
+			}
+		}
+	}
 	for i := range s.conditions {
+		if visited[i] {
+			continue
+		}
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)

@@ -933,3 +933,157 @@ func TestRequestBuilderHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tag.TableId, tableID)
 }
+
+// TestKeyRangesIntersect verifies the Intersect method of the KeyRanges struct.
+func TestKeyRangesIntersect(t *testing.T) {
+	// kr is a helper function to create a KeyRange from string for better readability in tests.
+	kr := func(start, end string) kv.KeyRange {
+		return kv.KeyRange{StartKey: []byte(start), EndKey: []byte(end)}
+	}
+
+	// Define test cases in a table-driven format.
+	testCases := []struct {
+		name           string        // A descriptive name for the test case.
+		initialKR      *kv.KeyRanges // The initial KeyRanges object before intersection.
+		intersectStart []byte        // The start of the intersection span [start, end).
+		intersectEnd   []byte        // The end of the intersection span [start, end).
+		expectedKR     *kv.KeyRanges // The expected KeyRanges object after intersection.
+	}{
+		{
+			name: "Single Partition (like non-partitioned): With row count hints",
+			initialKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{
+						kr("a", "b"), // Filtered out
+						kr("c", "f"), // Trimmed
+						kr("h", "k"), // Kept as is
+						kr("y", "z"), // Filtered out
+					},
+				},
+				[][]int{{10, 20, 30, 40}},
+			),
+			intersectStart: []byte("d"),
+			intersectEnd:   []byte("w"),
+			// Expect hints to be preserved for the remaining ranges.
+			expectedKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{
+						kr("d", "f"),
+						kr("h", "k"),
+					},
+				},
+				[][]int{{20, 30}},
+			),
+		},
+		{
+			name: "Partitioned: Mixed filtering, causing some partitions to become empty",
+			initialKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("a", "b"), kr("c", "d")},
+					{kr("e", "g"), kr("i", "k")},
+					{kr("m", "n")},
+				},
+				[][]int{
+					{10, 20},
+					{30, 40},
+					{50},
+				},
+			),
+			intersectStart: []byte("f"),
+			intersectEnd:   []byte("j"),
+			// Expect that empty partitions are removed from the final result.
+			expectedKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("f", "g"), kr("i", "j")},
+				},
+				[][]int{
+					{30, 40},
+				},
+			),
+		},
+		{
+			name: "Partitioned: No overlap, all ranges should be filtered out",
+			initialKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("a", "c")},
+					{kr("e", "g")},
+				},
+				[][]int{{10}, {20}},
+			),
+			intersectStart: []byte("h"),
+			intersectEnd:   []byte("k"),
+			// Expect an empty KeyRanges struct as a result.
+			expectedKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{},
+				[][]int{},
+			),
+		},
+		{
+			name: "Partitioned: Intersection span fully contains all ranges",
+			initialKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("b", "d")},
+					{kr("f", "h")},
+				},
+				[][]int{{10}, {20}},
+			),
+			intersectStart: []byte("a"),
+			intersectEnd:   []byte("z"),
+			// Expect the ranges and hints to remain unchanged.
+			expectedKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("b", "d")},
+					{kr("f", "h")},
+				},
+				[][]int{{10}, {20}},
+			),
+		},
+		{
+			name: "Partitioned: Intersection trims a single range from both ends",
+			initialKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("a", "z")},
+				},
+				[][]int{{100}},
+			),
+			intersectStart: []byte("c"),
+			intersectEnd:   []byte("x"),
+			// Expect a single, smaller range.
+			expectedKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("c", "x")},
+				},
+				[][]int{{100}},
+			),
+		},
+		{
+			name: "Partitioned: Edge cases where ranges touch the intersection boundaries",
+			initialKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{
+						kr("a", "c"), // Filtered out: kr.EndKey == intersect.start
+						kr("c", "e"), // Kept: The exact range
+						kr("e", "g"), // Filtered out: kr.StartKey == intersect.end
+					},
+				},
+				[][]int{{10, 20, 30}},
+			),
+			intersectStart: []byte("c"),
+			intersectEnd:   []byte("e"),
+			// Expect only the middle range to survive.
+			expectedKR: kv.NewPartitionedKeyRangesWithHints(
+				[][]kv.KeyRange{
+					{kr("c", "e")},
+				},
+				[][]int{{20}},
+			),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.initialKR.Intersect(tc.intersectStart, tc.intersectEnd)
+			require.Equal(t, tc.expectedKR, tc.initialKR)
+		})
+	}
+}

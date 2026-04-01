@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/Masterminds/semver"
+	"git.pingcap.net/pingkai/semver/masterminds/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"

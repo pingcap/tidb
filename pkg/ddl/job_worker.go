@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -61,8 +62,6 @@ var (
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
 	mockDDLErrOnce = int64(0)
-	// TestNotifyBeginTxnCh is used for if the txn is beginning in runInTxn.
-	TestNotifyBeginTxnCh = make(chan struct{})
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -127,16 +126,24 @@ func (c *jobContext) initStepCtx() {
 	}
 }
 
-func (c *jobContext) cleanStepCtx() {
+func (c *jobContext) cleanStepCtx(cause error) {
 	// reorgTimeoutOccurred indicates whether the current reorg process
 	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
-	if c.reorgTimeoutOccurred {
+	if cause == context.Canceled && c.reorgTimeoutOccurred {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(context.Canceled)
+	if c.stepCtxCancel != nil {
+		c.stepCtxCancel(cause)
+	}
 	c.stepCtx = nil // unset stepCtx for the next step initialization
+}
+
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr() error {
+	c.reorgTimeoutOccurred = true
+	return dbterror.ErrWaitReorgTimeout
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -195,6 +202,11 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan error
+	// analyzeStartTime records when the analyze for a job was started.
+	analyzeStartTime time.Time
+	// analyzeCumulativeTimeout stores the computed cumulative timeout for analyze
+	analyzeCumulativeTimeout time.Duration
 }
 
 // NewReorgContext returns a new ddl job context.
@@ -563,7 +575,6 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
 	jobW *model.JobW,
-	sysTblMgr systable.Manager,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	job := jobW.Job
@@ -577,7 +588,7 @@ func (w *worker) transitOneJobStep(
 	// time range of another concurrent job updates, such as 'cancel/pause' job
 	// or on owner change, overlap with us, we will report 'write conflict', but
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
-	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
+	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
 	if err != nil {
 		// TODO maybe we can unify where to rollback, they are scatting around.
 		w.sess.Rollback()
@@ -704,21 +715,6 @@ func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBui
 
 func (w *ReorgContext) ddlJobSourceType() string {
 	return w.tp
-}
-
-func skipWriteBinlog(job *model.Job) bool {
-	switch job.Type {
-	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
-	// it's used to update table's TiFlash replica available status.
-	case model.ActionUpdateTiFlashReplicaStatus:
-		return true
-	// Don't sync 'alter table cache|nocache' to other tools.
-	// It's internal to the current cluster.
-	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
-		return true
-	}
-
-	return false
 }
 
 func chooseLeaseTime(t, maxv time.Duration) time.Duration {
@@ -854,6 +850,14 @@ func (w *worker) runOneJobStep(
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if job.IsRollingback() {
+		if jobCtx.stepCtx != nil && jobCtx.stepCtx.Err() == nil {
+			// If the job switched to rolling back immediately after a reorg step
+			// timed out, the step context may still be active and hold reorg
+			// resources (workers, tickers, goroutines). Clean the step context
+			// explicitly to release those resources and avoid leaks before we
+			// continue rollback processing.
+			jobCtx.cleanStepCtx(dbterror.ErrCancelledDDLJob)
+		}
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
@@ -865,7 +869,7 @@ func (w *worker) runOneJobStep(
 			defer close(stopCheckingJobCancelled)
 
 			jobCtx.initStepCtx()
-			defer jobCtx.cleanStepCtx()
+			defer jobCtx.cleanStepCtx(context.Canceled)
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
@@ -877,7 +881,7 @@ func (w *worker) runOneJobStep(
 					case <-ticker.C:
 						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
-						if err == systable.ErrNotFound {
+						if goerrors.Is(err, systable.ErrNotFound) {
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
 								zap.Int64("job_id", job.ID))
@@ -904,12 +908,6 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
-						case model.JobStateRunning:
-							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
-							}
 						}
 					}
 				}
@@ -1002,6 +1000,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onLockTables(jobCtx, job)
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(jobCtx, job)
+	case model.ActionAlterTableMode:
+		ver, err = onAlterTableMode(jobCtx, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
@@ -1061,6 +1061,10 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionRefreshMeta:
+		ver, err = onRefreshMeta(jobCtx, job)
+	case model.ActionAlterTableAffinity:
+		ver, err = onAlterTableAffinity(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

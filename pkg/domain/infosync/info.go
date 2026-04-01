@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -93,8 +94,8 @@ const (
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
 	RequestRetryInterval = 200 * time.Millisecond
-	// SyncBundlesMaxRetry is the max retry times for sync placement bundles
-	SyncBundlesMaxRetry = 3
+	// RequestPDMaxRetry is the max retry times for sync placement bundles
+	RequestPDMaxRetry = 3
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
@@ -281,6 +282,10 @@ func GlobalInfoSyncerInit(
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
+
+	// Initialize affinity package
+	affinity.InitManager(is.pdHTTPCli)
+
 	return is, nil
 }
 
@@ -697,7 +702,7 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
-	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
+	return PutRuleBundlesWithRetry(ctx, bundles, RequestPDMaxRetry, RequestRetryInterval)
 }
 
 // CreateAffinityGroup creates affinity groups globally.
@@ -859,7 +864,7 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	}
 	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("remove minStartTS failed", zap.Error(err))
 	}
 }
 
@@ -875,7 +880,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("update minStartTS failed", zap.Error(err))
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
@@ -885,6 +890,10 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
+		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue {
+			// Ignore DDL sessions.
+			continue
+		}
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
@@ -920,7 +929,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("update minStartTS failed", zap.Error(err))
 	}
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
@@ -1082,7 +1091,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		res = fmt.Sprintf("http://%s", net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
+		res = fmt.Sprintf("%s://%s", util2.InternalHTTPSchema(), net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
 	}
 	is.prometheusAddr = res
 	is.modifyTime = time.Now()

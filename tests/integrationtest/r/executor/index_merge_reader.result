@@ -525,7 +525,7 @@ Projection	1104.45	root		executor__index_merge_reader.t1.c1
   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx2(c2)	range:[-inf,1024), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	1104.45	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set global tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query = 4000;
+set @@tidb_mem_quota_query = 3000;
 select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 set global tidb_mem_oom_action = DEFAULT;

@@ -299,6 +299,7 @@ go_test(
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
         "//pkg/parser/terror",
         "//pkg/planner",
         "//pkg/planner/core/base",

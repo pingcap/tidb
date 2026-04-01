@@ -41,6 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -120,6 +123,11 @@ type regionJob struct {
 
 	// injected is used in test to set the behaviour
 	injected []injectedBehaviour
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "regionJob", "regionJob", nil
 }
 
 type tikvWriteResult struct {
@@ -1250,6 +1258,9 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 			select {
 			case <-workerCtx.Done():
 				j.done(b.jobWg)
+				if j.region != nil && j.region.Region != nil {
+					b.releaseStoreLoad(j.region.Region.Peers)
+				}
 				return
 			case b.innerJobToWorkerCh <- j:
 			}
@@ -1338,4 +1349,133 @@ func (b *storeBalancer) releaseStoreLoad(peers []*metapb.Peer) {
 			goto retry
 		}
 	}
+}
+
+type regionJobWorker struct {
+	ctx             context.Context
+	jobInCh         chan *regionJob
+	jobOutCh        chan *regionJob
+	afterExecuteJob func([]*metapb.Peer)
+	jobWg           *sync.WaitGroup
+	local           *Backend
+}
+
+// HandleTask process a single job that reads from the job channel.
+// If the worker fails to process the job, it will set the error to the context.
+// Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
+func (w *regionJobWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
+	// As we need to call job.done() after panic, we recover here rather than in worker pool.
+	defer util2.Recover("region job worker", "handleTableScanTaskWithRecover", func() {
+		err = errors.Errorf("region job worker panic")
+		job.done(w.jobWg)
+	}, false)
+
+	failpoint.Inject("injectPanicForRegionJob", nil)
+
+	defer func() {
+		failpoint.Inject("mockJobWgDone", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				w.jobWg.Add(-v)
+			}
+		})
+	}()
+
+	var peers []*metapb.Peer
+	// in unit test, we may not have the real peers
+	if job.region != nil && job.region.Region != nil {
+		peers = job.region.Region.GetPeers()
+	}
+	failpoint.InjectCall("beforeExecuteRegionJob", w.ctx)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
+	err = w.local.executeJob(w.ctx, job)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
+
+	if w.afterExecuteJob != nil {
+		w.afterExecuteJob(peers)
+	}
+	switch job.stage {
+	case regionScanned, wrote, ingested:
+		select {
+		case <-w.ctx.Done():
+			job.done(w.jobWg)
+			return nil
+		case w.jobOutCh <- job:
+		}
+	case needRescan:
+		jobs, err2 := w.local.generateJobForRange(
+			w.ctx,
+			job.ingestData,
+			[]common.Range{job.keyRange},
+			job.regionSplitSize,
+			job.regionSplitKeys,
+		)
+		if err2 != nil {
+			// Don't need to put the job back to retry, because generateJobForRange
+			// has done the retry internally. Here just done for the "needRescan"
+			// job and exit directly.
+			job.done(w.jobWg)
+			return err2
+		}
+		// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
+		newJobCnt := len(jobs) - 1
+		for newJobCnt > 0 {
+			job.ref(w.jobWg)
+			newJobCnt--
+		}
+		for _, j := range jobs {
+			j.lastRetryableErr = job.lastRetryableErr
+			select {
+			case <-w.ctx.Done():
+				j.done(w.jobWg)
+				// don't exit here, we mark done for each job and exit in the outer loop
+			case w.jobOutCh <- j:
+			}
+		}
+	}
+
+	return err
+}
+
+func (*regionJobWorker) Close() error {
+	return nil
+}
+
+func getRegionJobWorkerPool(
+	workerCtx context.Context,
+	jobWg *sync.WaitGroup,
+	local *Backend,
+	balancer *storeBalancer,
+	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
+) *workerpool.WorkerPool[*regionJob, *regionJob] {
+	var (
+		sourceChannel   = jobToWorkerCh
+		afterExecuteJob func([]*metapb.Peer)
+	)
+
+	if balancer != nil {
+		afterExecuteJob = balancer.releaseStoreLoad
+		sourceChannel = balancer.innerJobToWorkerCh
+	}
+
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+
+	pool := workerpool.NewWorkerPool(
+		"regionJobWorkerPool",
+		rcmgrutil.DistTask,
+		local.GetWorkerConcurrency(),
+		func() workerpool.Worker[*regionJob, *regionJob] {
+			return &regionJobWorker{
+				ctx:             workerCtx,
+				local:           local,
+				jobInCh:         jobToWorkerCh,
+				jobOutCh:        jobFromWorkerCh,
+				afterExecuteJob: afterExecuteJob,
+				jobWg:           jobWg,
+			}
+		},
+	)
+
+	pool.SetResultSender(jobFromWorkerCh)
+	pool.SetTaskReceiver(sourceChannel)
+	return pool
 }

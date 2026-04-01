@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1409,12 +1410,31 @@ type SlowQueryExtractor struct {
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+	// Limit is a hint for early-exit optimizations when scanning slow log files.
+	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
+	// A value of 0 means "no limit hint".
+	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
 type TimeRange struct {
 	StartTime time.Time
 	EndTime   time.Time
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// SetDesc implements base.MemTableDescHintSetter.
+func (e *SlowQueryExtractor) SetDesc(desc bool) {
+	e.Desc = desc
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1844,4 +1864,58 @@ func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
+}
+
+// TableRegionsExtractor is used to extract single schema and table from predictions
+type TableRegionsExtractor struct {
+	extractHelper
+	schemaName, tableName pmodel.CIStr
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TableRegionsExtractor) Extract(ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: support more push down strategies, for example, only table_name or only db_name, or multiple table_name/db_name.
+	remained, _, dbNameSet := e.extractCol(ctx, schema, names, predicates, "db_name", true)
+	if dbNameSet.Count() != 1 {
+		return predicates
+	}
+	remained, _, tableNameSet := e.extractCol(ctx, schema, names, remained, "table_name", true)
+	if tableNameSet.Count() != 1 {
+		return predicates
+	}
+	for dbName := range dbNameSet {
+		for tableName := range tableNameSet {
+			e.schemaName = pmodel.NewCIStr(dbName)
+			e.tableName = pmodel.NewCIStr(tableName)
+		}
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TableRegionsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	r := new(bytes.Buffer)
+	if e.schemaName.String() != "" {
+		r.WriteString("schema name: ")
+		r.WriteString(e.schemaName.String())
+	}
+	if e.tableName.String() != "" {
+		r.WriteString(", table name: ")
+		r.WriteString(e.tableName.String())
+	}
+	return r.String()
+}
+
+// GetSchemaName return the extracted schema name
+func (e *TableRegionsExtractor) GetSchemaName() pmodel.CIStr {
+	return e.schemaName
+}
+
+// GetTableName return the extracted table name
+func (e *TableRegionsExtractor) GetTableName() pmodel.CIStr {
+	return e.tableName
 }

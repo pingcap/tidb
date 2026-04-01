@@ -25,6 +25,7 @@ import (
 
 var (
 	_ DMLNode = &DeleteStmt{}
+	_ DMLNode = &DistributeTableStmt{}
 	_ DMLNode = &InsertStmt{}
 	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
@@ -280,6 +281,8 @@ type TableName struct {
 	IndexHints     []*IndexHint
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *TableSplit
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
 	// IsAlias is true if this table name is an alias.
@@ -352,6 +355,12 @@ func (n *TableName) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while splicing TableName.TableSample")
 		}
 	}
+	if n.TableSplit != nil {
+		ctx.WritePlain(" ")
+		if err := n.TableSplit.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing TableName.TableSplit")
+		}
+	}
 	return nil
 }
 
@@ -367,6 +376,7 @@ const (
 	HintNoOrderIndex
 	HintIndex
 	HintNoIndex
+	HintFull
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -445,6 +455,13 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.TableSample = newTs.(*TableSample)
+	}
+	if n.TableSplit != nil {
+		newTblSplit, ok := n.TableSplit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TableSplit = newTblSplit.(*TableSplit)
 	}
 	if n.AsOf != nil {
 		newNode, skipChildren := n.AsOf.Accept(v)
@@ -573,6 +590,12 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			if err := tn.TableSample.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while splicing TableName.TableSample")
+			}
+		}
+		if tn.TableSplit != nil {
+			ctx.WritePlain(" ")
+			if err := tn.TableSplit.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while splicing TableName.TableSplit")
 			}
 		}
 
@@ -1070,6 +1093,36 @@ func (s *TableSample) Accept(v Visitor) (node Node, ok bool) {
 		s.RepeatableSeed = node.(ExprNode)
 	}
 	return v.Leave(s)
+}
+
+// TableSplit represents a table split range returned by SHOW TABLE SPLITS.
+type TableSplit struct {
+	node
+	// Start is the lower bound of the split, as a hex-encoded string.
+	Start string
+	// End is the upper bound of the split, as a hex-encoded string.
+	End string
+}
+
+// Restore implements Node interface.
+func (ts *TableSplit) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("TABLESPLIT")
+	ctx.WritePlain("(")
+	ctx.WriteString(ts.Start)
+	ctx.WritePlain(", ")
+	ctx.WriteString(ts.End)
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (ts *TableSplit) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChildren := v.Enter(ts)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n := newNode.(*TableSplit)
+	return v.Leave(n)
 }
 
 type SelectStmtKind uint8
@@ -2267,6 +2320,19 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 func (n *ImportIntoStmt) SecureText() string {
 	redactedStmt := *n
 	redactedStmt.Path = RedactURL(n.Path)
+	redactedStmt.Options = make([]*LoadDataOpt, 0, len(n.Options))
+	for _, opt := range n.Options {
+		outOpt := opt
+		ln := strings.ToLower(opt.Name)
+		if ln == CloudStorageURI {
+			redactedStr := RedactURL(opt.Value.(ValueExpr).GetString())
+			outOpt = &LoadDataOpt{
+				Name:  opt.Name,
+				Value: NewValueExpr(redactedStr, "", ""),
+			}
+		}
+		redactedStmt.Options = append(redactedStmt.Options, outOpt)
+	}
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()
@@ -3077,6 +3143,9 @@ const (
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
+	ShowDistributionJobs
+	ShowDistributions
+	ShowAffinity
 	ShowTableGroups
 )
 
@@ -3128,6 +3197,8 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+
+	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3349,6 +3420,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
+	case ShowDistributionJobs:
+		if n.DistributionJobID != nil {
+			ctx.WriteKeyWord("DISTRIBUTION JOB ")
+			ctx.WritePlainf("%d", *n.DistributionJobID)
+		} else {
+			ctx.WriteKeyWord("DISTRIBUTION JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
@@ -3426,6 +3505,16 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
+		case ShowDistributions:
+			ctx.WriteKeyWord("TABLE ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+			}
+			ctx.WriteKeyWord(" DISTRIBUTIONS")
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
+			return nil
 		case ShowRegions:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
@@ -3887,6 +3976,68 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 		}
 		n.Expr = node.(ExprNode)
 	}
+	return v.Leave(n)
+}
+
+type DistributeTableStmt struct {
+	dmlNode
+	Table          *TableName
+	PartitionNames []model.CIStr
+	Rule           string
+	Engine         string
+	Timeout        string
+}
+
+// Restore implements Node interface.
+func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DISTRIBUTE ")
+	ctx.WriteKeyWord("TABLE ")
+
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+	}
+	if len(n.PartitionNames) > 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i, v := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(v.String())
+		}
+		ctx.WritePlain(")")
+	}
+
+	if len(n.Rule) > 0 {
+		ctx.WriteKeyWord(" RULE = ")
+		ctx.WriteString(n.Rule)
+	}
+
+	if len(n.Engine) > 0 {
+		ctx.WriteKeyWord(" ENGINE = ")
+		ctx.WriteString(n.Engine)
+	}
+
+	if len(n.Timeout) > 0 {
+		ctx.WriteKeyWord(" TIMEOUT = ")
+		ctx.WriteString(n.Timeout)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DistributeTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*DistributeTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

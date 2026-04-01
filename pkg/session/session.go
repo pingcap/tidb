@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/pkdb_remote"
+	pkdbremote "github.com/pingcap/tidb/pkg/executor/pkdb_remote"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -150,6 +150,7 @@ var _ types.Session = (*session)(nil)
 type stmtRecord struct {
 	st      sqlexec.Statement
 	stmtCtx *stmtctx.StatementContext
+	params  variable.PlanCacheParamList
 }
 
 // StmtHistory holds all histories of statements in a txn.
@@ -158,10 +159,15 @@ type StmtHistory struct {
 }
 
 // Add appends a stmt to history list.
-func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContext) {
+func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContext, params *variable.PlanCacheParamList) {
 	s := &stmtRecord{
 		st:      st,
 		stmtCtx: stmtCtx,
+	}
+	if params != nil {
+		s.params.Reset()
+		s.params.SetForNonPrepCache(params.IsForNonPrepCache())
+		s.params.Append(params.AllParamValues()...)
 	}
 	h.history = append(h.history, s)
 }
@@ -1091,6 +1097,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PlanCacheParams.Reset()
+			params := &sr.params
+			if params.IsForNonPrepCache() {
+				s.sessionVars.PlanCacheParams.SetForNonPrepCache(true)
+			}
+			if vals := params.AllParamValues(); len(vals) > 0 {
+				s.sessionVars.PlanCacheParams.Append(vals...)
+			}
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
@@ -1854,6 +1867,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1918,7 +1932,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2150,11 +2164,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
 		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = prepareStmt.PreparedAst.StmtType
+			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
 		}
 	}
 	if stmtLabel == "" {
-		stmtLabel = ast.GetStmtLabel(stmtNode)
+		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
@@ -2569,6 +2583,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: params,
 		PrepStmt:   stmt,
+		PrepStmtId: stmtID,
 	}
 	return s.ExecuteStmt(ctx, execStmt)
 }
@@ -2641,6 +2656,7 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 			LatestSchemaVersion: versionInfo.LatestSchemaVersion,
 			IsReadOnly:          versionInfo.IsReadOnly,
 			HasSubquery:         versionInfo.HasSubquery,
+			HasLimit:            versionInfo.HasLimit,
 			LimitValues:         versionInfo.LimitValues,
 			StatsVerHash:        versionInfo.StatsVerHash,
 		}
@@ -2652,12 +2668,13 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 
 		// Try to look up plan cache directly using parameterized SQL with version info
 		// This avoids parsing SQL AST on the remote side
-		cachedVal, _, hit := plannercore.LookupPlanCacheBySQLWithParams(ctx, s, lookupParams)
+		cachedVal, key2, hit := plannercore.LookupPlanCacheBySQLWithParams(ctx, s, lookupParams)
 		if hit && cachedVal != nil && cachedVal.Stmt != nil {
 			pstmt := cachedVal.Stmt
 			if err := executor.ResetContextOfStmt(s, pstmt.PreparedAst.Stmt); err != nil {
 				return nil, err
 			}
+			s.restoreForwardedSQLDigest()
 
 			if versionInfo.PlanCacheEnabled {
 				s.GetSessionVars().StmtCtx.EnablePlanCache()
@@ -2674,9 +2691,12 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 				return nil, errors.Annotate(err, "failed to adjust cached plan")
 			}
 			if ok {
-				logutil.Logger(ctx).Debug("Hit remote PlanCache")
+				logutil.Logger(ctx).Debug("fast plan cache lookup hit", zap.String("key", key2))
 				return s.executeWithCachedPlan(ctx, plan, cachedVal.OutputColumns, cachedVal.Stmt, is)
 			}
+			logutil.Logger(ctx).Debug("fast plan cache lookup miss2", zap.String("key", key2))
+		} else {
+			logutil.Logger(ctx).Debug("fast plan cache lookup miss1", zap.String("key", key2))
 		}
 	}
 
@@ -2692,6 +2712,7 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 	if err := executor.ResetContextOfStmt(s, paramStmt); err != nil {
 		return nil, errors.Annotate(err, "failed to reset context of statement")
 	}
+	s.restoreForwardedSQLDigest()
 
 	// Set parameter values into session context before generating PlanCacheStmt
 	if err := plannercore.SetParameterValuesIntoSCtx(s.GetPlanCtx(), true, nil, params); err != nil {
@@ -2717,6 +2738,38 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 
 	// Build and execute the statement using the cached plan
 	return s.executeWithCachedPlan(ctx, plan, names, stmt, is)
+}
+
+func (s *session) restoreForwardedSQLDigest() {
+	v := s.Value(sessionctx.ForwardedSQLDigestKey{})
+	if v == nil {
+		return
+	}
+	s.ClearValue(sessionctx.ForwardedSQLDigestKey{})
+
+	digestInfo, ok := v.(sessionctx.ForwardedSQLDigest)
+	if !ok {
+		if ptr, ok := v.(*sessionctx.ForwardedSQLDigest); ok && ptr != nil {
+			digestInfo = *ptr
+		} else {
+			return
+		}
+	}
+	if digestInfo.Normalized == "" || s.sessionVars == nil || s.sessionVars.StmtCtx == nil {
+		return
+	}
+
+	var digest *parser.Digest
+	if digestInfo.Digest != "" {
+		if digestBytes, err := hex.DecodeString(digestInfo.Digest); err == nil {
+			digest = parser.NewDigest(digestBytes)
+		}
+	}
+	if digest == nil {
+		digest = parser.DigestNormalized(digestInfo.Normalized)
+	}
+
+	s.sessionVars.StmtCtx.InitSQLDigest(digestInfo.Normalized, digest)
 }
 
 // executeWithCachedPlan executes a physical plan obtained from the plan cache
@@ -2829,6 +2882,15 @@ func (s *session) Close() {
 	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
+	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
 	}
 }
 
@@ -3809,8 +3871,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	)
 	taskexecutor.RegisterTaskType(
 		proto.ImportInto,
-		func(ctx context.Context, id string, task *proto.Task, table taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return importinto.NewImportExecutor(ctx, id, task, table, store)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, task, param, store)
 		},
 	)
 
@@ -3853,14 +3915,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -3877,6 +3931,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before some other internal SQLs.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
 	if err != nil {
 		return nil, err
 	}
@@ -4068,13 +4130,20 @@ func runInBootstrapSession(store kv.Storage, ver, verEE int64) ddl.StartMode {
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	if startMode == ddl.Bootstrap {
+	switch startMode {
+	case ddl.Bootstrap:
 		bootstrap(s)
-	} else if startMode == ddl.Upgrade {
+	case ddl.Upgrade:
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)

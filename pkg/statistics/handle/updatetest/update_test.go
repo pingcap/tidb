@@ -71,13 +71,13 @@ func TestSingleSessionInsert(t *testing.T) {
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 := h.GetTableStats(tableInfo1)
+	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
-	stats2 := h.GetTableStats(tableInfo2)
+	stats2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.Equal(t, int64(rowCount2), stats2.RealtimeCount)
 
 	testKit.MustExec("analyze table t1")
@@ -87,7 +87,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*2), stats1.RealtimeCount)
 
 	// Test IncreaseFactor.
@@ -102,7 +102,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	testKit.MustExec("commit")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*3), stats1.RealtimeCount)
 
 	testKit.MustExec("begin")
@@ -118,9 +118,9 @@ func TestSingleSessionInsert(t *testing.T) {
 	testKit.MustExec("commit")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*3), stats1.RealtimeCount)
-	stats2 = h.GetTableStats(tableInfo2)
+	stats2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.Equal(t, int64(rowCount2), stats2.RealtimeCount)
 
 	testKit.MustExec("begin")
@@ -128,7 +128,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	testKit.MustExec("commit")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(0), stats1.RealtimeCount)
 
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
@@ -150,7 +150,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	err = h.DumpStatsDeltaToKV(false)
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	// not dumped
@@ -158,12 +158,12 @@ func TestSingleSessionInsert(t *testing.T) {
 	err = h.DumpStatsDeltaToKV(false)
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	h.FlushStats()
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1+1), stats1.RealtimeCount)
 }
 
@@ -186,7 +186,7 @@ func TestRollback(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 
-	stats := h.GetTableStats(tableInfo)
+	stats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(0), stats.RealtimeCount)
 	require.Equal(t, int64(0), stats.ModifyCount)
 }
@@ -220,7 +220,7 @@ func TestMultiSession(t *testing.T) {
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 := h.GetTableStats(tableInfo1)
+	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	for i := 0; i < rowCount1; i++ {
@@ -240,7 +240,7 @@ func TestMultiSession(t *testing.T) {
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1*2), stats1.RealtimeCount)
 	testKit.RefreshSession()
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
@@ -268,14 +268,14 @@ func TestTxnWithFailure(t *testing.T) {
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 := h.GetTableStats(tableInfo1)
+	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	// have not commit
 	require.Equal(t, int64(0), stats1.RealtimeCount)
 	testKit.MustExec("commit")
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	_, err = testKit.Exec("insert into t1 values(0, 2)")
@@ -283,13 +283,13 @@ func TestTxnWithFailure(t *testing.T) {
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
 	testKit.MustExec("insert into t1 values(-1, 2)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1+1), stats1.RealtimeCount)
 }
 
@@ -321,7 +321,7 @@ func TestUpdatePartition(t *testing.T) {
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.Equal(t, int64(1), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
 			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
@@ -331,7 +331,7 @@ func TestUpdatePartition(t *testing.T) {
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.Equal(t, int64(2), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
 			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
@@ -341,14 +341,14 @@ func TestUpdatePartition(t *testing.T) {
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
 			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 		// assert WithGetTableStatsByQuery get the same result
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
 			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
@@ -380,7 +380,7 @@ func TestAutoUpdate(t *testing.T) {
 		err = statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
 		require.NoError(t, h.Update(context.Background(), is))
-		stats := h.GetTableStats(tableInfo)
+		stats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		require.Equal(t, int64(0), stats.RealtimeCount)
 
 		_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
@@ -389,7 +389,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
-		stats = h.GetTableStats(tableInfo)
+		stats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		require.Equal(t, int64(5), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
 		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
@@ -407,7 +407,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
-		stats = h.GetTableStats(tableInfo)
+		stats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		require.Equal(t, int64(6), stats.RealtimeCount)
 		require.Equal(t, int64(1), stats.ModifyCount)
 
@@ -417,7 +417,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
-		stats = h.GetTableStats(tableInfo)
+		stats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		require.Equal(t, int64(7), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
 
@@ -427,7 +427,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
-		stats = h.GetTableStats(tableInfo)
+		stats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		// Modify count is non-zero means that we do not analyze the table.
 		require.Equal(t, int64(1), stats.ModifyCount)
@@ -449,7 +449,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, h.Update(context.Background(), is))
 		testKit.MustExec("explain select * from t where a > 'a'")
 		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-		stats = h.GetTableStats(tableInfo)
+		stats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
 		hg := stats.GetIdx(tableInfo.Indices[0].ID)
@@ -485,14 +485,14 @@ func TestAutoUpdatePartition(t *testing.T) {
 		h := do.StatsHandle()
 
 		require.NoError(t, h.Update(context.Background(), is))
-		stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		stats := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 		require.Equal(t, int64(0), stats.RealtimeCount)
 
 		testKit.MustExec("insert into t values (1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
 		h.HandleAutoAnalyze()
-		stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		stats = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 		require.Equal(t, int64(1), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
 	})
@@ -816,8 +816,8 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		pi := tableInfo.GetPartitionInfo()
-		globalStats := h.GetTableStats(tableInfo)
-		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+		partitionStats := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 		require.Equal(t, int64(6), globalStats.RealtimeCount)
 		require.Equal(t, int64(0), globalStats.ModifyCount)
 		require.Equal(t, int64(2), partitionStats.RealtimeCount)
@@ -826,8 +826,8 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		testKit.MustExec("insert into t values (3, 'g')")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
-		globalStats = h.GetTableStats(tableInfo)
-		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+		partitionStats = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 		require.Equal(t, int64(7), globalStats.RealtimeCount)
 		require.Equal(t, int64(1), globalStats.ModifyCount)
 		require.Equal(t, int64(3), partitionStats.RealtimeCount)
@@ -835,8 +835,8 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
-		globalStats = h.GetTableStats(tableInfo)
-		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+		partitionStats = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 		require.Equal(t, int64(7), globalStats.RealtimeCount)
 		require.Equal(t, int64(0), globalStats.ModifyCount)
 		require.Equal(t, int64(3), partitionStats.RealtimeCount)
@@ -1084,7 +1084,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 
-	tblStats := h.GetTableStats(tbl.Meta())
+	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -1097,7 +1097,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	require.False(t, h.HandleAutoAnalyze())
 
-	tblStats1 := h.GetTableStats(tbl.Meta())
+	tblStats1 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, tblStats.ModifyCount, tblStats1.ModifyCount)
 
 	tk.MustExec("unlock stats t")
@@ -1110,7 +1110,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("analyze table t")
 
-	tblStats2 := h.GetTableStats(tbl.Meta())
+	tblStats2 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(15), tblStats2.RealtimeCount)
 }
 
@@ -1146,13 +1146,13 @@ func TestStatsLockForDelta(t *testing.T) {
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 := h.GetTableStats(tableInfo1)
+	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, stats1.RealtimeCount, int64(0))
 
 	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
-	stats2 := h.GetTableStats(tableInfo2)
+	stats2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.Equal(t, int64(rowCount2), stats2.RealtimeCount)
 
 	testKit.MustExec("analyze table t1")
@@ -1161,13 +1161,13 @@ func TestStatsLockForDelta(t *testing.T) {
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, stats1.RealtimeCount, int64(0))
 
 	testKit.MustExec("unlock stats t1")
 
 	testKit.MustExec("analyze table t1")
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(20), stats1.RealtimeCount)
 
 	for i := 0; i < rowCount1; i++ {
@@ -1175,7 +1175,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
-	stats1 = h.GetTableStats(tableInfo1)
+	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(30), stats1.RealtimeCount)
 }
 
@@ -1284,9 +1284,9 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
-	require.Nil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
+	require.Nil(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetIdx(idxInfo.ID))
 	require.Eventually(t, func() bool {
 		return h.HandleAutoAnalyze()
 	}, 3*time.Second, time.Millisecond*100)
-	require.NotNil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
+	require.NotNil(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetIdx(idxInfo.ID))
 }

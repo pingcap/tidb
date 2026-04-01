@@ -1633,6 +1633,14 @@ select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1;
 a	b	c
 Level	Code	Message
 Warning	1815	use_index_merge(planner__core__casetest__hint__hint.t1, primary, a, b, c) is inapplicable, check whether the indexes (c) exist, or the indexes are conflicted with use_index/ignore_index/force_index hints.
+drop table if exists t_conflict;
+Level	Code	Message
+Note	1051	Unknown table 'planner__core__casetest__hint__hint.t_conflict'
+create table t_conflict(a int, index idx_a(a));
+explain  select /*+ FULL(t_conflict) USE_INDEX(t_conflict, idx_a) */ * from t_conflict;
+id	estRows	task	access object	operator info
+IndexReader_7	10000.00	root		index:IndexFullScan_6
+└─IndexFullScan_6	10000.00	cop[tikv]	table:t_conflict, index:idx_a(a)	keep order:false, stats:pseudo
 drop table if exists t1;
 drop view if exists v1;
 CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, INDEX (c2));
@@ -1769,74 +1777,6 @@ IndexReader	6666.67	root		index:IndexRangeScan
 └─IndexRangeScan	6666.67	cop[tikv]	table:tt, index:a(a)	range:[-inf,10), [15,15], (20,+inf], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	IndexMerge is inapplicable
-use test;
-drop table if exists t;
-create table t (a int, b int, c int, key(b), key(c));
-insert into t values (1,1,1),(2,2,2),(3,3,3);
-explain select /*+ index(t b c) */ * from t where a = 1;
-id	estRows	task	access object	operator info
-IndexLookUp_8	10.00	root		
-├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select /*+ index(t b xxxx) */ * from t where a = 1;
-id	estRows	task	access object	operator info
-IndexLookUp_8	10.00	root		
-├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1176	Key 'xxxx' doesn't exist in table 't'
-explain select /*+ index(t xxx) */ * from t where a = 1;
-id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1176	Key 'xxx' doesn't exist in table 't'
-drop table if exists t;
-use test;
-drop table if exists t;
-create table t (a int, b int, c int, key(b), key(c));
-insert into t values (1,1,1),(2,2,2),(3,3,3);
-explain select /*+ index(t) */ * from t where a = 1;
-id	estRows	task	access object	operator info
-IndexLookUp_8	10.00	root		
-├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-drop table if exists t;
-use test;
-drop table if exists t;
-create table t (a int primary key, b int, c int, key idx_b(b), key idx_c(c));
-insert into t values (1,1,1),(2,2,2),(3,3,3);
-explain select /*+ no_index(t) */ * from t where b = 2;
-id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(test.t.b, 2)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select /*+ no_index(t idx_b) */ * from t where b = 2 and c = 2;
-id	estRows	task	access object	operator info
-IndexLookUp_8	0.01	root		
-├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[2,2], keep order:false, stats:pseudo
-└─Selection_7(Probe)	0.01	cop[tikv]		eq(test.t.b, 2)
-  └─TableRowIDScan_6	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select /*+ no_index(t idx_c) */ * from t where c = 2;
-id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(test.t.c, 2)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select /*+ no_index(t idx_b, idx_c) */ * from t where b = 2 and c = 2;
-id	estRows	task	access object	operator info
-TableReader_7	0.01	root		data:Selection_6
-└─Selection_6	0.01	cop[tikv]		eq(test.t.b, 2), eq(test.t.c, 2)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select /*+ no_index(t idx_b idx_c) */ * from t where b = 2 and c = 2;
-id	estRows	task	access object	operator info
-TableReader_7	0.01	root		data:Selection_6
-└─Selection_6	0.01	cop[tikv]		eq(test.t.b, 2), eq(test.t.c, 2)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-drop table if exists t;
 drop table if exists t1;
 create table t1(id int primary key, a int, b int, v int, index idx_a(a), unique key idx_b(b));
 explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from t1;

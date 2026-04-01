@@ -634,27 +634,20 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
+	// for record
+	regions, err := getPhysicalTableRecordRegions(physicalTableID, tableInfo, tikvStore, s, uniqueRegionMap)
+	if err != nil {
+		return nil, err
+	}
+	// for indices
 	// This is used to decode the int handle properly.
 	var hasUnsignedIntHandle bool
 	if pkInfo := tableInfo.GetPkColInfo(); pkInfo != nil {
 		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.GetFlag())
 	}
-	// for record
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
 	regionCache := tikvStore.GetRegionCache()
-	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-	if err != nil {
-		return nil, err
-	}
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
 	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
-	recordRegions, err := getRegionMeta(tikvStore, recordRegionMetas, uniqueRegionMap, tablePrefix, recordPrefix, nil, physicalTableID, 0, hasUnsignedIntHandle)
-	if err != nil {
-		return nil, err
-	}
-
-	regions := recordRegions
-	// for indices
 	for _, index := range tableInfo.Indices {
 		if index.State != model.StatePublic {
 			continue
@@ -676,6 +669,35 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 		return nil, err
 	}
 	return regions, nil
+}
+
+func getPhysicalTableRecordRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+	if uniqueRegionMap == nil {
+		uniqueRegionMap = make(map[uint64]struct{})
+	}
+	// This is used to decode the int handle properly.
+	var hasUnsignedIntHandle bool
+	if pkInfo := tableInfo.GetPkColInfo(); pkInfo != nil {
+		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.GetFlag())
+	}
+	// for record
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
+	regionCache := tikvStore.GetRegionCache()
+	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	recordRegions, err := getRegionMeta(tikvStore, recordRegionMetas, uniqueRegionMap, tablePrefix, recordPrefix, nil, physicalTableID, 0, hasUnsignedIntHandle)
+	if err != nil {
+		return nil, err
+	}
+	err = checkRegionsStatus(s, recordRegions)
+	if err != nil {
+		return nil, err
+	}
+	return recordRegions, nil
 }
 
 func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {

@@ -27,19 +27,6 @@ var ffiSysVars = []*SysVar{
 		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 			return BoolToOnOff(tikvrpc.EnableTiKVLocalCall.Load()), nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBXEnableScheduleLeaderRule, Value: BoolToOnOff(DefTiDBXEnableScheduleLeaderRule), Type: TypeBool,
-		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
-			v := TiDBOptOn(s)
-			if v != EnableScheduleLeaderRule.Load() {
-				EnableScheduleLeaderRule.Store(v)
-				if EnableScheduleLeaderRuleFn != nil {
-					EnableScheduleLeaderRuleFn(v)
-				}
-			}
-			return nil
-		}, GetGlobal: func(context.Context, *SessionVars) (string, error) {
-			return BoolToOnOff(EnableScheduleLeaderRule.Load()), nil
-		}},
 	{Scope: ScopeGlobal, Name: TiDBXEnablePDLocalCall, Value: BoolToOnOff(DefTiDBXEnableLocalRPCOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 			if PDLocalCallVar == nil {
@@ -94,6 +81,17 @@ var ffiSysVars = []*SysVar{
 		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 			return BoolToOnOff(tikvrpc.TiDBXStoreBatchGet.Load()), nil
 		}},
+
+	{Scope: ScopeGlobal, Name: TiDBXEnableFastPath, Value: BoolToOnOff(DefTiDBXFastPath), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableFastPath.Store(TiDBOptOn(val))
+			tikvrpc.EnableFastPath.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableFastPath.Load()), nil
+		},
+	},
 }
 
 // PDLocalCallVar will be set by the upper package tidbx-server to point to pd-server's

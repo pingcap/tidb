@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -133,7 +134,12 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
-	defer tracing.StartRegion(ctx, "planner.Optimize").End()
+	defer func() {
+		tracing.StartRegion(ctx, "planner.Optimize").End()
+		if r := recover(); r != nil {
+			retErr = tidbutil.GetRecoverError(r)
+		}
+	}()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
@@ -149,20 +155,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		if !allowed {
 			return nil, nil, errors.Trace(plannererrors.ErrSQLInReadOnlyMode)
 		}
-	}
-
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
-		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
-		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
-		if hasTiFlashAccess {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-		}
-		defer func() {
-			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
-			if hasTiFlashAccess {
-				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			}
-		}()
 	}
 
 	// handle the execute statement
@@ -222,6 +214,21 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+	}
+
+	// This should be handled after `set_var`
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
+		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
+		if hasTiFlashAccess {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		}
+		defer func() {
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
+			if hasTiFlashAccess {
+				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}()
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -506,6 +513,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	}
 
 	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+		return nil, nil, 0, err
+	}
+
+	if err := core.CheckTableMode(node); err != nil {
 		return nil, nil, 0, err
 	}
 

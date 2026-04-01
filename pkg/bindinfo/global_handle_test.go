@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -408,6 +409,27 @@ var testSQLs = []struct {
 		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
 		memoryUsage: float64(256),
 	},
+}
+
+func TestLoadBindingTimeLag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create global binding using select * from t`)
+	numBindings := len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 1, numBindings)
+
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 5*time.Second)
+	tk.MustExec(`create global binding using select * from t where a < 1`)
+	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 2, numBindings)
+
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 15*time.Second)
+	tk.MustExec(`create global binding using select * from t where a > 1`)
+	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 2, numBindings) // can't see the latest one since the time lag tolerance is only 10s
 }
 
 func TestGlobalBinding(t *testing.T) {

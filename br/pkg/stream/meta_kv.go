@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
@@ -51,6 +52,14 @@ func ParseTxnMetaKeyFrom(txnKey kv.Key) (*RawMetaKey, error) {
 		Field: field,
 		Ts:    ts,
 	}, nil
+}
+
+func ParseDBIDFromTableKey(key []byte) (int64, error) {
+	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return meta.ParseDBKey(rawMetaKey.Key)
 }
 
 // UpdateKey updates `key` field in `RawMetaKey` struct.
@@ -165,12 +174,13 @@ l_for:
 		switch data[0] {
 		case flagShortValuePrefix:
 			vlen := data[1]
-			if len(data[2:]) < int(vlen) {
+			if len(data) < int(vlen)+2 {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"the length of short value is invalid, vlen: %v", int(vlen))
+					"insufficient data for short value, need %d bytes but only have %d",
+					int(vlen)+2, len(data))
 			}
-			v.shortValue = data[2 : vlen+2]
-			data = data[vlen+2:]
+			v.shortValue = data[2 : int(vlen)+2]
+			data = data[int(vlen)+2:]
 		case flagOverlappedRollback:
 			v.hasOverlappedRollback = true
 			data = data[1:]
@@ -209,6 +219,11 @@ func (v *RawWriteCFValue) IsRollback() bool {
 // IsRollback checks whether the value in cf is a `delete` record.
 func (v *RawWriteCFValue) IsDelete() bool {
 	return v.GetWriteType() == WriteTypeDelete
+}
+
+// IsPut checks whether the value in cf is a `put` record.
+func (v *RawWriteCFValue) IsPut() bool {
+	return v.GetWriteType() == WriteTypePut
 }
 
 // HasShortValue checks whether short value is stored in write cf.

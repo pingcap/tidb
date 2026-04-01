@@ -2,19 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "pb",
-    srcs = [
-        "forwardpb.pb.go",
-        "forwardpb_grpc.pb.go",
-        "forwardpb_vtproto.pb.go",
-    ],
+    srcs = ["forwardpb.pb.go"],
     importpath = "github.com/pingcap/tidb/pkg/executor/pkdb_remote/pb",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_planetscale_vtprotobuf//protohelpers",
+        "@com_github_golang_protobuf//proto",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
-        "@org_golang_google_protobuf//reflect/protoreflect",
-        "@org_golang_google_protobuf//runtime/protoimpl",
     ],
 )

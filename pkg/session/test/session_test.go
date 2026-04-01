@@ -685,22 +685,13 @@ func TestRequestSource(t *testing.T) {
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-				requestSource := ""
+				tikvrpc.AttachContext(req, req.Context)
+				requestSource := req.Context.GetRequestSource()
 				readType := ""
-				switch r := req.Req.(type) {
-				case *kvrpcpb.PrewriteRequest:
-					requestSource = r.GetContext().GetRequestSource()
-				case *kvrpcpb.CommitRequest:
-					requestSource = r.GetContext().GetRequestSource()
-				case *coprocessor.Request:
+				switch req.Req.(type) {
+				case *kvrpcpb.PrewriteRequest, *kvrpcpb.CommitRequest:
+				case *coprocessor.Request, *kvrpcpb.GetRequest, *kvrpcpb.BatchGetRequest:
 					readType = "leader_" // read request will be attached with read type
-					requestSource = r.GetContext().GetRequestSource()
-				case *kvrpcpb.GetRequest:
-					readType = "leader_" // read request will be attached with read type
-					requestSource = r.GetContext().GetRequestSource()
-				case *kvrpcpb.BatchGetRequest:
-					readType = "leader_" // read request will be attached with read type
-					requestSource = r.GetContext().GetRequestSource()
 				}
 				require.Equal(t, readType+source, requestSource)
 				return next(target, req)

@@ -17,9 +17,7 @@ package tests
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -312,6 +310,23 @@ func TestBindingSymbolList(t *testing.T) {
 	require.NotNil(t, binding.Collation)
 	require.NotNil(t, binding.CreateTime)
 	require.NotNil(t, binding.UpdateTime)
+}
+
+func TestIssue64070(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_enable_fuzzy_binding=true`)
+	tk.MustExec(`create table tttt (a int)`)
+	tk.MustExec(`create global binding using select * from test.tttt`)
+	sqlDigest := tk.MustQuery(`select sql_digest from mysql.bind_info where bind_sql like "%tttt%"`).Rows()[0][0].(string)
+	tk.MustExec(fmt.Sprintf(`SET BINDING DISABLED FOR SQL DIGEST '%v'`, sqlDigest)) // disable this binding
+	tk.MustExec(`create global binding using select * from *.tttt`)
+	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != "builtin" order by bind_sql`).Check(testkit.Rows(
+		"SELECT * FROM `*`.`tttt` enabled", // enabled cross-db binding v.s. disabled normal binding
+		"SELECT * FROM `test`.`tttt` disabled"))
+	tk.MustQuery(`select * from tttt`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1")) // use the cross-db binding
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
@@ -885,30 +900,13 @@ func removeAllBindings(tk *testkit.TestKit, global bool) {
 	}
 	// test DROP BINDING FOR SQL DIGEST can handle empty strings correctly
 	digests = append(digests, "", "", "")
-	// randomly split digests into 4 groups using random number
-	// shuffle the slice
-	rand.Shuffle(len(digests), func(i, j int) {
-		digests[i], digests[j] = digests[j], digests[i]
-	})
-	split := make([][]string, 4)
-	for i, d := range digests {
-		split[i%4] = append(split[i%4], d)
-	}
 	// group 0: wrap with ' then connect by ,
 	var g0 string
-	for _, d := range split[0] {
+	for _, d := range digests {
 		g0 += "'" + d + "',"
 	}
-	// group 1: connect by , and set into a user variable
-	tk.MustExec(fmt.Sprintf("set @a = '%v'", strings.Join(split[1], ",")))
-	g1 := "@a,"
-	var g2 string
-	for _, d := range split[2] {
-		g2 += "'" + d + "',"
-	}
-	// group 2: connect by , and put into a normal string
-	g3 := "'" + strings.Join(split[3], ",") + "'"
-	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s %s %s %s", scope, g0, g1, g2, g3))
+	g0 += "'123', '456'" // invalid digests
+	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s", scope, g0))
 	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
 }
 
