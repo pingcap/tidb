@@ -20,34 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
 )
-
-func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
-	[]statistics.TopNMeta, []*statistics.Histogram, error) {
-	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
-		return nil, nil, wrapper.AllHg, nil
-	}
-	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	killer := &sc.GetSessionVars().SQLKiller
-
-	// use original method if concurrency equals 1 or for version1
-	if mergeConcurrency < 2 {
-		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
-	}
-	batchSize := len(wrapper.AllTopN) / mergeConcurrency
-	if batchSize < 1 {
-		batchSize = 1
-	} else if batchSize > MaxPartitionMergeBatchSize {
-		batchSize = MaxPartitionMergeBatchSize
-	}
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
-}
 
 // MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency.
 // To merge global stats topN by concurrency,

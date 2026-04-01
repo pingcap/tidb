@@ -309,16 +309,6 @@ func TestGlobalStatsData2(t *testing.T) {
 	testGlobalStats2(t, tk, dom)
 }
 
-func TestGlobalStatsData2WithConcurrency(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer func() {
-		tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	}()
-	testGlobalStats2(t, tk, dom)
-}
-
 func TestGlobalStatsData3(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -923,44 +913,10 @@ func TestIssues24349(t *testing.T) {
 	testIssues24349(t, testKit, store)
 }
 
-func TestIssues24349WithConcurrency(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=default")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	testIssues24349(t, testKit, store)
-}
-
-func TestIssues24349V2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@tidb_merge_partition_stats_concurrency=0")
-	defer testKit.MustExec("set @@tidb_analyze_version=default")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testIssues24349(t, testKit, store)
-}
-
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	testGlobalStatsAndSQLBinding(tk)
-}
-
-func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
 	testGlobalStatsAndSQLBinding(tk)
 }
 
@@ -1030,7 +986,6 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	tk.MustExec(`insert into t (a) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)`)
 	// increase by 10 ^ 5 rows
 	tk.MustExec(`insert into t (a) select null from t, t t2, t t3, t t4, t t5`)
-	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=1")
 	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
 	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
