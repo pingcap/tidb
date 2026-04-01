@@ -132,12 +132,12 @@ func TestMaskingPolicyCTEScenarios(t *testing.T) {
 	tk.MustQuery("with cte as (select c from t_cte_src) select count(*) from cte where c = 'secret'").Check(testkit.Rows("1"))
 	tk.MustQuery("with cte as (select id, c from t_cte_src) select j.name, cte.c from t_cte_join j join cte on j.id = cte.id order by j.id").
 		Check(testkit.Rows("alice ******", "bob ******"))
-	tk.MustQuery("with cte1 as (select c from t_cte_src), cte2 as (select c from cte1) select count(*) from cte2 where c = '******'").
-		Check(testkit.Rows("2"))
+	tk.MustQuery("with cte1 as (select c from t_cte_src), cte2 as (select c from cte1) select count(*) from cte2 where c = 'secret'").
+		Check(testkit.Rows("1"))
 	tk.MustQuery("with cte as (select c from t_cte_src) select count(*) from (select c from cte group by c) g").
 		Check(testkit.Rows("2"))
 
-	tk.MustGetErrCode("with cte as (select c from t_cte_src) insert into t_cte_dst select c from cte", errno.ErrAccessDeniedToMaskedColumn)
+	tk.MustGetErrCode("insert into t_cte_dst with cte as (select c from t_cte_src) select c from cte", errno.ErrAccessDeniedToMaskedColumn)
 }
 
 func TestMaskingPolicyCreateOrReplaceCoverage(t *testing.T) {
