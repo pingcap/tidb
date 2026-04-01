@@ -533,7 +533,7 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
 		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows(""+
 			"TableReader root partition:all data:Selection",
-			"└─Selection cop[tikv]  or(eq(cast(test.t_issue52023.a, double BINARY), 5), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"└─Selection cop[tikv]  in(cast(test.t_issue52023.a, double BINARY), 5, 55)",
 			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
 		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows(""+
 			"TableReader root partition:all data:Selection",

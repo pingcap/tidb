@@ -2009,6 +2009,31 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 	return opFunc
 }
 
+func (er *expressionRewriter) wrapExprWithCmpEvalType(expr expression.Expression, cmpType types.EvalType) expression.Expression {
+	switch cmpType {
+	case types.ETInt:
+		return expression.WrapWithCastAsInt(er.sctx, expr, nil)
+	case types.ETReal:
+		return expression.WrapWithCastAsReal(er.sctx, expr)
+	case types.ETDecimal:
+		return expression.WrapWithCastAsDecimal(er.sctx, expr)
+	case types.ETString:
+		return expression.WrapWithCastAsString(er.sctx, expr)
+	case types.ETDatetime:
+		return expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
+	case types.ETTimestamp:
+		return expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeTimestamp))
+	case types.ETDuration:
+		return expression.WrapWithCastAsDuration(er.sctx, expr)
+	case types.ETJson:
+		return expression.WrapWithCastAsJSON(er.sctx, expr)
+	case types.ETVectorFloat32:
+		return expression.WrapWithCastAsVectorFloat32(er.sctx, expr)
+	default:
+		return expr
+	}
+}
+
 func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
 	if expression.GetRowLen(er.ctxStack[stkLen-1]) != 1 {
@@ -2102,15 +2127,36 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	allSameType := true
+	commonCmpType := leftEt
+	hasCommonCmpType := false
+	allSameCmpType := true
 	for _, arg := range args[1:] {
-		if arg.GetType(er.sctx.GetEvalCtx()).GetType() != mysql.TypeNull && expression.GetAccurateCmpType(er.sctx.GetEvalCtx(), args[0], arg) != leftEt {
+		if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			continue
+		}
+		cmpType := expression.GetAccurateCmpType(er.sctx.GetEvalCtx(), args[0], arg)
+		if cmpType != leftEt {
 			allSameType = false
+		}
+		if !hasCommonCmpType {
+			commonCmpType = cmpType
+			hasCommonCmpType = true
+			continue
+		}
+		if cmpType != commonCmpType {
+			allSameCmpType = false
 			break
 		}
 	}
 	var function expression.Expression
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
+	} else if allSameCmpType && hasCommonCmpType && l == 1 && lLen > 1 {
+		normalizedArgs := slices.Clone(args)
+		// Preserve a single IN when every element uses the same comparison type with the left operand.
+		// This avoids expanding mixed-type comparisons like varchar_col IN (1, 2, 3) into a large OR of EQ(cast(...)).
+		normalizedArgs[0] = er.wrapExprWithCmpEvalType(normalizedArgs[0], commonCmpType)
+		function = er.notToExpression(not, ast.In, tp, normalizedArgs...)
 	} else {
 		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
 		coll := er.deriveCollationForIn(l, lLen, args)

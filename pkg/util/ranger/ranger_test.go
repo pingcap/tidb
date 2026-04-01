@@ -2262,14 +2262,14 @@ create table t(
 			indexPos:    0,
 			exprStr:     "isnull(a) or a in (1,2,3,4)",
 			accessConds: "[]",
-			filterConds: "[or(isnull(test.t.a), or(or(eq(cast(test.t.a, double BINARY), 1), eq(cast(test.t.a, double BINARY), 2)), or(eq(cast(test.t.a, double BINARY), 3), eq(cast(test.t.a, double BINARY), 4))))]",
+			filterConds: "[or(isnull(test.t.a), in(cast(test.t.a, double BINARY), 1, 2, 3, 4))]",
 			resultStr:   "[[NULL,+inf]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "isnull(a) and a in (1,2,3,4)",
 			accessConds: "[isnull(test.t.a)]",
-			filterConds: "[or(or(eq(cast(test.t.a, double BINARY), 1), eq(cast(test.t.a, double BINARY), 2)), or(eq(cast(test.t.a, double BINARY), 3), eq(cast(test.t.a, double BINARY), 4)))]",
+			filterConds: "[in(cast(test.t.a, double BINARY), 1, 2, 3, 4)]",
 			resultStr:   "[[NULL,NULL]]",
 		},
 		{

@@ -95,7 +95,7 @@ id
 explain format='plan_tree' select * from t1 where id in (0, 1);
 id	task	access object	operator info
 IndexReader	root		index:Selection
-└─Selection	cop[tikv]		or(eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0), eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 1))
+└─Selection	cop[tikv]		in(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0, 1)
   └─IndexFullScan	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:false, stats:pseudo
 select * from t1 where id in (0, 1);
 id
@@ -112,7 +112,7 @@ asdf
 explain format='plan_tree' select * from t2 where id in (0, 1);
 id	task	access object	operator info
 IndexReader	root		index:Selection
-└─Selection	cop[tikv]		or(eq(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 0), eq(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 1))
+└─Selection	cop[tikv]		in(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 0, 1)
   └─IndexFullScan	cop[tikv]	table:t2, index:id(id)	keep order:false, stats:pseudo
 select * from t2 where id in (0, 1);
 id
