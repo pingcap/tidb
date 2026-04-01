@@ -2548,6 +2548,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 		jobInfo := chunkRow.GetString(3)
 		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime any
+		// startTime and endTime use the local timezone for displaying.
+		// startTimeUTC is used to calculate the remaining duration of the job.
 		var startTimeUTC *time.Time
 		if !chunkRow.IsNull(5) {
 			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
