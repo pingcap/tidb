@@ -387,8 +387,10 @@ func (s *kvSizeSampler) sampleOneFile(
 
 func (s *kvSizeSampler) sampledRowSourceSize(parser mydump.Parser, startPos int64, row mydump.Row) int64 {
 	// Sampling needs per-row source bytes, not buffered reader progress.
-	// SQL/CSV parsers expose byte offsets through Pos(), while parquet Pos()
-	// is row-count based and must fall back to the row-size estimate.
+	// SQL/CSV parsers expose byte offsets through Pos(), including compressed
+	// input where Pos() tracks uncompressed bytes and stays aligned with the
+	// RealSize-based source totals. Parquet Pos() is row-count based and must
+	// fall back to the row-size estimate.
 	if s.cfg.Format == DataFormatParquet {
 		return int64(row.Length)
 	}
