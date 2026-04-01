@@ -109,7 +109,9 @@ func TestSnapshotRepoBackupLifecycleRewriteResponseFiles(t *testing.T) {
 func TestValidateSnapshotBackupRepoConfigRejectsNoCheckpoint(t *testing.T) {
 	cfg := &BackupConfig{
 		UseCheckpoint: false,
-		Layout:        repo.LayoutRepoV1,
+		SnapshotRepoBackupOptions: SnapshotRepoBackupOptions{
+			Layout: repo.LayoutRepoV1,
+		},
 	}
 	err := validateSnapshotBackupRepoConfig(cfg)
 	require.Error(t, err)

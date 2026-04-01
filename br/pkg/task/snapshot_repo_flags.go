@@ -43,6 +43,39 @@ func (a snapshotRepoOnPendingAction) String() string {
 	return string(a)
 }
 
+// SnapshotRepoBackupOptions groups repo-v1 snapshot backup policy while keeping
+// the existing flat flag/config surface.
+type SnapshotRepoBackupOptions struct {
+	Layout    repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
+	OnPending snapshotRepoOnPendingAction `json:"on-pending" toml:"on-pending"`
+}
+
+func (o SnapshotRepoBackupOptions) IsRepoV1() bool {
+	return o.Layout.IsRepoV1()
+}
+
+func (o SnapshotRepoBackupOptions) HashLayoutTag() string {
+	if !o.IsRepoV1() {
+		return ""
+	}
+	return o.Layout.String()
+}
+
+func parseSnapshotRepoBackupOptionsFromFlags(flags *pflag.FlagSet) (SnapshotRepoBackupOptions, error) {
+	layout, err := parseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return SnapshotRepoBackupOptions{}, errors.Trace(err)
+	}
+	onPending, err := parseSnapshotOnPendingFlag(flags)
+	if err != nil {
+		return SnapshotRepoBackupOptions{}, errors.Trace(err)
+	}
+	return SnapshotRepoBackupOptions{
+		Layout:    layout,
+		OnPending: onPending,
+	}, nil
+}
+
 func DefineSnapshotRepoFlags(flags *pflag.FlagSet, includeBackupID bool) {
 	flags.String(flagStorageLayout, repo.LayoutLegacy.String(),
 		"snapshot storage layout, one of legacy or repo-v1")

@@ -85,19 +85,18 @@ type CompressionConfig struct {
 type BackupConfig struct {
 	Config
 
-	TimeAgo          time.Duration               `json:"time-ago" toml:"time-ago"`
-	BackupTS         uint64                      `json:"backup-ts" toml:"backup-ts"`
-	LastBackupTS     uint64                      `json:"last-backup-ts" toml:"last-backup-ts"`
-	GCTTL            int64                       `json:"gc-ttl" toml:"gc-ttl"`
-	RemoveSchedulers bool                        `json:"remove-schedulers" toml:"remove-schedulers"`
-	RangeLimit       int                         `json:"range-limit" toml:"range-limit"`
-	IgnoreStats      bool                        `json:"ignore-stats" toml:"ignore-stats"`
-	UseBackupMetaV2  bool                        `json:"use-backupmeta-v2"`
-	UseCheckpoint    bool                        `json:"use-checkpoint" toml:"use-checkpoint"`
-	Layout           repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
-	OnPending        snapshotRepoOnPendingAction `json:"on-pending" toml:"on-pending"`
-	ReplicaReadLabel map[string]string           `json:"replica-read-label" toml:"replica-read-label"`
-	TableConcurrency uint                        `json:"table-concurrency" toml:"table-concurrency"`
+	TimeAgo          time.Duration `json:"time-ago" toml:"time-ago"`
+	BackupTS         uint64        `json:"backup-ts" toml:"backup-ts"`
+	LastBackupTS     uint64        `json:"last-backup-ts" toml:"last-backup-ts"`
+	GCTTL            int64         `json:"gc-ttl" toml:"gc-ttl"`
+	RemoveSchedulers bool          `json:"remove-schedulers" toml:"remove-schedulers"`
+	RangeLimit       int           `json:"range-limit" toml:"range-limit"`
+	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
+	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool          `json:"use-checkpoint" toml:"use-checkpoint"`
+	SnapshotRepoBackupOptions
+	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
+	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -195,11 +194,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.Layout, err = parseSnapshotStorageLayoutFlag(flags)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.OnPending, err = parseSnapshotOnPendingFlag(flags)
+	cfg.SnapshotRepoBackupOptions, err = parseSnapshotRepoBackupOptionsFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -376,15 +371,11 @@ type immutableBackupConfig struct {
 
 // a rough hash for checkpoint checker
 func (cfg *BackupConfig) Hash() ([]byte, error) {
-	layout := ""
-	if cfg.Layout.IsRepoV1() {
-		layout = cfg.Layout.String()
-	}
 	config := &immutableBackupConfig{
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Layout:        layout,
+		Layout:        cfg.SnapshotRepoBackupOptions.HashLayoutTag(),
 
 		BackendOptions: cfg.BackendOptions,
 		Storage:        cfg.Storage,
@@ -450,7 +441,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
 		if err != nil {
-			if cfg.Layout.IsRepoV1() {
+			if cfg.SnapshotRepoBackupOptions.IsRepoV1() {
 				return errors.Annotate(err, "repo-v1 snapshot backup requires checkpoint support")
 			}
 			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
@@ -497,12 +488,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		preparedStorage *preparedSnapshotBackupStorage
 		repoLifecycle   *snapshotRepoBackupLifecycle
 	)
-	if cfg.Layout.IsRepoV1() {
+	if cfg.SnapshotRepoBackupOptions.IsRepoV1() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
 		}
 		preparedStorage, err = prepareSnapshotBackupStorage(ctx, u, client.GetBaseStorage(), snapshotBackupStorageParams{
-			onPending: cfg.OnPending,
+			onPending: cfg.SnapshotRepoBackupOptions.OnPending,
 			cfgHash:   cfgHash,
 			createdBy: repoCreatedBy(g.GetVersion()),
 			allocateBackupID: func(ctx context.Context) (repo.BackupID, error) {

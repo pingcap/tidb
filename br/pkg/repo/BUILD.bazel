@@ -5,12 +5,15 @@ go_library(
     srcs = [
         "layout.go",
         "meta.go",
+        "snapshotops.go",
+        "snapshotscan.go",
         "storage.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/repo",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/checkpoint",
+        "//br/pkg/errors",
         "//br/pkg/metautil",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
@@ -22,9 +25,12 @@ go_library(
 go_test(
     name = "repo_test",
     timeout = "short",
-    srcs = ["repo_test.go"],
+    srcs = [
+        "repo_test.go",
+        "snapshotops_test.go",
+    ],
     flaky = True,
-    shard_count = 5,
+    shard_count = 12,
     deps = [
         ":repo",
         "//br/pkg/checkpoint",
@@ -32,6 +38,8 @@ go_test(
         "//br/pkg/repo/snapshotpaths",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_stretchr_testify//require",
     ],
 )

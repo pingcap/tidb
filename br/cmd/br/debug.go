@@ -8,8 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"path"
 	"reflect"
+	"strings"
+	"text/tabwriter"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -21,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock/mockid"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -30,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +65,301 @@ func NewDebugCommand() *cobra.Command {
 	meta.Hidden = true
 
 	return meta
+}
+
+// NewRepoCommand returns a repository management subcommand.
+func NewRepoCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:          "repo",
+		Short:        "manage BR snapshot repositories",
+		SilenceUsage: true,
+		PersistentPreRunE: func(c *cobra.Command, args []string) error {
+			if err := Init(c); err != nil {
+				return errors.Trace(err)
+			}
+			build.LogInfo(build.BR)
+			tidblogutil.LogEnvVariables()
+			task.LogArguments(c)
+			return nil
+		},
+	}
+	cmd.AddCommand(newRepoSnapshotCommand())
+	return cmd
+}
+
+func newRepoSnapshotCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "snapshot",
+		Short: "manage snapshot backups in a repository",
+	}
+	cmd.AddCommand(
+		newRepoSnapshotListCommand(),
+		newRepoSnapshotGetCommand(),
+		newRepoSnapshotDeleteCommand(),
+		newRepoSnapshotPendingCommand(),
+		newRepoSnapshotOrphansCommand(),
+	)
+	return cmd
+}
+
+func newRepoSnapshotListCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "list completed snapshot backups",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := parseRepoSnapshotConfig(cmd)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			ctx := GetDefaultContext()
+			backupIDs, err := task.RunRepoSnapshotList(ctx, task.RepoSnapshotListConfig{Config: cfg})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return printRepoSnapshotList(cmd, backupIDs)
+		},
+	}
+	_ = cmd.MarkFlagRequired("s")
+	return cmd
+}
+
+func newRepoSnapshotGetCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "get",
+		Short: "print a stable metadata view from a snapshot backup",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := parseRepoSnapshotConfig(cmd)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			backupID, err := parseRepoSnapshotBackupID(cmd, true)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			view, err := cmd.Flags().GetString("view")
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			ctx := GetDefaultContext()
+			payload, err := task.RunRepoSnapshotGet(ctx, task.RepoSnapshotGetConfig{
+				Config:   cfg,
+				BackupID: backupID,
+				View:     view,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = cmd.OutOrStdout().Write(payload)
+			return errors.Trace(err)
+		},
+	}
+	cmd.Flags().String("backup-id", "", "snapshot backup id")
+	cmd.Flags().String("view", "basic", "stable metadata view: basic, tables, or files")
+	_ = cmd.MarkFlagRequired("s")
+	_ = cmd.MarkFlagRequired("backup-id")
+	return cmd
+}
+
+func newRepoSnapshotDeleteCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete",
+		Short: "delete one snapshot backup from the repository",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := parseRepoSnapshotConfig(cmd)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			backupID, err := parseRepoSnapshotBackupID(cmd, true)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			ctx := GetDefaultContext()
+			result, err := task.RunRepoSnapshotDelete(ctx, task.RepoSnapshotDeleteConfig{
+				Config:   cfg,
+				BackupID: backupID,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if result == nil {
+				result = &task.RepoSnapshotDeleteResult{}
+			}
+			return printRepoSnapshotMutationResult(cmd, "deleted", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
+		},
+	}
+	cmd.Flags().String("backup-id", "", "snapshot backup id")
+	_ = cmd.MarkFlagRequired("s")
+	_ = cmd.MarkFlagRequired("backup-id")
+	return cmd
+}
+
+func newRepoSnapshotPendingCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pending",
+		Short: "manage unfinished snapshot backups",
+	}
+	cmd.AddCommand(newRepoSnapshotPendingDiscardCommand())
+	return cmd
+}
+
+func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "discard",
+		Short: "discard one unfinished snapshot backup",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := parseRepoSnapshotConfig(cmd)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			backupID, err := parseRepoSnapshotBackupID(cmd, false)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			ctx := GetDefaultContext()
+			result, err := task.RunRepoSnapshotPendingDiscard(ctx, task.RepoSnapshotPendingDiscardConfig{
+				Config:   cfg,
+				BackupID: backupID,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if result == nil {
+				result = &task.RepoSnapshotPendingDiscardResult{}
+			}
+			return printRepoSnapshotMutationResult(cmd, "discarded", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
+		},
+	}
+	cmd.Flags().String("backup-id", "", "snapshot backup id")
+	_ = cmd.MarkFlagRequired("s")
+	return cmd
+}
+
+func newRepoSnapshotOrphansCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "orphans",
+		Short: "manage orphan snapshot objects",
+	}
+	cmd.AddCommand(
+		newRepoSnapshotOrphansListCommand(),
+		newRepoSnapshotOrphansDeleteCommand(),
+	)
+	return cmd
+}
+
+func newRepoSnapshotOrphansListCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "list orphan snapshot objects",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := parseRepoSnapshotConfig(cmd)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			ctx := GetDefaultContext()
+			for orphanPath, err := range task.WalkRepoSnapshotOrphans(ctx, task.RepoSnapshotOrphansConfig{Config: cfg}) {
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), orphanPath); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			return nil
+		},
+	}
+	_ = cmd.MarkFlagRequired("s")
+	return cmd
+}
+
+func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete",
+		Short: "delete orphan snapshot objects",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := parseRepoSnapshotConfig(cmd)
+			if err != nil {
+				cmd.SilenceUsage = false
+				return errors.Trace(err)
+			}
+			ctx := GetDefaultContext()
+			deleted, err := task.RunRepoSnapshotOrphansDelete(ctx, task.RepoSnapshotOrphansConfig{Config: cfg})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "deleted %d orphan objects\n", deleted)
+			return errors.Trace(err)
+		},
+	}
+	_ = cmd.MarkFlagRequired("s")
+	return cmd
+}
+
+func parseRepoSnapshotConfig(cmd *cobra.Command) (task.Config, error) {
+	cfg := task.Config{LogProgress: HasLogFile()}
+	if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+		return task.Config{}, errors.Trace(err)
+	}
+	return cfg, nil
+}
+
+func parseRepoSnapshotBackupID(cmd *cobra.Command, required bool) (repo.BackupID, error) {
+	raw, err := cmd.Flags().GetString("backup-id")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" && !required {
+		return 0, nil
+	}
+	return repo.ParseBackupID(raw)
+}
+
+func printRepoSnapshotList(cmd *cobra.Command, backupIDs []repo.BackupID) error {
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "BACKUP ID\tBACKUP TIME"); err != nil {
+		return errors.Trace(err)
+	}
+	for _, backupID := range backupIDs {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\n", backupID.String(), formatRepoSnapshotTime(backupID)); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return errors.Trace(tw.Flush())
+}
+
+func printRepoSnapshotMutationResult(
+	cmd *cobra.Command,
+	action string,
+	inputBackupID repo.BackupID,
+	backupID repo.BackupID,
+	metadataDeleted, dataDeleted, pendingDeleted int,
+) error {
+	if backupID.IsZero() {
+		backupID = inputBackupID
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(),
+		"%s snapshot %s: metadata=%d data=%d pending=%d\n",
+		action, backupID.String(), metadataDeleted, dataDeleted, pendingDeleted)
+	return errors.Trace(err)
+}
+
+func formatRepoSnapshotTime(backupID repo.BackupID) string {
+	return utils.FormatDate(oracle.GetTimeFromTS(uint64(backupID)))
 }
 
 func newCheckSumCommand() *cobra.Command {

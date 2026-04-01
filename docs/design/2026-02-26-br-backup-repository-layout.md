@@ -22,7 +22,7 @@
       - [Restore](#restore)
       - [Discard Pending Backup](#discard-pending-backup)
       - [List](#list)
-      - [Files of a Backup](#files-of-a-backup)
+      - [Backupmeta of a Backup](#backupmeta-of-a-backup)
       - [Orphans](#orphans)
     - [Compatibility](#compatibility)
     - [Misc](#misc)
@@ -222,18 +222,19 @@ Command:
 
 Semantics:
 - Lists completed snapshot backups in the repo.
-- Outputs the user-facing `backup-id` (`uint64`), snapshot time/TS, backup type, and size.
+- Outputs the user-facing `backup-id` (`uint64`), physical time of this backup id.
+- This shouldn't read backupmeta, only `list_objects` for performance.
 
-#### Files of a Backup
+#### Backupmeta of a Backup
 
 Command:
-- `br repo snapshot files list -s <repo> --backup-id <backup-id>`
-- `br repo snapshot files delete -s <repo> --backup-id <backup-id>`
+- `br repo snapshot get -s <repo> --backup-id <backup-id> --view <...>`
+- `br repo snapshot delete -s <repo> --backup-id <backup-id>`
 
 Semantics:
-- `files list` prints the SST objects that belong to the specified backup.
-- `files delete` deletes the SST objects that belong to the specified backup and also removes `_meta/snapshot/<backup-id>/...` if present.
-- Still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard.
+- `get` prints the backupmeta json fields of `backupmeta`.
+- `delete` deletes the SST objects that belong to the specified backup and also removes `_meta/snapshot/<backup-id>/...` if present.
+- `delete` still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard; while `get` doesn't, `get` reads `backupmeta`.
 
 #### Orphans
 
@@ -246,6 +247,7 @@ Semantics:
 - `orphans delete` deletes SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
 - Can be implemented by comparing `_meta/snapshot/` entries with upper-case hex `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
 - This is still expected to be more expensive than listing known backups.
+  - You should only call `list_objects` to finish this. A proper way is to enumerate all backup ids and skip-scanning backup ids in each 
 
 ### Compatibility
 

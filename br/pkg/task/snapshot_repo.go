@@ -237,7 +237,7 @@ func (l *snapshotRepoBackupLifecycle) BeforeFirstRequestToStore() func(storeID u
 }
 
 func validateSnapshotBackupRepoConfig(cfg *BackupConfig) error {
-	if !cfg.Layout.IsRepoV1() {
+	if !cfg.SnapshotRepoBackupOptions.Layout.IsRepoV1() {
 		return nil
 	}
 	if !cfg.UseCheckpoint {
