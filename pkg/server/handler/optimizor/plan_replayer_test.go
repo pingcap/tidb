@@ -202,11 +202,11 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-	autoAnalyzeRows = tk.MustQuery("select @@global.tidb_enable_auto_analyze = 0")
+	autoAnalyzeRows = tk.MustQuery("select @@global.tidb_enable_auto_analyze")
 	require.True(t, autoAnalyzeRows.Next(), "unexpected data")
-	var autoAnalyzeDisabled int
-	require.NoError(t, autoAnalyzeRows.Scan(&autoAnalyzeDisabled))
-	require.Equal(t, 1, autoAnalyzeDisabled)
+	var autoAnalyzeValue int64
+	require.NoError(t, autoAnalyzeRows.Scan(&autoAnalyzeValue))
+	require.Equal(t, int64(0), autoAnalyzeValue)
 	require.NoError(t, autoAnalyzeRows.Close())
 
 	// 3-3. assert that the count and modify count in the stats is as expected
