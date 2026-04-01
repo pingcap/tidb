@@ -122,10 +122,20 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 
 	// Process each EqualCondition.
 	// Determine which child index is the preserved (outer) side, if any.
-	// LEFT JOIN preserves left (child 0); RIGHT JOIN preserves right (child 1).
-	preservedChildIdx := -1 // -1 means no preserved side (inner join)
+	// The preserved side is the one whose rows appear in the output regardless
+	// of whether a match exists. Pushing a guard filter there would incorrectly
+	// remove rows that should survive with NULL-padded (or false-flagged) columns.
+	//
+	// LEFT JOIN / LeftOuterSemiJoin / AntiLeftOuterSemiJoin / AntiSemiJoin:
+	//   left (child 0) is preserved.
+	// RIGHT JOIN: right (child 1) is preserved.
+	// INNER JOIN / SemiJoin: no preserved side (unmatched rows are discarded).
+	preservedChildIdx := -1 // -1 means no preserved side
 	switch join.JoinType {
-	case base.LeftOuterJoin:
+	case base.LeftOuterJoin,
+		base.AntiSemiJoin,
+		base.LeftOuterSemiJoin,
+		base.AntiLeftOuterSemiJoin:
 		preservedChildIdx = 0
 	case base.RightOuterJoin:
 		preservedChildIdx = 1

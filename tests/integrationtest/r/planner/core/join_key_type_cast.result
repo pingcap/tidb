@@ -190,6 +190,17 @@ select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.i
 id	v	id	v
 1	10	1	10
 2	20	2	20
+explain format = 'brief' select /*+ INL_JOIN(t_idx_str) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
+id	estRows	task	access object	operator info
+Projection	2.40	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_str.id, planner__core__join_key_type_cast.t_idx_str.v
+└─HashJoin	2.40	root		inner join, equal:[eq(Column#1, Column#12)]
+  ├─Projection(Build)	3.00	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_int.id->Column#1
+  │ └─TableReader	3.00	root		data:TableFullScan
+  │   └─TableFullScan	3.00	cop[tikv]	table:t_idx_int	keep order:false
+  └─Projection(Probe)	2.40	root		planner__core__join_key_type_cast.t_idx_str.id, planner__core__join_key_type_cast.t_idx_str.v, cast(planner__core__join_key_type_cast.t_idx_str.id, bigint BINARY)->Column#12
+    └─Selection	2.40	root		eq(cast(cast(planner__core__join_key_type_cast.t_idx_str.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_idx_str.id, double BINARY))
+      └─TableReader	3.00	root		data:TableFullScan
+        └─TableFullScan	3.00	cop[tikv]	table:t_idx_str	keep order:false
 explain format = 'brief' select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double);
 id	estRows	task	access object	operator info
 Projection	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v

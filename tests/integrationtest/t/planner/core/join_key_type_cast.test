@@ -151,6 +151,11 @@ explain format = 'brief' select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join
 # Verify correctness: '1.5' must NOT match int 1.
 select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id order by t_idx_int.id;
 
+# With INL_JOIN hint on the VARCHAR table: the rewritten join key on the
+# VARCHAR side is CAST(id AS SIGNED), not the original indexed column, so
+# IndexJoin on t_idx_str's index must NOT be chosen.
+explain format = 'brief' select /*+ INL_JOIN(t_idx_str) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
+
 # TestJoinKeyTypeCastExplicitCast
 # Explicit CAST(col AS DOUBLE) in join conditions produces the same plan-tree
 # pattern as implicit type coercion (updateEQCond materializes the CAST into a
