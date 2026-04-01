@@ -58,6 +58,7 @@ Execution policy:
 
 - Integration:
   - `tests/integrationtest/t/privilege/column_masking_policy.test`
+  - `tests/integrationtest/t/privilege/column_masking_cte.test`
 - Unit:
   - `pkg/ddl/masking_policy_test.go`
   - `pkg/planner/core/masking_policy_projection_test.go`

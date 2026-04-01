@@ -236,6 +236,48 @@
     }
   },
   {
+    "id": "P0-CORE-03",
+    "scenario": "AT RESULT semantics with CTE",
+    "coverage_cases": [
+      {
+        "name": "Basic CTE masking (IT-MASK-P0-CTE-001)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "CTE with RESTRICT ON (IT-MASK-P0-CTE-002)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "CTE AT RESULT semantics (HAVING, ORDER BY) (IT-MASK-P0-CTE-003)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "CTE multiple references (IT-MASK-P0-CTE-004)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "CTE with current_role() (IT-MASK-P0-CTE-005)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "CTE with MASK_PARTIAL (IT-MASK-P0-CTE-006)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "CTE with CONCAT expression (IT-MASK-P0-CTE-007)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      },
+      {
+        "name": "Recursive CTE with masking (IT-MASK-P0-CTE-008)",
+        "file": "tests/integrationtest/t/privilege/column_masking_cte.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking_cte"]
+    }
+  },
+  {
     "id": "P0-RES-01",
     "scenario": "RESTRICT ON INSERT INTO ... SELECT",
     "coverage_cases": [
