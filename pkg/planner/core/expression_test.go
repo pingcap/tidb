@@ -202,6 +202,52 @@ func TestCast(t *testing.T) {
 	require.Equal(t, types.KindNull, v.Kind())
 }
 
+func TestCastRetTypeDoesNotShareASTFieldType(t *testing.T) {
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTp.AddFlag(mysql.NotNullFlag)
+
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
+
+	tbl := &model.TableInfo{
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+	}
+	expr := parseExpr(t, "cast(a as signed)").(*ast.FuncCastExpr)
+	expr.Tp = targetTp
+
+	built1, err := buildExpr(t, ctx, expr, expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	sf1, ok := built1.(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.NotSame(t, targetTp, sf1.RetType)
+	require.True(t, mysql.HasNotNullFlag(targetTp.GetFlag()))
+
+	sf1.RetType.SetType(mysql.TypeString)
+	sf1.RetType.AddFlag(mysql.UnsignedFlag)
+
+	built2, err := buildExpr(t, ctx, expr, expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	sf2, ok := built2.(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.NotSame(t, sf1.RetType, sf2.RetType)
+	require.Equal(t, mysql.TypeLonglong, targetTp.GetType())
+	require.True(t, mysql.HasNotNullFlag(targetTp.GetFlag()))
+	require.Equal(t, mysql.TypeLonglong, sf2.RetType.GetType())
+	require.False(t, mysql.HasNotNullFlag(sf2.RetType.GetFlag()))
+	require.False(t, mysql.HasUnsignedFlag(sf2.RetType.GetFlag()))
+}
+
 func TestPatternIn(t *testing.T) {
 	tests := []testCase{
 		{

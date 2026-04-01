@@ -109,7 +109,8 @@ func TestDeleter(t *testing.T) {
 		conflictedKVs := gatherTargetKVFn(t, tbl, kvGroup, conflictedRowCnt)
 
 		encoder := getEncoder(t, tbl)
-		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder)
+		trafficRec := &mockTrafficRecorder{}
+		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, trafficRec)
 		eg := util.NewErrorGroupWithRecover()
 		ch := make(chan *external.KVPair)
 		eg.Go(func() error {
@@ -133,6 +134,8 @@ func TestDeleter(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, eg.Wait())
+		require.Greater(t, trafficRec.readBytes.Load(), uint64(0))
+		require.Greater(t, trafficRec.writeBytes.Load(), uint64(0))
 	}
 
 	bak := conflictedkv.BufferedKeyCountLimit

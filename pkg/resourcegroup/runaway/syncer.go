@@ -23,12 +23,19 @@ import (
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
+	// Label values for syncer metrics.
+	lblSync      = "sync"
+	lblWatch     = "watch"
+	lblWatchDone = "watch_done"
+
 	// watchSyncInterval is the interval to sync the watch record.
 	watchSyncInterval = time.Second
 	// watchSyncBatchLimit is the max number of rows fetched per sync query.
@@ -55,6 +62,14 @@ type syncer struct {
 	infoCache           *infoschema.InfoCache
 
 	mu sync.Mutex
+
+	lastSyncTime   time.Time
+	syncInterval   prometheus.Observer
+	syncDuration   prometheus.Observer
+	watchCPGauge   prometheus.Gauge
+	doneCPGauge    prometheus.Gauge
+	syncOKCounter  prometheus.Counter
+	syncErrCounter prometheus.Counter
 }
 
 func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache) *syncer {
@@ -69,6 +84,12 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 			getRunawayWatchDoneTableName(),
 			"id",
 			0},
+		syncInterval:   metrics.RunawaySyncerIntervalHistogram.WithLabelValues(lblSync),
+		syncDuration:   metrics.RunawaySyncerDurationHistogram.WithLabelValues(lblSync),
+		watchCPGauge:   metrics.RunawaySyncerCheckpointGauge.WithLabelValues(lblWatch),
+		doneCPGauge:    metrics.RunawaySyncerCheckpointGauge.WithLabelValues(lblWatchDone),
+		syncOKCounter:  metrics.RunawaySyncerCounter.WithLabelValues(lblSync, metrics.LblOK),
+		syncErrCounter: metrics.RunawaySyncerCounter.WithLabelValues(lblSync, metrics.LblError),
 	}
 }
 

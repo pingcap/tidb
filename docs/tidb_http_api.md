@@ -738,3 +738,47 @@ timezone.*
      ```shell
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
+
+## Test-only APIs (enableTestAPI failpoint)
+
+These APIs are only registered when the `enableTestAPI` failpoint is enabled.
+
+### Enable
+
+Build `tidb-server` with the failpoint enabled, then run with:
+
+```shell
+GO_FAILPOINTS="github.com/pingcap/tidb/pkg/server/enableTestAPI=return" ./bin/tidb-server
+```
+
+### Delete row key or index key
+
+You can use those APIs to mock dangling row or index keys case for test.
+
+Row key:
+```shell
+curl -X POST "http://{TiDBIP}:10080/test/delete/rowkey/{db}/{table}?handle={intHandle}"
+# For clustered common handle tables:
+curl -X POST "http://{TiDBIP}:10080/test/delete/rowkey/{db}/{table}?{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]"
+```
+
+Index key:
+```shell
+curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?handle={intHandle}&{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]"
+# For clustered common handle tables:
+curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]"
+```
+
+## APIs unique to TiDB-X
+
+### Run ADMIN CHECK for an index
+```shell
+# curl -XPOST "http://{TiDBIP}:10080/ddl/check/{db}/{table}/{index}"
+{
+ "check_sql": "admin check index `test`.`t` `primary`",
+ "db": "test",
+ "index": "primary",
+ "result": "success",
+ "table": "t"
+}
+```

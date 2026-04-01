@@ -20,8 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -31,6 +33,7 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -39,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -382,13 +386,13 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if len(task.EncodedPlan) > 0 {
-		records = generateRecords(task)
+		records = generateRecords(ctx, task)
 		if err = dumpEncodedPlan(sctx, zw, task.EncodedPlan); err != nil {
 			return err
 		}
 	} else {
 		// Dump explain
-		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
+		if err = dumpPlanReplayerExplain(ctx, sctx, zw, task, &records); err != nil {
 			errMsgs = append(errMsgs, err.Error())
 		}
 	}
@@ -405,8 +409,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
+func generateRecords(ctx context.Context, task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	records := make([]PlanReplayerStatusRecord, 0)
+	setTaskPresignedURL(ctx, task)
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
@@ -418,6 +423,26 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 		}
 	}
 	return records
+}
+
+func setTaskPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) {
+	if task.IsCapture {
+		return
+	}
+	url, err := getPresignedURL(ctx, task)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get plan replayer presigned URL", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", task.FileName))
+		return
+	}
+	task.PresignedURL = url
+}
+
+func getPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) (string, error) {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return "", err
+	}
+	return storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 1*time.Hour)
 }
 
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
@@ -785,7 +810,8 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 	return
 }
 
-func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+func dumpPlanReplayerExplain(ctx context.Context, sctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+	setTaskPresignedURL(ctx, task)
 	sqls := make([]string, 0)
 	for _, execStmt := range task.ExecStmts {
 		sql := execStmt.Text()
@@ -795,7 +821,7 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 			Token:     task.FileName,
 		})
 	}
-	debugTraces, err := dumpExplain(ctx, zw, task.Analyze, sqls, false)
+	debugTraces, err := dumpExplain(sctx, zw, task.Analyze, sqls, false)
 	task.DebugTrace = debugTraces
 	return err
 }
