@@ -220,14 +220,15 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 
 		success := false
 		defer func() {
-			sql := "rollback"
 			if success {
-				sql = "commit"
+				commitErr := se.CommitTxn(ctx)
+				if err == nil && commitErr != nil {
+					err = commitErr
+				}
+				return
 			}
-			_, commitErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql)
-			if err == nil && commitErr != nil {
-				err = commitErr
-			}
+
+			se.RollbackTxn(clitutil.WithInternalSourceType(context.Background(), kv.InternalDistTask))
 		}()
 
 		if err = fn(se); err != nil {
