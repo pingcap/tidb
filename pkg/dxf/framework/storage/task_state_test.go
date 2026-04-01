@@ -149,7 +149,9 @@ func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
 			defer timer.Stop()
 
 			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "select sleep(10)")
-			require.NoError(t, err)
+			if err != nil {
+				return err
+			}
 			return ctx.Err()
 		})
 		require.ErrorIs(t, err, context.Canceled)
