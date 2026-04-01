@@ -1725,6 +1725,13 @@ func (b *PlanBuilder) buildFinalProjectionWithMaskingSimple(ctx context.Context,
 		return p, nil
 	}
 
+	// Defensive check: ensure oldLen is within valid bounds
+	// Use the minimum of oldLen and actual schema length to avoid index out of range
+	actualLen := p.Schema().Len()
+	if oldLen < 0 || oldLen > actualLen {
+		oldLen = actualLen
+	}
+
 	// Build a projection that applies masking to the first oldLen columns (non-auxiliary)
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
@@ -1762,6 +1769,10 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 	// flag it if cte contain distinct
 	if b.buildingCTE {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+	}
+	// Defensive check: ensure length is within valid bounds
+	if length < 0 || length > child.Schema().Len() {
+		length = child.Schema().Len()
 	}
 	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
@@ -1844,15 +1855,25 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 }
 
 func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.LogicalUnionAll) error {
-	unionCols := make([]*expression.Column, 0, u.Children()[0].Schema().Len())
-	names := make([]*types.FieldName, 0, u.Children()[0].Schema().Len())
+	firstChild := u.Children()[0]
+	firstChildLen := firstChild.Schema().Len()
+	if firstChildLen <= 0 {
+		return errors.New("first child of UNION has empty schema")
+	}
+
+	unionCols := make([]*expression.Column, 0, firstChildLen)
+	names := make([]*types.FieldName, 0, firstChildLen)
 
 	// Infer union result types by its children's schema.
-	for i, col := range u.Children()[0].Schema().Columns {
+	for i, col := range firstChild.Schema().Columns {
 		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
 		tmpExprs = append(tmpExprs, col)
 		resultTp := col.RetType
 		for j := 1; j < len(u.Children()); j++ {
+			// Defensive check: ensure child j has at least i+1 columns
+			if i >= u.Children()[j].Schema().Len() {
+				return errors.Errorf("UNION child %d has %d columns, but child 0 has %d columns", j, u.Children()[j].Schema().Len(), firstChildLen)
+			}
 			tmpExprs = append(tmpExprs, u.Children()[j].Schema().Columns[i])
 			childTp := u.Children()[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
@@ -1864,7 +1885,12 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
-		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
+
+		// Defensive check: ensure OutputNames has at least i+1 elements
+		if i >= len(firstChild.OutputNames()) {
+			return errors.Errorf("first child has %d columns but only %d output names", firstChildLen, len(firstChild.OutputNames()))
+		}
+		names = append(names, &types.FieldName{ColName: firstChild.OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -1996,7 +2022,8 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
 	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
-	if oldLen != setOprPlan.Schema().Len() {
+	// Defensive check: ensure oldLen is within valid bounds (schema may have changed after buildDistinct)
+	if oldLen > 0 && oldLen <= setOprPlan.Schema().Len() && oldLen != setOprPlan.Schema().Len() {
 		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(setOprPlan)
 		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
