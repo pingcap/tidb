@@ -2625,7 +2625,8 @@ func getRemainDurationForAnalyzeStatusHelper(
 ) (_ *time.Duration, percentage, totalCnt float64, err error) {
 	remainingDuration := time.Duration(0)
 	if startTimeUTC != nil {
-		duration := time.Now().UTC().Sub(startTimeUTC.UTC())
+		// time.Time.Sub uses the actual instant.
+		duration := time.Now().Sub(*startTimeUTC)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
 				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
