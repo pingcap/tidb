@@ -851,13 +851,33 @@ type alterMaterializedScheduleInfoNextTimeUpdateSpec struct {
 	tableNotExistsErrConverter func(error) error
 }
 
+func (e *executor) newInternalMaterializedScheduleInfoUpdateSession(fallbackCtx sessionctx.Context) (*sess.Session, func(), error) {
+	if e.sessPool == nil {
+		return sess.NewSession(fallbackCtx), func() {}, nil
+	}
+	internalCtx, err := e.sessPool.Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return sess.NewSession(internalCtx), func() {
+		e.sessPool.Put(internalCtx)
+	}, nil
+}
+
 func (e *executor) bestEffortUpdateMaterializedScheduleInfoNextTime(
 	ctx sessionctx.Context,
 	spec alterMaterializedScheduleInfoNextTimeUpdateSpec,
 	nextTime *string,
 ) error {
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
-	ddlSess := sess.NewSession(ctx)
+	// The outer ALTER MATERIALIZED VIEW / LOG statement is privilege-checked on the target
+	// MV/base table only. The follow-up NEXT_TIME update touches mysql.* system tables and must
+	// therefore run on a true DDL internal session instead of reusing the caller session.
+	ddlSess, releaseInternalSession, err := e.newInternalMaterializedScheduleInfoUpdateSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseInternalSession()
 	if err := ddlSess.BeginPessimistic(kctx); err != nil {
 		return errors.Trace(err)
 	}

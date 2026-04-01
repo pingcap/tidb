@@ -29,6 +29,7 @@ import (
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -568,6 +569,40 @@ func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
 
 	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view log on t")
+}
+
+func TestAlterMaterializedViewRefreshUpdatesNextTimeWithAlterPrivilegeOnly(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create user 'mv_alter_refresh_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_alter_refresh_u'@'%'")
+	tk.MustExec("grant alter on test.mv to 'mv_alter_refresh_u'@'%'")
+
+	getMViewMeta := func() (int64, *model.MaterializedViewInfo) {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+		require.NoError(t, err)
+		require.NotNil(t, mvTable.Meta().MaterializedView)
+		return mvTable.Meta().ID, mvTable.Meta().MaterializedView
+	}
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_alter_refresh_u", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("alter materialized view test.mv refresh next date_add(now(), interval 25 minute)")
+
+	mviewID, mvInfo := getMViewMeta()
+	require.Equal(t, "FAST", mvInfo.RefreshMethod)
+	require.Equal(t, "", mvInfo.RefreshStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows("1 1 1"))
 }
 
 func TestAlterMaterializedViewRefreshBestEffortInfoUpdateWarning(t *testing.T) {

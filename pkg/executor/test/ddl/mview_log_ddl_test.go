@@ -338,6 +338,41 @@ func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 }
 
+func TestAlterMaterializedViewLogPurgeUpdatesNextTimeWithAlterPrivilegeOnly(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 2 hour)")
+	tk.MustExec("create user 'mv_alter_purge_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_alter_purge_u'@'%'")
+	tk.MustExec("grant alter on test.t to 'mv_alter_purge_u'@'%'")
+
+	getMLogMeta := func() (int64, string, string, string) {
+		is := dom.InfoSchema()
+		mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
+		require.NoError(t, err)
+		require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+		return mlogTable.Meta().ID,
+			mlogTable.Meta().MaterializedViewLog.PurgeMethod,
+			mlogTable.Meta().MaterializedViewLog.PurgeStartWith,
+			mlogTable.Meta().MaterializedViewLog.PurgeNext
+	}
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_alter_purge_u", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("alter materialized view log on test.t purge next date_add(now(), interval 25 minute)")
+
+	mlogID, purgeMethod, purgeStartWith, purgeNext := getMLogMeta()
+	require.Equal(t, "DEFERRED", purgeMethod)
+	require.Equal(t, "", purgeStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows("1 1 1"))
+}
+
 func TestAlterMaterializedViewLogPurgeBestEffortInfoUpdateWarning(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
