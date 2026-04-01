@@ -66,7 +66,7 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 	return topNs, hists
 }
 
-var benchmarkSizes = []int{100, 1000, 2000, 5000, 10000}
+var benchmarkSizes = []int{100, 1000, 2000, 5000, 10000, 100000}
 
 func benchmarkMergePartTopNAndHistToGlobal(partitions int, b *testing.B) {
 	loc := time.UTC

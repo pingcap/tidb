@@ -362,57 +362,6 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.BucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
-// BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(val *types.Datum, count int64) {
-	lowIdx, highIdx := 0, hg.Len()-1
-	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
-	if hg.Len() > 4 {
-		if cmpResult := chunk.Compare(hg.Bounds.GetRow(highIdx*2+1), 0, val); cmpResult < 0 {
-			return
-		}
-		if cmpResult := chunk.Compare(hg.Bounds.GetRow(lowIdx), 0, val); cmpResult > 0 {
-			return
-		}
-	}
-	var midIdx = 0
-	var found bool
-	for lowIdx <= highIdx {
-		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := chunk.Compare(hg.Bounds.GetRow(midIdx*2), 0, val)
-		if cmpResult > 0 {
-			highIdx = midIdx - 1
-			continue
-		}
-		cmpResult = chunk.Compare(hg.Bounds.GetRow(midIdx*2+1), 0, val)
-		if cmpResult < 0 {
-			lowIdx = midIdx + 1
-			continue
-		}
-		midbucket := &hg.Buckets[midIdx]
-
-		if midbucket.NDV > 0 {
-			midbucket.NDV--
-		}
-		if cmpResult == 0 {
-			midbucket.Repeat = 0
-		}
-		midbucket.Count -= count
-		if midbucket.Count < 0 {
-			midbucket.Count = 0
-		}
-		found = true
-		break
-	}
-	if found {
-		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
-			hg.Buckets[midIdx].Count -= count
-			if hg.Buckets[midIdx].Count < 0 {
-				hg.Buckets[midIdx].Count = 0
-			}
-		}
-	}
-}
-
 // RemoveVals remove the given values from the histogram.
 // This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
 func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
@@ -1610,73 +1559,6 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4M
 	return res
 }
 
-// MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool, analyzeVer int) (*Histogram, error) {
-	var totCount, totNull, totColSize int64
-	var bucketNumber int
-	if expBucketNumber == 0 {
-		return nil, errors.Errorf("expBucketNumber can not be zero")
-	}
-	// This only occurs when there are no histogram records in the histogram system table.
-	// It happens only to tables whose DDL events haven't been processed yet and that have no indexes or keys,
-	// with the predicate column feature enabled.
-	if len(hists) == 0 {
-		return nil, nil
-	}
-	for _, hist := range hists {
-		totColSize += hist.TotColSize
-		totNull += hist.NullCount
-		histLen := hist.Len()
-		if histLen > 0 {
-			bucketNumber += histLen
-			totCount += hist.Buckets[hist.Len()-1].Count
-		}
-	}
-	// If all the hist and the topn is empty, return a empty hist.
-	if bucketNumber+len(popedTopN) == 0 {
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
-	}
-
-	bucketNumber += len(popedTopN)
-	buckets := make([]*bucket4Merging, 0, bucketNumber)
-
-	// init `buckets`.
-	for _, hist := range hists {
-		buckets = append(buckets, hist.buildBucket4Merging()...)
-	}
-
-	for _, meta := range popedTopN {
-		totCount += int64(meta.Count)
-		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone())
-		if err != nil {
-			return nil, err
-		}
-		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
-	}
-
-	// Remove empty buckets
-	tail := 0
-	for i := range buckets {
-		if buckets[i].Count != 0 {
-			// Because we will reuse the tail of the slice in `releasebucket4MergingForRecycle`,
-			// we need to shift the non-empty buckets to the front.
-			buckets[tail], buckets[i] = buckets[i], buckets[tail]
-			tail++
-		}
-	}
-	for n := tail; n < len(buckets); n++ {
-		releasebucket4MergingForRecycle(buckets[n])
-	}
-	buckets = buckets[:tail]
-
-	err := sortBucketsByUpperBound(sc.TypeCtx(), buckets)
-	if err != nil {
-		return nil, err
-	}
-
-	return mergeHistBucketsToGlobalHist(sc, buckets, totCount, totNull, totColSize, expBucketNumber, isIndex, hists, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp)
-}
-
 // MergePartTopNAndHistToGlobal merges partition-level TopN lists and histograms
 // into a single global TopN and histogram in one combined pass. It sums TopN
 // counts across partitions and extracts Repeat counts from histogram bucket
@@ -1796,10 +1678,9 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	// Phase 6: Merge buckets into global histogram via the shared helper.
-	// Pass nil for recalcRepeatHists since we already extracted repeats.
 	globalHist, err := mergeHistBucketsToGlobalHist(
 		sc, buckets, totCount, totNull, totColSize, expBucketNumber,
-		isIndex, nil, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp,
+		isIndex, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -1809,14 +1690,11 @@ func MergePartTopNAndHistToGlobal(
 }
 
 // mergeHistBucketsToGlobalHist merges sorted buckets into a single global histogram.
-// If recalcRepeatHists is non-nil, repeats are recalculated by scanning those histograms
-// (the legacy behavior used by MergePartitionHist2GlobalHist). Pass nil to skip that step.
 func mergeHistBucketsToGlobalHist(
 	sc *stmtctx.StatementContext,
 	buckets []*bucket4Merging,
 	totCount, totNull, totColSize, expBucketNumber int64,
 	isIndex bool,
-	recalcRepeatHists []*Histogram,
 	histID int64,
 	lastUpdateVersion uint64,
 	tp *types.FieldType,
@@ -2003,21 +1881,6 @@ func mergeHistBucketsToGlobalHist(
 
 	for i := 1; i < len(globalBuckets); i++ {
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
-	}
-
-	// Recalculate repeats by scanning original histograms (legacy path).
-	if recalcRepeatHists != nil {
-		// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
-		for _, bucket := range globalBuckets {
-			var repeat float64
-			for _, hist := range recalcRepeatHists {
-				histRowCount, _ := hist.EqualRowCount(nil, *bucket.upper, isIndex)
-				repeat += histRowCount // only hists of indexes have bucket.NDV
-			}
-			if int64(repeat) > bucket.Repeat {
-				bucket.Repeat = int64(repeat)
-			}
-		}
 	}
 
 	globalHist := NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, len(globalBuckets), totColSize)
