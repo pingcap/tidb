@@ -723,12 +723,6 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
-	if err := conn.increaseUserConnectionsCount(); err != nil {
-		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-			Warn("failed to increase the count of connections", zap.Error(err),
-				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
-		return
-	}
 	defer conn.decreaseUserConnectionCount()
 
 	if !s.registerConn(conn) {
