@@ -2385,8 +2385,9 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	// Apply masking at the final result stage (AT RESULT semantics).
 	// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+	// For CTEs, we skip masking here because CTE definitions should preserve original values.
 	// For nested set-op operands, masking is deferred to the outermost set-op result.
-	if b.buildingSetOprOperand == 0 {
+	if b.buildingSetOprOperand == 0 && !b.isCTE && !b.buildingCTE {
 		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
 		if err != nil {
 			return nil, err
@@ -4822,8 +4823,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	// Apply masking at the final result stage (AT RESULT semantics).
 	// This ensures HAVING, ORDER BY, set operators, etc. all use original values.
+	// For CTEs, we skip masking here because:
+	// 1. CTE definitions should preserve original values for correct filtering/joining
+	// 2. Masking is applied when CTE results are materialized to the final output
 	// For set-operator operands, masking is deferred to the outer set-op final stage.
-	if b.buildingSetOprOperand == 0 {
+	if b.buildingSetOprOperand == 0 && !b.isCTE && !b.buildingCTE {
 		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
 		if err != nil {
 			return nil, err
@@ -5126,6 +5130,17 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior
+	oldIsCTE := b.isCTE
+	oldBuildingCTE := b.buildingCTE
+	b.isCTE = true
+	b.buildingCTE = true
+	defer func() {
+		b.isCTE = oldIsCTE
+		b.buildingCTE = oldBuildingCTE
+	}()
+
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
@@ -5133,6 +5148,14 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
+		// Preserve OrigTblName and OrigColName for masking policy lookup
+		// If they are not set, copy from TblName and ColName before overwriting
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
+		}
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
+		}
 		name.TblName = cte.Name
 		name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
@@ -5142,6 +5165,10 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
+			// Preserve original column name before overwriting
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
 			outPutNames[i].ColName = n
 		}
 	}
