@@ -2009,31 +2009,6 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 	return opFunc
 }
 
-func (er *expressionRewriter) wrapExprWithCmpEvalType(expr expression.Expression, cmpType types.EvalType) expression.Expression {
-	switch cmpType {
-	case types.ETInt:
-		return expression.WrapWithCastAsInt(er.sctx, expr, nil)
-	case types.ETReal:
-		return expression.WrapWithCastAsReal(er.sctx, expr)
-	case types.ETDecimal:
-		return expression.WrapWithCastAsDecimal(er.sctx, expr)
-	case types.ETString:
-		return expression.WrapWithCastAsString(er.sctx, expr)
-	case types.ETDatetime:
-		return expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
-	case types.ETTimestamp:
-		return expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeTimestamp))
-	case types.ETDuration:
-		return expression.WrapWithCastAsDuration(er.sctx, expr)
-	case types.ETJson:
-		return expression.WrapWithCastAsJSON(er.sctx, expr)
-	case types.ETVectorFloat32:
-		return expression.WrapWithCastAsVectorFloat32(er.sctx, expr)
-	default:
-		return expr
-	}
-}
-
 func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
 	if expression.GetRowLen(er.ctxStack[stkLen-1]) != 1 {
@@ -2153,11 +2128,23 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else if allSameCmpType && hasCommonCmpType && l == 1 && lLen > 1 {
 		normalizedArgs := slices.Clone(args)
-		// Preserve a single IN when every element uses the same comparison type with the left operand.
-		// This avoids expanding mixed-type comparisons like varchar_col IN (1, 2, 3) into a large OR of EQ(cast(...)).
-		normalizedArgs[0] = er.wrapExprWithCmpEvalType(normalizedArgs[0], commonCmpType)
-		function = er.notToExpression(not, ast.In, tp, normalizedArgs...)
-	} else {
+		// Preserve a single IN when every element uses the same numeric comparison type with the left operand.
+		// The IN builtin will cast the remaining arguments and fold constant casts for us.
+		switch commonCmpType {
+		case types.ETInt:
+			normalizedArgs[0] = expression.WrapWithCastAsInt(er.sctx, normalizedArgs[0], nil)
+		case types.ETReal:
+			normalizedArgs[0] = expression.WrapWithCastAsReal(er.sctx, normalizedArgs[0])
+		case types.ETDecimal:
+			normalizedArgs[0] = expression.WrapWithCastAsDecimal(er.sctx, normalizedArgs[0])
+		default:
+			normalizedArgs = nil
+		}
+		if normalizedArgs != nil {
+			function = er.notToExpression(not, ast.In, tp, normalizedArgs...)
+		}
+	}
+	if function == nil {
 		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
 		coll := er.deriveCollationForIn(l, lLen, args)
 		if er.err != nil {

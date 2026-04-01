@@ -92,12 +92,12 @@ IndexReader	root		index:Selection
 select * from t1 where id = 1.0;
 id
 1asdf
-explain format='plan_tree' select * from t1 where id in (0, 1);
+explain format='plan_tree' select * from t1 where id in (0, 1.0, 2e0);
 id	task	access object	operator info
 IndexReader	root		index:Selection
-└─Selection	cop[tikv]		in(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0, 1)
+└─Selection	cop[tikv]		in(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0, 1, 2)
   └─IndexFullScan	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:false, stats:pseudo
-select * from t1 where id in (0, 1);
+select * from t1 where id in (0, 1.0, 2e0);
 id
 1asdf
 asdf
@@ -109,12 +109,12 @@ IndexReader	root		index:Selection
 select * from t2 where id = 0;
 id
 asdf
-explain format='plan_tree' select * from t2 where id in (0, 1);
+explain format='plan_tree' select * from t2 where id in (0, 1.0, 2e0);
 id	task	access object	operator info
 IndexReader	root		index:Selection
-└─Selection	cop[tikv]		in(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 0, 1)
+└─Selection	cop[tikv]		in(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 0, 1, 2)
   └─IndexFullScan	cop[tikv]	table:t2, index:id(id)	keep order:false, stats:pseudo
-select * from t2 where id in (0, 1);
+select * from t2 where id in (0, 1.0, 2e0);
 id
 1asdf
 asdf
