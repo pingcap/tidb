@@ -4069,8 +4069,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// or an external non-CTE query), we will give a warning.
 		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
-			if b.isCTE && len(b.outerCTEs) > 0 {
-				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
+			if b.isCTE {
+				if len(b.outerCTEs) > 0 {
+					b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
+				}
 			} else if !b.buildingRecursivePartForCTE {
 				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
 				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(

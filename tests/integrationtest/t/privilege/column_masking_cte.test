@@ -60,7 +60,7 @@ CREATE MASKING POLICY p_having ON privilege__column_masking_cte.t_having(categor
 
 --echo # Test: HAVING clause should use original values for comparison
 WITH cte AS (SELECT category, amount FROM privilege__column_masking_cte.t_having)
-SELECT category, SUM(amount) FROM cte GROUP BY category HAVING category > 'A';
+SELECT category, SUM(amount) FROM cte GROUP BY category HAVING category > 'A' ORDER BY category;
 
 --echo # Test: ORDER BY should use original values for sorting
 DROP TABLE IF EXISTS privilege__column_masking_cte.t_orderby;
