@@ -645,7 +645,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		}
 	}
 
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel, true)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -790,7 +790,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int, reserveUserConnection bool) (err error) {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -814,20 +814,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
-	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
+	if err := cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
-	}
-	reservedUserConnection := false
-	defer func() {
-		if err != nil && reservedUserConnection {
-			cc.decreaseUserConnectionCount()
-		}
-	}()
-	if reserveUserConnection {
-		if err = cc.increaseUserConnectionsCount(); err != nil {
-			return err
-		}
-		reservedUserConnection = true
 	}
 	cc.ctx.SetPort(port)
 	cc.ctx.SetCompressionLevel(zstdLevel)
@@ -2554,7 +2542,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel, false); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
