@@ -690,10 +690,7 @@ func containsLateralTableSource(node ast.ResultSetNode) bool {
 		}
 		// Descend into the inner source (derived table / set-op) so nested
 		// LATERAL inside a subquery or set-op used as a table source is detected.
-		if inner, ok := n.Source.(ast.ResultSetNode); ok {
-			return containsLateralTableSource(inner)
-		}
-		return false
+		return containsLateralTableSource(n.Source)
 	case *ast.Join:
 		// For parenthesized single table refs, the parser creates Join{Left: TableSource, Right: nil}
 		if n.Right == nil {
@@ -701,6 +698,22 @@ func containsLateralTableSource(node ast.ResultSetNode) bool {
 		}
 		// Check both sides for nested LATERAL
 		return containsLateralTableSource(n.Left) || containsLateralTableSource(n.Right)
+	case *ast.SelectStmt:
+		// Descend into the FROM clause of a derived subquery.
+		if n.From != nil {
+			return containsLateralTableSource(n.From.TableRefs)
+		}
+		return false
+	case *ast.SetOprStmt:
+		// Check each operand in the UNION/INTERSECT/EXCEPT list.
+		if n.SelectList != nil {
+			for _, sel := range n.SelectList.Selects {
+				if rs, ok := sel.(ast.ResultSetNode); ok && containsLateralTableSource(rs) {
+					return true
+				}
+			}
+		}
+		return false
 	default:
 		return false
 	}
