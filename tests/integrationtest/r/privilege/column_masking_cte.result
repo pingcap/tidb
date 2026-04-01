@@ -59,8 +59,8 @@ AS MASK_FULL(category, '*') ENABLE;
 WITH cte AS (SELECT category, amount FROM privilege__column_masking_cte.t_having)
 SELECT category, SUM(amount) FROM cte GROUP BY category HAVING category > 'A';
 category	SUM(amount)
-*	300
 *	200
+*	300
 # Test: ORDER BY should use original values for sorting
 DROP TABLE IF EXISTS privilege__column_masking_cte.t_orderby;
 CREATE TABLE privilege__column_masking_cte.t_orderby(id INT, val VARCHAR(20));

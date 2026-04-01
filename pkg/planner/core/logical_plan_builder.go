@@ -269,7 +269,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		b.optFlag |= rule.FlagSkewDistinctAgg
 	}
 	// flag it if cte contain aggregation
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var rollupExpand *logicalop.LogicalExpand
@@ -5055,14 +5055,13 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
-				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
-				copy(saveCte, b.outerCTEs[i:])
-				b.outerCTEs = b.outerCTEs[:i]
+				// Save b.buildingCTE state and set to false to prevent infinite recursion
+				// Note: We do NOT truncate b.outerCTEs here because buildDataSourceFromCTEMerge
+				// needs access to it when setting b.buildingCTE = true for the masking fix
 				o := b.buildingCTE
 				b.buildingCTE = false
 				//nolint:all_revive,revive
 				defer func() {
-					b.outerCTEs = append(b.outerCTEs, saveCte...)
 					b.buildingCTE = o
 				}()
 				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
@@ -5132,13 +5131,13 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
 	// Set b.isCTE to true to ensure masking is skipped during CTE definition building
 	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior
-	// NOTE: We do NOT set b.buildingCTE here because b.outerCTEs has already been truncated
-	// at this point (see tryBuildCTE line 4797), and setting buildingCTE would cause
-	// buildDistinct to fail when accessing b.outerCTEs[len(b.outerCTEs)-1]
 	oldIsCTE := b.isCTE
+	oldBuildingCTE := b.buildingCTE
 	b.isCTE = true
+	b.buildingCTE = true
 	defer func() {
 		b.isCTE = oldIsCTE
+		b.buildingCTE = oldBuildingCTE
 	}()
 
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
