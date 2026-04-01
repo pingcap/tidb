@@ -23,8 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,6 +44,11 @@ func _hit(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int)
 func _miss(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
 	_, ok := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
 	require.False(t, ok)
+}
+
+func _putWithParamTypes(pc sessionctx.InstancePlanCache, key string, memUsage int64, paramTypes []*types.FieldType) (succ bool) {
+	v := &PlanCacheValue{Memory: memUsage, ParamTypes: paramTypes}
+	return pc.Put(key, v, paramTypes)
 }
 
 func TestInstancePlanCacheBasic(t *testing.T) {
@@ -74,6 +81,20 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(pc, 1, 100, 0)
 	_put(pc, 1, 101, 0)
 	require.Equal(t, pc.MemUsage(), int64(100)) // the second one will be ignored
+
+	// delete an exact key
+	pc = NewInstancePlanCache(1000, 1000)
+	_put(pc, 1, 100, 0)
+	_put(pc, 2, 100, 0)
+	_put(pc, 3, 100, 0)
+	numDeleted := pc.Delete("2-0")
+	require.Equal(t, 1, numDeleted)
+	require.Equal(t, int64(200), pc.MemUsage())
+	require.Equal(t, int64(2), pc.Size())
+	_hit(t, pc, 1, 0)
+	_miss(t, pc, 2, 0)
+	_hit(t, pc, 3, 0)
+	require.Equal(t, 0, pc.Delete("not-exist"))
 
 	// eviction
 	pc = NewInstancePlanCache(320, 500)
@@ -157,6 +178,28 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_miss(t, pc, 3, 1)
 	_miss(t, pc, 3, 2)
 	_miss(t, pc, 3, 3)
+
+	// same exact key with different param types should be deleted together
+	pc = NewInstancePlanCache(1000, 1000)
+	key := "shared-key"
+	paramTypes1 := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	paramTypes2 := []*types.FieldType{types.NewFieldType(mysql.TypeDouble)}
+	require.True(t, _putWithParamTypes(pc, key, 100, paramTypes1))
+	require.True(t, _putWithParamTypes(pc, key, 100, paramTypes2))
+	_put(pc, 2, 100, 1)
+	_, ok := pc.Get(key, paramTypes1)
+	require.True(t, ok)
+	_, ok = pc.Get(key, paramTypes2)
+	require.True(t, ok)
+	numDeleted := pc.Delete(key)
+	require.Equal(t, 2, numDeleted)
+	require.Equal(t, int64(100), pc.MemUsage())
+	require.Equal(t, int64(1), pc.Size())
+	_, ok = pc.Get(key, paramTypes1)
+	require.False(t, ok)
+	_, ok = pc.Get(key, paramTypes2)
+	require.False(t, ok)
+	_hit(t, pc, 2, 1)
 
 	// hard limit can take effect in this case
 	pc = NewInstancePlanCache(200, 200)

@@ -43,7 +43,10 @@ type instancePCNode struct {
 	value    *PlanCacheValue
 	lastUsed atomic.Time
 	next     atomic.Pointer[instancePCNode]
+	deleted  atomic.Bool
 }
+
+var deletedInstancePCNode = &instancePCNode{}
 
 // instancePlanCache is a lock-free implementation of InstancePlanCache interface.
 // [key1] --> [headNode1] --> [node1] --> [node2] --> [node3]
@@ -62,32 +65,45 @@ type instancePlanCache struct {
 }
 
 func (pc *instancePlanCache) getHead(key string, create bool) *instancePCNode {
-	headNode, ok := pc.heads.Load(key)
-	if ok { // cache hit
-		return headNode.(*instancePCNode)
+	for {
+		headNode, ok := pc.heads.Load(key)
+		if ok { // cache hit
+			head := headNode.(*instancePCNode)
+			if !head.deleted.Load() {
+				return head
+			}
+			if !create {
+				return nil
+			}
+			pc.heads.CompareAndDelete(key, headNode)
+			continue
+		}
+		if !create { // cache miss
+			return nil
+		}
+		newHeadNode := pc.createNode(nil)
+		actual, loaded := pc.heads.LoadOrStore(key, newHeadNode)
+		if !loaded {
+			return newHeadNode
+		}
+		if headNode, ok := actual.(*instancePCNode); ok && !headNode.deleted.Load() { // for safety
+			return headNode
+		}
+		pc.heads.CompareAndDelete(key, actual)
 	}
-	if !create { // cache miss
-		return nil
-	}
-	newHeadNode := pc.createNode(nil)
-	actual, _ := pc.heads.LoadOrStore(key, newHeadNode)
-	if headNode, ok := actual.(*instancePCNode); ok { // for safety
-		return headNode
-	}
-	return nil
 }
 
 // Get gets the cached value according to key and paramTypes.
 func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool) {
 	headNode := pc.getHead(key, false)
-	if headNode == nil { // cache miss
+	if headNode == nil || headNode.deleted.Load() { // cache miss
 		return nil, false
 	}
 	return pc.getPlanFromList(headNode, paramTypes)
 }
 
 func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
-	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
+	for node := headNode.next.Load(); node != nil && node != deletedInstancePCNode; node = node.next.Load() {
 		if checkTypesCompatibility4PC(node.value.ParamTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			if !pc.inEvict.Load() {
 				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
@@ -109,23 +125,48 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 		return // do nothing if it exceeds the hard limit
 	}
 	headNode := pc.getHead(key, true)
-	if headNode == nil {
+	if headNode == nil || headNode.deleted.Load() {
 		return false // for safety
 	}
 	if _, ok := pc.getPlanFromList(headNode, paramTypes); ok {
 		return // some other thread has inserted the same plan before
 	}
-	if pc.inEvict.Load() {
+	if pc.inEvict.Load() || headNode.deleted.Load() {
 		return // do nothing if eviction is in progress
 	}
 
 	firstNode := headNode.next.Load()
+	if firstNode == deletedInstancePCNode {
+		return
+	}
 	currNode := pc.createNode(value)
 	currNode.next.Store(firstNode)
 	if headNode.next.CompareAndSwap(firstNode, currNode) { // if failed, some other thread has updated this node,
 		pc.totCost.Add(vMem) // then skip this Put and wait for the next time.
 		pc.totPlan.Add(1)
 		succ = true
+	}
+	return
+}
+
+// Delete removes all cached values under the exact cache key.
+func (pc *instancePlanCache) Delete(key string) (numDeleted int) {
+	pc.evictMutex.Lock() // serialize against Evict and key deletion for safety
+	defer pc.evictMutex.Unlock()
+	pc.inEvict.Store(true)
+	defer pc.inEvict.Store(false)
+
+	headNode := pc.getHead(key, false)
+	if headNode == nil {
+		return 0
+	}
+	headNode.deleted.Store(true)
+	firstNode := headNode.next.Swap(deletedInstancePCNode)
+	pc.heads.Delete(key)
+	for node := firstNode; node != nil && node != deletedInstancePCNode; node = node.next.Load() {
+		pc.totCost.Sub(node.value.MemoryUsage())
+		pc.totPlan.Sub(1)
+		numDeleted++
 	}
 	return
 }
@@ -226,7 +267,7 @@ func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t
 func (pc *instancePlanCache) foreach(callback func(prev, this *instancePCNode) (thisRemoved bool)) {
 	_, headNodes := pc.headNodes()
 	for _, headNode := range headNodes {
-		for prev, this := headNode, headNode.next.Load(); this != nil; {
+		for prev, this := headNode, headNode.next.Load(); this != nil && this != deletedInstancePCNode; {
 			thisRemoved := callback(prev, this)
 			if !thisRemoved { // this node is removed, no need to update the prev node in this case
 				prev, this = this, this.next.Load()
