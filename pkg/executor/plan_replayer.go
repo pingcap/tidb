@@ -406,6 +406,9 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
+// Plan replayer loads recorded statistics for troubleshooting/reproduction.
+// Auto-analyze can run right after restore and overwrite those stats, which
+// makes the restored environment drift from the captured one.
 func disableAutoAnalyzeForPlanReplayerLoad(ctx sessionctx.Context) error {
 	return errors.AddStack(ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(
 		context.Background(),
@@ -503,7 +506,8 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		return err
 	}
-	// Keep restored statistics stable until users explicitly re-enable auto-analyze.
+	// Explicitly disable auto-analyze after restore so imported stats stay stable.
+	// Users can re-enable it manually when they no longer need a frozen replay env.
 	err = disableAutoAnalyzeForPlanReplayerLoad(e.Ctx)
 	if err != nil {
 		return err
